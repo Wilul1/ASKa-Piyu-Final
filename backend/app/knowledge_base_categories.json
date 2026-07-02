@@ -1,0 +1,299 @@
+{
+  "categories": [
+    {
+      "name": "Admissions",
+      "keywords": ["admission", "admissions", "applicant", "application", "freshman", "freshmen", "transferee", "foreign student", "entrance examination"],
+      "subcategories": [
+        {
+          "name": "Admission Requirements",
+          "office": "Admissions Office",
+          "keywords": ["admission requirements", "requirements for admission", "application requirements", "documentary requirements", "admission credentials", "applicant requirements", "new student requirements"]
+        },
+        {
+          "name": "Entrance Examination",
+          "office": "Admissions Office",
+          "keywords": ["entrance examination", "entrance exam", "admission test", "qualifying examination", "college admission test", "exam permit"]
+        },
+        {
+          "name": "Freshmen",
+          "office": "Admissions Office",
+          "keywords": ["freshmen", "freshman", "first year", "new student", "incoming student", "freshman admission", "freshmen admission"]
+        },
+        {
+          "name": "Transferees",
+          "office": "Admissions Office",
+          "keywords": ["transferee", "transferees", "transferee student", "transfer student", "transfer applicant", "transfer credentials", "students transferring"]
+        },
+        {
+          "name": "Foreign Students",
+          "office": "Admissions Office",
+          "keywords": ["foreign student", "foreign students", "international student", "international students", "alien certificate", "student visa", "foreign applicant"]
+        }
+      ]
+    },
+    {
+      "name": "Academic Policies",
+      "keywords": ["academic policy", "academic policies", "academic", "registrar", "scholastic", "grades", "attendance", "graduation", "withdrawal", "validation", "retention"],
+      "subcategories": [
+        {
+          "name": "Registration",
+          "office": "Registrar",
+          "keywords": ["registration", "enrollment", "enrolment", "enroll", "enrolled", "subject registration", "official registration", "adding", "dropping"]
+        },
+        {
+          "name": "Academic Load",
+          "office": "Registrar",
+          "keywords": ["academic load", "student load", "maximum load", "minimum load", "overload", "underload", "units allowed", "subject load"]
+        },
+        {
+          "name": "Validation",
+          "office": "Registrar",
+          "keywords": ["validation", "validate", "validated", "subject validation", "course validation", "credit validation", "validation of subjects"]
+        },
+        {
+          "name": "Retention",
+          "office": "Registrar",
+          "keywords": ["retention", "retention policy", "scholastic delinquency", "academic standing", "probation", "warning status", "dismissal due to grades"]
+        },
+        {
+          "name": "Attendance",
+          "office": "Office of Student Affairs",
+          "keywords": ["attendance", "absence", "absences", "excuse slip", "excused absence", "tardiness", "late attendance", "class attendance"]
+        },
+        {
+          "name": "Grading System",
+          "office": "Registrar",
+          "keywords": ["grading system", "grades", "grade", "final grade", "midterm grade", "incomplete grade", "gwa", "weighted average", "passing grade"]
+        },
+        {
+          "name": "Withdrawal",
+          "office": "Registrar",
+          "keywords": ["withdrawal", "withdraw", "dropping", "drop subject", "drop a subject", "withdrawal from course", "leave of absence", "loa"]
+        },
+        {
+          "name": "Graduation",
+          "office": "Registrar",
+          "keywords": ["graduation", "graduate", "graduation requirements", "candidate for graduation", "commencement", "diploma", "graduation clearance"]
+        }
+      ]
+    },
+    {
+      "name": "Student Records",
+      "keywords": ["student records", "records", "registrar", "transcript", "grades", "honorable dismissal", "good moral", "certificate of registration"],
+      "subcategories": [
+        {
+          "name": "Certificate of Registration",
+          "office": "Registrar",
+          "keywords": ["certificate of registration", "cor", "registration certificate", "official registration form", "registration form"]
+        },
+        {
+          "name": "Transcript of Records",
+          "office": "Registrar",
+          "keywords": ["transcript of records", "tor", "official transcript", "academic transcript", "transcript request", "request tor"]
+        },
+        {
+          "name": "Copy of Grades",
+          "office": "Registrar",
+          "keywords": ["copy of grades", "cog", "grade report", "report of grades", "grades copy", "request grades"]
+        },
+        {
+          "name": "Honorable Dismissal",
+          "office": "Registrar",
+          "keywords": ["honorable dismissal", "transfer credential", "transfer credentials", "certificate of transfer", "school transfer"]
+        },
+        {
+          "name": "Good Moral",
+          "office": "Office of Student Affairs",
+          "keywords": ["good moral", "certificate of good moral", "good moral certificate", "conduct certificate", "student conduct"]
+        }
+      ]
+    },
+    {
+      "name": "Scholarships & Financial Policies",
+      "keywords": ["scholarship", "scholarships", "financial", "tuition", "fee", "fees", "refund", "financial assistance", "grant"],
+      "subcategories": [
+        {
+          "name": "Scholarships",
+          "office": "Scholarship Office",
+          "keywords": ["scholarship", "scholarships", "scholarship grant", "grant", "student aid", "financial assistance", "educational assistance", "scholarship requirements"]
+        },
+        {
+          "name": "Fee Refunds",
+          "office": "Accounting Office",
+          "keywords": ["fee refund", "fee refunds", "refund", "refunds", "tuition refund", "refund policy", "withdrawal refund", "reimbursement", "overpayment"]
+        },
+        {
+          "name": "Tuition Policies",
+          "office": "Cashier",
+          "keywords": ["tuition", "tuition policies", "tuition policy", "tuition fee", "tuition fees", "assessment of fees", "miscellaneous fees", "payment of fees"]
+        }
+      ]
+    },
+    {
+      "name": "Graduate Studies",
+      "keywords": ["graduate studies", "graduate school", "graduate program", "graduate programs", "master", "doctoral", "gsar"],
+      "subcategories": [
+        {
+          "name": "Graduate Programs",
+          "office": "Graduate Studies Office",
+          "keywords": ["graduate programs", "graduate program", "masteral", "master's", "masters", "doctoral", "doctorate", "graduate curricular offerings"]
+        },
+        {
+          "name": "Graduate Policies",
+          "office": "Graduate Studies Office",
+          "keywords": ["graduate policies", "graduate policy", "graduate admission", "graduate requirements", "graduate retention", "graduate enrollment", "gsar policies"]
+        }
+      ]
+    },
+    {
+      "name": "Student Services",
+      "keywords": ["student services", "student affairs", "guidance", "counseling", "health", "welfare", "student organization", "osas"],
+      "subcategories": [
+        {
+          "name": "Guidance",
+          "office": "Guidance Office",
+          "keywords": ["guidance", "guidance office", "student guidance", "career guidance", "referral", "guidance services"]
+        },
+        {
+          "name": "Counseling",
+          "office": "Guidance Office",
+          "keywords": ["counseling", "counselling", "counselor", "counsellor", "mental health", "consultation", "individual counseling", "group counseling"]
+        },
+        {
+          "name": "Health Services",
+          "office": "Medical Clinic",
+          "keywords": ["health services", "health service", "medical clinic", "clinic", "medical certificate", "first aid", "nurse", "physical examination"]
+        },
+        {
+          "name": "Student Organizations",
+          "office": "Office of Student Affairs",
+          "keywords": ["student organizations", "student organization", "organization", "organizations", "club", "accredited organization", "supreme student council", "student council"]
+        },
+        {
+          "name": "Student Welfare",
+          "office": "Office of Student Affairs",
+          "keywords": ["student welfare", "welfare", "student assistance", "student discipline", "disciplinary", "offense", "sanction", "violation", "student rights"]
+        }
+      ]
+    },
+    {
+      "name": "Programs & Curricular Offerings",
+      "keywords": ["program", "programs", "curricular offerings", "course offerings", "college", "degree", "undergraduate", "curriculum"],
+      "subcategories": [
+        {
+          "name": "Undergraduate Programs",
+          "office": "Registrar",
+          "keywords": ["undergraduate programs", "undergraduate program", "bachelor", "baccalaureate", "degree programs", "undergraduate curricular offerings"]
+        },
+        {
+          "name": "Graduate Programs",
+          "office": "Graduate Studies Office",
+          "keywords": ["graduate programs", "graduate program", "master", "doctoral", "graduate curricular offerings"]
+        },
+        {
+          "name": "College of Computer Studies",
+          "office": "College of Computer Studies",
+          "keywords": ["college of computer studies", "ccs", "computer studies", "computer science", "information technology", "information system", "bscs", "bsit", "bsis"]
+        },
+        {
+          "name": "College of Engineering",
+          "office": "College of Engineering",
+          "keywords": ["college of engineering", "engineering", "engineering programs", "civil engineering", "electrical engineering", "mechanical engineering", "electronics engineering"]
+        },
+        {
+          "name": "College of Agriculture",
+          "office": "College of Agriculture",
+          "keywords": ["college of agriculture", "agriculture", "agricultural", "agriculture programs", "agribusiness", "crop science", "animal science"]
+        },
+        {
+          "name": "College of Arts and Sciences",
+          "office": "College of Arts and Sciences",
+          "keywords": ["college of arts and sciences", "arts and sciences", "cas", "biology", "psychology", "mathematics", "communication"]
+        },
+        {
+          "name": "College of Teacher Education",
+          "office": "College of Teacher Education",
+          "keywords": ["college of teacher education", "teacher education", "education programs", "bachelor of elementary education", "bachelor of secondary education", "beed", "bsed"]
+        }
+      ]
+    },
+    {
+      "name": "Administrative Information",
+      "keywords": ["administrative", "officials", "board of regents", "vision", "mission", "goals", "handbook owner", "university officials"],
+      "subcategories": [
+        {
+          "name": "Administrative Officials",
+          "office": "Office of the President",
+          "keywords": ["administrative officials", "officials", "university officials", "administration", "campus officials", "administrative council"]
+        },
+        {
+          "name": "Board of Regents",
+          "office": "Office of the President",
+          "keywords": ["board of regents", "regents", "bor", "governing board", "university board"]
+        },
+        {
+          "name": "Vision, Mission, Goals",
+          "office": "Office of the President",
+          "keywords": ["vision", "mission", "goals", "vmg", "quality policy", "institutional goals", "vision mission goals"]
+        },
+        {
+          "name": "Handbook Owner Information",
+          "office": "Office of Student Affairs",
+          "keywords": ["handbook owner", "owner information", "student handbook", "handbook information", "publisher", "copyright", "revision"]
+        }
+      ]
+    },
+    {
+      "name": "Technical Support",
+      "keywords": ["technical", "portal", "lms", "login", "password", "account", "system access", "online system"],
+      "subcategories": [
+        {
+          "name": "Student Portal",
+          "office": "ICT Office",
+          "keywords": ["student portal", "portal", "tele-web", "teleweb", "online portal", "student information system", "sis"]
+        },
+        {
+          "name": "LMS",
+          "office": "ICT Office",
+          "keywords": ["lms", "learning management system", "e-learning", "elearning", "online class", "virtual classroom", "canvas", "moodle"]
+        },
+        {
+          "name": "Account Recovery",
+          "office": "ICT Office",
+          "keywords": ["account recovery", "forgot password", "reset password", "password reset", "recover account", "locked account", "cannot login", "can't log in", "login issue"]
+        },
+        {
+          "name": "System Access",
+          "office": "ICT Office",
+          "keywords": ["system access", "access", "login", "log in", "sign in", "username", "password", "account access", "online access"]
+        }
+      ]
+    },
+    {
+      "name": "Requirements & Forms",
+      "keywords": ["forms", "form", "clearance", "certificate request", "requirements", "request", "requests", "application form"],
+      "subcategories": [
+        {
+          "name": "Application Forms",
+          "office": "Admissions Office",
+          "keywords": ["application forms", "application form", "admission form", "application", "form submission", "download form"]
+        },
+        {
+          "name": "Clearance",
+          "office": "Registrar",
+          "keywords": ["clearance", "student clearance", "graduation clearance", "clearance form", "clearance request", "sign clearance"]
+        },
+        {
+          "name": "Certificates",
+          "office": "Registrar",
+          "keywords": ["certificates", "certificate request", "request certificate", "certification", "certifications", "certificate issuance", "document request"]
+        },
+        {
+          "name": "Requests",
+          "office": "Registrar",
+          "keywords": ["requests", "request", "student request", "document request", "request form", "service request", "processing request"]
+        }
+      ]
+    }
+  ]
+}

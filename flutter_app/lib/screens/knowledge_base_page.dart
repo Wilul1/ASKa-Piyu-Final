@@ -1,0 +1,2132 @@
+import 'dart:convert';
+import 'dart:html' as html;
+
+import 'package:flutter/material.dart';
+
+import '../app_config.dart';
+import '../design_tokens.dart';
+import '../widgets/sidebar.dart';
+import '../widgets/student_ui.dart';
+import 'chatbot_page.dart';
+
+const _articleFontFamily = 'Inter';
+
+class KnowledgeBasePage extends StatefulWidget {
+  const KnowledgeBasePage({super.key});
+
+  @override
+  State<KnowledgeBasePage> createState() => _KnowledgeBasePageState();
+}
+
+class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
+  final TextEditingController _searchController = TextEditingController();
+  List<_KbArticle> _articles = [];
+  List<_KbCategory> _categories = [];
+  List<String> _suggestions = [];
+  bool _loading = true;
+  String? _error;
+  String _activeQuery = '';
+  String? _activeCategory;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialData();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadInitialData() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final data = await _getJson('/kb/categories');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _categories = _categoryItems(data);
+        _articles = [];
+        _suggestions = [];
+        _activeQuery = '';
+        _activeCategory = null;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error =
+            'Could not load Knowledge Base articles. Check your configured backend URL.';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadArticles({String? query, String? category}) async {
+    final nextQuery = (query ?? _activeQuery).trim();
+    final nextCategory = category == null ? _activeCategory : category.trim();
+    setState(() {
+      _loading = true;
+      _error = null;
+      _activeQuery = nextQuery;
+      _activeCategory =
+          nextCategory == null || nextCategory.isEmpty ? null : nextCategory;
+    });
+
+    final params = <String, String>{
+      'limit': '48',
+      if (nextQuery.isNotEmpty) 'q': nextQuery,
+      if (_activeCategory != null) 'category': _activeCategory!,
+    };
+    final queryString = Uri(queryParameters: params).query;
+
+    try {
+      final data = await _getJson('/kb/articles?$queryString');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _articles = _articleItems(data);
+        _suggestions = _suggestionItems(data);
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = 'Could not search Knowledge Base articles.';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<Map<String, dynamic>> _getJson(String path) async {
+    final request = html.HttpRequest();
+    request.open('GET', '${AppConfig.resolvedApiBase}$path');
+    request.send();
+    await request.onLoadEnd.first;
+
+    if (request.status != 200) {
+      throw StateError('Request failed with status ${request.status}');
+    }
+    final decoded = jsonDecode(request.responseText ?? '{}');
+    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+  }
+
+  void _performSearch([String? value]) {
+    final query = (value ?? _searchController.text).trim();
+    _searchController.text = query;
+    _searchController.selection = TextSelection.collapsed(offset: query.length);
+    if (query.isEmpty) {
+      _showCategoryBrowse();
+      return;
+    }
+    _loadArticles(query: query, category: '');
+  }
+
+  void _selectCategory(String? category) {
+    _loadArticles(category: category ?? '');
+  }
+
+  void _showCategoryBrowse() {
+    _searchController.clear();
+    setState(() {
+      _activeQuery = '';
+      _activeCategory = null;
+      _articles = [];
+      _suggestions = [];
+      _error = null;
+      _loading = false;
+    });
+  }
+
+  void _openArticle(_KbArticle article) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _ArticleReaderPage(
+          apiBase: AppConfig.resolvedApiBase,
+          article: article,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 900;
+        final body = _KnowledgeBaseBody(
+          searchController: _searchController,
+          articles: _articles,
+          categories: _categories,
+          suggestions: _suggestions,
+          loading: _loading,
+          error: _error,
+          activeQuery: _activeQuery,
+          activeCategory: _activeCategory,
+          onSearch: _performSearch,
+          onRetry: _loadInitialData,
+          onSelectCategory: _selectCategory,
+          onShowCategories: _showCategoryBrowse,
+          onOpenArticle: _openArticle,
+        );
+
+        if (isWide) {
+          return Scaffold(
+            backgroundColor: DesignTokens.bgGrey,
+            body: Row(
+              children: [
+                const SizedBox(
+                  width: 220,
+                  child: AppSidebar(current: StudentNavItem.knowledgeBase),
+                ),
+                Expanded(child: body),
+              ],
+            ),
+          );
+        }
+
+        return Scaffold(
+          backgroundColor: DesignTokens.bgGrey,
+          drawer: const Drawer(
+            child: AppSidebar(current: StudentNavItem.knowledgeBase),
+          ),
+          appBar: AppBar(title: const Text('Knowledge Base')),
+          body: body,
+        );
+      },
+    );
+  }
+}
+
+class _KnowledgeBaseBody extends StatelessWidget {
+  final TextEditingController searchController;
+  final List<_KbArticle> articles;
+  final List<_KbCategory> categories;
+  final List<String> suggestions;
+  final bool loading;
+  final String? error;
+  final String activeQuery;
+  final String? activeCategory;
+  final ValueChanged<String?> onSearch;
+  final VoidCallback onRetry;
+  final ValueChanged<String?> onSelectCategory;
+  final VoidCallback onShowCategories;
+  final ValueChanged<_KbArticle> onOpenArticle;
+
+  const _KnowledgeBaseBody({
+    required this.searchController,
+    required this.articles,
+    required this.categories,
+    required this.suggestions,
+    required this.loading,
+    required this.error,
+    required this.activeQuery,
+    required this.activeCategory,
+    required this.onSearch,
+    required this.onRetry,
+    required this.onSelectCategory,
+    required this.onShowCategories,
+    required this.onOpenArticle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StudentPage(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _HeroSearch(
+            controller: searchController,
+            activeQuery: activeQuery,
+            onSearch: onSearch,
+          ),
+          const SizedBox(height: 22),
+          if (activeQuery.isEmpty && activeCategory == null)
+            _CategorySections(
+              categories: categories,
+              loading: loading,
+              error: error,
+              onRetry: onRetry,
+              onSelectCategory: onSelectCategory,
+            )
+          else
+            _ArticleResults(
+              articles: articles,
+              suggestions: suggestions,
+              loading: loading,
+              error: error,
+              activeQuery: activeQuery,
+              activeCategory: activeCategory,
+              onRetry: onRetry,
+              onShowCategories: onShowCategories,
+              onOpenArticle: onOpenArticle,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroSearch extends StatelessWidget {
+  final TextEditingController controller;
+  final String activeQuery;
+  final ValueChanged<String?> onSearch;
+
+  const _HeroSearch({
+    required this.controller,
+    required this.activeQuery,
+    required this.onSearch,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.white, Color(0xFFFFFBF0)],
+        ),
+        border: Border.all(color: const Color(0xFFF1E4C8)),
+        boxShadow: DesignTokens.softShadow(0.07),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: DesignTokens.maroon.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: const Text(
+              'ASKa-Piyu Knowledge Base',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: DesignTokens.maroon,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Text(
+            'Find student support topics',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 34,
+              height: 1.12,
+              fontWeight: FontWeight.w900,
+              color: DesignTokens.ink,
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Browse friendly categories first, or search the indexed handbook directly.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 16, height: 1.45, color: DesignTokens.muted),
+          ),
+          const SizedBox(height: 24),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                boxShadow: DesignTokens.softShadow(0.08),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 10),
+                  const Icon(Icons.search_rounded, color: DesignTokens.muted),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      onSubmitted: onSearch,
+                      decoration: const InputDecoration(
+                        hintText: 'Search articles, policies, offices...',
+                        border: InputBorder.none,
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (activeQuery.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        controller.clear();
+                        onSearch('');
+                      },
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: DesignTokens.muted,
+                      ),
+                    ),
+                  SizedBox(
+                    height: 46,
+                    child: ElevatedButton.icon(
+                      onPressed: () => onSearch(null),
+                      icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                      label: const Text('Search'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: DesignTokens.maroon,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (activeQuery.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              'Showing results for "$activeQuery"',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: DesignTokens.maroon,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ArticleResults extends StatelessWidget {
+  final List<_KbArticle> articles;
+  final List<String> suggestions;
+  final bool loading;
+  final String? error;
+  final String activeQuery;
+  final String? activeCategory;
+  final VoidCallback onRetry;
+  final VoidCallback onShowCategories;
+  final ValueChanged<_KbArticle> onOpenArticle;
+
+  const _ArticleResults({
+    required this.articles,
+    required this.suggestions,
+    required this.loading,
+    required this.error,
+    required this.activeQuery,
+    required this.activeCategory,
+    required this.onRetry,
+    required this.onShowCategories,
+    required this.onOpenArticle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StudentPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: StudentSectionTitle(
+                  title: activeCategory == null
+                      ? 'Search Results'
+                      : activeCategory!,
+                  subtitle: activeCategory == null
+                      ? 'Matching articles from the indexed Knowledge Base.'
+                      : 'Focused articles under this category.',
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onShowCategories,
+                icon: const Icon(Icons.grid_view_rounded, size: 18),
+                label: const Text('Categories'),
+                style: TextButton.styleFrom(
+                  foregroundColor: DesignTokens.maroon,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (loading)
+            const _LoadingState()
+          else if (error != null)
+            _ErrorState(message: error!, onRetry: onRetry)
+          else if (articles.isEmpty)
+            _EmptyState(suggestions: suggestions)
+          else
+            ...articles.map(
+              (article) => _ArticleCard(
+                article: article,
+                onTap: () => onOpenArticle(article),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategorySections extends StatefulWidget {
+  final List<_KbCategory> categories;
+  final bool loading;
+  final String? error;
+  final VoidCallback onRetry;
+  final ValueChanged<String?> onSelectCategory;
+
+  const _CategorySections({
+    required this.categories,
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+    required this.onSelectCategory,
+  });
+
+  @override
+  State<_CategorySections> createState() => _CategorySectionsState();
+}
+
+class _CategorySectionsState extends State<_CategorySections> {
+  final Set<String> _expanded = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = widget.categories
+        .where((category) => category.articleCount > 0)
+        .toList()
+      ..sort((left, right) =>
+          _categorySortKey(left.name).compareTo(_categorySortKey(right.name)));
+
+    return StudentPanel(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const StudentSectionTitle(
+            title: 'Browse by Category',
+            subtitle: 'Start with student-friendly sections, then open the focused articles you need.',
+          ),
+          const SizedBox(height: 16),
+          if (widget.loading)
+            const _LoadingState()
+          else if (widget.error != null)
+            _ErrorState(message: widget.error!, onRetry: widget.onRetry)
+          else if (visible.isEmpty)
+            const _EmptyCategoryState()
+          else
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final twoColumns = constraints.maxWidth >= 860;
+                final cardWidth = twoColumns
+                    ? (constraints.maxWidth - 14) / 2
+                    : constraints.maxWidth;
+                return Wrap(
+                  spacing: 14,
+                  runSpacing: 14,
+                  children: visible
+                      .map(
+                        (category) => SizedBox(
+                          width: cardWidth,
+                          child: _CategoryCard(
+                            category: category,
+                            expanded: _expanded.contains(category.name),
+                            onToggle: () => _toggle(category.name),
+                            onOpen: () =>
+                                widget.onSelectCategory(category.name),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _toggle(String name) {
+    setState(() {
+      if (!_expanded.add(name)) {
+        _expanded.remove(name);
+      }
+    });
+  }
+}
+
+class _CategoryCard extends StatelessWidget {
+  final _KbCategory category;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final VoidCallback onOpen;
+
+  const _CategoryCard({
+    required this.category,
+    required this.expanded,
+    required this.onToggle,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final topics = category.visibleSubcategories;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: expanded
+              ? DesignTokens.maroon.withValues(alpha: 0.22)
+              : DesignTokens.border,
+        ),
+        boxShadow: DesignTokens.softShadow(expanded ? 0.08 : 0.04),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        child: Column(
+          children: [
+            InkWell(
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(18),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    StudentIconBox(
+                      icon: _categoryIcon(category.name),
+                      color: DesignTokens.maroon,
+                      size: 44,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            category.name,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              height: 1.25,
+                              fontWeight: FontWeight.w900,
+                              color: DesignTokens.ink,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${category.articleCount} focused ${category.articleCount == 1 ? 'article' : 'articles'}',
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: DesignTokens.muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: expanded ? 'Collapse' : 'Preview topics',
+                      onPressed: onToggle,
+                      icon: Icon(
+                        expanded
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        color: DesignTokens.maroon,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (expanded) ...[
+              const Divider(height: 1, color: DesignTokens.border),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: topics
+                          .map<Widget>(
+                            (topic) => _TopicChip(
+                              label: topic.name,
+                              articleCount: topic.articleCount,
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ElevatedButton.icon(
+                        onPressed: onOpen,
+                        icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                        label: const Text('View articles'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: DesignTokens.maroon,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TopicChip extends StatelessWidget {
+  final String label;
+  final int articleCount;
+
+  const _TopicChip({required this.label, required this.articleCount});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+      decoration: BoxDecoration(
+        color: DesignTokens.gold.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: DesignTokens.gold.withValues(alpha: 0.26)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.ink,
+            ),
+          ),
+          if (articleCount > 0) ...[
+            const SizedBox(width: 6),
+            Text(
+              '$articleCount',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                color: DesignTokens.maroon,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ArticleCard extends StatelessWidget {
+  final _KbArticle article;
+  final VoidCallback onTap;
+
+  const _ArticleCard({required this.article, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return StudentInkCard(
+      onTap: onTap,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      shadow: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const StudentIconBox(
+                icon: Icons.description_outlined,
+                color: DesignTokens.maroon,
+                size: 42,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      article.title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: DesignTokens.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      article.path,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: DesignTokens.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded,
+                  color: DesignTokens.muted),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            article.preview,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 13, height: 1.45, color: DesignTokens.ink),
+          ),
+          const SizedBox(height: 12),
+          _ArticleMeta(article: article),
+        ],
+      ),
+    );
+  }
+}
+
+class _ArticleMeta extends StatelessWidget {
+  final _KbArticle article;
+
+  const _ArticleMeta({required this.article});
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _MetaChip(icon: Icons.folder_outlined, label: article.category),
+        _MetaChip(icon: Icons.menu_book_outlined, label: _sourceLabel(article)),
+        if (article.page != null)
+          _MetaChip(
+              icon: Icons.bookmark_border_rounded,
+              label: 'Page ${article.page}'),
+        if (article.matchingSections > 1)
+          _MetaChip(
+              icon: Icons.segment_rounded,
+              label: '${article.matchingSections} matching sections'),
+      ],
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _MetaChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: DesignTokens.muted),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.muted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ArticleReaderPage extends StatelessWidget {
+  final String apiBase;
+  final _KbArticle article;
+
+  const _ArticleReaderPage({
+    super.key,
+    required this.apiBase,
+    required this.article,
+  });
+
+  Future<_KbArticleDetail> _loadDetail() async {
+    final request = html.HttpRequest();
+    request.open(
+        'GET', '$apiBase/kb/articles/${Uri.encodeComponent(article.id)}');
+    request.send();
+    await request.onLoadEnd.first;
+    if (request.status != 200) {
+      throw StateError('Unable to load article detail');
+    }
+    final decoded = jsonDecode(request.responseText ?? '{}');
+    return _KbArticleDetail.fromJson(Map<String, dynamic>.from(decoded as Map));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 900;
+        final body = FutureBuilder<_KbArticleDetail>(
+          future: _loadDetail(),
+          builder: (context, snapshot) {
+            final content = _ArticleReaderBody(
+              article: article,
+              detail: snapshot.data,
+              loading: snapshot.connectionState != ConnectionState.done,
+              error: snapshot.hasError,
+            );
+
+            if (isWide) {
+              return Row(
+                children: [
+                  const SizedBox(
+                    width: 220,
+                    child: AppSidebar(current: StudentNavItem.knowledgeBase),
+                  ),
+                  Expanded(child: content),
+                ],
+              );
+            }
+
+            return Scaffold(
+              backgroundColor: DesignTokens.bgGrey,
+              drawer: const Drawer(
+                child: AppSidebar(current: StudentNavItem.knowledgeBase),
+              ),
+              appBar: AppBar(title: const Text('Article')),
+              body: content,
+            );
+          },
+        );
+
+        if (isWide) {
+          return Scaffold(backgroundColor: DesignTokens.bgGrey, body: body);
+        }
+        return body;
+      },
+    );
+  }
+}
+
+class _ArticleReaderBody extends StatelessWidget {
+  final _KbArticle article;
+  final _KbArticleDetail? detail;
+  final bool loading;
+  final bool error;
+
+  const _ArticleReaderBody({
+    required this.article,
+    required this.detail,
+    required this.loading,
+    required this.error,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StudentPage(
+      maxWidth: 1280,
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 30),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final loaded = detail;
+          final displayArticle = loaded?.article ?? article;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _BreadcrumbBar(
+                article: displayArticle,
+                onBack: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: 16),
+              if (loading)
+                const StudentPanel(
+                  padding: EdgeInsets.symmetric(vertical: 80),
+                  child: _LoadingState(),
+                )
+              else if (error || loaded == null)
+                StudentPanel(
+                  child: _ErrorState(
+                    message: 'Could not load this article.',
+                    onRetry: () => Navigator.of(context).pop(),
+                  ),
+                )
+              else
+                _ArticleDocument(detail: loaded),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _BreadcrumbBar extends StatelessWidget {
+  final _KbArticle article;
+  final VoidCallback onBack;
+
+  const _BreadcrumbBar({required this.article, required this.onBack});
+
+  @override
+  Widget build(BuildContext context) {
+    return StudentPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      shadow: false,
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Back',
+            onPressed: onBack,
+            icon: const Icon(Icons.arrow_back_rounded,
+                color: DesignTokens.maroon),
+          ),
+          const SizedBox(width: 2),
+          Expanded(
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 7,
+              runSpacing: 6,
+              children: [
+                const Text(
+                  'Knowledge Base',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: DesignTokens.maroon,
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded,
+                    size: 17, color: DesignTokens.muted),
+                Text(
+                  article.category,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: DesignTokens.muted,
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded,
+                    size: 17, color: DesignTokens.muted),
+                const Text(
+                  'Article',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: DesignTokens.muted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ArticleDocument extends StatelessWidget {
+  final _KbArticleDetail detail;
+
+  const _ArticleDocument({required this.detail});
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = _formatArticleBlocks(detail.content);
+    return StudentPanel(
+      padding: const EdgeInsets.fromLTRB(40, 36, 40, 40),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 960),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              detail.title,
+              style: const TextStyle(
+                fontFamily: _articleFontFamily,
+                fontSize: 36,
+                height: 1.2,
+                fontWeight: FontWeight.w700,
+                color: DesignTokens.ink,
+              ),
+            ),
+            const SizedBox(height: 22),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MetaChip(
+                    icon: Icons.folder_outlined,
+                    label: detail.article.category),
+                _MetaChip(
+                    icon: Icons.menu_book_outlined,
+                    label: _sourceLabel(detail.article)),
+                if (detail.article.page != null)
+                  _MetaChip(
+                      icon: Icons.bookmark_border_rounded,
+                      label: 'Page ${detail.article.page}'),
+              ],
+            ),
+            const SizedBox(height: 22),
+            _PathNote(path: detail.path),
+            const SizedBox(height: 34),
+            const Divider(height: 1, color: DesignTokens.border),
+            const SizedBox(height: 34),
+            if (blocks.isEmpty)
+              const Text(
+                'No content available.',
+                style: TextStyle(
+                  fontFamily: _articleFontFamily,
+                  fontSize: 17,
+                  height: 1.75,
+                  color: DesignTokens.muted,
+                ),
+              )
+            else
+              ...blocks.map((block) => _ArticleBlockView(block: block)),
+            const SizedBox(height: 32),
+            const Divider(height: 1, color: DesignTokens.border),
+            const SizedBox(height: 24),
+            const _AskPanel(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PathNote extends StatelessWidget {
+  final String path;
+
+  const _PathNote({required this.path});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: DesignTokens.gold.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: DesignTokens.gold.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.account_tree_outlined,
+              size: 19, color: DesignTokens.maroon),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              path.isEmpty ? 'Path not specified' : path,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                fontWeight: FontWeight.w500,
+                color: DesignTokens.ink,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AskPanel extends StatelessWidget {
+  const _AskPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
+      decoration: BoxDecoration(
+        color: DesignTokens.maroon.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: DesignTokens.maroon.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Still have questions?',
+            style: TextStyle(
+                fontSize: 20,
+                height: 1.25,
+                fontWeight: FontWeight.w700,
+                color: DesignTokens.ink),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'ASKa-Piyu can explain this article in simpler student-friendly language.',
+            style: TextStyle(
+                fontSize: 14, height: 1.55, color: DesignTokens.muted),
+          ),
+          const SizedBox(height: 18),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+              height: 44,
+              child: ElevatedButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ChatbotPage()),
+                ),
+                icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+                label: const Text('Ask ASKa-Piyu'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: DesignTokens.maroon,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ArticleBlockView extends StatelessWidget {
+  final _ArticleBlock block;
+
+  const _ArticleBlockView({required this.block});
+
+  @override
+  Widget build(BuildContext context) {
+    switch (block.kind) {
+      case _ArticleBlockKind.heading:
+        return _SectionHeading(text: block.text);
+      case _ArticleBlockKind.subheading:
+        return Padding(
+          padding: const EdgeInsets.only(top: 24, bottom: 12),
+          child: Text(
+            block.text,
+            style: const TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 23,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+              color: DesignTokens.maroon,
+            ),
+          ),
+        );
+      case _ArticleBlockKind.numbered:
+        return _ListBlock(prefix: block.marker ?? '', text: block.text);
+      case _ArticleBlockKind.bullet:
+        return _ListBlock(prefix: '', text: block.text, bullet: true);
+      case _ArticleBlockKind.note:
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7ED),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFFED7AA)),
+          ),
+          child: Text(
+            block.text,
+            style: const TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 14,
+              height: 1.6,
+              fontWeight: FontWeight.w400,
+              color: DesignTokens.ink,
+            ),
+          ),
+        );
+      case _ArticleBlockKind.paragraph:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 18),
+          child: Text(
+            block.text,
+            style: const TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 17,
+              height: 1.78,
+              fontWeight: FontWeight.w400,
+              color: DesignTokens.ink,
+            ),
+          ),
+        );
+    }
+  }
+}
+
+class _SectionHeading extends StatelessWidget {
+  final String text;
+
+  const _SectionHeading({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = _sectionHeadingParts(text);
+    return Padding(
+      padding: const EdgeInsets.only(top: 28, bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (parts.label != null) ...[
+            Text(
+              parts.label!,
+              style: const TextStyle(
+                fontFamily: _articleFontFamily,
+                fontSize: 12.5,
+                height: 1.35,
+                letterSpacing: 0.8,
+                fontWeight: FontWeight.w700,
+                color: DesignTokens.maroon,
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (parts.title != parts.label)
+            Text(
+              parts.title,
+              style: const TextStyle(
+                fontFamily: _articleFontFamily,
+                fontSize: 23,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+                color: DesignTokens.ink,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ListBlock extends StatelessWidget {
+  final String prefix;
+  final String text;
+  final bool bullet;
+
+  const _ListBlock({
+    required this.prefix,
+    required this.text,
+    this.bullet = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            constraints: const BoxConstraints(minWidth: 26),
+            padding: const EdgeInsets.only(top: 8),
+            child: bullet
+                ? Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: DesignTokens.maroon,
+                      shape: BoxShape.circle,
+                    ),
+                  )
+                : Text(
+                    prefix,
+                    style: const TextStyle(
+                      fontFamily: _articleFontFamily,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: DesignTokens.maroon,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontFamily: _articleFontFamily,
+                fontSize: 16.5,
+                height: 1.72,
+                fontWeight: FontWeight.w400,
+                color: DesignTokens.ink,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _ArticleBlockKind {
+  heading,
+  subheading,
+  paragraph,
+  numbered,
+  bullet,
+  note
+}
+
+class _ArticleBlock {
+  final _ArticleBlockKind kind;
+  final String text;
+  final String? marker;
+
+  const _ArticleBlock(this.kind, this.text, {this.marker});
+}
+
+class _HeadingParts {
+  final String? label;
+  final String title;
+
+  const _HeadingParts({required this.label, required this.title});
+}
+
+_HeadingParts _sectionHeadingParts(String text) {
+  final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final structural = RegExp(
+    r'^(Section|Chapter|Article)\s+([IVXLCDM]+|\d+|[A-Z])(?:\s*[\-:·]\s*|\s+)?(.*)$',
+    caseSensitive: false,
+  ).firstMatch(cleaned);
+
+  if (structural == null) {
+    return _HeadingParts(label: null, title: cleaned);
+  }
+
+  final kind = structural.group(1)!.toUpperCase();
+  final number = structural.group(2)!.toUpperCase();
+  final title = (structural.group(3) ?? '').trim();
+  return _HeadingParts(
+    label: '$kind $number',
+    title: title.isEmpty ? '$kind $number' : title,
+  );
+}
+
+List<_ArticleBlock> _formatArticleBlocks(String content) {
+  final normalized = content
+      .replaceAll('\r\n', '\n')
+      .replaceAll(RegExp(r'[ \t]+'), ' ')
+      .trim();
+  if (normalized.isEmpty) {
+    return [];
+  }
+
+  final lines = normalized
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  final blocks = <_ArticleBlock>[];
+
+  for (final line in lines) {
+    if (_isPageMarker(line)) {
+      continue;
+    }
+
+    final section = _parseSectionLine(line);
+    if (section != null) {
+      blocks.add(_ArticleBlock(
+        _ArticleBlockKind.heading,
+        '${section.label} ${section.title}'.trim(),
+      ));
+      if (section.paragraph != null && section.paragraph!.isNotEmpty) {
+        blocks.add(
+            _ArticleBlock(_ArticleBlockKind.paragraph, section.paragraph!));
+      }
+      continue;
+    }
+
+    final numbered =
+        RegExp(r'^(\d+[\).]|[a-zA-Z][\).])\s+(.+)$').firstMatch(line);
+    final bullet = RegExp(r'^([\u2022\-*])\s+(.+)$').firstMatch(line);
+
+    if (numbered != null) {
+      blocks.add(_ArticleBlock(
+        _ArticleBlockKind.numbered,
+        numbered.group(2)!.trim(),
+        marker: numbered.group(1),
+      ));
+    } else if (bullet != null) {
+      blocks.add(
+          _ArticleBlock(_ArticleBlockKind.bullet, bullet.group(2)!.trim()));
+    } else if (_isMajorHeading(line)) {
+      blocks.add(_ArticleBlock(_ArticleBlockKind.heading, _cleanHeading(line)));
+    } else if (_isSubheading(line)) {
+      blocks.add(
+          _ArticleBlock(_ArticleBlockKind.subheading, _cleanHeading(line)));
+    } else if (_isNote(line)) {
+      blocks.add(_ArticleBlock(_ArticleBlockKind.note, line));
+    } else {
+      blocks.add(_ArticleBlock(_ArticleBlockKind.paragraph, line));
+    }
+  }
+
+  return blocks;
+}
+
+bool _isPageMarker(String line) {
+  final value = line.trim();
+  return RegExp(r'^-+\s*page\s+\d+\s*-+$', caseSensitive: false)
+          .hasMatch(value) ||
+      RegExp(r'^page\s+\d+$', caseSensitive: false).hasMatch(value);
+}
+
+class _ParsedSectionLine {
+  final String label;
+  final String title;
+  final String? paragraph;
+
+  const _ParsedSectionLine({
+    required this.label,
+    required this.title,
+    required this.paragraph,
+  });
+}
+
+_ParsedSectionLine? _parseSectionLine(String line) {
+  final cleaned = line.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final match = RegExp(
+    r'^(section|chapter|article|sec\.?)\s+([IVXLCDM]+|\d+|[A-Z])(?:\s*[·:\-]\s*|\s+)(.+)$',
+    caseSensitive: false,
+  ).firstMatch(cleaned);
+  if (match == null) {
+    return null;
+  }
+
+  final rawKind = match.group(1)!.replaceAll('.', '').toUpperCase();
+  final kind = rawKind == 'SEC' ? 'SEC' : rawKind;
+  final number = match.group(2)!.toUpperCase();
+  final rest = match.group(3)!.trim();
+  final split = _splitTitleAndParagraph(rest);
+  return _ParsedSectionLine(
+    label: '$kind $number',
+    title: split.title,
+    paragraph: split.paragraph,
+  );
+}
+
+class _TitleParagraphSplit {
+  final String title;
+  final String? paragraph;
+
+  const _TitleParagraphSplit({required this.title, required this.paragraph});
+}
+
+_TitleParagraphSplit _splitTitleAndParagraph(String value) {
+  final words = value.split(' ').where((word) => word.isNotEmpty).toList();
+  if (words.isEmpty) {
+    return const _TitleParagraphSplit(title: '', paragraph: null);
+  }
+
+  var titleEnd = words.length;
+  for (var index = 0; index < words.length; index++) {
+    final word = words[index].replaceAll(RegExp(r'[^A-Za-z]'), '');
+    if (word.isEmpty) {
+      continue;
+    }
+    final startsNormalSentence = word[0].toUpperCase() == word[0] &&
+        word.substring(1) != word.substring(1).toUpperCase();
+    if (index > 0 && startsNormalSentence) {
+      titleEnd = index;
+      break;
+    }
+  }
+
+  final rawTitle = words.take(titleEnd).join(' ').trim();
+  final paragraph = words.skip(titleEnd).join(' ').trim();
+  return _TitleParagraphSplit(
+    title: _titleCase(rawTitle),
+    paragraph: paragraph.isEmpty ? null : paragraph,
+  );
+}
+
+bool _isMajorHeading(String line) {
+  final value = line.trim();
+  if (RegExp(r'^(section|chapter|article)\s+[\w.-]+[:\s-]',
+          caseSensitive: false)
+      .hasMatch(value)) {
+    return true;
+  }
+  final letters = value.replaceAll(RegExp(r'[^A-Za-z]'), '');
+  return value.length <= 80 &&
+      letters.length >= 4 &&
+      value == value.toUpperCase() &&
+      !value.endsWith('.');
+}
+
+bool _isSubheading(String line) {
+  final value = line.trim();
+  if (value.length > 70 || value.endsWith('.')) {
+    return false;
+  }
+  final titleLike =
+      RegExp(r'^[A-Z][A-Za-z]*(\s+[A-Z][A-Za-z]*){0,5}$').hasMatch(value);
+  return RegExp(
+              r'\b(policy|policies|requirements?|procedures?|eligibility|notes?|guidelines?|classification|curricular offerings|administrative officials|enrollment|admission|attendance|graduation|retention)\b',
+              caseSensitive: false)
+          .hasMatch(value) ||
+      titleLike;
+}
+
+bool _isNote(String line) {
+  return RegExp(r'^(note|important|reminder)\s*[:\-]', caseSensitive: false)
+      .hasMatch(line.trim());
+}
+
+String _cleanHeading(String line) {
+  final cleaned =
+      line.replaceAll(RegExp(r'\s+'), ' ').trim().replaceAll(RegExp(r':$'), '');
+  final structural = RegExp(
+    r'^(section|chapter|article)\s+(.+)$',
+    caseSensitive: false,
+  ).firstMatch(cleaned);
+  if (structural != null) {
+    final label = structural.group(1)!.toLowerCase();
+    final suffix = structural.group(2)!.trim();
+    return '${label[0].toUpperCase()}${label.substring(1)} $suffix';
+  }
+  final letters = cleaned.replaceAll(RegExp(r'[^A-Za-z]'), '');
+  if (letters.length >= 4 && cleaned == cleaned.toUpperCase()) {
+    return _titleCase(cleaned);
+  }
+  return cleaned;
+}
+
+String _titleCase(String value) {
+  const keepUpper = {'OSAS', 'TOR', 'ID', 'PDF'};
+  return value.toLowerCase().split(' ').map((word) {
+    final upper = word.toUpperCase();
+    if (keepUpper.contains(upper)) {
+      return upper;
+    }
+    if (word.isEmpty) {
+      return word;
+    }
+    return '${word[0].toUpperCase()}${word.substring(1)}';
+  }).join(' ');
+}
+
+class _LoadingState extends StatelessWidget {
+  const _LoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 30),
+        child: CircularProgressIndicator(color: DesignTokens.maroon),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final List<String> suggestions;
+
+  const _EmptyState({this.suggestions = const []});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 34),
+      child: Center(
+        child: Column(
+          children: [
+            const Text(
+              'No exact article found.',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                color: DesignTokens.ink,
+              ),
+            ),
+            if (suggestions.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              const Text(
+                'Try:',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: DesignTokens.muted,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: suggestions
+                    .map<Widget>(
+                      (suggestion) => _TopicChip(
+                        label: suggestion,
+                        articleCount: 0,
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyCategoryState extends StatelessWidget {
+  const _EmptyCategoryState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 34),
+      child: Center(
+        child: Text(
+          'Categories will appear after Knowledge Base content is indexed.',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+            color: DesignTokens.muted,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ErrorState({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline_rounded, color: Color(0xFFC2410C)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                  fontSize: 13, height: 1.4, color: Color(0xFF9A3412)),
+            ),
+          ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
+      ),
+    );
+  }
+}
+
+List<_KbCategory> _categoryItems(Map<String, dynamic> data) {
+  final items = data['items'];
+  if (items is! List) {
+    return [];
+  }
+  return items
+      .whereType<Map>()
+      .map((item) => _KbCategory.fromJson(Map<String, dynamic>.from(item)))
+      .where((category) => category.name.trim().isNotEmpty)
+      .toList();
+}
+
+List<_KbArticle> _articleItems(Map<String, dynamic> data) {
+  final items = data['items'];
+  if (items is! List) {
+    return [];
+  }
+  return items
+      .whereType<Map>()
+      .map((item) => _KbArticle.fromJson(Map<String, dynamic>.from(item)))
+      .toList();
+}
+
+List<String> _suggestionItems(Map<String, dynamic> data) {
+  final items = data['suggestions'];
+  if (items is! List) {
+    return [];
+  }
+  return items
+      .map((item) => item.toString().trim())
+      .where((item) => item.isNotEmpty)
+      .toList();
+}
+
+String _sourceLabel(_KbArticle article) {
+  final source = article.sourceFilename.toLowerCase();
+  if (source.contains('handbook')) {
+    return 'Student Handbook';
+  }
+  if (source.contains('policy')) {
+    return 'Policy Document';
+  }
+  if (source.endsWith('.pdf') || source.isNotEmpty) {
+    return 'Source Document';
+  }
+  return 'Student Handbook';
+}
+
+IconData _categoryIcon(String name) {
+  final value = name.toLowerCase();
+  if (value.contains('admission')) {
+    return Icons.how_to_reg_rounded;
+  }
+  if (value.contains('academic')) {
+    return Icons.school_rounded;
+  }
+  if (value.contains('record')) {
+    return Icons.folder_copy_rounded;
+  }
+  if (value.contains('scholarship') || value.contains('financial')) {
+    return Icons.payments_rounded;
+  }
+  if (value.contains('program') || value.contains('curricular')) {
+    return Icons.account_balance_rounded;
+  }
+  if (value.contains('service')) {
+    return Icons.support_agent_rounded;
+  }
+  if (value.contains('administrative')) {
+    return Icons.groups_rounded;
+  }
+  if (value.contains('technical')) {
+    return Icons.computer_rounded;
+  }
+  if (value.contains('requirement') || value.contains('form')) {
+    return Icons.assignment_rounded;
+  }
+  return Icons.menu_book_rounded;
+}
+
+int _categorySortKey(String name) {
+  const order = [
+    'Admissions',
+    'Academic Policies',
+    'Student Records',
+    'Scholarships & Financial Policies',
+    'Programs & Curricular Offerings',
+    'Student Services',
+    'Administrative Information',
+    'Technical Support',
+    'Requirements & Forms',
+  ];
+  final normalized = _normalizeDisplayText(name);
+  final index = order.indexWhere((item) => _normalizeDisplayText(item) == normalized);
+  return index == -1 ? 999 : index;
+}
+
+class _KbCategory {
+  final String name;
+  final int articleCount;
+  final List<_KbSubcategory> subcategories;
+
+  const _KbCategory({
+    required this.name,
+    required this.articleCount,
+    required this.subcategories,
+  });
+
+  List<_KbSubcategory> get visibleSubcategories {
+    final visible = subcategories
+        .where((subcategory) => subcategory.articleCount > 0)
+        .toList();
+    if (visible.isNotEmpty) {
+      return visible;
+    }
+    return subcategories.take(8).toList();
+  }
+
+  factory _KbCategory.fromJson(Map<String, dynamic> json) {
+    final rawSubcategories = json['subcategories'];
+    final subcategories = rawSubcategories is List
+        ? rawSubcategories
+            .whereType<Map>()
+            .map((item) =>
+                _KbSubcategory.fromJson(Map<String, dynamic>.from(item)))
+            .where((item) => item.name.trim().isNotEmpty)
+            .toList()
+        : <_KbSubcategory>[];
+    return _KbCategory(
+      name: (json['name'] ?? 'General').toString(),
+      articleCount: _intOrNull(json['article_count']) ??
+          subcategories.fold<int>(
+            0,
+            (total, subcategory) => total + subcategory.articleCount,
+          ),
+      subcategories: subcategories,
+    );
+  }
+}
+
+class _KbSubcategory {
+  final String name;
+  final int articleCount;
+
+  const _KbSubcategory({
+    required this.name,
+    required this.articleCount,
+  });
+
+  factory _KbSubcategory.fromJson(Map<String, dynamic> json) {
+    return _KbSubcategory(
+      name: _friendlyTopicTitle((json['name'] ?? '').toString()),
+      articleCount: _intOrNull(json['article_count']) ?? 0,
+    );
+  }
+}
+
+class _KbArticle {
+  final String id;
+  final String title;
+  final String originalTitle;
+  final String path;
+  final String category;
+  final String subcategory;
+  final int? page;
+  final String sourceFilename;
+  final String preview;
+  final int matchingSections;
+
+  const _KbArticle({
+    required this.id,
+    required this.title,
+    required this.originalTitle,
+    required this.path,
+    required this.category,
+    required this.subcategory,
+    required this.page,
+    required this.sourceFilename,
+    required this.preview,
+    required this.matchingSections,
+  });
+
+  factory _KbArticle.fromJson(Map<String, dynamic> json) {
+    final rawTitle = (json['title'] ?? 'Untitled article').toString();
+    final path = (json['path'] ?? '').toString();
+    final subcategory = (json['subcategory'] ?? '').toString();
+    return _KbArticle(
+      id: (json['id'] ?? json['chunk_id'] ?? '').toString(),
+      title: _friendlyArticleTitle(
+        title: rawTitle,
+        subcategory: subcategory,
+        path: path,
+      ),
+      originalTitle: rawTitle,
+      path: path,
+      category: (json['category'] ?? 'General').toString(),
+      subcategory: subcategory,
+      page: _intOrNull(json['page']),
+      sourceFilename: (json['source_filename'] ?? '').toString(),
+      preview: (json['content_preview'] ?? '').toString(),
+      matchingSections: _intOrNull(json['matching_sections']) ?? 1,
+    );
+  }
+}
+
+class _KbArticleDetail {
+  final _KbArticle article;
+  final String title;
+  final String path;
+  final String content;
+
+  const _KbArticleDetail({
+    required this.article,
+    required this.title,
+    required this.path,
+    required this.content,
+  });
+
+  factory _KbArticleDetail.fromJson(Map<String, dynamic> json) {
+    final article = _KbArticle.fromJson(json);
+    return _KbArticleDetail(
+      article: article,
+      title: article.title,
+      path: article.path,
+      content: (json['content'] ?? json['text'] ?? '').toString(),
+    );
+  }
+}
+
+String _friendlyArticleTitle({
+  required String title,
+  required String subcategory,
+  required String path,
+}) {
+  final candidates = [
+    subcategory,
+    _pathLeaf(path),
+    title,
+  ];
+
+  for (final candidate in candidates) {
+    final friendly = _friendlyTopicTitle(candidate);
+    if (_isStudentFriendlyTitle(friendly)) {
+      return friendly;
+    }
+  }
+
+  return _friendlyTopicTitle(title);
+}
+
+String _friendlyTopicTitle(String value) {
+  var cleaned = value
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .replaceAll('petitionsubject', 'petition subject')
+      .trim();
+  if (cleaned.isEmpty) {
+    return cleaned;
+  }
+
+  final mapped = _mappedFriendlyTitle(cleaned);
+  if (mapped != null) {
+    return mapped;
+  }
+
+  cleaned = cleaned
+      .replaceFirst(RegExp(r'^\(+'), '')
+      .replaceFirst(RegExp(r'\)+$'), '')
+      .trim();
+  final colonIndex = cleaned.indexOf(':');
+  if (colonIndex >= 0 && colonIndex < cleaned.length - 1) {
+    cleaned = cleaned.substring(colonIndex + 1).trim();
+  }
+  cleaned = cleaned
+      .replaceFirst(
+        RegExp(
+          r'^(chapter|article|section|sec\.?)\s+([ivxlcdm]+|\d+|[a-z])\s*[-:.)]?\s*',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .replaceAll(RegExp(r'\s*/\s*'), ' / ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  if (cleaned.length > 72) {
+    final sentenceEnd = cleaned.indexOf(RegExp(r'[.;]'));
+    if (sentenceEnd > 24) {
+      cleaned = cleaned.substring(0, sentenceEnd).trim();
+    }
+  }
+
+  return _titleCase(cleaned);
+}
+
+String? _mappedFriendlyTitle(String value) {
+  final normalized = _normalizeDisplayText(value);
+  final mappings = <String, String>{
+    'a graduating student may request for unscheduled petition subject':
+        'Unscheduled / Petition Subject',
+    'unscheduled petition subject': 'Unscheduled / Petition Subject',
+    'petition subject': 'Unscheduled / Petition Subject',
+    'enhanced policies and guidelines': 'Enhanced Policies and Guidelines',
+    'leave of absence': 'Leave of Absence Policy',
+    'excuse slip': 'Excuse Slip',
+    'scholastic delinquency': 'Scholastic Delinquency',
+    'transcript of records': 'Transcript of Records',
+    'certificate of registration': 'Certificate of Registration',
+    'copy of grades': 'Copy of Grades',
+    'good moral': 'Good Moral',
+    'honorable dismissal': 'Honorable Dismissal',
+  };
+  for (final entry in mappings.entries) {
+    if (normalized.contains(entry.key)) {
+      return entry.value;
+    }
+  }
+  return null;
+}
+
+bool _isStudentFriendlyTitle(String value) {
+  final normalized = _normalizeDisplayText(value);
+  if (normalized.isEmpty || normalized == 'general') {
+    return false;
+  }
+  if (normalized.startsWith('cmo ') ||
+      normalized.startsWith('memorandum ') ||
+      normalized.startsWith('republic act ')) {
+    return false;
+  }
+  if (normalized.length > 78) {
+    return false;
+  }
+  final words = normalized.split(' ').where((word) => word.isNotEmpty).length;
+  return words <= 9;
+}
+
+String _pathLeaf(String path) {
+  final parts = path
+      .split('>')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList();
+  return parts.isEmpty ? '' : parts.last;
+}
+
+String _normalizeDisplayText(String value) {
+  return value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+int? _intOrNull(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  return int.tryParse((value ?? '').toString());
+}

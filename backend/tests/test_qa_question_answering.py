@@ -103,6 +103,76 @@ def test_qa_absence_due_to_illness_uses_attendance_context():
     assert result.confidence in {"high", "medium"}
 
 
+def test_qa_validate_id_typed_procedure_answer_does_not_crash_on_source_label_fallback():
+    """Typed procedure answers call _source_label(..., fallback=...); must not TypeError."""
+    procedure_chunk = RetrievedChunk(
+        document_id="charter-doc",
+        title="ID Validation",
+        source_filename="Citizens_Charter_2026.pdf",
+        chunk_index=0,
+        text=(
+            "Overview\nThis service provides assistance for ID Validation.\n\n"
+            "Office / Division\nOffice of the Student Affairs and Services\n\n"
+            "Requirements\n"
+            "- Requirement: Certificate of Registration\n"
+            "- Requirement: Student ID\n\n"
+            "Steps\n"
+            "1. Client Step: Present the Certificate of Registration.\n"
+            "   Agency Action: Check Certificate of Registration.\n"
+            "2. Client Step: Evaluate the services rendered by OSAS.\n"
+            "3. Client Step: Accept the validated ID.\n\n"
+            "Fees\nNone\n\n"
+            "Total Processing Time\n4 minutes\n\n"
+            "Page: 18"
+        ),
+        relevance_score=0.93,
+        original_score=0.8,
+        reranked_score=0.93,
+        rerank_reasons=["boost_identity_service_title"],
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "document_id": "charter-doc",
+            "title": "ID Validation",
+            "source_section": "ID Validation",
+            "source_document": "Citizens_Charter_2026.pdf",
+            "source_filename": "Citizens_Charter_2026.pdf",
+            "office": "Office of the Student Affairs and Services",
+            "page_number": 18,
+        },
+    )
+    noise = RetrievedChunk(
+        document_id="form-doc",
+        title="Requirement: Clearance, Request Form Accounting",
+        source_filename="form.pdf",
+        chunk_index=1,
+        text="Form Preview: x\nRelated Services: Accounting",
+        relevance_score=0.96,
+        original_score=0.9,
+        reranked_score=0.96,
+        rerank_reasons=["semantic_similarity"],
+        metadata={
+            "document_type": "requirement",
+            "article_type": "requirement_form",
+            "title": "Requirement: Clearance, Request Form Accounting",
+            "extraction_status": "rag_only",
+        },
+    )
+    result, _, mock_generate = run_question("How do I validate my ID?", [noise, procedure_chunk])
+
+    assert mock_generate.call_count == 0
+    assert "ID Validation" in result.answer or "validate" in result.answer.lower()
+    assert "Certificate of Registration" in result.answer
+    assert "Student ID" in result.answer
+    assert "Office of the Student Affairs and Services" in result.answer
+    assert "4 minutes" in result.answer
+    assert "Form Preview" not in result.answer
+    assert "Requirement: Clearance" not in result.answer
+    assert result.sources
+    assert result.sources[0]["source_section"] == "ID Validation"
+    assert result.sources[0]["page_number"] == 18
+
+
 def test_qa_shifting_course_uses_shifting_policy_context():
     result, _, mock_generate = run_question(
         "How do I shift course?",

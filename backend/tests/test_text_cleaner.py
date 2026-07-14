@@ -87,7 +87,7 @@ def test_normalizes_obvious_icts_form_ocr_noise():
 
     assert "Philippines" in cleaned
     assert "State Polytechnic University" in cleaned
-    assert "ICT SERVICES" in cleaned
+    assert "ICTSERVICES" in cleaned
     assert "Technology" in cleaned
     assert "LSPU-ICTS-SF-002" in cleaned
     assert "SF-001" in cleaned

@@ -4,6 +4,7 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../screens/admin_management_pages.dart';
 import '../screens/admin_panel_page.dart';
+import '../screens/admin_generate_articles_page.dart';
 import '../screens/chatbot_page.dart';
 import '../screens/knowledge_base_page.dart';
 import '../screens/login_page.dart';
@@ -16,9 +17,12 @@ enum StudentNavItem {
   chatbot,
   myTickets,
   submitTicket,
+  officeDashboard,
+  officeAssignedTickets,
   adminDashboard,
   adminAllTickets,
   adminKnowledgeBase,
+  adminGenerateArticles,
   adminUsersRoles,
   adminOffices,
   adminReports,
@@ -37,6 +41,7 @@ class AppSidebar extends StatelessWidget {
     final user = auth.currentUser;
     final role = user?.role.trim().toLowerCase();
     final isStudent = role == 'student';
+    final isOffice = role == 'office';
     final isAdmin = role == 'admin';
     final items = <_SidebarData>[
       const _SidebarData('Home', Icons.home_rounded, StudentNavItem.home),
@@ -50,6 +55,12 @@ class AppSidebar extends StatelessWidget {
       if (isStudent)
         const _SidebarData('Submit Ticket', Icons.add_task_rounded,
             StudentNavItem.submitTicket),
+      if (isOffice)
+        const _SidebarData('Office Dashboard', Icons.dashboard_customize_rounded,
+            StudentNavItem.officeDashboard),
+      if (isOffice)
+        const _SidebarData('Assigned Tickets', Icons.assignment_turned_in_rounded,
+            StudentNavItem.officeAssignedTickets),
       if (isAdmin)
         const _SidebarData('Admin Dashboard', Icons.dashboard_rounded,
             StudentNavItem.adminDashboard),
@@ -59,6 +70,9 @@ class AppSidebar extends StatelessWidget {
       if (isAdmin)
         const _SidebarData('Knowledge Base Admin', Icons.library_books_rounded,
             StudentNavItem.adminKnowledgeBase),
+      if (isAdmin)
+        const _SidebarData('Generate Articles', Icons.fact_check_rounded,
+            StudentNavItem.adminGenerateArticles),
       if (isAdmin)
         const _SidebarData('Users & Roles', Icons.manage_accounts_rounded,
             StudentNavItem.adminUsersRoles),
@@ -207,6 +221,22 @@ class AppSidebar extends StatelessWidget {
       return;
     }
 
+    if (item == StudentNavItem.officeDashboard) {
+      openOfficePage(
+        context,
+        builder: (_) => const OfficeDashboardPage(),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.officeAssignedTickets) {
+      openOfficePage(
+        context,
+        builder: (_) => const OfficeAssignedTicketsPage(),
+      );
+      return;
+    }
+
     if (item == StudentNavItem.adminDashboard) {
       openAdminPage(
         context,
@@ -227,6 +257,14 @@ class AppSidebar extends StatelessWidget {
       openAdminPage(
         context,
         builder: (_) => const AdminPanelPage(),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.adminGenerateArticles) {
+      openAdminPage(
+        context,
+        builder: (_) => const AdminGenerateArticlesPage(),
       );
       return;
     }
@@ -267,16 +305,15 @@ class _GuestAccount extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
+    return OutlinedButton(
       onPressed: onLogin,
-      icon: const Icon(Icons.login_rounded, size: 18),
-      label: const Text('Login'),
       style: OutlinedButton.styleFrom(
         foregroundColor: DesignTokens.maroon,
         side: const BorderSide(color: DesignTokens.maroon),
         padding: const EdgeInsets.symmetric(vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
+      child: const Text('Login'),
     );
   }
 }

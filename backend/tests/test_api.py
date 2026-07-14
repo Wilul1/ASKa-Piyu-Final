@@ -4,13 +4,21 @@ import logging
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.config import DOTENV_PATH, settings
+from app.db.session import get_db_session, initialize_database
 from app.main import app, validate_startup_configuration
+from app.models.db_models import User
 from app.models.schemas import StructuredDocumentSchema
 from app.services.admin.knowledge_base_pipeline import KnowledgeBaseIngestResult
+from app.services.auth import create_access_token
 from app.services.chroma_store import RetrievedChunk
+from app.services.passwords import hash_password
 from app.services.student.question_service import QuestionAnswerResult
 
 client = TestClient(app)
@@ -22,6 +30,50 @@ PIPELINE_STAGES = [
     {"key": "review", "label": "Admin review/edit", "status": "needs_review", "detail": None},
     {"key": "index", "label": "Index to ChromaDB", "status": "waiting", "detail": None},
 ]
+
+
+@pytest.fixture()
+def admin_auth_client(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    initialize_database(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    def override_get_db_session():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    monkeypatch.setattr("app.services.auth.settings.auth_secret_key", "test-auth-secret")
+    monkeypatch.setattr("app.services.auth.settings.auth_token_ttl_minutes", 60)
+    monkeypatch.setattr("app.routes.admin.knowledge_base.get_session_factory", lambda: session_factory)
+    app.dependency_overrides[get_db_session] = override_get_db_session
+    try:
+        yield TestClient(app), session_factory
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _admin_bearer_token(session_factory, *, role: str = "admin") -> str:
+    session: Session = session_factory()
+    try:
+        user = User(
+            email=f"{role}@example.edu",
+            password_hash=hash_password("correct horse battery staple"),
+            full_name=f"{role.title()} User",
+            role=role,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return create_access_token(user)
+    finally:
+        session.close()
 
 
 def test_health():
@@ -193,6 +245,11 @@ def test_admin_extract(mock_extract):
     assert data["document_type"] == "pdf"
     assert data["pipeline_stages"][-1]["label"] == "Index to ChromaDB"
     assert data["validation_report"]["status"] == "Ready for Indexing"
+    # Phase C: extract response must forward V2 fields (never silently drop them).
+    assert "charter_v2_services" in data
+    assert data["charter_v2_services"] == []
+    assert data["charter_v2_detected_count"] == 0
+    assert isinstance(data.get("charter_v2_diagnostics"), dict)
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
@@ -330,6 +387,42 @@ def test_admin_endpoint_correct_header_is_allowed(mock_get_store):
 
     assert response.status_code == 200
     assert response.json()["success"] is True
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "")
+@patch("app.routes.admin.knowledge_base.get_knowledge_base_store")
+def test_admin_endpoint_accepts_admin_bearer_token(mock_get_store, admin_auth_client):
+    auth_client, session_factory = admin_auth_client
+    token = _admin_bearer_token(session_factory, role="admin")
+    mock_get_store.return_value.reset_collection.return_value = {
+        "collection": "aska_knowledge_base",
+        "vectors_removed": 0,
+        "timestamp": "2026-06-28T00:00:00+00:00",
+    }
+
+    response = auth_client.delete("/admin/chroma/reset", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "")
+def test_admin_endpoint_rejects_non_admin_bearer_token(admin_auth_client):
+    auth_client, session_factory = admin_auth_client
+    token = _admin_bearer_token(session_factory, role="student")
+
+    response = auth_client.delete("/admin/chroma/reset", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Only admin accounts can use Knowledge Base Admin tools."
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "")
+def test_admin_endpoint_rejects_invalid_bearer_token():
+    response = client.delete("/admin/chroma/reset", headers={"Authorization": "Bearer invalid-token"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Admin authorization failed."
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "")
@@ -569,3 +662,139 @@ def test_qa_ask_endpoint_returns_program_scope_debug_when_enabled(mock_answer):
     assert data["program_scope"]["detected_college_scope"] == "college of engineering"
     assert data["program_scope"]["chunks_before_scope_filter"] == 6
     assert data["program_scope"]["chunks_after_scope_filter"] == 2
+
+
+@patch("app.services.qa.question_answering.generate_groq_answer")
+@patch("app.services.qa.question_answering.get_knowledge_base_store")
+def test_qa_ask_validate_id_does_not_crash_on_citation_fallback_label(mock_store, mock_groq):
+    """POST /qa/ask must not 500 when typed procedure answers use source-label fallback."""
+    from app.services.chroma_store import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        document_id="charter-doc",
+        title="ID Validation",
+        source_filename="Citizens_Charter_2026.pdf",
+        chunk_index=0,
+        text=(
+            "Overview\nThis service provides assistance for ID Validation.\n\n"
+            "Office / Division\nOffice of the Student Affairs and Services\n\n"
+            "Requirements\n- Requirement: Certificate of Registration\n"
+            "- Requirement: Student ID\n\n"
+            "Steps\n1. Client Step: Present the Certificate of Registration.\n"
+            "2. Client Step: Accept the validated ID.\n\n"
+            "Fees\nNone\n\nTotal Processing Time\n4 minutes\n\nPage: 18"
+        ),
+        relevance_score=0.94,
+        original_score=0.8,
+        reranked_score=0.94,
+        rerank_reasons=["boost_identity_service_title"],
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "document_id": "charter-doc",
+            "title": "ID Validation",
+            "procedure_title": "ID Validation",
+            "source_section": "ID Validation",
+            "source_document": "Citizens_Charter_2026.pdf",
+            "page_number": 18,
+            "office": "Office of the Student Affairs and Services",
+        },
+    )
+
+    class _Store:
+        chunk_count = 1
+
+        def search(self, query, *, top_k=None, raw_k=None):
+            return [chunk]
+
+    mock_store.return_value = _Store()
+    response = client.post("/qa/ask", json={"question": "How do I validate my ID?"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "Certificate of Registration" in data["answer"]
+    assert "Form Preview" not in data["answer"]
+    assert "Related Services" not in data["answer"]
+    assert data["sources"]
+    assert data["sources"][0]["source_section"] == "ID Validation"
+    assert data["sources"][0].get("page_number") == 18 or data["sources"][0].get("page") == 18
+    mock_groq.assert_not_called()
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
+def test_admin_generate_article_candidates_from_preview():
+    from app.db.session import get_session_factory
+    from app.models.db_models import PublishedArticle
+    from tests.db_helpers import cleanup_all_published_articles
+
+    cleanup_all_published_articles()
+
+    preview = {
+        "knowledge_units": [
+            {
+                "unit_index": 0,
+                "title": "Admission Requirements",
+                "content": "Students must submit the following documents and complete the listed steps before enrollment." * 2,
+                "content_type": "document_chunk",
+                "hierarchy_path": "Admissions > Requirements",
+                "word_count": 70,
+                "status": "OK",
+                "metadata": {
+                    "office": "Registrar",
+                    "section_heading": "Admission Requirements",
+                    "document_type": "information",
+                },
+            }
+        ],
+        "structured": {"formatted_text": "Admission Requirements"},
+    }
+
+    response = client.post(
+        "/admin/kb/articles/generate-from-preview",
+        headers=ADMIN_HEADERS,
+        json={"preview": preview, "filename": "sample.txt", "max_candidates": 80},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["total_detected"] >= 1
+    assert data["save_mode"] == "preview_only"
+    assert data["saved_count"] == 0
+    assert data["preview_count"] >= 1
+    assert "recommended_candidates" in data
+    preview_items = data["recommended_candidates"] or data["overflow_candidates"] or data["needs_review_candidates"]
+    assert preview_items
+    assert preview_items[0]["id"].startswith("preview-")
+
+    no_limit_response = client.post(
+        "/admin/kb/articles/generate-from-preview",
+        headers=ADMIN_HEADERS,
+        json={"preview": preview, "filename": "sample-no-limit.txt"},
+    )
+    assert no_limit_response.status_code == 200
+    no_limit_data = no_limit_response.json()
+    assert no_limit_data["saved_count"] == 0
+    assert no_limit_data["preview_count"] >= 1
+    assert "all_candidates" in no_limit_data
+    assert "coverage" in no_limit_data
+
+    session = get_session_factory()()
+    try:
+        rows = session.query(PublishedArticle).filter(
+            PublishedArticle.source_filename == "sample.txt"
+        ).all()
+        assert rows == []
+    finally:
+        session.close()
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
+def test_admin_generate_article_candidates_from_preview_requires_knowledge_units():
+    response = client.post(
+        "/admin/kb/articles/generate-from-preview",
+        headers=ADMIN_HEADERS,
+        json={"preview": {"structured": {}}, "filename": "empty.txt"},
+    )
+
+    assert response.status_code == 422

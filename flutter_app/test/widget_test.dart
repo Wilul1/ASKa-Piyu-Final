@@ -18,6 +18,8 @@ void main() {
     expect(find.text('Ask ASKa-Piyu'), findsWidgets);
     expect(find.text('Knowledge Base'), findsWidgets);
     expect(find.text('Admin Dashboard'), findsNothing);
+    expect(find.text('Office Dashboard'), findsNothing);
+    expect(find.text('Assigned Tickets'), findsNothing);
     expect(find.text('All Tickets'), findsNothing);
     expect(find.text('Knowledge Base Admin'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
@@ -36,6 +38,8 @@ void main() {
     expect(find.text('Ask ASKa-Piyu'), findsOneWidget);
     expect(find.text('Login'), findsOneWidget);
     expect(find.text('Admin Dashboard'), findsNothing);
+    expect(find.text('Office Dashboard'), findsNothing);
+    expect(find.text('Assigned Tickets'), findsNothing);
     expect(find.text('All Tickets'), findsNothing);
     expect(find.text('Knowledge Base Admin'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
@@ -56,6 +60,8 @@ void main() {
     expect(find.text('Submit Ticket'), findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
     expect(find.text('Admin Dashboard'), findsNothing);
+    expect(find.text('Office Dashboard'), findsNothing);
+    expect(find.text('Assigned Tickets'), findsNothing);
     expect(find.text('All Tickets'), findsNothing);
     expect(find.text('Knowledge Base Admin'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
@@ -78,6 +84,27 @@ void main() {
     expect(find.text('Logout'), findsOneWidget);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
+    expect(find.text('Office Dashboard'), findsNothing);
+    expect(find.text('Assigned Tickets'), findsNothing);
+  });
+
+  testWidgets('office sidebar shows office tools without student or admin pages',
+      (WidgetTester tester) async {
+    final controller = await _authenticatedController('office');
+
+    await tester.pumpWidget(_sidebarHarness(controller));
+
+    expect(find.text('Office Dashboard'), findsOneWidget);
+    expect(find.text('Assigned Tickets'), findsOneWidget);
+    expect(find.text('Logout'), findsOneWidget);
+    expect(find.text('My Tickets'), findsNothing);
+    expect(find.text('Submit Ticket'), findsNothing);
+    expect(find.text('Admin Dashboard'), findsNothing);
+    expect(find.text('All Tickets'), findsNothing);
+    expect(find.text('Knowledge Base Admin'), findsNothing);
+    expect(find.text('Users & Roles'), findsNothing);
+    expect(find.text('Offices'), findsNothing);
+    expect(find.text('Reports / Statistics'), findsNothing);
   });
 
   testWidgets('home support label follows the authenticated role',
@@ -128,6 +155,7 @@ AuthUser _user(String role) {
     fullName: '$role User',
     role: role,
     officeId: role == 'office' ? 'office-1' : null,
+    officeName: role == 'office' ? 'ICT Office' : null,
     studentId: role == 'student' ? '2026-0001' : null,
     createdAt: null,
     updatedAt: null,

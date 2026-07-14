@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, unquote
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db_session
+from app.models.db_models import PublishedArticle
+from app.services.article_content_formatter import strip_embedded_article_metadata
 
 from app.services.chroma_store import RetrievedChunk, get_knowledge_base_store
 from app.services.knowledge_taxonomy import (
@@ -14,6 +20,8 @@ from app.services.knowledge_taxonomy import (
     knowledge_base_taxonomy,
 )
 from app.services.retrieval_reranker import prepare_retrieval_query
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/kb", tags=["Knowledge Base Browser"])
 MAX_SECTIONS_BEFORE_SPLIT = 5
@@ -41,32 +49,33 @@ class ArticleIdentity:
     parent_title: str
 
 
-@router.get("/articles", summary="List indexed knowledge base articles")
+@router.get("/articles", summary="List published Knowledge Base articles")
 async def list_articles(
     q: str | None = Query(default=None),
     category: str | None = Query(default=None),
     limit: int = Query(default=24, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     debug: bool = Query(default=False),
+    session: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
-    store = _store()
-    if q and q.strip():
-        filtered = _semantic_article_search(
-            store,
-            q=q.strip(),
-            category=category,
-            limit=limit,
-            offset=offset,
+    """Public Knowledge Base lists PostgreSQL published_articles only.
+
+    ChromaDB chunks remain for Ask ASKa-Piyu retrieval and are never returned here.
+    """
+    try:
+        rows = (
+            session.query(PublishedArticle)
+            .filter(PublishedArticle.published.is_(True))
+            .order_by(PublishedArticle.updated_at.desc(), PublishedArticle.title.asc())
+            .all()
         )
-    else:
-        raw_chunks = store.list_chunks()
-        articles = (
-            _focused_article_groups(raw_chunks)
-            if _has_classified_chunks(raw_chunks)
-            else [_article_summary(chunk) for chunk in raw_chunks]
-        )
-        filtered = _filter_articles(articles, q=None, category=category)
-    displayed = _prepare_article_display(filtered, q=q or "")
+    except Exception as e:
+        logger.warning("PublishedArticle query failed: %s", e)
+        rows = []
+
+    articles = [_published_article_summary(art) for art in rows]
+    filtered = _filter_published_articles(articles, q=q, category=category)
+    displayed = list(filtered)
     if not debug:
         displayed = [_without_identity_debug(item) for item in displayed]
     return {
@@ -78,60 +87,231 @@ async def list_articles(
     }
 
 
-@router.get("/articles/{article_id:path}", summary="Read one indexed knowledge base article")
-async def get_article(article_id: str) -> dict[str, Any]:
-    if article_id.startswith("kb:"):
-        article = _configured_article_detail(article_id)
-        if article is None:
-            raise HTTPException(status_code=404, detail="Article not found")
-        return article
-    if article_id.startswith("topic:"):
-        article = _focused_article_detail(article_id)
-        if article is None:
-            raise HTTPException(status_code=404, detail="Article not found")
-        return article
-    if _looks_like_article_key(article_id):
-        article = _focused_article_detail(article_id)
-        if article is None:
-            raise HTTPException(status_code=404, detail="Article not found")
-        return article
-    chunk = _store().get_chunk(article_id)
-    if chunk is None:
+@router.get("/articles/{article_id:path}", summary="Read one published Knowledge Base article")
+async def get_article(article_id: str, session: Session = Depends(get_db_session)) -> dict[str, Any]:
+    """Public article detail serves published PostgreSQL articles only."""
+    pub_id = article_id[4:] if article_id.startswith("pub:") else article_id
+    article = session.get(PublishedArticle, pub_id)
+    if article is None or not bool(article.published):
         raise HTTPException(status_code=404, detail="Article not found")
-    return _article_detail(chunk)
+    return _published_article_detail(article)
 
 
-@router.get("/categories", summary="List indexed knowledge base categories")
-async def list_categories() -> dict[str, Any]:
-    chunks = _store().list_chunks()
-    if not _has_classified_chunks(chunks):
-        return _legacy_categories(chunks)
-    counts = _subcategory_counts(chunks)
-    items = []
-    for category in knowledge_base_taxonomy():
-        subcategories = []
-        article_count = 0
-        for subcategory in category["subcategories"]:
-            key = (_normalize(category["name"]), _normalize(subcategory["name"]))
-            count = counts.get(key, 0)
-            article_count += count
-            subcategories.append(
-                {
-                    "name": subcategory["name"],
-                    "office": subcategory["office"],
-                    "article_count": count,
-                    "id": _configured_article_id(category["name"], subcategory["name"]),
-                }
+def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
+    from app.services.article_content_formatter import extract_embedded_article_metadata
+    from app.services.document_storage import (
+        find_source_document_by_filename,
+        get_source_document,
+        source_page_url,
+        source_view_url,
+    )
+
+    display_body = strip_embedded_article_metadata(article.content)
+    meta = extract_embedded_article_metadata(article.content)
+    summary_text = (article.summary or "").strip()
+    source_section = str(meta.get("source_section") or "").strip()
+    document_type = str(
+        meta.get("document_type") or meta.get("article_type") or "information"
+    ).strip()
+    path = article.path or f"{article.category} > {article.subcategory or ''}".strip(" >")
+
+    page = meta.get("page_number") or meta.get("page_start") or meta.get("page")
+    if isinstance(page, str) and page.isdigit():
+        page = int(page)
+    if not isinstance(page, int):
+        page = None
+
+    document_id = str(
+        getattr(article, "source_document_id", None)
+        or meta.get("document_id")
+        or meta.get("source_document_id")
+        or ""
+    ).strip() or None
+    source_row = None
+    if document_id:
+        source_row = get_source_document(document_id)
+    if source_row is None and article.source_filename:
+        source_row = find_source_document_by_filename(article.source_filename)
+        if source_row is not None:
+            document_id = source_row.id
+
+    source_label = None
+    if source_row is not None:
+        source_label = source_row.source_label
+    if not source_label:
+        source_label = str(meta.get("source_label") or article.source_filename or "").strip() or None
+
+    return {
+        "id": f"pub:{article.id}",
+        "chunk_id": "",
+        "title": (article.title or "").strip() or "Untitled Article",
+        "path": path,
+        "category": article.category,
+        "subcategory": article.subcategory or "",
+        "article_key": f"pub:{article.id}",
+        "derived_article_title": article.title,
+        "derived_section_title": source_section,
+        "matched_aliases": [],
+        "grouping_reason": "published",
+        "office": article.office or "",
+        "page": page,
+        "page_range": str(page) if page is not None else None,
+        "page_number": page,
+        "source_document": source_label or "",
+        "source_filename": article.source_filename or "",
+        "source_section": source_section,
+        "document_id": document_id,
+        "source_label": source_label,
+        "source_view_url": source_view_url(document_id, page) if document_id else None,
+        "source_page_url": source_page_url(document_id, page) if document_id else None,
+        "document_type": document_type,
+        "summary": summary_text,
+        "short_summary": summary_text,
+        "body": display_body,
+        "content_preview": _text_preview(summary_text or display_body),
+        "article_type": "published",
+        "keywords": [],
+        "updated_at": article.updated_at.isoformat() if article.updated_at else None,
+        "published_at": article.published_at.isoformat() if article.published_at else None,
+        "_search_blob": " ".join(
+            [
+                article.title or "",
+                article.category or "",
+                article.subcategory or "",
+                article.office or "",
+                summary_text,
+                display_body,
+                article.source_filename or "",
+                source_section,
+                document_type,
+            ]
+        ),
+    }
+
+
+def _published_article_detail(article: PublishedArticle) -> dict[str, Any]:
+    summary = _published_article_summary(article)
+    display_body = strip_embedded_article_metadata(article.content)
+    summary.pop("_search_blob", None)
+    return {
+        **summary,
+        "content": display_body,
+        "text": display_body,
+        "body": display_body,
+        "metadata": {
+            "category": article.category,
+            "subcategory": article.subcategory or "",
+            "office": article.office or "",
+            "source_filename": article.source_filename or "",
+            "source_section": summary.get("source_section") or "",
+            "document_type": summary.get("document_type") or "",
+            "document_id": summary.get("document_id"),
+            "page_number": summary.get("page_number"),
+            "source_label": summary.get("source_label"),
+            "source_view_url": summary.get("source_view_url"),
+            "chunk_count": int(article.chunk_count or 0),
+            "published": bool(article.published),
+            "published_at": article.published_at.isoformat() if article.published_at else None,
+            "updated_at": article.updated_at.isoformat() if article.updated_at else None,
+        },
+    }
+
+
+def _filter_published_articles(
+    articles: list[dict[str, Any]],
+    *,
+    q: str | None,
+    category: str | None,
+) -> list[dict[str, Any]]:
+    filtered = articles
+    if q and q.strip():
+        query = _normalize(q)
+        filtered = [
+            article
+            for article in filtered
+            if query
+            in _normalize(
+                str(
+                    article.get("_search_blob")
+                    or f"{article.get('title', '')} {article.get('category', '')} "
+                    f"{article.get('summary', '')} {article.get('content_preview', '')} "
+                    f"{article.get('office', '')} {article.get('body', '')}"
+                )
             )
+        ]
+    if category and category.strip():
+        category_key = _normalize(category)
+        filtered = [
+            article
+            for article in filtered
+            if _normalize(str(article.get("category") or "")) == category_key
+        ]
+    cleaned: list[dict[str, Any]] = []
+    for article in filtered:
+        item = dict(article)
+        item.pop("_search_blob", None)
+        # Keep list payloads light; full body is available on article detail.
+        item.pop("body", None)
+        cleaned.append(item)
+    return cleaned
+
+
+@router.get("/categories", summary="List categories for published Knowledge Base articles")
+async def list_categories(session: Session = Depends(get_db_session)) -> dict[str, Any]:
+    """Category cards are derived from published PostgreSQL articles only."""
+    try:
+        rows = (
+            session.query(PublishedArticle)
+            .filter(PublishedArticle.published.is_(True))
+            .all()
+        )
+    except Exception as e:
+        logger.warning("PublishedArticle category query failed: %s", e)
+        rows = []
+
+    by_category: dict[str, list[PublishedArticle]] = {}
+    for art in rows:
+        name = (art.category or "General").strip() or "General"
+        by_category.setdefault(name, []).append(art)
+
+    taxonomy_order = [cat["name"] for cat in knowledge_base_taxonomy()]
+    ordered_names = [name for name in taxonomy_order if name in by_category]
+    ordered_names.extend(sorted(name for name in by_category if name not in ordered_names))
+
+    items: list[dict[str, Any]] = []
+    for category_name in ordered_names:
+        arts = by_category[category_name]
+        sub_counts: dict[str, int] = {}
+        sub_offices: dict[str, str] = {}
+        for art in arts:
+            sub_name = (art.subcategory or "").strip() or "General"
+            sub_counts[sub_name] = sub_counts.get(sub_name, 0) + 1
+            if art.office and sub_name not in sub_offices:
+                sub_offices[sub_name] = art.office
+        subcategories = [
+            {
+                "name": sub_name,
+                "office": sub_offices.get(sub_name, ""),
+                "article_count": count,
+                "id": _configured_article_id(category_name, sub_name),
+            }
+            for sub_name, count in sorted(sub_counts.items(), key=lambda item: item[0].lower())
+        ]
+        sample_titles = [art.title for art in sorted(arts, key=lambda a: a.title.lower())[:4]]
         items.append(
             {
-                "name": category["name"],
-                "article_count": article_count,
-                "sample_article_titles": [item["name"] for item in subcategories[:4]],
+                "name": category_name,
+                "article_count": len(arts),
+                "sample_article_titles": sample_titles,
                 "subcategories": subcategories,
             }
         )
-    return {"items": items, "total": len(items)}
+    return {
+        "items": items,
+        "total": len(items),
+        "published_article_count": len(rows),
+        "persistence_table": "published_articles",
+    }
 
 
 @router.get("/classify", summary="Classify a question for support routing")
@@ -148,9 +328,21 @@ async def classify_for_routing(q: str = Query(..., min_length=3)) -> dict[str, A
     }
 
 
-@router.get("/popular", summary="List common knowledge base topics")
-async def popular_articles() -> dict[str, Any]:
-    articles = [_article_summary(chunk) for chunk in _store().list_chunks()]
+@router.get("/popular", summary="List common published Knowledge Base topics")
+async def popular_articles(session: Session = Depends(get_db_session)) -> dict[str, Any]:
+    try:
+        rows = (
+            session.query(PublishedArticle)
+            .filter(PublishedArticle.published.is_(True))
+            .all()
+        )
+    except Exception as e:
+        logger.warning("PublishedArticle popular query failed: %s", e)
+        rows = []
+    articles = [_published_article_summary(art) for art in rows]
+    for article in articles:
+        article.pop("_search_blob", None)
+
     popular: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -162,7 +354,8 @@ async def popular_articles() -> dict[str, Any]:
                 for article in articles
                 if article["id"] not in seen
                 and term_key in _normalize(
-                    f"{article['title']} {article['path']} {article['content_preview']}"
+                    f"{article['title']} {article['path']} {article.get('summary', '')} "
+                    f"{article['content_preview']} {article.get('office', '')}"
                 )
             ),
             None,
@@ -599,6 +792,7 @@ def _without_identity_debug(article: dict[str, Any]) -> dict[str, Any]:
         "grouping_reason",
     ):
         item.pop(key, None)
+    # chunk_id may be present for tracing public article origin; keep it but avoid raw text
     return item
 
 

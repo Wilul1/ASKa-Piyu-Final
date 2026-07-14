@@ -462,7 +462,7 @@ class _LoginRequiredPage extends StatelessWidget {
                   style: TextStyle(color: DesignTokens.muted, height: 1.45),
                 ),
                 const SizedBox(height: 22),
-                ElevatedButton.icon(
+                ElevatedButton(
                   onPressed: () => Navigator.of(context).pushReplacement(
                     MaterialPageRoute(
                       builder: (_) => LoginPage(
@@ -471,8 +471,6 @@ class _LoginRequiredPage extends StatelessWidget {
                       ),
                     ),
                   ),
-                  icon: const Icon(Icons.login_rounded),
-                  label: const Text('Login or Create Account'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: DesignTokens.maroon,
                     foregroundColor: Colors.white,
@@ -482,6 +480,7 @@ class _LoginRequiredPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
+                  child: const Text('Login or Create Account'),
                 ),
               ],
             ),
@@ -939,11 +938,14 @@ class TicketDetailsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final officeReplies = ticket.messages
+        .where((message) => message.senderRole.toLowerCase() != 'student')
+        .length;
     return Dialog(
       insetPadding: const EdgeInsets.all(18),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 720),
+        constraints: const BoxConstraints(maxWidth: 860, maxHeight: 760),
         child: Column(
           children: [
             Padding(
@@ -997,6 +999,11 @@ class TicketDetailsDialog extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (ticket.status == 'Resolved' ||
+                        ticket.status == 'Closed') ...[
+                      _TicketStatusBanner(status: ticket.status),
+                      const SizedBox(height: 14),
+                    ],
                     Wrap(
                       spacing: 10,
                       runSpacing: 10,
@@ -1008,14 +1015,7 @@ class TicketDetailsDialog extends StatelessWidget {
                     const SizedBox(height: 18),
                     _DetailGrid(ticket: ticket),
                     const SizedBox(height: 20),
-                    const Text(
-                      'Description',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        color: DesignTokens.ink,
-                        fontSize: 15,
-                      ),
-                    ),
+                    const _DialogSectionHeader(title: 'Description'),
                     const SizedBox(height: 8),
                     Container(
                       width: double.infinity,
@@ -1036,16 +1036,13 @@ class TicketDetailsDialog extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 22),
-                    const Text(
-                      'Conversation',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        color: DesignTokens.ink,
-                        fontSize: 15,
-                      ),
+                    _DialogSectionHeader(
+                      title: 'Conversation',
+                      trailing:
+                          '$officeReplies office ${officeReplies == 1 ? 'reply' : 'replies'}',
                     ),
-                    const SizedBox(height: 12),
-                    ConversationTimeline(messages: ticket.messages),
+                    const SizedBox(height: 10),
+                    ConversationTimeline(ticket: ticket),
                   ],
                 ),
               ),
@@ -1053,6 +1050,91 @@ class TicketDetailsDialog extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TicketStatusBanner extends StatelessWidget {
+  final String status;
+
+  const _TicketStatusBanner({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final isClosed = status == 'Closed';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF86EFAC)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.check_circle_outline_rounded,
+            color: Color(0xFF16A34A),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              isClosed
+                  ? 'This ticket has been closed.'
+                  : 'This ticket has been marked as resolved.',
+              style: const TextStyle(
+                color: Color(0xFF166534),
+                fontWeight: FontWeight.w900,
+                height: 1.3,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DialogSectionHeader extends StatelessWidget {
+  final String title;
+  final String? trailing;
+
+  const _DialogSectionHeader({required this.title, this.trailing});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              color: DesignTokens.ink,
+              fontSize: 15,
+            ),
+          ),
+        ),
+        if (trailing != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: DesignTokens.maroon.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: DesignTokens.maroon.withValues(alpha: 0.14),
+              ),
+            ),
+            child: Text(
+              trailing!,
+              style: const TextStyle(
+                color: DesignTokens.maroon,
+                fontWeight: FontWeight.w900,
+                fontSize: 11,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -1140,46 +1222,282 @@ class _DetailData {
 }
 
 class ConversationTimeline extends StatelessWidget {
-  final List<TicketMessage> messages;
+  final TicketEntry ticket;
 
-  const ConversationTimeline({super.key, required this.messages});
+  const ConversationTimeline({super.key, required this.ticket});
 
   @override
   Widget build(BuildContext context) {
-    if (messages.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(18),
+    final replies = ticket.messages
+        .where((message) => message.senderRole.toLowerCase() != 'student')
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        StudentConcernBubble(ticket: ticket),
+        const SizedBox(height: 14),
+        if (replies.isEmpty)
+          const _NoOfficeRepliesState()
+        else
+          ...replies.map(
+            (message) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: OfficeReplyBubble(message: message),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class StudentConcernBubble extends StatelessWidget {
+  final TicketEntry ticket;
+
+  const StudentConcernBubble({super.key, required this.ticket});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFD7DEE9)),
+        boxShadow: DesignTokens.softShadow(0.035),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E8F0),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.person_outline_rounded,
+                  color: DesignTokens.muted,
+                  size: 19,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      ticket.userName.trim().isEmpty
+                          ? 'Student concern'
+                          : ticket.userName,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: DesignTokens.ink,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const Text(
+                      'Student concern',
+                      style: TextStyle(
+                        color: DesignTokens.muted,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                _formatDate(ticket.createdAt),
+                style: const TextStyle(
+                  color: DesignTokens.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            ticket.subject,
+            style: const TextStyle(
+              color: DesignTokens.ink,
+              fontWeight: FontWeight.w900,
+              fontSize: 15,
+              height: 1.35,
+            ),
+          ),
+          if (ticket.description.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              ticket.description,
+              style: const TextStyle(
+                color: DesignTokens.ink,
+                height: 1.45,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NoOfficeRepliesState extends StatelessWidget {
+  const _NoOfficeRepliesState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: DesignTokens.border),
+        boxShadow: DesignTokens.softShadow(0.035),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StudentIconBox(
+            icon: Icons.support_agent_rounded,
+            color: DesignTokens.maroon,
+            size: 38,
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'No office replies yet.',
+                  style: TextStyle(
+                    color: DesignTokens.ink,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Your assigned office will respond here once they review your concern.',
+                  style: TextStyle(
+                    color: DesignTokens.muted,
+                    height: 1.4,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class OfficeReplyBubble extends StatelessWidget {
+  final TicketMessage message;
+
+  const OfficeReplyBubble({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 680),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: DesignTokens.border),
+          color: const Color(0xFFFFF7ED),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: DesignTokens.maroon.withValues(alpha: 0.24),
+          ),
+          boxShadow: DesignTokens.softShadow(0.045),
         ),
         child: Column(
-          children: const [
-            Icon(Icons.forum_outlined, color: DesignTokens.muted),
-            SizedBox(height: 8),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: DesignTokens.maroon.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.support_agent_rounded,
+                    color: DesignTokens.maroon,
+                    size: 19,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        message.senderName.trim().isEmpty
+                            ? 'Assigned Office'
+                            : message.senderName,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: DesignTokens.maroon,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const Text(
+                        'Office Reply',
+                        style: TextStyle(
+                          color: DesignTokens.muted,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: DesignTokens.maroon.withValues(alpha: 0.10),
+                    ),
+                  ),
+                  child: Text(
+                    _formatDate(message.createdAt),
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             Text(
-              'No replies yet',
-              style: TextStyle(
-                color: DesignTokens.muted,
-                fontWeight: FontWeight.w800,
+              message.message,
+              style: const TextStyle(
+                color: DesignTokens.ink,
+                height: 1.5,
+                fontSize: 14,
               ),
             ),
           ],
         ),
-      );
-    }
-
-    return Column(
-      children: messages
-          .map(
-            (message) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: MessageBubble(message: message),
-            ),
-          )
-          .toList(),
+      ),
     );
   }
 }

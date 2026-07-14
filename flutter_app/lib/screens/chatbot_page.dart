@@ -7,6 +7,7 @@ import '../auth/auth_navigation.dart';
 import '../app_config.dart';
 import '../design_tokens.dart';
 import '../widgets/sidebar.dart';
+import '../widgets/source_pdf_viewer.dart';
 import 'my_tickets_page.dart';
 
 class ChatbotPage extends StatefulWidget {
@@ -381,52 +382,98 @@ class _SourceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+    final label = source.citationLabel;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            source.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: DesignTokens.ink),
+        onTap: source.canOpenSource
+            ? () => showSourcePdfViewer(
+                  context,
+                  title: source.title,
+                  sourceLabel: source.sourceLabel ?? source.sourceFilename,
+                  sourceSection: source.sourceSection ?? source.path,
+                  page: source.pageNumber ?? source.page,
+                  viewUrl: source.sourceViewUrl,
+                  pageUrl: source.sourcePageUrl,
+                )
+            : null,
+        child: Container(
+          width: 260,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: DesignTokens.border),
           ),
-          const SizedBox(height: 8),
-          Text(
-            source.path.isEmpty ? 'Path not specified' : source.path,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-                fontSize: 12, height: 1.35, color: Color(0xFF64748B)),
-          ),
-          const SizedBox(height: 8),
-          Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.article_outlined,
-                  size: 15, color: Color(0xFF64748B)),
-              const SizedBox(width: 5),
+              Row(
+                children: [
+                  Icon(
+                    source.canOpenSource
+                        ? Icons.picture_as_pdf_outlined
+                        : Icons.article_outlined,
+                    size: 16,
+                    color: DesignTokens.maroon,
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Source',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: DesignTokens.maroon,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               Text(
-                source.page == null
-                    ? 'Page not specified'
-                    : 'Page ${source.page}',
+                label,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
+                  fontSize: 13,
+                  height: 1.35,
+                  fontWeight: FontWeight.w700,
+                  color: DesignTokens.ink,
+                ),
+              ),
+              if ((source.sourceExcerpt ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  source.sourceExcerpt!,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
                     fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF475569)),
+                    height: 1.35,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Text(
+                source.canOpenSource
+                    ? 'Tap to view source PDF'
+                    : ((source.citationNote ?? '').trim().isNotEmpty
+                        ? source.citationNote!.trim()
+                        : (source.page == null
+                            ? 'Page not specified'
+                            : 'Page ${source.page}')),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: source.canOpenSource
+                      ? DesignTokens.maroon
+                      : const Color(0xFF9A3412),
+                ),
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -616,14 +663,33 @@ class _QaAnswer {
   factory _QaAnswer.fromJson(Map<String, dynamic> json, String question) {
     final sourceItems =
         json['sources'] is List ? json['sources'] as List : const [];
+    final citationItems =
+        json['citations'] is List ? json['citations'] as List : const [];
+    final merged = <_QaSource>[];
+    final seen = <String>{};
+
+    void addSources(List items) {
+      for (final item in items.whereType<Map>()) {
+        final source =
+            _QaSource.fromJson(Map<String, dynamic>.from(item));
+        final key =
+            '${source.citationId}|${source.documentId}|${source.page}|${source.title}';
+        if (seen.contains(key)) continue;
+        seen.add(key);
+        merged.add(source);
+      }
+    }
+
+    addSources(citationItems);
+    if (merged.isEmpty) {
+      addSources(sourceItems);
+    }
+
     return _QaAnswer(
       text: (json['answer'] ?? '').toString(),
       question: question,
       confidence: (json['confidence'] ?? 'low').toString(),
-      sources: sourceItems
-          .whereType<Map>()
-          .map((item) => _QaSource.fromJson(Map<String, dynamic>.from(item)))
-          .toList(),
+      sources: merged,
     );
   }
 }
@@ -632,16 +698,83 @@ class _QaSource {
   final String title;
   final String path;
   final int? page;
+  final int? pageNumber;
+  final String? citationId;
+  final String? documentId;
+  final String? sourceFilename;
+  final String? sourceSection;
+  final String? sourceExcerpt;
+  final String? sourceViewUrl;
+  final String? sourcePageUrl;
+  final String? sourceLabel;
+  final bool? pdfAvailable;
+  final String? citationNote;
 
-  const _QaSource(
-      {required this.title, required this.path, required this.page});
+  const _QaSource({
+    required this.title,
+    required this.path,
+    required this.page,
+    this.pageNumber,
+    this.citationId,
+    this.documentId,
+    this.sourceFilename,
+    this.sourceSection,
+    this.sourceExcerpt,
+    this.sourceViewUrl,
+    this.sourcePageUrl,
+    this.sourceLabel,
+    this.pdfAvailable,
+    this.citationNote,
+  });
+
+  bool get canOpenSource =>
+      ((sourceViewUrl ?? '').trim().isNotEmpty ||
+          (sourcePageUrl ?? '').trim().isNotEmpty) &&
+      (documentId ?? '').trim().isNotEmpty &&
+      pdfAvailable != false;
+
+  String get citationLabel {
+    final doc = (sourceLabel ?? sourceFilename ?? title).trim();
+    final section = (sourceSection ?? path).trim();
+    final pageValue = pageNumber ?? page;
+    final parts = <String>[
+      if (doc.isNotEmpty) doc,
+      if (section.isNotEmpty && section.toLowerCase() != doc.toLowerCase())
+        section,
+      if (pageValue != null) 'page $pageValue',
+    ];
+    return parts.isEmpty ? title : parts.join(', ');
+  }
 
   factory _QaSource.fromJson(Map<String, dynamic> json) {
-    final rawPage = json['page'];
+    final rawPage = json['page_number'] ?? json['page'];
+    final page =
+        rawPage is int ? rawPage : int.tryParse((rawPage ?? '').toString());
+    final pdfRaw = json['pdf_available'];
+    bool? pdfAvailable;
+    if (pdfRaw is bool) {
+      pdfAvailable = pdfRaw;
+    } else if (pdfRaw != null) {
+      final text = pdfRaw.toString().toLowerCase();
+      if (text == 'true') pdfAvailable = true;
+      if (text == 'false') pdfAvailable = false;
+    }
     return _QaSource(
-      title: (json['title'] ?? 'Untitled source').toString(),
-      path: (json['path'] ?? '').toString(),
-      page: rawPage is int ? rawPage : int.tryParse((rawPage ?? '').toString()),
+      title: (json['title'] ?? json['source_label'] ?? 'Untitled source')
+          .toString(),
+      path: (json['path'] ?? json['source_section'] ?? '').toString(),
+      page: page,
+      pageNumber: page,
+      citationId: json['citation_id']?.toString(),
+      documentId: json['document_id']?.toString(),
+      sourceFilename: json['source_filename']?.toString(),
+      sourceSection: json['source_section']?.toString(),
+      sourceExcerpt: json['source_excerpt']?.toString(),
+      sourceViewUrl: json['source_view_url']?.toString(),
+      sourcePageUrl: json['source_page_url']?.toString(),
+      sourceLabel: json['source_label']?.toString(),
+      pdfAvailable: pdfAvailable,
+      citationNote: json['citation_note']?.toString(),
     );
   }
 }

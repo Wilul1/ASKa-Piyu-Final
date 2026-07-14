@@ -198,6 +198,8 @@ def test_kb_articles_available_after_rebuild_with_test_fixture(mock_ingest, mock
 
     assert rebuild_response.status_code == 200
     assert rebuild_response.json()["success"] is True
+    # Rebuild indexes Chroma for chatbot retrieval; it does not publish public KB articles.
     assert articles_response.status_code == 200
-    assert articles_response.json()["total"] > 0
-    assert articles_response.json()["items"][0]["category"] == "Academic Policies"
+    assert articles_response.json()["total"] == 0
+    assert articles_response.json()["items"] == []
+    assert store.list_chunks()  # Chroma still has indexed chunks

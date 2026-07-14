@@ -1,6 +1,7 @@
 from app.services.structured_document_parser import (
     build_structured_document,
     classify_document_type,
+    format_structured_document,
     parse_structured_document,
 )
 
@@ -60,6 +61,58 @@ def test_removes_table_headers_from_noisy_steps():
     assert all("AGENCY TO BE TIME" not in item for item in steps.items)
     assert all("fiica" not in item.lower() for item in steps.items)
     assert "Online application" in doc.formatted_text
+
+
+def test_charter_pipe_table_drops_header_fragments_and_fixes_office():
+    sample = """
+4. ID Validation
+Office or Division | Office of the Student Affairs and Services
+Classification: Simple
+Who May Avail: All
+Checklist of Requirements | Where to Secure
+Certificate of Registration | Registrar Office
+Student ID | Business Affairs Office
+CLIENT STEPS | AGENCY ACTIONS | FEES TO BE PAID | PROCESSING TIME | PERSON RESPONSIBLE
+BE | TIME | RESPONSIBLE
+1. Present the Certificate of Registration. | Check Certificate of Registration. | None | 1 minute | OSAS Director/Chairperson/Staff
+2. Evaluate the services rendered by OSAS. | Issue Evaluation Form. | None | 2 minutes | OSAS Director/Chairperson/Staff
+3. Accept the validated ID. | Release validated ID. | None | 1 minute | OSAS Director/Chairperson/Staff
+TOTAL: None | 4 minutes
+"""
+    parsed = parse_structured_document(sample)
+    assert parsed["document_type"] == "citizen_charter"
+    service = parsed["services"][0]
+    assert service["service"] == "ID Validation"
+    assert service["office"] == "Office of the Student Affairs and Services"
+    assert service["office"] != "or Division"
+    assert service["total_processing_time"] == "4 minutes"
+    assert service["total_fees"] == "None"
+    assert len(service["requirements"]) == 2
+    assert service["requirements"][0]["requirement"] == "Certificate of Registration"
+    assert len(service["steps"]) == 3
+    assert all(
+        "BE" not in (step.get("client_step") or "")
+        and "TIME" not in (step.get("agency_action") or "")
+        and "RESPONSIBLE" != (step.get("responsible_personnel") or "")
+        for step in service["steps"]
+    )
+    assert service["steps"][0]["client_step"].startswith("Present the Certificate")
+    assert service["parser_debug"]["rejected_fake_steps"] >= 1
+    assert service["parser_debug"]["requirement_pairs_detected"] == 2
+    assert service["parser_debug"]["total_line_detected"] is True
+
+
+def test_charter_rejects_page_number_and_fragment_titles():
+    from app.services.structured_document_parser import _clean_service_title
+
+    assert _clean_service_title("72") == ""
+    assert _clean_service_title("00") == ""
+    assert _clean_service_title("equipment") == ""
+    assert _clean_service_title("Services") == ""
+    assert _clean_service_title("4. LSPU Entrance Examination") == "LSPU Entrance Examination"
+    assert _clean_service_title("Use of Library Facilities and Equipment") == (
+        "Use of Library Facilities and Equipment"
+    )
 
 
 def test_formats_university_service_template():
@@ -445,8 +498,9 @@ def test_parses_cropped_user_access_form_without_citizen_charter_fields():
 
     form = parsed["form"]
 
-    assert parsed["document_type"] == "form"
-    assert form["office"] == "ICT SERVICES"
+    assert parsed["document_type"] == "requirement"
+    assert form["office"] == "ICT Services"
+    assert form["office_detection_source"] == "extracted_from_document"
     assert form["form_name"] == "User Access and Password Application Form"
     assert form["form_code"] == "LSPU-ICTS-SF-002"
     assert form["revision"] == "REV. 0"
@@ -454,7 +508,7 @@ def test_parses_cropped_user_access_form_without_citizen_charter_fields():
     assert "Name" in form["fields"]
     assert "Client Steps" not in form["fields"]
     assert "Processing Time" not in form["fields"]
-    assert form["options"]["type_of_account"] == ["Email", "My Account", "WiFi", "Intranet", "Others"]
+    assert form["options"]["type_of_account"] == ["Email", "My Account", "Wifi", "Intranet", "Others"]
     assert form["options"]["type_of_request"] == [
         "New Account",
         "Reset Password",
@@ -487,7 +541,8 @@ def test_user_access_form_uses_header_title_and_strict_code_without_option_field
 
     form = parsed["form"]
 
-    assert form["office"] == "Information & Communication Technology Services"
+    assert form["office"] == "Information and Communication Technology Services"
+    assert form["office_detection_source"] == "extracted_from_document"
     assert form["form_name"] == "User Access and Password Application Form"
     assert form["form_code"] == "LSPU-ICTS-SF-002"
     assert form["fields"] == [
@@ -501,7 +556,7 @@ def test_user_access_form_uses_header_title_and_strict_code_without_option_field
         "Requestor Signature",
         "Approved",
     ]
-    assert form["options"]["type_of_account"] == ["Email", "My Account", "WiFi", "Intranet", "Others"]
+    assert form["options"]["type_of_account"] == ["Email", "My Account", "Wifi", "Intranet", "Others"]
     assert form["options"]["type_of_request"] == [
         "New Account",
         "Reset Password",
@@ -533,7 +588,8 @@ def test_form_title_office_and_field_labels_are_not_sections():
 
     form = parsed["form"]
 
-    assert form["office"] == "Information & Communication Technology Services"
+    assert form["office"] == "Information and Communication Technology Services"
+    assert form["office_detection_source"] == "extracted_from_document"
     assert form["form_name"] == "User Access and Password Application Form"
     assert form["sections"] == ["Approval"]
     assert "Information and Communication Technology Services" not in form["sections"]
@@ -563,7 +619,7 @@ def test_parses_request_for_ict_services_form_generically():
 
     form = parsed["form"]
 
-    assert parsed["document_type"] == "form"
+    assert parsed["document_type"] == "requirement"
     assert form["form_name"] == "Request for ICT Services Form"
     assert form["form_code"] == "LSPU-ICTS-SF-001"
     assert "Requested By" in form["fields"]
@@ -585,7 +641,7 @@ def test_duplicate_form_copies_trigger_crop_warning():
     """
     parsed = parse_structured_document("\n".join([one_copy, one_copy, one_copy, one_copy]))
 
-    assert parsed["document_type"] == "form"
+    assert parsed["document_type"] == "requirement"
     assert parsed["form"]["warnings"] == [
         "Multiple identical form copies detected. Please crop or split before OCR."
     ]
@@ -650,8 +706,8 @@ def test_parses_noisy_icts_technical_assistance_request_form():
 
     form = parsed["form"]
 
-    assert parsed["document_type"] == "form"
-    assert form["form_name"] == "ICTS Technical Assistance Request Form"
+    assert parsed["document_type"] == "requirement"
+    assert form["form_name"] == "Icts Technical Assistance Request Form"
     assert form["form_code"] == "LSPU-ICTS-SF-022"
     assert "Requester Information" in form["sections"]
     assert "Event Information" in form["sections"]
@@ -659,10 +715,10 @@ def test_parses_noisy_icts_technical_assistance_request_form():
     assert "Requester Name" in form["fields"]
     assert "College/Office" in form["fields"]
     assert form["options"]["type_of_service_requested"] == [
-        "Photo/Video Coverage",
-        "Internet Connection",
-        "Visual Presentation Support",
-        "Encoding",
+        "Phoro Video Coverage",
+        "Interner Connecion",
+        "Visuai Preecnudlion Support",
+        "Encading",
     ]
 
 
@@ -711,10 +767,10 @@ def test_noisy_technical_assistance_form_ignores_headers_footer_roles_and_option
     assert form["date"] == "August 2016"
     assert "Services Needed" not in form["fields"]
     assert form["options"]["services_needed"] == [
-        "Photo/Video Coverage",
-        "Internet Connection",
-        "Visual Presentation Support",
-        "Encoding",
+        "Phoro Video Coverage",
+        "Interner Connecion",
+        "Visuai Preecnudlion Support",
+        "Encading",
         "Others",
     ]
     assert "Name" in form["fields"]
@@ -739,6 +795,42 @@ def test_noisy_technical_assistance_form_ignores_headers_footer_roles_and_option
     assert "LSPU-ICTS-SF-022" not in form["fields"]
     assert "REV. 0" not in form["fields"]
     assert "August 2016" not in form["fields"]
+
+
+def test_noisy_services_table_stops_before_role_and_free_text_fields():
+    parsed = parse_structured_document(
+        """
+        INFORMATION AND COMMUNICATIONS TECHNOLOGY SERVICES
+        icts TEcHNICAL AssISTANcE Request Form
+        rEQuESTERINFORMATION
+        Name | Contact number
+        Collcec/omcc; | Date
+        EVENT INFORMATION
+        Venue:
+        DAle; | Time
+        Services Needed: | phoro Video Coverage | Interner Connecion
+        Visuai Preecnudlion support | Encading
+        Orhers (Plesse Specilyl;
+        Wcma Netded;
+        Requested by: | acceivcd by: | Approved By:
+        Printed Name & Signature | ICT, Servicing Staff | ICTS Director /chJirpurson
+        SERVICE ASSESSMENT
+        LSPU-ICTS-SF-022 | Acv | August 2016
+        """
+    )
+
+    form = parsed["form"]
+
+    assert form["options_or_services"] == [
+        "Phoro Video Coverage",
+        "Interner Connecion",
+        "Visuai Preecnudlion Support",
+        "Encading",
+        "Orhers (plesse Specilyl",
+    ]
+    assert "Wcma Netded" not in form["options_or_services"]
+    assert "Acceivcd By" not in form["options_or_services"]
+    assert "Approved By" not in form["options_or_services"]
 
 
 def test_generic_strong_form_signals_route_to_form_parser_without_icts_title():
@@ -767,7 +859,7 @@ def test_generic_strong_form_signals_route_to_form_parser_without_icts_title():
     form = parsed["form"]
 
     assert classify_document_type(parsed["cleaned_text"]) == "form"
-    assert parsed["document_type"] == "form"
+    assert parsed["document_type"] == "requirement"
     assert form["form_name"] == "Facilities Maintenance Request"
     assert form["form_code"] == "LSPU-FMO-SF-123"
     assert "Requester Information" in form["sections"]
@@ -810,11 +902,12 @@ def test_noisy_request_for_ict_services_omits_garbage_fields_and_recovers_sectio
 
     form = parsed["form"]
 
-    assert parsed["document_type"] == "form"
+    assert parsed["document_type"] == "requirement"
     assert form["office"] == "[NEEDS REVIEW]"
+    assert form["office_detection_source"] == "unknown"
     assert form["date"] == "August 2016"
     assert "Requester Information" in form["sections"]
-    assert "ICT Services Requested" in form["sections"]
+    assert "Ict Services Requested" in form["sections"]
     assert "Service Report" in form["sections"]
     assert "Requester Name" in form["fields"]
     assert "College/Office" in form["fields"]
@@ -850,5 +943,109 @@ def test_service_report_section_recovers_with_trailing_text_or_qualifiers():
         """
     )
 
-    assert parsed["document_type"] == "form"
+    assert parsed["document_type"] == "requirement"
     assert parsed["form"]["sections"] == ["Service Report"]
+
+
+def test_form_maps_to_requirement_with_requirement_display_metadata():
+    parsed = parse_structured_document(
+        """
+        Records Office
+        Document Request Form
+        Form Code: LSPU-REC-SF-010
+        Name: __________________
+        Contact Number: ________
+        Date: __________________
+        """
+    )
+
+    form = parsed["form"]
+
+    assert parsed["document_type"] == "requirement"
+    assert parsed["display_document_type"] == "Requirement / Form Document"
+    assert form["document_type"] == "requirement"
+    assert form["display_document_type"] == "Requirement / Form Document"
+    assert form["form_title"] == "Document Request Form"
+
+
+def test_options_requirements_related_services_and_instructions_are_dynamic():
+    parsed = parse_structured_document(
+        """
+        Student Services Office
+        Student Assistance Request Form
+
+        Requester Information
+        Name: __________________
+        Contact Number: ________
+        Description: ___________
+        Signature: _____________
+
+        Services Requested:
+        Please check applicable
+        Counseling
+        Peer Support
+        Referral
+        """
+    )
+
+    form = parsed["form"]
+
+    assert form["options_or_services"] == ["Counseling", "Peer Support", "Referral"]
+    assert form["requirements"] == ["Name", "Contact Number", "Description", "Signature"]
+    assert form["related_services"] == ["Counseling", "Peer Support", "Referral"]
+    assert form["how_to_fill_out"] == [
+        "Fill in the required requester information.",
+        "Select the applicable service option if available.",
+        "Provide a description if the form includes a description field.",
+        "Sign the form if a signature field is present.",
+        "Submit the completed form to the indicated office.",
+    ]
+
+
+def test_options_and_related_services_are_empty_when_not_in_document():
+    parsed = parse_structured_document(
+        """
+        Clearance Request Form
+        Name: __________________
+        College/Office: ________
+        Date: __________________
+        """
+    )
+
+    form = parsed["form"]
+
+    assert form["options_or_services"] == []
+    assert form["related_services"] == []
+
+
+def test_unknown_office_stays_unknown_when_not_found():
+    parsed = parse_structured_document(
+        """
+        Generic Request Form
+        Name: __________________
+        Date: __________________
+        """
+    )
+
+    assert parsed["form"]["office"] == "[NEEDS REVIEW]"
+    assert parsed["form"]["office_detection_source"] == "unknown"
+
+
+def test_formatted_requirement_preview_excludes_raw_extraction_text():
+    parsed = parse_structured_document(
+        """
+        Records Office
+        Document Request Form
+        Name: __________________
+        Type of Request: [ ] Transcript
+        """
+    )
+
+    preview = format_structured_document(parsed)
+    doc = build_structured_document("Document Request Form\nName: __________________")
+    labels = [field.label for field in doc.fields]
+
+    assert "Raw Extraction" not in preview
+    assert "Document Request Form" in preview
+    assert "Raw Extraction" not in labels
+    assert parsed["form"]["raw_extracted_text"]

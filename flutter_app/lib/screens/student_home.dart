@@ -204,11 +204,9 @@ class _MainSearchBar extends StatelessWidget {
           const SizedBox(width: 8),
           SizedBox(
             height: 46,
-            child: ElevatedButton.icon(
+            child: ElevatedButton(
               onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const KnowledgeBasePage())),
-              icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-              label: const Text('Search'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: DesignTokens.maroon,
                 foregroundColor: Colors.white,
@@ -217,6 +215,7 @@ class _MainSearchBar extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14)),
               ),
+              child: const Text('Search'),
             ),
           ),
         ],

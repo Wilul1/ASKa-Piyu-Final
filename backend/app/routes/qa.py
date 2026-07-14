@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.config import settings
 from app.models.schemas import QAAskRequest, QAAskResponse
 from app.services.chroma_store import get_knowledge_base_store
-from app.services.qa.question_answering import answer_qa_question
+from app.services.qa.question_answering import answer_qa_question, _citations_from_sources
 from app.services.student.question_service import EmptyKnowledgeBaseError
 
 
@@ -40,9 +40,12 @@ async def qa_ask(
         raise HTTPException(status_code=500, detail=f"QA request failed: {exc}") from exc
 
     debug_enabled = payload.debug if debug is None else debug
+    sources = result.sources or []
+    citations = _citations_from_sources(sources)
     return QAAskResponse(
         answer=result.answer,
-        sources=result.sources,
+        sources=sources,
+        citations=citations,
         confidence=result.confidence,
         retrieved_chunks=result.retrieved_chunks if debug_enabled else None,
         normalized_query=result.normalized_query if debug_enabled else None,

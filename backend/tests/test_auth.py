@@ -8,6 +8,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import get_db_session, initialize_database
 from app.main import app
+from app.models.db_models import Office, User
+from app.services.auth import create_access_token
+from app.services.passwords import hash_password
 
 
 @pytest.fixture()
@@ -129,6 +132,44 @@ def test_auth_me_works_with_valid_token(auth_client):
     assert response.status_code == 200
     assert response.json()["email"] == "student@example.edu"
     assert response.json()["role"] == "student"
+    assert response.json()["office_id"] is None
+    assert response.json()["office_name"] is None
+
+
+def test_auth_me_includes_office_name(auth_client):
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        office = Office(name="ICT Office")
+        session.add(office)
+        session.flush()
+        user = User(
+            email="ict@aska.local",
+            password_hash=hash_password("office123"),
+            full_name="ICT Staff",
+            role="office",
+            office_id=office.id,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        token = create_access_token(user)
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass
+
+    response = auth_client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "office"
+    assert data["office_id"]
+    assert data["office_name"] == "ICT Office"
 
 
 def test_auth_me_rejects_missing_token(auth_client):

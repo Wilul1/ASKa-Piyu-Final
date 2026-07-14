@@ -78,7 +78,7 @@ class AuthController extends ChangeNotifier {
       'x-user-role': user.role.trim().toLowerCase(),
       'x-user-name': user.fullName,
       'x-user-email': user.email,
-      if (user.officeId != null) 'x-user-office': user.officeId!,
+      if (user.officeName != null) 'x-user-office': user.officeName!,
     };
   }
 

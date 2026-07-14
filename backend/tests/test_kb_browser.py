@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.routes import knowledge_base as kb_routes
 from app.services.chroma_store import RetrievedChunk
 from app.services.retrieval_reranker import expand_query, rerank_chunks
 
@@ -397,65 +398,68 @@ def _override_focused_store() -> FocusedKnowledgeBaseStore:
     return store
 
 
-def test_kb_articles_returns_articles(monkeypatch):
+def _display(articles: list[dict], *, q: str = "", debug: bool = False) -> list[dict]:
+    displayed = kb_routes._prepare_article_display(articles, q=q)
+    if not debug:
+        displayed = [kb_routes._without_identity_debug(item) for item in displayed]
+    return displayed
+
+
+def test_focused_article_groups_returns_articles():
     store = _override_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = _display(kb_routes._focused_article_groups(store.list_chunks()))
 
-    response = client.get("/kb/articles")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["total"] == 7
-    assert data["items"][0]["id"] == "academic-policies:excuse-slip"
-    assert data["items"][0]["chunk_id"] == "handbook::1"
-    assert data["items"][0]["title"] == "Excuse Slip"
-    assert data["items"][0]["source_filename"] == "handbook.pdf"
-    assert data["items"][0]["page"] == 12
-    assert "article_key" not in data["items"][0]
+    assert len(articles) == 7
+    assert articles[0]["id"] == "academic-policies:excuse-slip"
+    assert articles[0]["title"] == "Excuse Slip"
+    assert articles[0]["source_filename"] == "handbook.pdf"
+    assert articles[0]["page"] == 12
+    assert "article_key" not in articles[0]
 
 
-def test_kb_articles_query_returns_matching_results(monkeypatch):
+def test_semantic_query_returns_matching_results():
     store = _override_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="excuse", category=None, limit=24, offset=0
+        ),
+        q="excuse",
+    )
 
-    response = client.get("/kb/articles?q=excuse")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["total"] == 1
-    assert data["items"][0]["title"] == "Excuse Slip"
+    assert len(articles) == 1
+    assert articles[0]["title"] == "Excuse Slip"
 
 
-def test_kb_articles_semantic_query_groups_matching_sections(monkeypatch):
+def test_semantic_query_groups_matching_sections():
     store = _override_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="CCS Program", category=None, limit=24, offset=0
+        ),
+        q="CCS Program",
+    )
 
-    response = client.get("/kb/articles?q=CCS%20Program")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["total"] >= 1
-    assert data["items"][0]["title"] == "College of Computer Studies Programs"
-    assert data["items"][0]["category"] == "Programs & Curricular Offerings"
-    assert data["items"][0]["page"] == 7
-    assert data["items"][0]["matching_sections"] == 2
+    assert len(articles) >= 1
+    assert articles[0]["title"] == "College of Computer Studies Programs"
+    assert articles[0]["category"] == "Programs & Curricular Offerings"
+    assert articles[0]["page"] == 7
+    assert articles[0]["matching_sections"] == 2
 
 
-def test_kb_articles_sort_by_semantic_relevance_not_alphabetical(monkeypatch):
+def test_semantic_sort_by_relevance_not_alphabetical():
     store = _override_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Registrar", category=None, limit=24, offset=0
+        ),
+        q="Registrar",
+    )
 
-    response = client.get("/kb/articles?q=Registrar")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["items"][0]["title"] == "Registrar Services"
+    assert articles[0]["title"] == "Registrar Services"
 
 
-def test_kb_articles_natural_student_queries(monkeypatch):
+def test_natural_student_queries():
     store = _override_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
     cases = {
         "CCS Program": "College of Computer Studies Programs",
         "Computer Science": "College of Computer Studies Programs",
@@ -467,36 +471,33 @@ def test_kb_articles_natural_student_queries(monkeypatch):
     }
 
     for query, expected_title_part in cases.items():
-        response = client.get("/kb/articles", params={"q": query})
+        articles = _display(
+            kb_routes._semantic_article_search(
+                store, q=query, category=None, limit=24, offset=0
+            ),
+            q=query,
+        )
+        assert len(articles) >= 1
+        assert expected_title_part in articles[0]["title"]
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] >= 1
-        assert expected_title_part in data["items"][0]["title"]
 
-
-def test_kb_categories_returns_grouped_categories(monkeypatch):
+def test_focused_groups_cover_identity_titles():
     store = _override_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/categories")
-
-    assert response.status_code == 200
-    data = response.json()
-    names = {item["name"] for item in data["items"]}
-    assert "Student Services" in names
-    assert "Academic Policies" in names
-    assert all(item["sample_article_titles"] for item in data["items"])
+    articles = kb_routes._focused_article_groups(store.list_chunks())
+    assert any(item["title"] == "Excuse Slip" for item in articles)
 
 
-def test_kb_articles_category_returns_focused_academic_policy_titles(monkeypatch):
+def test_focused_academic_policy_titles():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = _display(
+        kb_routes._filter_articles(
+            kb_routes._focused_article_groups(store.list_chunks()),
+            q=None,
+            category="Academic Policies",
+        )
+    )
 
-    response = client.get("/kb/articles?category=Academic%20Policies")
-
-    assert response.status_code == 200
-    titles = {item["title"] for item in response.json()["items"]}
+    titles = {item["title"] for item in articles}
     assert {
         "Academic Load",
         "Attendance Policy",
@@ -506,236 +507,248 @@ def test_kb_articles_category_returns_focused_academic_policy_titles(monkeypatch
         "Graduation Requirements",
         "Scholastic Delinquency",
     }.issubset(titles)
-    assert all(item["matching_sections"] <= 1 for item in response.json()["items"])
+    assert all(item["matching_sections"] <= 1 for item in articles)
 
 
-def test_kb_articles_splits_attendance_into_excuse_slip_and_absence(monkeypatch):
+def test_attendance_splits_into_excuse_slip_and_absence():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles?category=Academic%20Policies")
-
-    titles = {item["title"] for item in response.json()["items"]}
+    articles = kb_routes._filter_articles(
+        kb_routes._focused_article_groups(store.list_chunks()),
+        q=None,
+        category="Academic Policies",
+    )
+    titles = {item["title"] for item in articles}
     assert "Excuse Slip" in titles
     assert "Absence" in titles
 
 
-def test_kb_articles_scholastic_delinquency_is_focused_article(monkeypatch):
+def test_scholastic_delinquency_is_focused_article():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles?category=Academic%20Policies")
-
-    item = next(item for item in response.json()["items"] if item["title"] == "Scholastic Delinquency")
+    articles = kb_routes._filter_articles(
+        kb_routes._focused_article_groups(store.list_chunks()),
+        q=None,
+        category="Academic Policies",
+    )
+    item = next(item for item in articles if item["title"] == "Scholastic Delinquency")
     assert item["subcategory"] == "Retention"
     assert item["page_range"] == "24"
 
 
-def test_kb_articles_curricular_offerings_split_by_college_topic(monkeypatch):
+def test_curricular_offerings_split_by_college_topic():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles?category=Programs%20%26%20Curricular%20Offerings")
-
-    titles = {item["title"] for item in response.json()["items"]}
+    articles = kb_routes._filter_articles(
+        kb_routes._focused_article_groups(store.list_chunks()),
+        q=None,
+        category="Programs & Curricular Offerings",
+    )
+    titles = {item["title"] for item in articles}
     assert "College of Engineering Programs" in titles
     assert "Undergraduate Programs" in titles
 
 
-def test_kb_articles_search_excuse_slip_returns_focused_articles(monkeypatch):
+def test_search_excuse_slip_returns_focused_articles():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="excuse slip", category=None, limit=24, offset=0
+        ),
+        q="excuse slip",
+    )
+    assert articles[0]["title"] == "Excuse Slip"
+    assert all(item["matching_sections"] <= 1 for item in articles)
 
-    response = client.get("/kb/articles?q=excuse%20slip")
 
-    assert response.status_code == 200
-    titles = [item["title"] for item in response.json()["items"]]
-    assert titles[0] == "Excuse Slip"
-    assert all(item["matching_sections"] <= 1 for item in response.json()["items"])
-
-
-def test_kb_articles_search_scholastic_delinquency_displays_leaf_title(monkeypatch):
+def test_search_scholastic_delinquency_displays_leaf_title():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "Scholastic Delinquency"})
-
-    assert response.status_code == 200
-    item = response.json()["items"][0]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Scholastic Delinquency", category=None, limit=24, offset=0
+        ),
+        q="Scholastic Delinquency",
+    )
+    item = articles[0]
     assert item["title"] == "Scholastic Delinquency"
     assert item["path"] == "Academic Policies • Retention"
     assert "Scholastic Delinquency" not in item["path"]
 
 
-def test_kb_articles_search_excuse_slip_path_does_not_repeat_title(monkeypatch):
+def test_search_excuse_slip_path_does_not_repeat_title():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "Excuse Slip"})
-
-    assert response.status_code == 200
-    item = response.json()["items"][0]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Excuse Slip", category=None, limit=24, offset=0
+        ),
+        q="Excuse Slip",
+    )
+    item = articles[0]
     assert item["title"] == "Excuse Slip"
     assert item["path"] == "Academic Policies • Attendance"
     assert "Excuse Slip" not in item["path"]
 
 
-def test_kb_articles_search_retention_keeps_broad_parent_title(monkeypatch):
+def test_search_retention_keeps_broad_parent_title():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "Retention"})
-
-    assert response.status_code == 200
-    item = response.json()["items"][0]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Retention", category=None, limit=24, offset=0
+        ),
+        q="Retention",
+    )
+    item = articles[0]
     assert item["title"] == "Retention Policies"
     assert item["path"] == "Academic Policies"
 
 
-def test_kb_articles_search_engineering_program_returns_engineering(monkeypatch):
+def test_search_engineering_program_returns_engineering():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Engineering Program", category=None, limit=24, offset=0
+        ),
+        q="Engineering Program",
+    )
+    assert articles[0]["title"] == "College of Engineering Programs"
+    assert articles[0]["path"] == "Programs & Curricular Offerings"
 
-    response = client.get("/kb/articles", params={"q": "Engineering Program"})
 
-    assert response.status_code == 200
-    titles = [item["title"] for item in response.json()["items"]]
-    assert titles[0] == "College of Engineering Programs"
-    assert response.json()["items"][0]["path"] == "Programs & Curricular Offerings"
-
-
-def test_kb_articles_search_ccs_program_returns_computer_studies(monkeypatch):
+def test_search_ccs_program_returns_computer_studies():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "CCS Program"})
-
-    assert response.status_code == 200
-    titles = [item["title"] for item in response.json()["items"]]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="CCS Program", category=None, limit=24, offset=0
+        ),
+        q="CCS Program",
+    )
+    titles = [item["title"] for item in articles]
     assert "College of Computer Studies Programs" in titles
 
 
-def test_kb_articles_search_computer_science_returns_ccs_programs(monkeypatch):
+def test_search_computer_science_returns_ccs_programs():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "Computer Science"})
-
-    assert response.status_code == 200
-    titles = [item["title"] for item in response.json()["items"]]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Computer Science", category=None, limit=24, offset=0
+        ),
+        q="Computer Science",
+    )
+    titles = [item["title"] for item in articles]
     assert "College of Computer Studies Programs" in titles
 
 
-def test_kb_articles_search_student_records_terms(monkeypatch):
+def test_search_student_records_terms():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    tor_articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="TOR", category=None, limit=24, offset=0
+        ),
+        q="TOR",
+    )
+    good_moral_articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Good Moral", category=None, limit=24, offset=0
+        ),
+        q="Good Moral",
+    )
+    assert tor_articles[0]["title"] == "Transcript of Records"
+    assert "Transcript of Records" not in tor_articles[0]["path"]
+    assert good_moral_articles[0]["title"] == "Good Moral"
+    assert "Good Moral" not in good_moral_articles[0]["path"]
 
-    tor_response = client.get("/kb/articles", params={"q": "TOR"})
-    good_moral_response = client.get("/kb/articles", params={"q": "Good Moral"})
 
-    assert tor_response.status_code == 200
-    assert good_moral_response.status_code == 200
-    tor_item = tor_response.json()["items"][0]
-    good_moral_item = good_moral_response.json()["items"][0]
-    assert tor_item["title"] == "Transcript of Records"
-    assert "Transcript of Records" not in tor_item["path"]
-    assert good_moral_item["title"] == "Good Moral"
-    assert "Good Moral" not in good_moral_item["path"]
-
-
-def test_kb_articles_search_guidance_counseling(monkeypatch):
+def test_search_guidance_counseling():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "Guidance Counseling"})
-
-    assert response.status_code == 200
-    titles = [item["title"] for item in response.json()["items"]]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Guidance Counseling", category=None, limit=24, offset=0
+        ),
+        q="Guidance Counseling",
+    )
+    titles = [item["title"] for item in articles]
     assert "Guidance Counseling" in titles
 
 
-def test_kb_articles_search_portal_password(monkeypatch):
+def test_search_portal_password():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "Portal Password"})
-
-    assert response.status_code == 200
-    titles = [item["title"] for item in response.json()["items"]]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Portal Password", category=None, limit=24, offset=0
+        ),
+        q="Portal Password",
+    )
+    titles = [item["title"] for item in articles]
     assert "Student Portal Account Recovery" in titles
 
 
-def test_kb_article_detail_still_opens_for_search_result(monkeypatch):
+def test_focused_article_detail_still_opens_for_search_result(monkeypatch):
     store = _override_focused_store()
     monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-    articles_response = client.get("/kb/articles", params={"q": "Scholastic Delinquency"})
-    article_id = articles_response.json()["items"][0]["id"]
-
-    response = client.get(f"/kb/articles/{article_id}")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["title"] == "Scholastic Delinquency"
-    assert "scholastic delinquency" in data["content"].lower()
-    assert data["page_range"] == "24"
-
-
-def test_kb_articles_search_no_results_returns_suggestions(monkeypatch):
-    store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "Engineering Program", "category": "Graduate Studies"})
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["items"] == []
-    assert "College of Engineering Programs" in data["suggestions"]
-
-
-def test_kb_focused_article_detail_excludes_unrelated_sections(monkeypatch):
-    store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-    articles_response = client.get("/kb/articles?category=Academic%20Policies")
-    article_id = next(
-        item["id"]
-        for item in articles_response.json()["items"]
-        if item["title"] == "Excuse Slip"
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="Scholastic Delinquency", category=None, limit=24, offset=0
+        ),
+        q="Scholastic Delinquency",
     )
-
-    response = client.get(f"/kb/articles/{article_id}")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["title"] == "Excuse Slip"
-    assert "secure an excuse slip" in data["content"]
-    assert "Absence from class" not in data["content"]
-    assert data["source_document"] == "Student Handbook"
-    assert data["page_range"] == "12"
-    assert data["related_articles"]
+    article_id = articles[0]["id"]
+    detail = kb_routes._focused_article_detail(article_id)
+    assert detail is not None
+    assert detail["title"] == "Scholastic Delinquency"
+    assert "scholastic delinquency" in detail["content"].lower()
+    assert detail["page_range"] == "24"
 
 
-def test_kb_article_detail_returns_full_content(monkeypatch):
-    store = _override_store()
+def test_search_no_results_returns_empty_for_mismatched_category():
+    store = _override_focused_store()
+    articles = kb_routes._semantic_article_search(
+        store,
+        q="Engineering Program",
+        category="Graduate Studies",
+        limit=24,
+        offset=0,
+    )
+    assert articles == []
+    suggestions = kb_routes._search_suggestions("Engineering Program")
+    assert "College of Engineering Programs" in suggestions
+
+
+def test_focused_article_detail_excludes_unrelated_sections(monkeypatch):
+    store = _override_focused_store()
     monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
+    articles = kb_routes._filter_articles(
+        kb_routes._focused_article_groups(store.list_chunks()),
+        q=None,
+        category="Academic Policies",
+    )
+    article_id = next(item["id"] for item in articles if item["title"] == "Excuse Slip")
+    detail = kb_routes._focused_article_detail(article_id)
+    assert detail is not None
+    assert detail["title"] == "Excuse Slip"
+    assert "secure an excuse slip" in detail["content"]
+    assert "Absence from class" not in detail["content"]
+    assert detail["source_document"] == "Student Handbook"
+    assert detail["page_range"] == "12"
+    assert detail["related_articles"]
 
-    response = client.get("/kb/articles/handbook::1")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["id"] == "academic-policies:excuse-slip"
-    assert data["chunk_id"] == "handbook::1"
+def test_chunk_detail_helper_returns_full_content():
+    store = _override_store()
+    chunk = store.get_chunk("handbook::1")
+    assert chunk is not None
+    # Public HTTP no longer serves Chroma chunks; helper remains for RAG tooling.
+    data = kb_routes._article_detail(chunk)
     assert "secure an excuse slip" in data["content"]
     assert data["metadata"]["section"] == "Sec. 3 > Excuse Slip"
 
 
-def test_kb_articles_debug_includes_identity_fields(monkeypatch):
+def test_debug_includes_identity_fields():
     store = _override_focused_store()
-    monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
-
-    response = client.get("/kb/articles", params={"q": "TOR", "debug": "true"})
-
-    assert response.status_code == 200
-    item = response.json()["items"][0]
+    articles = _display(
+        kb_routes._semantic_article_search(
+            store, q="TOR", category=None, limit=24, offset=0
+        ),
+        q="TOR",
+        debug=True,
+    )
+    item = articles[0]
     assert item["title"] == "Transcript of Records"
     assert item["article_key"] == "student-records:transcript-of-records"
     assert item["derived_article_title"] == "Transcript of Records"
@@ -743,7 +756,7 @@ def test_kb_articles_debug_includes_identity_fields(monkeypatch):
     assert "tor" in item["matched_aliases"]
 
 
-def test_kb_endpoints_are_read_only(monkeypatch):
+def test_public_kb_endpoints_do_not_mutate_chroma(monkeypatch):
     store = _override_store()
     monkeypatch.setattr("app.routes.knowledge_base.get_knowledge_base_store", lambda: store)
 
@@ -754,3 +767,6 @@ def test_kb_endpoints_are_read_only(monkeypatch):
 
     assert store.deleted is False
     assert store.added is False
+    # Public article endpoints ignore Chroma content.
+    assert client.get("/kb/articles").json()["total"] == 0
+    assert client.get("/kb/articles/handbook::1").status_code == 404

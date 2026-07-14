@@ -8,6 +8,10 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../screens/login_page.dart';
 import '../screens/student_home.dart';
+import 'admin_generate_articles_page.dart';
+import 'admin_kb_workspace.dart';
+import '../services/admin_article_service.dart';
+import '../services/extraction_preview_store.dart';
 import '../widgets/sidebar.dart';
 
 class _PipelineStage {
@@ -15,7 +19,8 @@ class _PipelineStage {
   final String status;
   final String? detail;
 
-  const _PipelineStage({required this.label, required this.status, this.detail});
+  const _PipelineStage(
+      {required this.label, required this.status, this.detail});
 }
 
 class AdminPanelPage extends StatefulWidget {
@@ -34,6 +39,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   final TextEditingController _reviewController = TextEditingController();
   final TextEditingController _retrievalController = TextEditingController();
   String _status = 'Choose a document to begin.';
+  String? _rawOcrText;
   List<_PipelineStage> _pipelineStages = _defaultPipelineStages();
   Map<String, dynamic>? _validationReport;
   Map<String, dynamic>? _kbStatistics;
@@ -42,11 +48,90 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   List<Map<String, dynamic>> _retrievalResults = [];
   bool _isBusy = false;
   bool _isRetrieving = false;
+  bool _useLegacyAdminKey = false;
+  Map<String, dynamic>? _extractionPreview;
+  String? _extractedDocumentType;
+  String? _classificationReason;
+  int _articleLibraryRefreshToken = 0;
+  int _selectedOutlineIndex = 0;
+  int? _publishedArticleCount;
+  int? _draftArticleCount;
+  int? _candidateHintCount;
 
   @override
   void initState() {
     super.initState();
     _adminKeyController.text = AppConfig.savedAdminKey ?? '';
+    _restoreLastExtraction();
+    _loadLibraryCounts();
+    _loadKbStatistics();
+  }
+
+  void _restoreLastExtraction() {
+    final cached = AppConfig.lastExtractionPreview;
+    if (cached == null) return;
+    final previewRaw = cached['preview'];
+    if (previewRaw is! Map) return;
+    final preview = Map<String, dynamic>.from(previewRaw);
+    final units = preview['knowledge_units'];
+    _extractionPreview = preview;
+    _knowledgeUnits = _readMapList(units);
+    _selectedFileName =
+        cached['source_filename']?.toString() ?? _selectedFileName;
+    _extractedDocumentType = formatDocumentTypeLabel(
+          cached['detected_document_type'] ?? cached['document_type']) ??
+        _extractedDocumentType;
+    _classificationReason = formatClassificationReason(
+          cached['detected_document_type'] ?? cached['classification_reason']) ??
+        _classificationReason;
+    _validationReport = _readMap(preview['validation_report']);
+    _kbStatistics = _readMap(preview['kb_statistics']);
+    _chunkPreview = _readMapList(preview['chunk_preview']);
+    _candidateHintCount = _asInt(cached['knowledge_units_count']) ??
+        (_knowledgeUnits.isEmpty ? null : _knowledgeUnits.length);
+    final status = cached['status']?.toString();
+    if (status != null && status.isNotEmpty) {
+      _status = status;
+    }
+  }
+
+  Future<void> _loadLibraryCounts() async {
+    try {
+      final articles = await _articleService().listArticles();
+      if (!mounted) return;
+      setState(() {
+        _publishedArticleCount =
+            articles.where((article) => article.published).length;
+        _draftArticleCount =
+            articles.where((article) => !article.published).length;
+      });
+    } catch (_) {
+      // Counts are informational; keep the workspace usable if the library call fails.
+    }
+  }
+
+  Future<void> _loadKbStatistics() async {
+    try {
+      final request = html.HttpRequest();
+      request.open('GET', '${AppConfig.resolvedApiBase}/admin/kb/statistics');
+      _setAdminHeader(request);
+      request.send();
+      await request.onLoadEnd.first;
+      if (request.status != 200 || !mounted) return;
+      final decoded = jsonDecode(request.responseText ?? '');
+      if (decoded is Map) {
+        setState(() {
+          _kbStatistics = Map<String, dynamic>.from(decoded);
+        });
+      }
+    } catch (_) {
+      // Statistics are optional for the workspace header cards.
+    }
+  }
+
+  int? _asInt(Object? value) {
+    if (value is int) return value;
+    return int.tryParse((value ?? '').toString());
   }
 
   @override
@@ -56,6 +141,30 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     _retrievalController.dispose();
     super.dispose();
   }
+
+  Map<String, dynamic> _buildExtractionPreview(Map<String, dynamic> data) {
+    return buildCompactExtractionPreview(data);
+  }
+
+  bool get _hasExtractionPreview {
+    final units = _extractionPreview?['knowledge_units'];
+    final hasUnits = units is List && units.isNotEmpty;
+    final v2 = _extractionPreview?['charter_v2_services'];
+    final hasV2 = v2 is List && v2.isNotEmpty;
+    return hasUnits || hasV2;
+  }
+
+  AdminArticleService _articleService() {
+    return AdminArticleService(
+      apiBase: AppConfig.resolvedApiBase,
+      setAdminHeader: _setAdminHeader,
+    );
+  }
+
+  void _refreshArticleLibrary() {
+    setState(() => _articleLibraryRefreshToken++);
+  }
+
 
   Future<void> _pickFile() async {
     final input = html.FileUploadInputElement()
@@ -78,7 +187,11 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         _knowledgeUnits = [];
         _chunkPreview = [];
         _retrievalResults = [];
+        _rawOcrText = null;
         _reviewController.clear();
+        _extractionPreview = null;
+        _extractedDocumentType = null;
+        _classificationReason = null;
       });
     });
   }
@@ -88,14 +201,43 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       path: '/admin/knowledge-base/extract',
       onSuccess: (data) {
         final extracted = data['review_text'] ?? data['extracted_text'];
+        final rawText = data['raw_text'];
         setState(() {
-          _reviewController.text = extracted is String ? extracted : _prettyJson(data);
+          _reviewController.text = extracted is String
+              ? _cleanPreviewText(extracted)
+              : _prettyJson(data);
+          _rawOcrText =
+              rawText is String && rawText.trim().isNotEmpty ? rawText : null;
           _pipelineStages = _readPipelineStages(data['pipeline_stages']);
           _validationReport = _readMap(data['validation_report']);
           _kbStatistics = _readMap(data['kb_statistics']);
           _knowledgeUnits = _readMapList(data['knowledge_units']);
           _chunkPreview = _readMapList(data['chunk_preview']);
-          _status = 'Extraction preview is ready.';
+          _extractionPreview = _buildExtractionPreview(data);
+          _extractedDocumentType = formatDocumentTypeLabel(
+            data['detected_document_type'] ?? data['document_type'],
+          );
+          _classificationReason = formatClassificationReason(
+            data['detected_document_type'] ?? data['classification_reason'],
+          );
+          _selectedOutlineIndex = 0;
+          _candidateHintCount =
+              _knowledgeUnits.isEmpty ? null : _knowledgeUnits.length;
+          final handoff = buildExtractionHandoffPackage(
+            extractResponse: data,
+            sourceFilename: _selectedFileName ??
+                data['source_filename']?.toString() ??
+                '',
+            status: 'Extraction preview is ready.',
+            classificationReason: _classificationReason,
+          );
+          // Always keep in-memory preview for this Documents session.
+          _extractionPreview =
+              Map<String, dynamic>.from(handoff['preview'] as Map);
+          final saved = AppConfig.saveLastExtractionPreview(handoff);
+          _status = saved
+              ? 'Extraction preview is ready. Generate Articles can load this document.'
+              : 'Extraction preview is ready, but saving for Generate Articles failed (browser storage full). Try Reload after clearing site data, or re-extract a smaller document.';
         });
       },
     );
@@ -106,16 +248,18 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       path: '/admin/knowledge-base/ingest',
       includeTitle: true,
       onSuccess: (data) {
-        final preview = data['extracted_text_preview'];
         final chunks = data['chunks_indexed'];
+        final chunkPreview = _readMapList(data['chunk_preview']);
         setState(() {
-          _reviewController.text = preview is String ? preview : _prettyJson(data);
+          // Keep full review text; do not replace it with the truncated ingest preview.
           _pipelineStages = _readPipelineStages(data['pipeline_stages']);
           _validationReport = _readMap(data['validation_report']);
           _kbStatistics = _readMap(data['kb_statistics']);
           _knowledgeUnits = _readMapList(data['knowledge_units']);
-          _chunkPreview = _readMapList(data['chunk_preview']);
-          _status = 'Saved to knowledge base. Indexed ${chunks ?? 0} chunks.';
+          _chunkPreview = chunkPreview;
+          _status =
+              'Knowledge units indexed for chatbot retrieval. Indexed ${chunks ?? 0} chunks.';
+          _loadKbStatistics();
         });
       },
     );
@@ -135,7 +279,8 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
     try {
       final request = html.HttpRequest();
-      request.open('POST', '${AppConfig.resolvedApiBase}/admin/kb/retrieval-test');
+      request.open(
+          'POST', '${AppConfig.resolvedApiBase}/admin/kb/retrieval-test');
       _setAdminHeader(request);
       request.setRequestHeader('Content-Type', 'application/json');
       request.send(jsonEncode({'question': question, 'top_k': 5}));
@@ -143,20 +288,28 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       await request.onLoadEnd.first;
 
       final responseText = request.responseText ?? '';
-      final decoded = responseText.isNotEmpty ? jsonDecode(responseText) : <String, dynamic>{};
-      final data = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{'response': decoded};
+      final decoded = responseText.isNotEmpty
+          ? jsonDecode(responseText)
+          : <String, dynamic>{};
+      final data = decoded is Map<String, dynamic>
+          ? decoded
+          : <String, dynamic>{'response': decoded};
 
       if (request.status == 200) {
         setState(() {
           _retrievalResults = _readMapList(data['results']);
           _kbStatistics = _readMap(data['kb_statistics']) ?? _kbStatistics;
-          _status = 'Retrieval test returned ${_retrievalResults.length} chunks.';
+          _status =
+              'Retrieval test returned ${_retrievalResults.length} chunks.';
         });
       } else {
-        setState(() => _status = (data['detail'] ?? 'Retrieval test failed.').toString());
+        setState(
+            () => _status = _adminRequestError(request.status, data['detail']));
       }
+    } on StateError catch (error) {
+      setState(() => _status = _adminAuthError(error.message));
     } catch (error) {
-      setState(() => _status = 'Could not run retrieval test: $error');
+      setState(() => _status = 'Could not reach the backend.');
     } finally {
       if (mounted) {
         setState(() => _isRetrieving = false);
@@ -178,7 +331,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     setState(() {
       _isBusy = true;
       _status = includeTitle
-          ? 'Indexing reviewed text to the knowledge base...'
+          ? 'Indexing knowledge units for chatbot retrieval...'
           : 'Extracting, cleaning, and structuring the document...';
     });
 
@@ -188,6 +341,21 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       if (includeTitle) {
         formData.append('title', file.name);
         formData.append('reviewed_text', _reviewController.text.trim());
+        // Force Citizen's Charter PDFs into the service_procedure ingest path.
+        final lowerName = file.name.toLowerCase();
+        final detected = (_extractedDocumentType ?? '').trim().toLowerCase();
+        final normalizedName = lowerName
+            .replaceAll(RegExp(r'[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]'), '-');
+        if (normalizedName.contains('charter') ||
+            normalizedName.contains('-cc_') ||
+            normalizedName.contains('_cc_') ||
+            RegExp(r'(^|[^a-z0-9])cc[_-]').hasMatch(normalizedName) ||
+            normalizedName.contains('citizen') ||
+            detected.contains('charter') ||
+            detected.contains('procedure') ||
+            detected.contains('service')) {
+          formData.append('document_type', 'citizen_charter');
+        }
       }
 
       final request = html.HttpRequest();
@@ -198,21 +366,30 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       await request.onLoadEnd.first;
 
       final responseText = request.responseText ?? '';
-      final decoded = responseText.isNotEmpty ? jsonDecode(responseText) : <String, dynamic>{};
-      final data = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{'response': decoded};
+      final decoded = responseText.isNotEmpty
+          ? jsonDecode(responseText)
+          : <String, dynamic>{};
+      final data = decoded is Map<String, dynamic>
+          ? decoded
+          : <String, dynamic>{'response': decoded};
 
       if (request.status == 200) {
         onSuccess(data);
       } else {
-        final detail = data['detail'] ?? 'Request failed with status ${request.status}.';
+        final detail = _adminRequestError(request.status, data['detail']);
         setState(() {
-          _status = detail.toString();
+          _status = detail;
           _reviewController.text = responseText;
         });
       }
+    } on StateError catch (error) {
+      setState(() {
+        _status = _adminAuthError(error.message);
+        _reviewController.text = error.message;
+      });
     } catch (error) {
       setState(() {
-        _status = 'Could not reach the backend. Make sure it is running on the URL above.';
+        _status = 'Could not reach the backend.';
         _reviewController.text = error.toString();
       });
     } finally {
@@ -223,17 +400,72 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   }
 
   void _setAdminHeader(html.HttpRequest request) {
+    final auth = AuthScope.of(context);
+    final token = auth.accessToken;
+    if (!_useLegacyAdminKey) {
+      if (auth.role != 'admin') {
+        throw StateError('not_admin');
+      }
+      if (token == null || token.trim().isEmpty) {
+        throw StateError('missing_admin_token');
+      }
+      request.setRequestHeader('Authorization', 'Bearer $token');
+      return;
+    }
+
     final key = _adminKeyController.text.trim();
     if (key.isEmpty) {
-      throw StateError('Enter the admin API key before using admin tools.');
+      throw StateError('missing_legacy_admin_key');
     }
     AppConfig.savedAdminKey = key;
     request.setRequestHeader(_adminKeyHeader, key);
   }
 
+  String _adminAuthError(String message) {
+    if (message == 'not_admin') {
+      return 'Only admin accounts can use Knowledge Base Admin tools.';
+    }
+    if (message == 'missing_admin_token') {
+      return 'Admin authorization failed. Please log in again as admin.';
+    }
+    if (message == 'missing_legacy_admin_key') {
+      return 'Admin authorization failed. Please log in again as admin.';
+    }
+    return 'Admin authorization failed. Please log in again as admin.';
+  }
+
+  String _adminRequestError(int? status, dynamic detail) {
+    if (status == 0) {
+      return 'Could not reach the backend.';
+    }
+    if (status == 403) {
+      return 'Only admin accounts can use Knowledge Base Admin tools.';
+    }
+    if (status == 401) {
+      return 'Admin authorization failed. Please log in again as admin.';
+    }
+    final text = detail?.toString().trim() ?? '';
+    if (text.isNotEmpty) {
+      return text;
+    }
+    return status == null
+        ? 'Request failed.'
+        : 'Request failed with status $status.';
+  }
+
   String _prettyJson(Map<String, dynamic> data) {
     const encoder = JsonEncoder.withIndent('  ');
     return encoder.convert(data);
+  }
+
+  String _cleanPreviewText(String value) {
+    final marker = RegExp(r'^\s*Raw Extraction:\s*$',
+        multiLine: true, caseSensitive: false);
+    final match = marker.firstMatch(value);
+    if (match == null) {
+      return value.trim();
+    }
+    return value.substring(0, match.start).trimRight();
   }
 
   Map<String, dynamic>? _readMap(dynamic value) {
@@ -280,6 +512,45 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     }).toList();
   }
 
+  List<Widget> _buildDocumentsTab() {
+    return [
+      AdminKbWorkspace(
+        fileName: _selectedFileName,
+        fileSizeBytes: _selectedFile?.size,
+        isBusy: _isBusy,
+        status: _status,
+        pipelineStages: _pipelineStages
+            .map(
+              (stage) => AdminPipelineStageView(
+                label: stage.label,
+                status: stage.status,
+                detail: stage.detail,
+              ),
+            )
+            .toList(),
+        knowledgeUnits: _knowledgeUnits,
+        validationReport: _validationReport,
+        kbStatistics: _kbStatistics,
+        reviewText: _reviewController.text,
+        rawOcrText: _rawOcrText,
+        documentType: _extractedDocumentType,
+        classificationReason: _classificationReason,
+        publishedCount: _publishedArticleCount,
+        draftCount: _draftArticleCount,
+        candidateHintCount: _candidateHintCount,
+        selectedOutlineIndex: _selectedOutlineIndex,
+        onPickFile: _pickFile,
+        onExtract: _extractPreview,
+        onIngest: _saveToKnowledgeBase,
+        onSelectOutline: (index) {
+          setState(() {
+            _selectedOutlineIndex = index;
+          });
+        },
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = AuthScope.of(context);
@@ -301,49 +572,18 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
-        final body = SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1100),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _AdminHeader(),
-                    const SizedBox(height: 18),
-                    _AdminAuthPanel(controller: _adminKeyController),
-                    const SizedBox(height: 14),
-                    _UploadPanel(
-                      fileName: _selectedFileName,
-                      isBusy: _isBusy,
-                      onPickFile: _pickFile,
-                      onExtract: _extractPreview,
-                      onIngest: _saveToKnowledgeBase,
-                    ),
-                    const SizedBox(height: 14),
-                    _ResultPanel(
-                      status: _status,
-                      controller: _reviewController,
-                      stages: _pipelineStages,
-                      isBusy: _isBusy,
-                    ),
-                    const SizedBox(height: 14),
-                    _ValidationPanel(report: _validationReport),
-                    const SizedBox(height: 14),
-                    _RetrievalTestPanel(
-                      controller: _retrievalController,
-                      isBusy: _isRetrieving,
-                      results: _retrievalResults,
-                      onRun: _runRetrievalTest,
-                    ),
-                    const SizedBox(height: 14),
-                    _StatisticsPanel(statistics: _kbStatistics),
-                    const SizedBox(height: 14),
-                    _KnowledgeUnitsPanel(units: _knowledgeUnits),
-                    const SizedBox(height: 14),
-                    _ChunkPreviewPanel(chunks: _chunkPreview),
-                  ],
+        final body = ColoredBox(
+          color: DesignTokens.bgGrey,
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1180),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _buildDocumentsTab(),
+                  ),
                 ),
               ),
             ),
@@ -352,6 +592,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
         if (isWide) {
           return Scaffold(
+            backgroundColor: DesignTokens.bgGrey,
             body: Row(
               children: [
                 const SizedBox(
@@ -365,13 +606,14 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         }
 
         return Scaffold(
+          backgroundColor: DesignTokens.bgGrey,
           drawer: const Drawer(
             child: AppSidebar(current: StudentNavItem.adminKnowledgeBase),
           ),
           appBar: AppBar(
             title: const Text('Knowledge Base Admin'),
             backgroundColor: Colors.white,
-            foregroundColor: const Color(0xFF203B63),
+            foregroundColor: DesignTokens.ink,
             elevation: 0.5,
           ),
           body: body,
@@ -394,9 +636,10 @@ class _AdminLoginRequired extends StatelessWidget {
               padding: const EdgeInsets.all(24),
               child: _AdminGuardPanel(
                 title: 'Admin login required',
-                message: 'Please log in with an admin account to use the admin panel.',
+                message:
+                    'Please log in with an admin account to use the admin panel.',
                 icon: Icons.admin_panel_settings_rounded,
-                action: ElevatedButton.icon(
+                action: ElevatedButton(
                   onPressed: () => Navigator.of(context).pushReplacement(
                     MaterialPageRoute(
                       builder: (_) => LoginPage(
@@ -406,8 +649,6 @@ class _AdminLoginRequired extends StatelessWidget {
                       ),
                     ),
                   ),
-                  icon: const Icon(Icons.login_rounded),
-                  label: const Text('Login'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: DesignTokens.maroon,
                     foregroundColor: Colors.white,
@@ -417,6 +658,7 @@ class _AdminLoginRequired extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
+                  child: const Text('Login'),
                 ),
               ),
             ),
@@ -465,15 +707,14 @@ class _AdminAccessDenied extends StatelessWidget {
             padding: const EdgeInsets.all(24),
             child: _AdminGuardPanel(
               title: 'Admin access only',
-              message: 'Your account is signed in, but it is not allowed to use this page.',
+              message:
+                  'Only admin accounts can use Knowledge Base Admin tools.',
               icon: Icons.lock_outline_rounded,
-              action: OutlinedButton.icon(
+              action: OutlinedButton(
                 onPressed: () => Navigator.of(context).pushAndRemoveUntil(
                   MaterialPageRoute(builder: (_) => const StudentHomePage()),
                   (route) => false,
                 ),
-                icon: const Icon(Icons.home_rounded),
-                label: const Text('Return Home'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: DesignTokens.maroon,
                   side: const BorderSide(color: DesignTokens.maroon),
@@ -482,6 +723,7 @@ class _AdminAccessDenied extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
+                child: const Text('Return Home'),
               ),
             ),
           ),
@@ -555,7 +797,8 @@ class _AdminHeader extends StatelessWidget {
             color: DesignTokens.primaryBlue.withOpacity(0.10),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: const Icon(Icons.admin_panel_settings_rounded, color: DesignTokens.primaryBlue),
+          child: const Icon(Icons.admin_panel_settings_rounded,
+              color: DesignTokens.primaryBlue),
         ),
         const SizedBox(width: 14),
         const Expanded(
@@ -564,12 +807,16 @@ class _AdminHeader extends StatelessWidget {
             children: [
               Text(
                 'Knowledge Base Admin',
-                style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: Color(0xFF203B63)),
+                style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF203B63)),
               ),
               SizedBox(height: 6),
               Text(
-                'Extract, clean, structure, review, then index documents.',
-                style: TextStyle(fontSize: 14, height: 1.45, color: Color(0xFF6C7785)),
+                'Extract, review article candidates, and index documents.',
+                style: TextStyle(
+                    fontSize: 14, height: 1.45, color: Color(0xFF6C7785)),
               ),
             ],
           ),
@@ -579,33 +826,89 @@ class _AdminHeader extends StatelessWidget {
   }
 }
 
-class _AdminAuthPanel extends StatelessWidget {
+class _AdminAdvancedOptionsPanel extends StatelessWidget {
   final TextEditingController controller;
+  final bool useLegacyAdminKey;
+  final ValueChanged<bool> onToggleLegacy;
+  final TextEditingController retrievalController;
+  final bool isRetrieving;
+  final List<Map<String, dynamic>> retrievalResults;
+  final VoidCallback onRunRetrievalTest;
 
-  const _AdminAuthPanel({required this.controller});
+  const _AdminAdvancedOptionsPanel({
+    required this.controller,
+    required this.useLegacyAdminKey,
+    required this.onToggleLegacy,
+    required this.retrievalController,
+    required this.isRetrieving,
+    required this.retrievalResults,
+    required this.onRunRetrievalTest,
+  });
 
   @override
   Widget build(BuildContext context) {
     return _Panel(
-      child: TextField(
-        controller: controller,
-        obscureText: true,
-        decoration: InputDecoration(
-          labelText: 'Admin API key',
-          hintText: 'Enter the backend admin key for this session',
-          prefixIcon: const Icon(Icons.key_rounded),
-          filled: true,
-          fillColor: const Color(0xFFF8FAFC),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: DesignTokens.border),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(top: 8),
+          title: const Text(
+            'Advanced developer options',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: DesignTokens.muted,
+            ),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: DesignTokens.border),
+          subtitle: const Text(
+            'Bearer token is used automatically when logged in as admin.',
+            style: TextStyle(fontSize: 12, color: DesignTokens.muted),
           ),
+          children: [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Use legacy API key'),
+              subtitle: const Text(
+                'For scripts and local development without admin login.',
+              ),
+              value: useLegacyAdminKey,
+              onChanged: onToggleLegacy,
+            ),
+            if (useLegacyAdminKey) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Admin API key',
+                  hintText: 'Enter the backend admin key for this session',
+                  prefixIcon: const Icon(Icons.key_rounded),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: DesignTokens.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: DesignTokens.border),
+                  ),
+                ),
+                onChanged: (value) => AppConfig.savedAdminKey = value,
+              ),
+            ],
+            const SizedBox(height: 12),
+            const Divider(),
+            const SizedBox(height: 8),
+            _RetrievalTestPanel(
+              controller: retrievalController,
+              isBusy: isRetrieving,
+              results: retrievalResults,
+              onRun: onRunRetrievalTest,
+            ),
+          ],
         ),
-        onChanged: (value) => AppConfig.savedAdminKey = value,
       ),
     );
   }
@@ -633,31 +936,35 @@ class _UploadPanel extends StatelessWidget {
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 720;
           final picker = InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: isBusy ? null : onPickFile,
-              child: Container(
-                height: 64,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  border: Border.all(color: const Color(0xFFDEE5EE)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.upload_file_rounded, color: DesignTokens.primaryBlue),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        fileName ?? 'Choose PDF or image',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF203B63)),
-                      ),
-                    ),
-                  ],
-                ),
+            borderRadius: BorderRadius.circular(8),
+            onTap: isBusy ? null : onPickFile,
+            child: Container(
+              height: 64,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                border: Border.all(color: const Color(0xFFDEE5EE)),
+                borderRadius: BorderRadius.circular(8),
               ),
-            );
+              child: Row(
+                children: [
+                  const Icon(Icons.upload_file_rounded,
+                      color: DesignTokens.primaryBlue),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      fileName ?? 'Choose PDF or image',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF203B63)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
 
           final actions = Wrap(
             spacing: 8,
@@ -671,11 +978,20 @@ class _UploadPanel extends StatelessWidget {
               ),
               _ActionButton(
                 icon: Icons.cloud_upload_rounded,
-                label: 'Index to Knowledge Base',
+                label: 'Index for Chatbot Retrieval',
                 onPressed: isBusy ? null : onIngest,
                 filled: false,
               ),
             ],
+          );
+
+          const indexHelper = Text(
+            'This indexes extracted knowledge units into ChromaDB for Ask ASKa-Piyu retrieval and citation grounding. It does not publish articles to the public Knowledge Base.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.4,
+              color: DesignTokens.muted,
+            ),
           );
 
           if (compact) {
@@ -685,15 +1001,24 @@ class _UploadPanel extends StatelessWidget {
                 picker,
                 const SizedBox(height: 12),
                 actions,
+                const SizedBox(height: 10),
+                indexHelper,
               ],
             );
           }
 
-          return Row(
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(child: picker),
-              const SizedBox(width: 12),
-              actions,
+              Row(
+                children: [
+                  Expanded(child: picker),
+                  const SizedBox(width: 12),
+                  actions,
+                ],
+              ),
+              const SizedBox(height: 10),
+              indexHelper,
             ],
           );
         },
@@ -702,17 +1027,55 @@ class _UploadPanel extends StatelessWidget {
   }
 }
 
+
+class _SummaryChip extends StatelessWidget {
+  const _SummaryChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: DesignTokens.maroon.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+class _GenerationMetric extends StatelessWidget {
+  const _GenerationMetric(this.label, this.value);
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('$label: $value', style: const TextStyle(fontSize: 13));
+  }
+}
+
 class _ResultPanel extends StatelessWidget {
   final String status;
   final TextEditingController controller;
   final List<_PipelineStage> stages;
   final bool isBusy;
+  final String? rawOcrText;
 
   const _ResultPanel({
     required this.status,
     required this.controller,
     required this.stages,
     required this.isBusy,
+    required this.rawOcrText,
   });
 
   @override
@@ -732,7 +1095,10 @@ class _ResultPanel extends StatelessWidget {
               Expanded(
                 child: Text(
                   status,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF203B63)),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF203B63)),
                 ),
               ),
             ],
@@ -769,7 +1135,74 @@ class _ResultPanel extends StatelessWidget {
               ),
             ),
           ),
+          _RawOcrDebugPanel(rawOcrText: rawOcrText),
         ],
+      ),
+    );
+  }
+}
+
+class _RawOcrDebugPanel extends StatelessWidget {
+  final String? rawOcrText;
+
+  const _RawOcrDebugPanel({required this.rawOcrText});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = rawOcrText?.trim();
+    if (text == null || text.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: DesignTokens.border),
+        ),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          leading: const Icon(Icons.bug_report_rounded,
+              color: DesignTokens.primaryBlue),
+          title: const Text(
+            'View Raw OCR Text',
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF203B63)),
+          ),
+          subtitle: const Text(
+            'Raw OCR text is only used for admin verification and is not shown to students.',
+            style: TextStyle(fontSize: 12, color: DesignTokens.muted),
+          ),
+          children: [
+            Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxHeight: 320),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: DesignTokens.border),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  text,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    height: 1.45,
+                    color: Color(0xFF1F2937),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -828,7 +1261,9 @@ class _ValidationPanel extends StatelessWidget {
                 children: metrics.map((metric) {
                   return SizedBox(
                     width: width,
-                    child: _MetricTile(label: metric[0].toString(), value: '${metric[1] ?? 0}'),
+                    child: _MetricTile(
+                        label: metric[0].toString(),
+                        value: '${metric[1] ?? 0}'),
                   );
                 }).toList(),
               );
@@ -853,6 +1288,7 @@ class _KnowledgeUnitsPanelState extends State<_KnowledgeUnitsPanel> {
   static const int _pageSize = 20;
   int _visibleCount = _pageSize;
   String _filter = 'All';
+  bool _expanded = false;
 
   @override
   void didUpdateWidget(covariant _KnowledgeUnitsPanel oldWidget) {
@@ -889,63 +1325,92 @@ class _KnowledgeUnitsPanelState extends State<_KnowledgeUnitsPanel> {
     final filtered = _filteredUnits;
     final visible = filtered.take(_visibleCount).toList();
     return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SectionHeader(
-            icon: Icons.article_rounded,
-            title: 'Knowledge Units',
-            trailing: _StatusChip(
-              label: '${visible.length}/${filtered.length} shown',
-              color: DesignTokens.primaryBlue,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(top: 12),
+          initiallyExpanded: false,
+          onExpansionChanged: (value) => setState(() => _expanded = value),
+          title: Row(
+            children: [
+              const Expanded(
+                child: _SectionHeader(
+                  icon: Icons.article_rounded,
+                  title: 'Knowledge Units',
+                ),
+              ),
+              _StatusChip(
+                label: '${filtered.length} units',
+                color: DesignTokens.primaryBlue,
+              ),
+            ],
+          ),
+          subtitle: const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'Knowledge Units are extracted sections used for RAG retrieval and citation grounding. They are not public Knowledge Base articles.',
+              style: TextStyle(fontSize: 12, color: DesignTokens.muted, height: 1.4),
             ),
           ),
-          const SizedBox(height: 12),
-          _FilterBar(
-            selected: _filter,
-            counts: {
-              'All': widget.units.length,
-              'OK': widget.units.where((unit) => (unit['status'] ?? 'OK').toString() == 'OK').length,
-              'Suspicious': widget.units.where((unit) => (unit['status'] ?? 'OK').toString() == 'Suspicious').length,
-              'TOC-like': widget.units.where((unit) {
-                final reasons = unit['suspicious_reasons'];
-                final reasonText = reasons is List ? reasons.join(' ').toLowerCase() : '';
-                return reasonText.contains('toc_like') || reasonText.contains('toc');
-              }).length,
-            },
-            onSelected: (value) {
-              setState(() {
-                _filter = value;
-                _visibleCount = _pageSize;
-              });
-            },
-          ),
-          const SizedBox(height: 12),
-          if (visible.isEmpty)
-            const _EmptyListMessage(message: 'No units match the selected filter.')
-          else
-            ListView.builder(
-              key: ValueKey('knowledge-units-$_filter-${visible.length}'),
-              itemCount: visible.length,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemBuilder: (context, index) => _KnowledgeUnitRow(unit: visible[index]),
-            ),
-          if (filtered.length > visible.length) ...[
-            const SizedBox(height: 8),
-            _LoadMoreButton(
-              remaining: filtered.length - visible.length,
-              onPressed: () {
-                setState(() {
-                  _visibleCount += _pageSize;
-                  if (_visibleCount > filtered.length) {
-                    _visibleCount = filtered.length;
-                  }
-                });
-              },
-            ),
+          children: [
+            if (_expanded) ...[
+              _FilterBar(
+                selected: _filter,
+                counts: {
+                  'All': widget.units.length,
+                  'OK': widget.units
+                      .where((unit) => (unit['status'] ?? 'OK').toString() == 'OK')
+                      .length,
+                  'Suspicious': widget.units
+                      .where((unit) =>
+                          (unit['status'] ?? 'OK').toString() == 'Suspicious')
+                      .length,
+                  'TOC-like': widget.units.where((unit) {
+                    final reasons = unit['suspicious_reasons'];
+                    final reasonText =
+                        reasons is List ? reasons.join(' ').toLowerCase() : '';
+                    return reasonText.contains('toc_like') ||
+                        reasonText.contains('toc');
+                  }).length,
+                },
+                onSelected: (value) {
+                  setState(() {
+                    _filter = value;
+                    _visibleCount = _pageSize;
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              if (visible.isEmpty)
+                const _EmptyListMessage(
+                    message: 'No units match the selected filter.')
+              else
+                ListView.builder(
+                  key: ValueKey('knowledge-units-$_filter-${visible.length}'),
+                  itemCount: visible.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemBuilder: (context, index) =>
+                      _KnowledgeUnitRow(unit: visible[index]),
+                ),
+              if (filtered.length > visible.length) ...[
+                const SizedBox(height: 8),
+                _LoadMoreButton(
+                  remaining: filtered.length - visible.length,
+                  onPressed: () {
+                    setState(() {
+                      _visibleCount += _pageSize;
+                      if (_visibleCount > filtered.length) {
+                        _visibleCount = filtered.length;
+                      }
+                    });
+                  },
+                ),
+              ],
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -970,7 +1435,9 @@ class _KnowledgeUnitRow extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: suspicious ? const Color(0xFFF3B26B) : const Color(0xFFDEE5EE)),
+        border: Border.all(
+            color:
+                suspicious ? const Color(0xFFF3B26B) : const Color(0xFFDEE5EE)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -981,16 +1448,23 @@ class _KnowledgeUnitRow extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF203B63)),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF203B63)),
                 ),
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 8,
                   runSpacing: 6,
                   children: [
-                    _MiniMeta(label: 'Type', value: (unit['content_type'] ?? 'policy').toString()),
-                    _MiniMeta(label: 'Words', value: '${unit['word_count'] ?? 0}'),
-                    if (pages.isNotEmpty) _MiniMeta(label: 'Pages', value: pages),
+                    _MiniMeta(
+                        label: 'Type',
+                        value: (unit['content_type'] ?? 'policy').toString()),
+                    _MiniMeta(
+                        label: 'Words', value: '${unit['word_count'] ?? 0}'),
+                    if (pages.isNotEmpty)
+                      _MiniMeta(label: 'Pages', value: pages),
                     if (path.isNotEmpty) _MiniMeta(label: 'Path', value: path),
                   ],
                 ),
@@ -1003,7 +1477,9 @@ class _KnowledgeUnitRow extends StatelessWidget {
             children: [
               _StatusChip(
                 label: status,
-                color: suspicious ? const Color(0xFFD97706) : const Color(0xFF2C9C5B),
+                color: suspicious
+                    ? const Color(0xFFD97706)
+                    : const Color(0xFF2C9C5B),
               ),
               const SizedBox(height: 8),
               TextButton.icon(
@@ -1034,10 +1510,90 @@ class _KnowledgeUnitRow extends StatelessWidget {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close')),
           ],
         );
       },
+    );
+  }
+}
+
+class _GenerateArticlesLinkPanel extends StatelessWidget {
+  const _GenerateArticlesLinkPanel({
+    required this.fileName,
+    required this.documentType,
+    required this.knowledgeUnitCount,
+  });
+
+  final String? fileName;
+  final String? documentType;
+  final int knowledgeUnitCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeader(
+            icon: Icons.library_books_rounded,
+            title: 'Open in Generate Articles',
+            trailing: null,
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            children: [
+              _StatusChip(
+                label: 'Source file: ${fileName ?? 'Unknown'}',
+                color: DesignTokens.primaryBlue,
+              ),
+              _StatusChip(
+                label:
+                    'Detected type: ${documentType == null || documentType!.isEmpty ? 'auto' : documentType!}',
+                color: DesignTokens.maroon,
+              ),
+              _StatusChip(
+                label: 'Knowledge units: $knowledgeUnitCount',
+                color: DesignTokens.primaryBlue,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Use the separate Generate Articles workspace to create and review student-facing article previews. '
+            'This Documents page is for extraction, RAG inspection, and indexing only.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.45,
+              color: DesignTokens.muted,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AdminGenerateArticlesPage(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.fact_check_rounded, size: 18),
+              label: const Text('Open Generate Articles'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: DesignTokens.maroon,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1087,7 +1643,8 @@ class _ChunkPreviewPanelState extends State<_ChunkPreviewPanel> {
             itemCount: visible.length,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemBuilder: (context, index) => _ChunkPreviewRow(chunk: visible[index]),
+            itemBuilder: (context, index) =>
+                _ChunkPreviewRow(chunk: visible[index]),
           ),
           if (widget.chunks.length > visible.length) ...[
             const SizedBox(height: 8),
@@ -1136,9 +1693,13 @@ class _ChunkPreviewRow extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 6,
                   children: [
-                    _MiniMeta(label: 'Chunk', value: '${chunk['chunk_index'] ?? 0}'),
-                    _MiniMeta(label: 'Title', value: (chunk['title'] ?? 'Untitled').toString()),
-                    _MiniMeta(label: 'Words', value: '${chunk['word_count'] ?? 0}'),
+                    _MiniMeta(
+                        label: 'Chunk', value: '${chunk['chunk_index'] ?? 0}'),
+                    _MiniMeta(
+                        label: 'Title',
+                        value: (chunk['title'] ?? 'Untitled').toString()),
+                    _MiniMeta(
+                        label: 'Words', value: '${chunk['word_count'] ?? 0}'),
                     if (path.isNotEmpty) _MiniMeta(label: 'Path', value: path),
                   ],
                 ),
@@ -1154,7 +1715,8 @@ class _ChunkPreviewRow extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             (chunk['content_preview'] ?? '').toString(),
-            style: const TextStyle(fontSize: 13, height: 1.45, color: Color(0xFF334155)),
+            style: const TextStyle(
+                fontSize: 13, height: 1.45, color: Color(0xFF334155)),
           ),
         ],
       ),
@@ -1166,7 +1728,8 @@ class _ChunkPreviewRow extends StatelessWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text('Chunk ${chunk['chunk_index'] ?? ''}: ${(chunk['title'] ?? 'Untitled').toString()}'),
+          title: Text(
+              'Chunk ${chunk['chunk_index'] ?? ''}: ${(chunk['title'] ?? 'Untitled').toString()}'),
           content: SizedBox(
             width: 720,
             child: SingleChildScrollView(
@@ -1177,7 +1740,9 @@ class _ChunkPreviewRow extends StatelessWidget {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close')),
           ],
         );
       },
@@ -1204,7 +1769,8 @@ class _RetrievalTestPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionHeader(icon: Icons.manage_search_rounded, title: 'Retrieval Test'),
+          const _SectionHeader(
+              icon: Icons.manage_search_rounded, title: 'Retrieval Test'),
           const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -1244,7 +1810,9 @@ class _RetrievalTestPanel extends StatelessWidget {
           ),
           if (results.isNotEmpty) ...[
             const SizedBox(height: 14),
-            ...results.map((result) => _RetrievalResultRow(result: result)).toList(),
+            ...results
+                .map((result) => _RetrievalResultRow(result: result))
+                .toList(),
           ],
         ],
       ),
@@ -1277,11 +1845,19 @@ class _RetrievalResultRow extends StatelessWidget {
             runSpacing: 6,
             children: [
               _MiniMeta(label: 'Rank', value: '${result['rank'] ?? '-'}'),
-              _MiniMeta(label: 'Original', value: _scoreText(result['original_score'] ?? result['similarity_score'])),
-              _MiniMeta(label: 'Reranked', value: _scoreText(result['reranked_score'])),
-              _MiniMeta(label: 'Title', value: (result['title'] ?? 'Untitled').toString()),
+              _MiniMeta(
+                  label: 'Original',
+                  value: _scoreText(
+                      result['original_score'] ?? result['similarity_score'])),
+              _MiniMeta(
+                  label: 'Reranked',
+                  value: _scoreText(result['reranked_score'])),
+              _MiniMeta(
+                  label: 'Title',
+                  value: (result['title'] ?? 'Untitled').toString()),
               if (path.isNotEmpty) _MiniMeta(label: 'Path', value: path),
-              if (_pageRange(result).isNotEmpty) _MiniMeta(label: 'Pages', value: _pageRange(result)),
+              if (_pageRange(result).isNotEmpty)
+                _MiniMeta(label: 'Pages', value: _pageRange(result)),
             ],
           ),
           if (reasons.isNotEmpty) ...[
@@ -1289,7 +1865,8 @@ class _RetrievalResultRow extends StatelessWidget {
             Wrap(
               spacing: 6,
               runSpacing: 6,
-              children: reasons.map((reason) => _ReasonChip(label: reason)).toList(),
+              children:
+                  reasons.map((reason) => _ReasonChip(label: reason)).toList(),
             ),
           ],
           const SizedBox(height: 8),
@@ -1304,7 +1881,8 @@ class _RetrievalResultRow extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             (result['content_preview'] ?? '').toString(),
-            style: const TextStyle(fontSize: 13, height: 1.45, color: Color(0xFF334155)),
+            style: const TextStyle(
+                fontSize: 13, height: 1.45, color: Color(0xFF334155)),
           ),
         ],
       ),
@@ -1319,10 +1897,14 @@ class _RetrievalResultRow extends StatelessWidget {
 
   static List<String> _readReasons(dynamic value) {
     if (value is! List) return const [];
-    return value.map((item) => item.toString()).where((item) => item.trim().isNotEmpty).toList();
+    return value
+        .map((item) => item.toString())
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
   }
 
-  static void _showFullChunk(BuildContext context, Map<String, dynamic> result) {
+  static void _showFullChunk(
+      BuildContext context, Map<String, dynamic> result) {
     showDialog<void>(
       context: context,
       builder: (context) {
@@ -1343,11 +1925,14 @@ class _RetrievalResultRow extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (meta.isNotEmpty) ...[
-                    Text(meta, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                    Text(meta,
+                        style: const TextStyle(
+                            fontSize: 12, color: Color(0xFF64748B))),
                     const SizedBox(height: 12),
                   ],
                   SelectableText(
-                    (result['content'] ?? result['content_preview'] ?? '').toString(),
+                    (result['content'] ?? result['content_preview'] ?? '')
+                        .toString(),
                     style: const TextStyle(fontSize: 13, height: 1.45),
                   ),
                 ],
@@ -1355,7 +1940,9 @@ class _RetrievalResultRow extends StatelessWidget {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close')),
           ],
         );
       },
@@ -1379,7 +1966,10 @@ class _ReasonChip extends StatelessWidget {
       ),
       child: Text(
         label.replaceAll('_', ' '),
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF1D4ED8)),
+        style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF1D4ED8)),
       ),
     );
   }
@@ -1396,25 +1986,167 @@ class _StatisticsPanel extends StatelessWidget {
     if (stats == null) {
       return const SizedBox.shrink();
     }
-    final last = stats['last_indexed_document'] is Map ? Map<String, dynamic>.from(stats['last_indexed_document']) : null;
-    final lastTitle = last == null ? 'None' : (last['title'] ?? last['source_filename'] ?? 'Untitled').toString();
+    final last = stats['last_indexed_document'] is Map
+        ? Map<String, dynamic>.from(stats['last_indexed_document'])
+        : null;
+    final lastTitle = last == null
+        ? 'None'
+        : (last['title'] ?? last['source_filename'] ?? 'Untitled').toString();
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionHeader(icon: Icons.storage_rounded, title: 'Knowledge Base Statistics'),
+          const _SectionHeader(
+              icon: Icons.storage_rounded, title: 'Knowledge Base Statistics'),
           const SizedBox(height: 12),
           Wrap(
             spacing: 12,
             runSpacing: 12,
             children: [
-              _MetricTile(label: 'Documents indexed', value: '${stats['documents_indexed'] ?? 0}'),
-              _MetricTile(label: 'Total chunks indexed', value: '${stats['total_chunks_indexed'] ?? 0}'),
-              _MetricTile(label: 'Embedding model', value: (stats['embedding_model'] ?? '-').toString()),
-              _MetricTile(label: 'Vector store', value: (stats['vector_store'] ?? '-').toString()),
+              _MetricTile(
+                  label: 'Documents indexed',
+                  value: '${stats['documents_indexed'] ?? 0}'),
+              _MetricTile(
+                  label: 'Total chunks indexed',
+                  value: '${stats['total_chunks_indexed'] ?? 0}'),
+              _MetricTile(
+                  label: 'PDF citation ready',
+                  value: '${stats['citation_ready_documents'] ?? 0}'),
+              _MetricTile(
+                  label: 'Re-index required',
+                  value: '${stats['citation_reindex_required'] ?? 0}'),
+              _MetricTile(
+                  label: 'Embedding model',
+                  value: (stats['embedding_model'] ?? '-').toString()),
+              _MetricTile(
+                  label: 'Vector store',
+                  value: (stats['vector_store'] ?? '-').toString()),
               _MetricTile(label: 'Last indexed document', value: lastTitle),
+              _MetricTile(
+                  label: 'Chunks with page_number',
+                  value: '${stats['chunks_with_page_number'] ?? 0}'),
             ],
           ),
+          if ((stats['sample_titles'] is List) &&
+              (stats['sample_titles'] as List).isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Sample indexed titles: ${(stats['sample_titles'] as List).take(12).join(' · ')}',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF334155)),
+            ),
+          ],
+          if (stats['document_type_counts'] is Map ||
+              stats['article_type_counts'] is Map) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Document types: ${_formatCountMap(stats['document_type_counts'])} · '
+              'Article types: ${_formatCountMap(stats['article_type_counts'])}',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
+          ],
+          if (_indexedDocuments(stats).isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Text(
+              'Level 2 citation support',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: DesignTokens.ink,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ..._indexedDocuments(stats).map(_buildIndexedDocumentStatus),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static List<Map<String, dynamic>> _indexedDocuments(Map<String, dynamic> stats) {
+    final raw = stats['indexed_documents'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  static String _formatCountMap(Object? raw) {
+    if (raw is! Map || raw.isEmpty) return '-';
+    return raw.entries.map((e) => '${e.key}:${e.value}').join(', ');
+  }
+
+  static Widget _buildIndexedDocumentStatus(Map<String, dynamic> doc) {
+    final label = (doc['source_label'] ??
+            doc['source_filename'] ??
+            doc['title'] ??
+            doc['document_id'] ??
+            'Document')
+        .toString();
+    final pdfStored = doc['pdf_stored'] == true;
+    final rowOk = doc['source_documents_row'] == true;
+    final chunksOk = doc['chunks_with_document_id'] == true;
+    final ready = doc['level2_citation_ready'] == true;
+    final message = (doc['message'] ?? '').toString().trim();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: ready ? const Color(0xFFF0FDF4) : const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: ready ? const Color(0xFF86EFAC) : const Color(0xFFFDBA74),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'PDF stored: ${pdfStored ? 'yes' : 'no'} · '
+            'source_documents row: ${rowOk ? 'yes' : 'no'} · '
+            'chunks with document_id: ${chunksOk ? 'yes' : 'no'} · '
+            'chunks: ${doc['chunk_count'] ?? 0} · '
+            'chunks with page_number: ${doc['chunks_with_page_number'] ?? 0}',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+          ),
+          if ((doc['sample_titles'] is List) &&
+              (doc['sample_titles'] as List).isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Sample titles: ${(doc['sample_titles'] as List).take(8).join(' · ')}',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF334155)),
+            ),
+          ],
+          if (doc['document_type_counts'] is Map ||
+              doc['article_type_counts'] is Map) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Types: ${_formatCountMap(doc['document_type_counts'])} · '
+              'Articles: ${_formatCountMap(doc['article_type_counts'])}',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
+          ],
+          if (message.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              message,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF9A3412),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1492,7 +2224,8 @@ class _EmptyListMessage extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFDEE5EE)),
       ),
-      child: Text(message, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+      child: Text(message,
+          style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
     );
   }
 }
@@ -1502,7 +2235,8 @@ class _SectionHeader extends StatelessWidget {
   final String title;
   final Widget? trailing;
 
-  const _SectionHeader({required this.icon, required this.title, this.trailing});
+  const _SectionHeader(
+      {required this.icon, required this.title, this.trailing});
 
   @override
   Widget build(BuildContext context) {
@@ -1513,7 +2247,10 @@ class _SectionHeader extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF203B63)),
+            style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF203B63)),
           ),
         ),
         if (trailing != null) trailing!,
@@ -1541,13 +2278,17 @@ class _MetricTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+          Text(label,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
           const SizedBox(height: 5),
           Text(
             value,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF203B63)),
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF203B63)),
           ),
         ],
       ),
@@ -1575,7 +2316,10 @@ class _MiniMeta extends StatelessWidget {
         '$label: $value',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF475569)),
+        style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF475569)),
       ),
     );
   }
@@ -1598,7 +2342,8 @@ class _StatusChip extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color),
+        style:
+            TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color),
       ),
     );
   }
@@ -1623,9 +2368,11 @@ String _truncatePath(String value) {
   if (value.length <= 96) {
     return value;
   }
-  final parts = value.split(' > ').where((part) => part.trim().isNotEmpty).toList();
+  final parts =
+      value.split(' > ').where((part) => part.trim().isNotEmpty).toList();
   if (parts.length >= 3) {
-    final compact = '${parts.first} > ... > ${parts[parts.length - 2]} > ${parts.last}';
+    final compact =
+        '${parts.first} > ... > ${parts[parts.length - 2]} > ${parts.last}';
     if (compact.length <= 110) {
       return compact;
     }
@@ -1652,7 +2399,8 @@ class _PipelineStageStrip extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: stages.map((stage) {
-            return SizedBox(width: itemWidth, child: _PipelineStageTile(stage: stage));
+            return SizedBox(
+                width: itemWidth, child: _PipelineStageTile(stage: stage));
           }).toList(),
         );
       },
@@ -1701,7 +2449,10 @@ class _PipelineStageTile extends StatelessWidget {
                   stage.label,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF203B63)),
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF203B63)),
                 ),
                 if (stage.detail != null && stage.detail!.isNotEmpty) ...[
                   const SizedBox(height: 3),
@@ -1735,7 +2486,12 @@ class _Panel extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFE8ECF2)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 14, offset: const Offset(0, 8))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 14,
+              offset: const Offset(0, 8))
+        ],
       ),
       child: child,
     );
@@ -1762,13 +2518,15 @@ class _ActionButton extends StatelessWidget {
             backgroundColor: DesignTokens.primaryBlue,
             foregroundColor: Colors.white,
             minimumSize: const Size(104, 48),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           )
         : OutlinedButton.styleFrom(
             foregroundColor: DesignTokens.primaryBlue,
             minimumSize: const Size(96, 48),
             side: const BorderSide(color: DesignTokens.primaryBlue),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           );
 
     final child = Row(

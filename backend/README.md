@@ -91,6 +91,28 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Docs: http://localhost:8000/docs
 
+### Development office accounts
+
+Public signup creates student accounts only. To seed local office accounts for
+ticket workflow testing, configure `ASKA_DATABASE_URL`, then run:
+
+```bash
+python scripts/seed_office_accounts.py
+```
+
+This idempotently creates `ICT Office`, `Registrar`, and `Office of Student
+Affairs`, plus `ict@aska.local`, `registrar@aska.local`, and `osas@aska.local`
+with password `office123`.
+
+To enable dynamic Article Planner office grouping, also seed `office_aliases`:
+
+```bash
+python scripts/seed_office_aliases.py
+```
+
+Runtime matching always loads from PostgreSQL; the seed script only populates
+development aliases and must not be treated as hardcoded planner logic.
+
 ## Project layout
 
 ```
@@ -121,7 +143,15 @@ app/
 
 ## Tests
 
+Pytest **always** uses `ASKA_TEST_DATABASE_URL` (database `aska_piyu_test`).
+It will abort if the active database is `aska_piyu` or any name that does not end with `_test`.
+Destructive cleanup of `published_articles` is refused on non-test databases unless
+`ASKA_ALLOW_DESTRUCTIVE_RESET=true`.
+
 ```bash
+# Create once (conftest also auto-creates aska_piyu_test if missing):
+# createdb aska_piyu_test
+
 pytest tests/ -v
 ```
 

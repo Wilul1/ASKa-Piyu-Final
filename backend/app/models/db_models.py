@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -19,9 +19,33 @@ class Office(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    service_category: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     users: Mapped[list["User"]] = relationship(back_populates="office")
+    aliases: Mapped[list["OfficeAlias"]] = relationship(
+        back_populates="office",
+        cascade="all, delete-orphan",
+    )
+
+
+class OfficeAlias(Base):
+    """Dynamic office name/abbreviation aliases used for text matching.
+
+    Alias strings and weights live in PostgreSQL so Article Planner / grouping
+    never hardcodes institution-specific office names.
+    """
+
+    __tablename__ = "office_aliases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    office_id: Mapped[str] = mapped_column(String(36), ForeignKey("offices.id"), index=True, nullable=False)
+    alias: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    weight: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    office: Mapped[Office] = relationship(back_populates="aliases")
 
 
 class User(Base):
@@ -97,3 +121,60 @@ class TicketReply(Base):
 
     ticket: Mapped[Ticket] = relationship(back_populates="replies")
     sender: Mapped[User] = relationship(back_populates="replies", foreign_keys=[sender_id])
+
+
+class PublishedArticle(Base):
+    __tablename__ = "published_articles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    category: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    subcategory: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    office: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    chunk_count: Mapped[int | None] = mapped_column(CheckConstraint("chunk_count >= 0"), nullable=True)
+    published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+
+class SourceDocument(Base):
+    """Original uploaded source file (PDF etc.) — durable citation grounding.
+
+    Chroma holds retrieval chunks only. This table + filesystem store remain
+    the source of truth for opening the original document at a cited page.
+    """
+
+    __tablename__ = "source_documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    stored_file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    document_type: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    edition: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    byte_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Level-3 citation readiness (optional document-level page geometry hints)
+    page_width: Mapped[float | None] = mapped_column(Float, nullable=True)
+    page_height: Mapped[float | None] = mapped_column(Float, nullable=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )

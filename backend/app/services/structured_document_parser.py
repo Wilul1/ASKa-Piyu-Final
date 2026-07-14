@@ -62,18 +62,25 @@ class ServiceRecord:
     requirements: list[Requirement] | None = None
     steps: list[Step] | None = None
     total_processing_time: str = NEEDS_REVIEW
+    total_fees: str = NEEDS_REVIEW
+    parser_debug: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["requirements"] = [asdict(r) for r in (self.requirements or [])]
         d["steps"] = [asdict(s) for s in (self.steps or [])]
+        if not d.get("parser_debug"):
+            d.pop("parser_debug", None)
         return d
 
 
 @dataclass
 class FormRecord:
-    document_type: str = "form"
+    document_type: str = "requirement"
+    display_document_type: str = "Requirement / Form Document"
     office: str = NEEDS_REVIEW
+    office_detection_source: str = "unknown"
+    form_title: str = NEEDS_REVIEW
     form_name: str = NEEDS_REVIEW
     form_code: str = NEEDS_REVIEW
     revision: str = NEEDS_REVIEW
@@ -81,6 +88,13 @@ class FormRecord:
     sections: list[str] = field(default_factory=list)
     fields: list[str] = field(default_factory=list)
     options: dict[str, list[str]] = field(default_factory=dict)
+    options_or_services: list[str] = field(default_factory=list)
+    requirements: list[str] = field(default_factory=list)
+    related_services: list[str] = field(default_factory=list)
+    how_to_fill_out: list[str] = field(default_factory=list)
+    source_document: str = ""
+    preview_file_path: str = ""
+    raw_extracted_text: str = ""
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,7 +127,7 @@ def classify_document_type(text: str) -> str:
                 r"\bForm\s*(?:No\.?|Code|Number)\b",
                 r"\bREV\.?\s*\d+\b",
                 r"\b(?:Approved|Requested|Requestor|Applicant|Signature)\b",
-                r"(?:\[[ xX/]\]|\(\s*[xX/ ]?\s*\)|\b(?:Email|WiFi|Intranet|Others?)\b)",
+                r"(?:\[[ xX/]\]|\(\s*[xX/ ]?\s*\)|â˜|â˜‘|â–¡|â– )",
             ],
         ),
         "memo": _classification_score(
@@ -179,21 +193,20 @@ def _first(patterns: list[str], text: str, default: str = NEEDS_REVIEW) -> str:
     return default
 
 
-def _service_blocks(text: str) -> list[str]:
-    """Split text into services using generic service/office labels."""
-    clean = clean_ocr_text(text)
+def _office_based_service_blocks(clean: str) -> list[str]:
+    """Legacy split on Office or Division / Service labels."""
     boundary_label = r"Office\s*(?:or)?\s*Division" if re.search(
         r"\bOffice\s*(?:or)?\s*Division\s*:",
         clean,
         flags=re.I,
     ) else r"Service"
-    clean = re.sub(
+    marked = re.sub(
         rf"(?=\n?\s*{boundary_label}\s*:)",
         "\n---SERVICE---\n",
         clean,
         flags=re.I,
     )
-    parts = [p.strip() for p in clean.split("---SERVICE---") if p.strip()]
+    parts = [p.strip() for p in marked.split("---SERVICE---") if p.strip()]
     if boundary_label.startswith("Office") and len(parts) > 1:
         merged: list[str] = []
         for index, part in enumerate(parts):
@@ -205,6 +218,78 @@ def _service_blocks(text: str) -> list[str]:
             merged.append(f"{context}\n{part}".strip() if context else part)
         parts = merged
     return parts or [clean]
+
+
+def _is_probable_charter_service_start(line: str, following: str) -> bool:
+    """True when a line looks like a numbered/plain service heading before charter fields."""
+    stripped = line.strip()
+    if not stripped or "|" in stripped or len(stripped) > 100:
+        return False
+    if re.search(
+        r"\b(Office\s*(?:or)?\s*Division|Classification|Who May Avail|Checklist|CLIENT\s+STEPS|"
+        r"Agency\s+Actions|Type of Transaction|Total\s*:|Where to Secure)\b",
+        stripped,
+        flags=re.I,
+    ):
+        return False
+    numbered = re.match(r"^(\d{1,3})[\.\)]\s+(.+)$", stripped)
+    candidate = numbered.group(2).strip() if numbered else stripped
+    cleaned = _clean_service_title(stripped if numbered else candidate)
+    if not cleaned:
+        return False
+    try:
+        from app.services.citizen_charter_services import is_noise_service_title
+
+        if is_noise_service_title(cleaned):
+            return False
+    except Exception:
+        pass
+    window = following[:800]
+    if re.search(r"\bOffice\s*(?:or)?\s*Division\s*:", window, flags=re.I):
+        return True
+    # Part-2/3 continuations may restart with the same heading then Client Steps.
+    if numbered and re.search(
+        r"\b(?:CLIENT\s+STEPS|Checklist\s+of\s+Requirements|Agency\s+Actions)\b",
+        window,
+        flags=re.I,
+    ):
+        return True
+    return False
+
+
+def _charter_heading_service_blocks(clean: str) -> list[str]:
+    """Split Citizen's Charter text so each block is one service heading → next heading."""
+    lines = clean.splitlines()
+    starts: list[int] = []
+    for index, line in enumerate(lines):
+        following = "\n".join(lines[index + 1 : index + 14])
+        if _is_probable_charter_service_start(line, following):
+            # Avoid duplicate starts for the same heading cluster.
+            if starts and index - starts[-1] <= 1:
+                continue
+            starts.append(index)
+    if len(starts) < 2:
+        return []
+    blocks: list[str] = []
+    for idx, start in enumerate(starts):
+        end = starts[idx + 1] if idx + 1 < len(starts) else len(lines)
+        block = "\n".join(lines[start:end]).strip()
+        if block:
+            blocks.append(block)
+    return blocks
+
+
+def _service_blocks(text: str, *, document_type: str | None = None) -> list[str]:
+    """Split text into services using charter headings when possible, else office labels."""
+    clean = clean_ocr_text(text)
+    if document_type == "citizen_charter" and re.search(
+        r"(?m)^\s*\d{1,3}[\.\)]\s+\S+",
+        clean,
+    ):
+        heading_blocks = _charter_heading_service_blocks(clean)
+        if len(heading_blocks) >= 2:
+            return heading_blocks
+    return _office_based_service_blocks(clean)
 
 
 def _only_title_context(text: str) -> bool:
@@ -229,7 +314,15 @@ def _title_context(text: str) -> str:
 
 
 def _extract_service_name(block: str) -> str:
-    explicit = _first([r"Service\s*[:\-]?\s*([^\n|]+)"], block, default="")
+    # Require a delimiter so "Service Pledge" is not treated as Service: Pledge.
+    explicit = _first(
+        [
+            r"Service\s*[:\-]\s*([^\n|]+)",
+            r"^\s*Service\s+([A-Z][^\n|]{2,80})$",
+        ],
+        block,
+        default="",
+    )
     explicit = _clean_service_title(explicit)
     if explicit:
         return explicit
@@ -247,15 +340,22 @@ def _infer_service_title(block: str) -> str:
         len(lines),
     )
     candidates = lines[:boundary_index]
-    for line in candidates:
-        if re.match(r"^\d+[\.\)]\s*\S+", line):
-            title = _clean_service_title(line)
-            if title:
-                return title
+    # Prefer the heading closest to Office/Division (last valid title), so document
+    # cover lines like "Citizen's Charter" do not win over the real service name.
+    numbered: list[str] = []
+    plain: list[str] = []
     for line in candidates:
         title = _clean_service_title(line)
-        if title:
-            return title
+        if not title:
+            continue
+        if re.match(r"^\d+[\.\)]\s*\S+", line):
+            numbered.append(title)
+        else:
+            plain.append(title)
+    if numbered:
+        return numbered[-1]
+    if plain:
+        return plain[-1]
     return NEEDS_REVIEW
 
 
@@ -265,27 +365,99 @@ def _clean_service_title(value: str) -> str:
     value = re.sub(r"^\d+[\.\)]\s*", "", value).strip(" |:-.")
     if not value or value == NEEDS_REVIEW:
         return ""
+    # Reject page numbers / numeric-only titles (13, 72, 00, etc.).
+    if re.fullmatch(r"\d{1,4}", value):
+        return ""
     if len(value) > 90 or "|" in value:
         return ""
-    if _is_header_noise(value):
+    if _is_header_noise(value) or _is_header_fragment(value):
         return ""
-    if re.search(r"\b(Office|Classification|Transaction|Who May Avail|Checklist|CLIENT STEPS|Total)\b", value, flags=re.I):
+    if re.search(
+        r"\b(Office|Classification|Transaction|Who May Avail|Checklist|CLIENT STEPS|Total|Type of Transaction)\b",
+        value,
+        flags=re.I,
+    ):
         return ""
     if original.endswith("."):
         return ""
+    # Reject continuation / sentence fragments and tiny generic crumbs.
+    lower = value.casefold()
+    if re.match(r"^(?:this service|administrators? can|efficiently)\b", lower):
+        return ""
+    if re.fullmatch(
+        r"(?:equipment|exit|services?|and technical staff|technical staff|staff|page)",
+        lower,
+    ):
+        return ""
     if re.search(r"\b(?:administration|facilitation|interpretation|conduct|processing|issuance)\b", value, flags=re.I):
-        return ""
+        # Allow concise service titles that start with Issuance/Processing.
+        if not re.match(r"^(?:Issuance|Processing|Completion|Dropping|Enrollment)\b", value, flags=re.I):
+            return ""
     # Prefer concise headings; descriptive sentences are less reliable service names.
-    if len(value.split()) > 8:
+    if len(value.split()) > 12:
         return ""
+    try:
+        from app.services.citizen_charter_services import (
+            is_noise_service_title,
+            strip_service_part_suffix,
+        )
+
+        value = strip_service_part_suffix(value)
+        if is_noise_service_title(value):
+            return ""
+    except Exception:
+        pass
     return value
 
 
 def _extract_office(block: str) -> str:
-    return _first([
-        r"Office\s*(?:or)?\s*Division\s*[:\-]?\s*([^|\n]+)",
-        r"Office\s*[:\-]?\s*([^|\n]+)",
-    ], block)
+    """Extract Office/Division value without capturing the label remnant."""
+    patterns = [
+        # Handle cleaner/label normalizer inserting ":" before a pipe.
+        r"Office\s*(?:or)?\s*Division\s*:\s*\|?\s*([^|\n]+)",
+        r"Office\s*(?:or)?\s*Division\s*\|\s*([^|\n]+)",
+        r"(?m)^Office\s*(?:or)?\s*Division\s*$\n\s*([^|\n]+)",
+        r"Office\s*(?:or)?\s*Division\s+([A-Z][^|\n]{2,90})",
+    ]
+    for pat in patterns:
+        match = re.search(pat, block, flags=re.I | re.S)
+        if not match:
+            continue
+        value = clean_ocr_text(match.group(1)).strip(" |:-\n\t")
+        value = re.sub(r"\b(?:Classification|Who May Avail|Checklist|Service)\b.*$", "", value, flags=re.I)
+        value = value.strip(" |:-")
+        if _looks_like_office_value(value):
+            return value
+
+    # Fallback: Office: <name> only when it is not the charter "Office or Division" label.
+    bare = re.search(r"(?m)^Office\s*[:\-]\s*([^|\n]+)$", block, flags=re.I)
+    if bare:
+        value = clean_ocr_text(bare.group(1)).strip(" |:-")
+        if _looks_like_office_value(value):
+            return value
+    return NEEDS_REVIEW
+
+
+def _looks_like_office_value(value: str) -> bool:
+    if not value or value == NEEDS_REVIEW:
+        return False
+    lower = value.casefold().strip()
+    if lower in {
+        "or division",
+        "division",
+        "office",
+        "office or division",
+        "office / division",
+        "office/division",
+    }:
+        return False
+    if _is_header_noise(value) or _is_header_fragment(value):
+        return False
+    if not _looks_like_field_value(value):
+        return False
+    if re.search(r"\b(?:client steps?|agency actions?|checklist|who may avail)\b", lower):
+        return False
+    return True
 
 
 def _extract_who_may_avail(block: str) -> str:
@@ -398,8 +570,8 @@ def _recover_requirement_rows(block: str) -> list[Requirement]:
         cells = [clean_ocr_text(cell.strip(" |")) for cell in line.split("|") if cell.strip()]
         if len(cells) < 2:
             continue
-        requirement = _clean_requirement_value(cells[0])
-        where = _clean_requirement_value(cells[1])
+        requirement = _clean_requirement_value(cells[0], role="requirement")
+        where = _clean_requirement_value(cells[1], role="where")
         if _looks_like_requirement_row(requirement, where):
             requirements.append(
                 Requirement(
@@ -434,9 +606,15 @@ def _requirement_zone(block: str) -> str:
 
 
 def _looks_like_requirement_row(requirement: str, where: str) -> bool:
-    if not requirement or _is_header_noise(requirement):
+    if not requirement or _is_header_noise(requirement) or _is_header_fragment(requirement):
         return False
-    if not where or _is_header_noise(where):
+    if not where:
+        return False
+    if not _is_allowed_secure_source(where) and (
+        _is_header_noise(where) or _is_header_fragment(where)
+    ):
+        return False
+    if re.fullmatch(r"\d{1,2}[\.\)]?", requirement.strip()):
         return False
     if re.search(r"\b(Client Step|Agency|Processing Time|Responsible|Total|Fees?)\b", requirement, flags=re.I):
         return False
@@ -449,7 +627,7 @@ def _looks_like_requirement_row(requirement: str, where: str) -> bool:
 
 def _extract_requirement_table(block: str) -> list[Requirement]:
     match = re.search(
-        r"Checklist\s+of\s+Requirements\s*(?:\|\s*)?Where\s+to\s+Secure\s*(.+?)(?:\bCLIENT\s+STEPS\b|\bSteps\s*:|\bTotal\s*:|$)",
+        r"Checklist\s+of\s+Requirements\s*(?:\|\s*)?(?:Where\s+to\s+Secure)?\s*(.+?)(?:\bCLIENT\s+STEPS\b|\bSteps\s*:|\bTotal\s*:|$)",
         block,
         flags=re.I | re.S,
     )
@@ -462,26 +640,59 @@ def _extract_requirement_table(block: str) -> list[Requirement]:
         line = line.strip(" |")
         if not line or "|" not in line:
             continue
+        if _is_header_noise(line):
+            continue
         cells = [clean_ocr_text(cell.strip(" |")) for cell in line.split("|") if cell.strip()]
         if len(cells) < 2:
             continue
-        requirement = _clean_requirement_value(cells[0])
-        where = _clean_requirement_value(cells[1])
-        if requirement and not _is_header_noise(requirement):
-            requirements.append(
-                Requirement(
-                    requirement=requirement,
-                    where_to_secure=where or NEEDS_REVIEW,
-                )
+        requirement = _clean_requirement_value(cells[0], role="requirement")
+        where = _clean_requirement_value(cells[1], role="where")
+        if not requirement or _is_header_fragment(requirement) or _is_header_noise(requirement):
+            continue
+        if where and not _is_allowed_secure_source(where) and (
+            _is_header_fragment(where) or _is_header_noise(where)
+        ):
+            where = ""
+        if re.fullmatch(r"\d{1,2}[\.\)]?", requirement.strip()):
+            continue
+        if re.search(r"\b(Client Step|Agency|Processing Time|Responsible|Total|Fees?)\b", requirement, flags=re.I):
+            continue
+        requirements.append(
+            Requirement(
+                requirement=requirement,
+                where_to_secure=where or NEEDS_REVIEW,
             )
+        )
 
     return requirements
 
 
-def _clean_requirement_value(value: str) -> str:
+_SECURE_SOURCE_ALLOWLIST = frozenset(
+    {
+        "client",
+        "applicant",
+        "requesting party",
+        "student",
+        "students",
+    }
+)
+
+
+def _is_allowed_secure_source(value: str) -> bool:
+    return clean_ocr_text(str(value or "")).strip(" |:-").casefold() in _SECURE_SOURCE_ALLOWLIST
+
+
+def _clean_requirement_value(value: str, *, role: str = "requirement") -> str:
     value = clean_ocr_text(value, remove_table_headers=True).strip(" |:-")
     value = re.sub(r"^(?:Checklist\s+of\s+Requirements|Where\s+to\s+Secure)\s*", "", value, flags=re.I)
-    return value.strip(" |:-")
+    value = value.strip(" |:-")
+    if role == "where" and _is_allowed_secure_source(value):
+        return value
+    if _is_header_fragment(value) or _is_header_noise(value):
+        return ""
+    if re.fullmatch(r"\d{1,2}[\.\)]?", value):
+        return ""
+    return value
 
 
 def _split_items(text: str) -> list[str]:
@@ -524,15 +735,25 @@ def _extract_table_steps(block: str) -> list[Step]:
     if not match:
         return []
 
+    body = match.group(1)
+    # Stop before the next Citizen's Charter service heading, not ordinary numbered rows.
+    trimmed_lines: list[str] = []
+    body_lines = body.splitlines()
+    for index, line in enumerate(body_lines):
+        following = "\n".join(body_lines[index + 1 : index + 12])
+        if index > 0 and _is_probable_charter_service_start(line, following):
+            break
+        trimmed_lines.append(line)
+
     lines = [
         clean_ocr_text(line.strip())
-        for line in match.group(1).splitlines()
-        if line.strip()
+        for line in trimmed_lines
+        if line.strip() and not _is_header_noise(line.strip())
     ]
     rows = _reconstruct_step_rows(lines)
     steps: list[Step] = []
     for line in rows:
-        if _is_header_noise(line):
+        if _is_header_noise(line) or _is_header_fragment(line):
             continue
         if "|" in line:
             cells = [clean_ocr_text(cell.strip(" |"), remove_table_headers=True) for cell in line.split("|")]
@@ -542,9 +763,17 @@ def _extract_table_steps(block: str) -> list[Step]:
                 steps.append(step)
             continue
 
+        # Numbered non-pipe rows: treat remaining text as client step only when substantial.
+        numbered = re.match(r"^(\d{1,2})[\.\)]\s+(.+)$", line.strip())
+        if numbered:
+            client = _clean_step_cell(numbered.group(2))
+            if client and not _is_header_fragment(client) and len(client) >= 8:
+                steps.append(Step(client_step=client))
+            continue
+
         if steps:
             continuation = clean_ocr_text(line, remove_table_headers=True)
-            if continuation and not _is_header_noise(continuation):
+            if continuation and not _is_header_noise(continuation) and not _is_header_fragment(continuation):
                 last = steps[-1]
                 last.agency_action = _join_parts(last.agency_action, continuation)
 
@@ -555,8 +784,11 @@ def _reconstruct_step_rows(lines: list[str]) -> list[str]:
     rows: list[str] = []
     current = ""
     for line in lines:
-        if _is_header_noise(line):
+        if _is_header_noise(line) or _is_header_fragment(line):
             continue
+        # Stop reconstructing when TOTAL appears.
+        if re.match(r"^Total\b", line.strip(), flags=re.I):
+            break
         if _starts_new_step_row(line):
             if current:
                 rows.append(current)
@@ -569,9 +801,13 @@ def _reconstruct_step_rows(lines: list[str]) -> list[str]:
 
 
 def _starts_new_step_row(line: str) -> bool:
-    if "|" not in line:
+    stripped = line.strip()
+    # Numbered charter rows always start a new step, even without pipes.
+    if re.match(r"^\d{1,2}[\.\)]\s+\S+", stripped):
+        return not _is_header_noise(stripped) and not _is_header_fragment(stripped)
+    if "|" not in stripped:
         return False
-    cells = [cell.strip() for cell in line.split("|") if cell.strip()]
+    cells = [cell.strip() for cell in stripped.split("|") if cell.strip()]
     if len(cells) < 2:
         return False
     first = cells[0]
@@ -579,17 +815,23 @@ def _starts_new_step_row(line: str) -> bool:
         return False
     if first[0].islower():
         return False
-    return not _is_header_noise(first)
+    if _is_header_noise(first) or _is_header_fragment(first):
+        return False
+    if _is_header_noise(stripped):
+        return False
+    return True
 
 
 def _append_row_continuation(current: str, line: str) -> str:
     if not current:
         return line
+    if _is_header_noise(line) or _is_header_fragment(line):
+        return current
     if "|" in line and "|" in current:
         current_cells = [cell.strip() for cell in current.split("|")]
         continuation_cells = [cell.strip() for cell in line.split("|")]
         for index, value in enumerate(continuation_cells):
-            if not value:
+            if not value or _is_header_fragment(value):
                 continue
             if index < len(current_cells):
                 current_cells[index] = _join_parts(current_cells[index], value)
@@ -629,6 +871,14 @@ def _merge_continuation_cells(step: Step, cells: list[str]) -> None:
 
 def _step_from_cells(cells: list[str]) -> Step | None:
     if len(cells) < 2:
+        return None
+
+    # Drop residual header fragments before mapping columns.
+    cells = [_clean_step_cell(cell) for cell in cells]
+    cells = [cell for cell in cells if cell and cell != NEEDS_REVIEW]
+    if len(cells) < 2:
+        return None
+    if _is_fake_header_step_cells(cells):
         return None
 
     client_step = cells[0]
@@ -676,7 +926,9 @@ def _step_from_cells(cells: list[str]) -> Step | None:
     processing_time = _clean_step_cell(processing_time)
     responsible = _clean_step_cell(responsible)
 
-    if not client_step or _is_header_noise(client_step):
+    if not client_step or _is_header_noise(client_step) or _is_header_fragment(client_step):
+        return None
+    if _is_header_fragment(agency_action) and _is_header_fragment(responsible):
         return None
 
     return Step(
@@ -832,7 +1084,11 @@ def _remove_known_step_fragments(
 
 def _clean_step_cell(value: str) -> str:
     value = clean_ocr_text(value, remove_table_headers=True)
-    return value.strip(" |:-")
+    value = value.strip(" |:-")
+    value = re.sub(r"^\d{1,2}[\.\)]\s+", "", value).strip(" |:-")
+    if _is_header_fragment(value):
+        return ""
+    return value
 
 
 def _join_parts(first: str, second: str) -> str:
@@ -843,23 +1099,101 @@ def _join_parts(first: str, second: str) -> str:
     return f"{first} {second}".strip()
 
 
+_HEADER_FRAGMENT_TOKENS = frozenset({
+    "BE",
+    "TIME",
+    "RESPONSIBLE",
+    "PAID",
+    "ACTIONS",
+    "STEPS",
+    "PERSON",
+    "PROCESSING",
+    "FEES",
+    "CLIENT",
+    "AGENCY",
+    "TO",
+    "TOBE",
+    "TOBEPAID",
+    "FEESTOBE",
+    "FEESTOBEPAID",
+    "CLIENTSTEPS",
+    "AGENCYACTIONS",
+    "PROCESSINGTIME",
+    "PERSONRESPONSIBLE",
+    "RESPONSIBLEPERSON",
+    "RESPONSIBLEPERSONNEL",
+})
+
+
+def _is_header_fragment(value: str) -> bool:
+    """True for residual table-header crumbs like BE / TIME / RESPONSIBLE."""
+    cleaned = clean_ocr_text(str(value or ""), remove_table_headers=True).strip(" |:-.")
+    if not cleaned:
+        return False
+    compact = re.sub(r"[^A-Z0-9]", "", cleaned.upper())
+    if compact in _HEADER_FRAGMENT_TOKENS:
+        return True
+    # Very short all-caps crumbs from mangled headers.
+    if len(cleaned.split()) <= 2 and compact in {
+        "BE", "TIME", "RESPONSIBLE", "PAID", "ACTIONS", "STEPS", "PERSON", "FEES", "CLIENT", "AGENCY"
+    }:
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:client\s+steps?|agency\s+actions?|fees?(?:\s+to\s+be(?:\s+paid)?)?|"
+            r"processing(?:\s+time)?|person(?:\s+responsible)?|responsible(?:\s+personnel)?|"
+            r"to\s+be(?:\s+paid)?)",
+            cleaned,
+            flags=re.I,
+        )
+    )
+
+
+def _is_fake_header_step_cells(cells: list[str]) -> bool:
+    meaningful = [cell for cell in cells if cell and cell != NEEDS_REVIEW]
+    if not meaningful:
+        return True
+    fragment_hits = sum(1 for cell in meaningful if _is_header_fragment(cell))
+    if fragment_hits >= max(2, len(meaningful) - 1):
+        return True
+    joined = " ".join(meaningful).casefold()
+    if re.search(r"\bbe\b", joined) and re.search(r"\btime\b", joined) and re.search(
+        r"\bresponsible\b", joined
+    ):
+        return True
+    return False
+
+
 def _is_header_noise(value: str) -> bool:
+    """True for charter table header cells — not for pipe-delimited data rows.
+
+    Do not call is_noise_service_title here: that helper rejects titles containing
+    '|', which would drop every valid CLIENT STEPS / requirements table row.
+    """
+    if _is_header_fragment(value):
+        return True
     compact = re.sub(r"[^A-Z]", "", value.upper())
     if not compact:
         return False
     header_tokens = {
         "CLIENTSTEPS",
         "AGENCYACTIONS",
-        "AGENCY",
         "ACTIONSPAID",
         "FEESTOBEPAID",
+        "FEESTOBE",
         "PROCESSINGTIME",
         "RESPONSIBLEPERSON",
         "RESPONSIBLEPERSONNEL",
+        "PERSONRESPONSIBLE",
         "CHECKLISTOFREQUIREMENTS",
         "WHERETOSECURE",
+        "TYPEOFTRANSACTION",
+        "WHOMAYAVAIL",
+        "OFFICEORDIVISION",
     }
-    return compact in header_tokens or any(token in compact for token in header_tokens)
+    if compact in header_tokens or any(token in compact for token in header_tokens):
+        return True
+    return False
 
 
 def _extract_explicit_steps(block: str) -> list[Step]:
@@ -885,68 +1219,145 @@ def _extract_explicit_steps(block: str) -> list[Step]:
         value = clean_ocr_text(body[start:end].strip(" ;,"), remove_table_headers=True)
         lowered = value.lower()
         if value and len(value) >= 8 and "fiica" not in lowered and "fica or" not in lowered:
-            steps.append(Step(client_step=value, processing_time=processing_time, responsible_personnel=responsible))
+            if not _is_header_fragment(value):
+                steps.append(Step(client_step=value, processing_time=processing_time, responsible_personnel=responsible))
     return steps
 
 
 def _extract_total(block: str, service: str) -> str:
-    explicit = _first([r"Total\s*:\s*([^\n]+)", r"Processing\s+Time\s*:\s*([^\n]+)"], block, default="")
-    if explicit:
-        return explicit
-    return NEEDS_REVIEW
+    """Return total processing time; store fees separately via _parse_total_line when needed."""
+    explicit = _first(
+        [
+            r"Total\s*[:\|]?\s*([^\n]+)",
+            r"Processing\s+Time\s*:\s*([^\n]+)",
+        ],
+        block,
+        default="",
+    )
+    if not explicit:
+        return NEEDS_REVIEW
+    _fees, processing = _parse_total_line(explicit)
+    return processing if processing != NEEDS_REVIEW else explicit
 
 
-def parse_form_document(text: str) -> dict[str, Any]:
+def _parse_total_line(value: str) -> tuple[str, str]:
+    """Split TOTAL line into (fees, processing_time)."""
+    text = clean_ocr_text(value, remove_table_headers=True).strip(" |:-")
+    if not text:
+        return NEEDS_REVIEW, NEEDS_REVIEW
+
+    # TOTAL: None | 4 minutes
+    # TOTAL:P30.00/unit 25 minutes
+    # TOTAL None 15 minutes
+    # TOTAL: 1-3 days, 1 hr and 45 minutes
+    fee = NEEDS_REVIEW
+    processing = NEEDS_REVIEW
+
+    time_unit = r"(?:minutes?|mins?|hours?|hrs?|days?|seconds?)"
+    time_atom = (
+        rf"(?:\d+\s+and\s+1/2|\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?)\s*{time_unit}"
+        rf"(?:\s+and\s+\d+(?:\.\d+)?\s*{time_unit})?"
+    )
+    time_matches = list(re.finditer(time_atom, text, flags=re.I))
+    if time_matches:
+        start = time_matches[0].start()
+        end = time_matches[0].end()
+        for match in time_matches[1:]:
+            between = text[end : match.start()]
+            if re.fullmatch(r"[\s,;/|]+", between or ""):
+                end = match.end()
+            else:
+                break
+        processing = clean_ocr_text(text[start:end]).strip(" ,;/")
+        remainder = (text[:start] + " " + text[end:]).strip(" |:-")
+    else:
+        remainder = text
+
+    fee_match = re.search(
+        r"\b(N\s*/\s*A|N/A|n/a|None|Free|Php\s*[\d,.]+(?:/\w+)?|P\s*[\d,.]+(?:/\w+)?|"
+        r"[\d,.]+(?:/\w+)?)\b",
+        remainder,
+        flags=re.I,
+    )
+    if fee_match:
+        fee = clean_ocr_text(fee_match.group(1)).strip()
+    elif remainder and not re.search(r"\b(?:minute|hour|day|second|hr)\b", remainder, flags=re.I):
+        # leftover non-time text may still be a fee token like "None"
+        cleaned = remainder.strip(" |:-")
+        if cleaned and not _is_header_fragment(cleaned):
+            fee = cleaned
+
+    return fee or NEEDS_REVIEW, processing or NEEDS_REVIEW
+
+
+def parse_form_document(text: str, *, source_document: str = "", preview_file_path: str = "") -> dict[str, Any]:
     cleaned = clean_ocr_text(text)
+    office, office_detection_source = _extract_form_office(cleaned)
+    form_title = _extract_form_name(cleaned)
+    fields = _extract_form_fields(cleaned)
+    options = _extract_form_options(cleaned)
+    options_or_services = _flatten_form_options(options)
     record = FormRecord(
-        office=_extract_form_office(cleaned),
-        form_name=_extract_form_name(cleaned),
+        office=office,
+        office_detection_source=office_detection_source,
+        form_title=form_title,
+        form_name=form_title,
         form_code=_extract_form_code(cleaned),
         revision=_extract_revision(cleaned),
         date=_extract_form_date(cleaned),
         sections=_extract_form_sections(cleaned),
-        fields=_extract_form_fields(cleaned),
-        options=_extract_form_options(cleaned),
+        fields=fields,
+        options=options,
+        options_or_services=options_or_services,
+        requirements=_requirements_from_form_fields(fields),
+        related_services=list(options_or_services),
+        how_to_fill_out=_how_to_fill_out(fields, options_or_services),
+        source_document=source_document,
+        preview_file_path=preview_file_path,
+        raw_extracted_text=cleaned,
         warnings=_duplicate_form_warnings(cleaned),
     )
     return {
         "status": "success",
-        "document_type": "form",
+        "document_type": "requirement",
+        "display_document_type": "Requirement / Form Document",
         "form": record.to_dict(),
         "cleaned_text": cleaned,
     }
 
 
-def _extract_form_office(text: str) -> str:
-    if _has_information_technology_services_header(text):
-        return "Information & Communication Technology Services"
-
+def _extract_form_office(text: str) -> tuple[str, str]:
     labeled = _first([
         r"(?:Office|Department|Unit|Division)\s*[:\-]\s*([^\n|]+)",
     ], text, default="")
     if _looks_like_field_value(labeled) and not _is_fillable_field_label(labeled):
-        return labeled
+        return labeled, "extracted_from_document"
 
     for line in _clean_lines(text)[:12]:
-        if re.search(r"\b(?:Office|Department|Division|Unit|Services?)\b", line, flags=re.I):
-            if (
-                not _is_fillable_field_line(line)
-                and not _is_footer_or_copy_line(line)
-                and not _clean_form_title(line)
-            ):
-                return _trim_form_value(line)
+        candidate = _office_header_candidate(line)
+        if candidate:
+            return candidate, "extracted_from_document"
 
-    return NEEDS_REVIEW
+    return NEEDS_REVIEW, "unknown"
 
 
-def _has_information_technology_services_header(text: str) -> bool:
-    for line in _clean_lines(text)[:8]:
-        if _clean_form_title(line):
-            continue
-        normalized = re.sub(r"[^A-Z]+", " ", line.upper())
-        if all(token in normalized for token in ["INFORMATION", "COMMUNICATION", "TECHNOLOGY", "SERVICES"]):
-            return True
-    return False
+def _office_header_candidate(line: str) -> str:
+    cleaned = _trim_form_value(line)
+    if not cleaned:
+        return ""
+    if re.search(r"\b(?:Office|Department|Division|Unit|Services?)\b", cleaned, flags=re.I):
+        if (
+            not _is_fillable_field_line(cleaned)
+            and not _is_footer_or_copy_line(cleaned)
+            and not _clean_form_title(cleaned)
+        ):
+            return _title_case_preserving_acronyms(cleaned)
+
+    words = re.findall(r"[A-Za-z]+", cleaned)
+    if 2 <= len(words) <= 8 and re.search(r"\b(?:Services?|Office|Department|Division|Unit)\b", cleaned, flags=re.I):
+        if not _is_fillable_field_line(cleaned) and not _clean_form_title(cleaned):
+            return _title_case_preserving_acronyms(cleaned)
+    return ""
 
 
 def _extract_form_name(text: str) -> str:
@@ -1042,14 +1453,6 @@ def _strip_government_location_title_prefix(value: str) -> str:
 
 
 def _extract_form_code(text: str) -> str:
-    lspu_icts = re.search(
-        r"\bLSPU[-\s]*ICTS[-\s]*S[F5][-\s]*(\d{3})\b",
-        clean_ocr_text(text),
-        flags=re.I,
-    )
-    if lspu_icts:
-        return f"LSPU-ICTS-SF-{lspu_icts.group(1)}"
-
     standard_code = re.search(
         r"\b([A-Z]{2,8})[-\s]+([A-Z0-9]{2,8})[-\s]+S[F5][-\s]*(\d{3})\b",
         clean_ocr_text(text),
@@ -1149,14 +1552,10 @@ def _normalize_form_section_candidate(value: str) -> str:
     cleaned = re.sub(r"\b9\b", "S", cleaned, flags=re.I)
     normalized = re.sub(r"[^A-Za-z]+", " ", cleaned)
     normalized = re.sub(r"\bREQVESTED\b", "Requested", normalized, flags=re.I)
-    if re.search(r"\bICT\b", normalized, flags=re.I) and re.search(r"\bServices?\b", normalized, flags=re.I) and re.search(r"\bRequested\b", normalized, flags=re.I):
-        return "ICT Services Requested"
-    if re.match(r"^\s*SERVICE\s+REPORT\b", normalized.strip(), flags=re.I):
-        return "Service Report"
-    if re.match(r"^\s*SERVICE\s+ASSESSMENT\b", normalized.strip(), flags=re.I):
-        return "Service Assessment"
-    if re.match(r"^\s*COMPLIANCE\s+ACKNOWLEDGEMENT\b", normalized.strip(), flags=re.I):
-        return "Compliance Acknowledgement"
+    normalized = re.sub(r"\b([A-Za-z]+)\s+S\s+(Requested|Needed)\b", r"\1s \2", normalized, flags=re.I)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if normalized and _looks_like_form_section_heading(normalized):
+        return _title_case_preserving_acronyms(normalized)
     return cleaned
 
 
@@ -1199,18 +1598,6 @@ def _field_labels_from_line(line: str) -> list[str]:
             if label:
                 labels.append(label)
 
-    for label in [
-        "Name",
-        "College/Office",
-        "Date",
-        "User Name",
-        "Description",
-        "Requestor Signature",
-        "Approved",
-        "Approved By",
-    ]:
-        if re.search(rf"^\s*{re.escape(label)}\s*(?:[:_]|$)", line, flags=re.I):
-            labels.append(label)
     return labels
 
 
@@ -1239,21 +1626,45 @@ def _extract_form_options(text: str) -> dict[str, list[str]]:
     options: dict[str, list[str]] = {}
     current_key = ""
     for line in _clean_lines(text):
+        if _is_form_boilerplate(line) or _is_footer_metadata_line(line):
+            continue
         label_match = re.search(r"\b(Type\s+of\s+[A-Za-z /]+|[A-Za-z /]+)\s*[:\-]\s*(.*)$", line, flags=re.I)
         if label_match:
             possible_label = _clean_option_group_label(label_match.group(1))
-            if possible_label and re.search(r"\b(type|status|category|mode|purpose|request|requested|account|service|services|needed)\b", possible_label, flags=re.I):
+            if possible_label and _is_option_block_terminator(possible_label):
+                current_key = ""
+                continue
+            if possible_label and _is_option_group_label(possible_label):
                 current_key = _snake_key(possible_label)
                 trailing = label_match.group(2)
                 found = _option_values_from_line(trailing)
+                if not found:
+                    found = _delimited_option_values(trailing)
                 if found:
                     options.setdefault(current_key, [])
                     options[current_key].extend(found)
+                    if any(_is_other_specify_option(value) for value in found):
+                        current_key = ""
                 continue
+        if re.search(r"\bplease\s+check\s+(?:all\s+)?applicable\b", line, flags=re.I):
+            current_key = "options_or_services"
+            continue
         found = _option_values_from_line(line)
         if current_key and found:
             options.setdefault(current_key, [])
             options[current_key].extend(found)
+            if any(_is_other_specify_option(value) for value in found):
+                current_key = ""
+            continue
+        if _looks_like_form_section_heading(_normalize_form_section_candidate(line)) or _is_option_block_terminator(line):
+            current_key = ""
+            continue
+        if current_key and _looks_like_standalone_option_line(line):
+            found = _standalone_option_values(line)
+            options.setdefault(current_key, [])
+            options[current_key].extend(found)
+            if any(_is_other_specify_option(value) for value in found):
+                current_key = ""
     return {key: _unique_preserve_order(values) for key, values in options.items() if values}
 
 
@@ -1262,9 +1673,43 @@ def _option_group_label_from_line(line: str) -> str:
     if not label_match:
         return ""
     label = _clean_option_group_label(label_match.group(1))
-    if label and re.search(r"\b(type|status|category|mode|purpose|request|requested|account|service|services|needed)\b", label, flags=re.I):
+    if label and _is_option_group_label(label):
         return label
     return ""
+
+
+def _is_option_group_label(label: str) -> bool:
+    if _is_option_block_terminator(label):
+        return False
+    return bool(re.search(
+        r"\b(type|status|category|mode|purpose|request|requested|account|service|services|needed|applicable|option)\b",
+        label,
+        flags=re.I,
+    ))
+
+
+def _is_option_block_terminator(value: str) -> bool:
+    cleaned = _trim_form_value(value)
+    normalized = re.sub(r"[^a-z]+", " ", cleaned.lower()).strip()
+    if _is_role_only_label(cleaned):
+        return True
+    if normalized in {
+        "requested by",
+        "requestor signature",
+        "requester signature",
+        "received by",
+        "approved by",
+        "printed name signature",
+        "signature over printed name",
+        "remarks",
+        "comments",
+    }:
+        return True
+    return bool(re.search(
+        r"\b(?:requested|received|approved)\s+by\b|\bsignature\b|\bassessment\b|\brat(?:e|ing)\b|\bremarks?\b",
+        cleaned,
+        flags=re.I,
+    ))
 
 
 def _clean_option_group_label(value: str) -> str:
@@ -1286,10 +1731,78 @@ def _option_values_from_line(line: str) -> list[str]:
     values = [value for value in values if value]
     if values:
         return values
-    if re.search(r"\b(?:Email|WiFi|Intranet|Others?|New Account|Reset Password|Activate Account|Deactivate Account|Photo/Video Coverage|Internet Connection|Visual Presentation Support|Encoding)\b", line, flags=re.I):
-        parts = re.split(r"\s{2,}|[;|,]", line)
-        return [_clean_option_value(part) for part in parts if _clean_option_value(part)]
+    bracket_pattern = r"\[\s*([A-Za-z][A-Za-z0-9 /&().'-]{1,35})\s*\]"
+    values = [_clean_option_value(match.group(1)) for match in re.finditer(bracket_pattern, line)]
+    values = [value for value in values if value and not re.fullmatch(r"[xX/]", value)]
+    if values:
+        return values
     return []
+
+
+def _delimited_option_values(value: str) -> list[str]:
+    if not value or re.search(r"_{2,}", value):
+        return []
+    if not re.search(r"\s{2,}|\||,|;", value):
+        return []
+    parts = re.split(r"\s{2,}|\||,|;", value)
+    return [_clean_option_value(part) for part in parts if _clean_option_value(part)]
+
+
+def _looks_like_standalone_option_line(line: str) -> bool:
+    value = _trim_form_value(line).strip(" -")
+    if not value or len(value) > 80:
+        return False
+    if _is_option_block_terminator(value):
+        return False
+    if re.search(r"\b(?:when|date|time|venue)\s+(?:needed|required)\b", value, flags=re.I):
+        return False
+    if _is_fillable_field_line(value) or _is_form_boilerplate(value) or _is_footer_or_copy_line(value):
+        return False
+    if ":" in value:
+        return False
+    if re.match(r"^(?:[A-Z]\.|\d+\.)\s+", value):
+        return True
+    words = re.findall(r"[A-Za-z][A-Za-z0-9/&().'-]*", value)
+    if not (1 <= len(words) <= 5):
+        return False
+    return bool(re.search(r"[A-Za-z]{3,}", value))
+
+
+def _standalone_option_values(line: str) -> list[str]:
+    value = re.sub(r"^(?:[A-Z]\.|\d+\.)\s+", "", _trim_form_value(line).strip(" -"))
+    delimited = _delimited_option_values(value)
+    if delimited:
+        return delimited
+    cleaned = _clean_option_value(value)
+    return [cleaned] if cleaned else []
+
+
+def _is_other_specify_option(value: str) -> bool:
+    normalized = re.sub(r"[^a-z]+", " ", value.lower()).strip()
+    return bool(re.search(r"\b(?:others?|orhers?)\b", normalized) and re.search(r"\bspec(?:ify|ilyl|ily)\b", normalized))
+
+
+def _flatten_form_options(options: dict[str, list[str]]) -> list[str]:
+    values: list[str] = []
+    for option_values in options.values():
+        values.extend(option_values)
+    return _unique_preserve_order(values)
+
+
+def _requirements_from_form_fields(fields: list[str]) -> list[str]:
+    return _unique_preserve_order([field for field in fields if field and field != NEEDS_REVIEW])
+
+
+def _how_to_fill_out(fields: list[str], options_or_services: list[str]) -> list[str]:
+    instructions = ["Fill in the required requester information."]
+    if options_or_services:
+        instructions.append("Select the applicable service option if available.")
+    if any(re.search(r"\bdescription\b", field, flags=re.I) for field in fields):
+        instructions.append("Provide a description if the form includes a description field.")
+    if any(re.search(r"\bsignature|signed|sign\b", field, flags=re.I) for field in fields):
+        instructions.append("Sign the form if a signature field is present.")
+    instructions.append("Submit the completed form to the indicated office.")
+    return instructions
 
 
 def _line_is_checkbox_options(line: str) -> bool:
@@ -1327,7 +1840,7 @@ def _is_fillable_field_label(value: str) -> bool:
         "item received",
         "date received",
         "description of the problem",
-        "assigned icts personnel",
+        "assigned personnel",
         "expected finish date/time",
         "endorsement",
         "event title",
@@ -1470,7 +1983,26 @@ def normalize_inline_spaces(value: str) -> str:
 def _title_case_preserving_acronyms(value: str) -> str:
     words = []
     small_words = {"and", "or", "of", "for", "to", "the", "a", "an"}
-    known_terms = {"wifi": "WiFi", "ict": "ICT", "icts": "ICTS", "lspu": "LSPU"}
+    acronym_stop_words = {
+        "USER",
+        "FORM",
+        "TYPE",
+        "DATE",
+        "NAME",
+        "TIME",
+        "PAGE",
+        "COPY",
+        "REV",
+        "AND",
+        "OF",
+        "FOR",
+        "THE",
+    }
+    known_terms = {
+        term.lower(): term
+        for term in re.findall(r"\b[A-Z]{2,4}\b", value)
+        if term not in acronym_stop_words
+    }
     for index, word in enumerate(value.split()):
         stripped = re.sub(r"[^A-Za-z0-9]", "", word)
         lowered = stripped.lower()
@@ -1487,7 +2019,7 @@ def _title_case_preserving_acronyms(value: str) -> str:
 
 def _is_form_boilerplate(value: str) -> bool:
     return bool(re.search(
-        r"\b(?:Republic|Philippines|State|Polytechnic|University|Campus|ICT Services|Form Code|Document Code|Revision|REV|Effectivity|Page)\b",
+        r"\b(?:Republic|Philippines|State|Polytechnic|University|Campus|Form Code|Document Code|Revision|REV|Effectivity|Page)\b",
         value,
         flags=re.I,
     ))
@@ -1543,6 +2075,7 @@ def _is_known_form_field_label(value: str) -> bool:
         "requested by",
         "received by",
         "approved by",
+        "approved",
         "name",
         "date",
         "venue",
@@ -1599,7 +2132,7 @@ def _canonical_field_label(value: str) -> str:
         "item received": "Item Received",
         "date received": "Date Received",
         "description of the problem": "Description of the Problem",
-        "assigned icts personnel": "Assigned ICTS Personnel",
+        "assigned personnel": "Assigned Personnel",
         "expected finish date/time": "Expected Finish Date/Time",
         "endorsement": "Endorsement",
         "nomo": "Name",
@@ -1619,9 +2152,9 @@ def parse_structured_document(text: str) -> dict[str, Any]:
         return parse_form_document(cleaned)
 
     services: list[ServiceRecord] = []
-    for block in _service_blocks(cleaned):
+    for block in _service_blocks(cleaned, document_type=document_type):
         has_service_label = re.search(
-            r"\b(?:Office\s*(?:or)?\s*Division|Service|Requirements?|Steps)\s*:",
+            r"\b(?:Office\s*(?:or)?\s*Division|Service|Requirements?|Steps|CLIENT\s+STEPS|Checklist\s+of\s+Requirements)\s*[:|]?",
             block,
             flags=re.I,
         )
@@ -1629,31 +2162,123 @@ def parse_structured_document(text: str) -> dict[str, Any]:
             continue
 
         service = _extract_service_name(block)
+        try:
+            from app.services.citizen_charter_services import is_artifact_charter_title
+
+            # Drop named artifacts only. Untitled blocks may still be recovered later.
+            if (
+                document_type == "citizen_charter"
+                and service
+                and service != NEEDS_REVIEW
+                and is_artifact_charter_title(service)
+            ):
+                continue
+        except Exception:
+            pass
+
+        total_raw = _first(
+            [r"Total\s*[:\|]?\s*([^\n]+)", r"Processing\s+Time\s*:\s*([^\n]+)"],
+            block,
+            default="",
+        )
+        total_fees, total_processing = _parse_total_line(total_raw) if total_raw else (NEEDS_REVIEW, NEEDS_REVIEW)
+        if total_processing == NEEDS_REVIEW and total_raw:
+            total_processing = total_raw
+
+        requirements = _extract_requirements(block)
+        steps = _extract_steps(block, service)
+        cleaned_block = clean_ocr_text(block, remove_table_headers=True)
+        dropped_headers = [
+            token
+            for token in (
+                "CLIENT STEPS",
+                "AGENCY ACTIONS",
+                "FEES TO BE PAID",
+                "PROCESSING TIME",
+                "PERSON RESPONSIBLE",
+                "BE",
+                "TIME",
+                "RESPONSIBLE",
+            )
+            if re.search(rf"\b{re.escape(token)}\b", block, flags=re.I)
+            and not re.search(rf"\b{re.escape(token)}\b", cleaned_block, flags=re.I)
+        ]
+        rejected_fake_steps = 0
+        # Count potential header-only rows that were present before filtering.
+        for line in block.splitlines():
+            if "|" not in line:
+                continue
+            cells = [c.strip() for c in line.split("|") if c.strip()]
+            if _is_fake_header_step_cells(cells):
+                rejected_fake_steps += 1
+
         record = ServiceRecord(
             office=_extract_office(block),
             service=service,
-            classification=_first([r"Classification\s*[:\-]?\s*\|?\s*([^|\n]+)", r"\b(Simple)\b"], block),
-            transaction_type=_first([r"Transaction\s*[:\-]?\s*\|?\s*([Gg]\d[GgCc](?:\s*/\s*[Gg]\d[GgCc])?)", r"\b(G2G\s*G2C|G2C|G2G)\b"], block),
+            classification=_first(
+                [r"Classification\s*[:\-]?\s*\|?\s*([^|\n]+)", r"\b(Simple|Complex|Highly\s+Technical)\b"],
+                block,
+            ),
+            transaction_type=_first(
+                [
+                    r"Type\s+of\s+Transaction\s*[:\-]?\s*\|?\s*([^|\n]+)",
+                    r"Transaction\s*[:\-]?\s*\|?\s*([Gg]\d[GgCc](?:\s*/\s*[Gg]\d[GgCc])?)",
+                    r"\b(G2G\s*G2C|G2C|G2G)\b",
+                ],
+                block,
+            ),
             who_may_avail=_extract_who_may_avail(block),
-            requirements=_extract_requirements(block),
-            steps=_extract_steps(block, service),
-            total_processing_time=_extract_total(block, service),
+            requirements=requirements,
+            steps=steps,
+            total_processing_time=total_processing,
+            total_fees=total_fees,
+            parser_debug={
+                "raw_service_block": block[:4000],
+                "cleaned_service_block": cleaned_block[:4000],
+                "dropped_header_fragments": dropped_headers,
+                "reconstructed_step_rows": len(steps),
+                "rejected_fake_steps": rejected_fake_steps,
+                "requirement_pairs_detected": len(requirements or []),
+                "total_line_detected": bool(total_raw),
+            },
         )
         services.append(record)
-    if not services:
-        services.append(ServiceRecord(requirements=[Requirement()], steps=[Step()]))
-    return {
+
+    service_dicts = [s.to_dict() for s in services]
+    charter_dropped_noise = 0
+    charter_merged_splits = 0
+    if document_type == "citizen_charter":
+        from app.services.citizen_charter_services import merge_charter_services
+
+        raw_block_count = len(service_dicts)
+        service_dicts = merge_charter_services(service_dicts)
+        if service_dicts:
+            charter_dropped_noise = int(service_dicts[0].get("_charter_dropped_noise") or 0)
+            charter_merged_splits = int(service_dicts[0].get("_charter_merge_events") or 0)
+        else:
+            charter_dropped_noise = raw_block_count
+
+    if not service_dicts:
+        service_dicts = [ServiceRecord(requirements=[Requirement()], steps=[Step()]).to_dict()]
+    result = {
         "status": "success",
         "document_type": document_type,
-        "services": [s.to_dict() for s in services],
+        "services": service_dicts,
         "cleaned_text": cleaned,
     }
+    if document_type == "citizen_charter":
+        result["charter_dropped_noise"] = charter_dropped_noise
+        result["charter_merged_splits"] = charter_merged_splits
+        result["charter_detected_blocks"] = (
+            len(service_dicts) + charter_merged_splits + charter_dropped_noise
+        )
+    return result
 
 
 def format_structured_document(parsed: dict[str, Any] | str) -> str:
     if isinstance(parsed, str):
         parsed = parse_structured_document(parsed)
-    if parsed.get("document_type") == "form":
+    if parsed.get("document_type") in {"form", "requirement"} and parsed.get("form"):
         return _format_form_document(parsed)
 
     out: list[str] = []
@@ -1682,12 +2307,16 @@ def format_structured_document(parsed: dict[str, Any] | str) -> str:
 def _format_form_document(parsed: dict[str, Any]) -> str:
     form = parsed.get("form", {})
     out = [
-        "Document Type: form",
-        f"Office: {form.get('office', NEEDS_REVIEW)}",
-        f"Form Name: {form.get('form_name', NEEDS_REVIEW)}",
-        f"Form Code: {form.get('form_code', NEEDS_REVIEW)}",
-        f"Revision: {form.get('revision', NEEDS_REVIEW)}",
-        f"Date: {form.get('date', NEEDS_REVIEW)}",
+        "Document Type:",
+        f"  {form.get('display_document_type') or 'Requirement / Form Document'}",
+        "",
+        "Basic Information:",
+        f"  - Form Title: {form.get('form_title') or form.get('form_name', NEEDS_REVIEW)}",
+        f"  - Office: {form.get('office', NEEDS_REVIEW)}",
+        f"  - Office Detection Source: {form.get('office_detection_source', 'unknown')}",
+        f"  - Form Code: {form.get('form_code', NEEDS_REVIEW)}",
+        f"  - Revision: {form.get('revision', NEEDS_REVIEW)}",
+        f"  - Date: {form.get('date', NEEDS_REVIEW)}",
     ]
     warnings = form.get("warnings") or []
     if warnings:
@@ -1701,14 +2330,34 @@ def _format_form_document(parsed: dict[str, Any]) -> str:
             out.append(f"  - {section}")
     fields = form.get("fields") or []
     if fields:
-        out.append("Fields:")
+        out.append("Fields / Required Information:")
         for field_name in fields:
             out.append(f"  - {field_name}")
-    options = form.get("options") or {}
-    if options:
-        out.append("Options:")
-        for key, values in options.items():
-            out.append(f"  - {key}: " + ", ".join(values))
+    options_or_services = form.get("options_or_services") or _flatten_form_options(form.get("options") or {})
+    out.append("Options / Services:")
+    if options_or_services:
+        for option in options_or_services:
+            out.append(f"  - {option}")
+    else:
+        out.append("  - None found in the uploaded document.")
+    requirements = form.get("requirements") or _requirements_from_form_fields(fields)
+    out.append("Generated Requirements:")
+    if requirements:
+        for requirement in requirements:
+            out.append(f"  - {requirement}")
+    else:
+        out.append("  - None found in the uploaded document.")
+    how_to_fill_out = form.get("how_to_fill_out") or _how_to_fill_out(fields, options_or_services)
+    out.append("How to Fill Out:")
+    for instruction in how_to_fill_out:
+        out.append(f"  - {instruction}")
+    related_services = form.get("related_services") or list(options_or_services)
+    out.append("Related Services:")
+    if related_services:
+        for service in related_services:
+            out.append(f"  - {service}")
+    else:
+        out.append("  - None found in the uploaded document.")
     return "\n".join(out).strip()
 
 
@@ -1720,7 +2369,7 @@ def parse_document(text: str) -> dict[str, Any]:
 def structure_text(text: str) -> str:
     return format_structured_document(parse_structured_document(text))
 
-def build_structured_document(text: str) -> StructuredDocument:
+def build_structured_document(text: str, *, source_document: str = "", preview_file_path: str = "") -> StructuredDocument:
     """
     Basic fallback structured parser.
 
@@ -1728,18 +2377,30 @@ def build_structured_document(text: str) -> StructuredDocument:
     pipeline a valid structured document format.
     """
     parsed = parse_structured_document(text)
+    if parsed.get("document_type") in {"form", "requirement"} and parsed.get("form"):
+        parsed["form"]["source_document"] = source_document
+        parsed["form"]["preview_file_path"] = preview_file_path
     formatted = _mark_unclear_words(format_structured_document(parsed))
-    if parsed.get("document_type") == "form":
+    if parsed.get("document_type") in {"form", "requirement"} and parsed.get("form"):
         form = parsed.get("form", {})
         fields: list[DocumentField] = [
-            DocumentField("Document Type", "text", value="form"),
+            DocumentField("Document Type", "text", value="requirement"),
+            DocumentField("Display Document Type", "text", value=form.get("display_document_type", "Requirement / Form Document")),
+            DocumentField("Form Title", "text", value=_mark_unclear_words(form.get("form_title") or form.get("form_name", NEEDS_REVIEW))),
             DocumentField("Office", "text", value=_mark_unclear_words(form.get("office", NEEDS_REVIEW))),
+            DocumentField("Office Detection Source", "text", value=form.get("office_detection_source", "unknown")),
             DocumentField("Form Name", "text", value=_mark_unclear_words(form.get("form_name", NEEDS_REVIEW))),
             DocumentField("Form Code", "text", value=_mark_unclear_words(form.get("form_code", NEEDS_REVIEW))),
             DocumentField("Revision", "text", value=_mark_unclear_words(form.get("revision", NEEDS_REVIEW))),
             DocumentField("Date", "text", value=_mark_unclear_words(form.get("date", NEEDS_REVIEW))),
             DocumentField("Sections", "list", items=[_mark_unclear_words(item) for item in form.get("sections", [])] or []),
             DocumentField("Fields", "list", items=[_mark_unclear_words(item) for item in form.get("fields", [])] or []),
+            DocumentField("Options / Services", "list", items=[_mark_unclear_words(item) for item in form.get("options_or_services", [])] or []),
+            DocumentField("Generated Requirements", "list", items=[_mark_unclear_words(item) for item in form.get("requirements", [])] or []),
+            DocumentField("How to Fill Out", "list", items=[_mark_unclear_words(item) for item in form.get("how_to_fill_out", [])] or []),
+            DocumentField("Related Services", "list", items=[_mark_unclear_words(item) for item in form.get("related_services", [])] or []),
+            DocumentField("Source Document", "text", value=form.get("source_document", "")),
+            DocumentField("Preview File Path", "text", value=form.get("preview_file_path", "")),
         ]
         for key, values in (form.get("options") or {}).items():
             fields.append(DocumentField(f"Options: {key}", "list", items=[_mark_unclear_words(item) for item in values]))

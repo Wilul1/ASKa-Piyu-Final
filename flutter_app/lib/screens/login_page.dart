@@ -126,19 +126,8 @@ class _LoginPageState extends State<LoginPage> {
                   _ErrorBanner(message: _error!),
                 ],
                 const SizedBox(height: 22),
-                ElevatedButton.icon(
+                ElevatedButton(
                   onPressed: _loading ? null : _submit,
-                  icon: _loading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.login_rounded),
-                  label: Text(_loading ? 'Logging in...' : 'Login'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: DesignTokens.maroon,
                     foregroundColor: Colors.white,
@@ -148,6 +137,16 @@ class _LoginPageState extends State<LoginPage> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
+                  child: _loading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(_loading ? 'Logging in...' : 'Login'),
                 ),
                 const SizedBox(height: 12),
                 TextButton(

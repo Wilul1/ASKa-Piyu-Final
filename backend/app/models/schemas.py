@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -49,6 +49,21 @@ class KnowledgeValidationReportSchema(BaseModel):
     status: str
 
 
+class DocumentTypeDetectionSchema(BaseModel):
+    document_type: Literal[
+        "information",
+        "procedure",
+        "requirement",
+        "citizen_charter",
+        "service_process",
+    ]
+    reason: str
+    scores: dict[str, int] = Field(default_factory=dict)
+    manual_override: bool = False
+    admin_selected_document_type: str | None = None
+    parser_kind: str | None = None
+
+
 class KnowledgeUnitSchema(BaseModel):
     unit_index: int
     title: str
@@ -82,6 +97,12 @@ class KnowledgeBaseStatisticsSchema(BaseModel):
     vector_store: str
     last_indexed_document: dict | None = None
     error: str | None = None
+    citation_ready_documents: int | None = None
+    citation_reindex_required: int | None = None
+    chunks_missing_document_id: int | None = None
+    document_type_counts: dict[str, int] = Field(default_factory=dict)
+    article_type_counts: dict[str, int] = Field(default_factory=dict)
+    indexed_documents: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # --- Admin: knowledge base creation (OCR → ChromaDB) ---
@@ -93,6 +114,10 @@ class ExtractDocumentResponse(BaseModel):
     status: str = "success"
     flow: str = "admin_extraction"
     document_type: str
+    document_profile: str | None = None
+    admin_selected_document_type: str | None = None
+    parser_document_type: str | None = None
+    source_type: str | None = None
     raw_text: str = Field(..., description="Raw OCR/PDF extraction before final review")
     cleaned_text: str = Field(..., description="Deterministically cleaned extraction")
     review_text: str = Field(..., description="Draft text admin should review before indexing")
@@ -104,9 +129,18 @@ class ExtractDocumentResponse(BaseModel):
     structured: StructuredDocumentSchema
     diagnostic_report: dict | None = None
     validation_report: KnowledgeValidationReportSchema | None = None
+    detected_document_type: DocumentTypeDetectionSchema | None = None
     knowledge_units: list[KnowledgeUnitSchema] = Field(default_factory=list)
     chunk_preview: list[ChunkPreviewSchema] = Field(default_factory=list)
     kb_statistics: KnowledgeBaseStatisticsSchema | None = None
+    # Citizen's Charter Extraction V2 (compact — no raw word geometry).
+    charter_v2_services: list[dict[str, Any]] = Field(default_factory=list)
+    charter_v2_detected_count: int = 0
+    charter_v2_clean_count: int = 0
+    charter_v2_needs_review_count: int = 0
+    charter_v2_low_quality_count: int = 0
+    charter_v2_rag_only_count: int = 0
+    charter_v2_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class IngestKnowledgeBaseResponse(BaseModel):
@@ -127,6 +161,7 @@ class IngestKnowledgeBaseResponse(BaseModel):
     structured: StructuredDocumentSchema
     diagnostic_report: dict | None = None
     validation_report: KnowledgeValidationReportSchema | None = None
+    detected_document_type: DocumentTypeDetectionSchema | None = None
     knowledge_units: list[KnowledgeUnitSchema] = Field(default_factory=list)
     chunk_preview: list[ChunkPreviewSchema] = Field(default_factory=list)
     kb_statistics: KnowledgeBaseStatisticsSchema | None = None
@@ -198,6 +233,39 @@ class QASourceSchema(BaseModel):
     page: int | None = None
     page_range: str | None = None
     matching_sections: int | None = None
+    # Level-2 citation grounding
+    citation_id: str | None = None
+    document_id: str | None = None
+    source_filename: str | None = None
+    source_section: str | None = None
+    page_number: int | None = None
+    source_excerpt: str | None = None
+    source_view_url: str | None = None
+    source_page_url: str | None = None
+    source_label: str | None = None
+    pdf_available: bool | None = None
+    citation_note: str | None = None
+
+
+class QACitationSchema(BaseModel):
+    citation_id: str
+    document_id: str | None = None
+    source_filename: str | None = None
+    source_section: str | None = None
+    page_number: int | None = None
+    source_excerpt: str | None = None
+    source_view_url: str | None = None
+    source_page_url: str | None = None
+    source_label: str | None = None
+    title: str | None = None
+    path: str | None = None
+    pdf_available: bool | None = None
+    citation_note: str | None = None
+    # Level-3 ready (optional / usually null for Level 2)
+    bbox: list[float] | None = None
+    page_width: float | None = None
+    page_height: float | None = None
+    text_position: dict[str, Any] | None = None
 
 
 class QARetrievedChunkSchema(BaseModel):
@@ -219,6 +287,7 @@ class QARetrievedChunkSchema(BaseModel):
 class QAAskResponse(BaseModel):
     answer: str
     sources: list[QASourceSchema] = Field(default_factory=list)
+    citations: list[QACitationSchema] = Field(default_factory=list)
     confidence: str = Field(..., pattern="^(high|medium|low)$")
     retrieved_chunks: list[QARetrievedChunkSchema] | None = None
     normalized_query: str | None = None
@@ -240,6 +309,26 @@ class QAAskResponse(BaseModel):
     fallback_reason: str | None = None
     out_of_scope_detected: bool | None = None
     ticket_routing: dict | None = None
+
+
+class DocumentSourceMetaSchema(BaseModel):
+    document_id: str
+    original_filename: str
+    stored_file_path: str | None = None
+    document_type: str | None = None
+    source_label: str | None = None
+    version: str | None = None
+    edition: str | None = None
+    content_type: str | None = None
+    byte_size: int | None = None
+    page_count: int | None = None
+    page_number: int | None = None
+    page_width: float | None = None
+    page_height: float | None = None
+    uploaded_at: str | None = None
+    source_view_url: str
+    source_page_url: str | None = None
+    open_fragment: str | None = None
 
 
 # --- Smart ticketing ---
@@ -332,6 +421,7 @@ class UserSchema(BaseModel):
     full_name: str
     role: UserRole
     office_id: str | None = None
+    office_name: str | None = None
     student_id: str | None = None
     created_at: str
     updated_at: str
@@ -380,3 +470,126 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserSchema
+
+
+# --- Admin: PublishedArticle management ---
+
+
+class AdminPublishedArticleCreate(BaseModel):
+    title: str
+    category: str
+    document_type: str | None = None
+    source_document: str | None = None
+    source_section: str | None = None
+    office: str | None = None
+    summary: str | None = None
+    content: str | None = None
+    requirements: list[str] | None = None
+    steps: list[str] | None = None
+    options_or_services: list[str] | None = None
+    related_articles: list[str] | None = None
+    chunk_ids: list[str] | None = None
+    publish_status: bool = False
+    needs_review: bool = False
+    planner_bucket: str | None = None
+    category_confidence: float | None = None
+    preview_file_path: str | None = None
+    update_existing_id: str | None = None
+    force_create: bool = False
+
+
+class AdminPublishedArticleUpdate(BaseModel):
+    title: str | None = None
+    category: str | None = None
+    document_type: str | None = None
+    source_document: str | None = None
+    source_section: str | None = None
+    office: str | None = None
+    summary: str | None = None
+    content: str | None = None
+    requirements: list[str] | None = None
+    steps: list[str] | None = None
+    options_or_services: list[str] | None = None
+    related_articles: list[str] | None = None
+    chunk_ids: list[str] | None = None
+    publish_status: bool | None = None
+    needs_review: bool | None = None
+    category_confidence: float | None = None
+    preview_file_path: str | None = None
+
+
+class AdminPublishedArticleSchema(BaseModel):
+    id: str
+    title: str
+    slug: str | None = None
+    category: str
+    subcategory: str | None = None
+    path: str | None = None
+    summary: str | None = None
+    content: str | None = None
+    office: str | None = None
+    source_filename: str | None = None
+    chunk_count: int | None = None
+    published: bool
+    published_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    persistence_table: str = "published_articles"
+    persistence_debug: dict[str, Any] | None = None
+    source_section: str | None = None
+    article_type: str | None = None
+    document_type: str | None = None
+
+
+class AdminBulkArticleItem(BaseModel):
+    """One candidate or saved article for bulk draft/publish."""
+
+    preview_id: str | None = None
+    existing_article_id: str | None = None
+    title: str | None = None
+    category: str | None = None
+    document_type: str | None = None
+    source_document: str | None = None
+    source_section: str | None = None
+    office: str | None = None
+    summary: str | None = None
+    content: str | None = None
+    publish_status: bool = False
+    needs_review: bool = False
+    planner_bucket: str | None = None
+    force_create: bool = False
+    update_existing_id: str | None = None
+
+
+class AdminBulkArticlesRequest(BaseModel):
+    articles: list[AdminBulkArticleItem]
+
+
+class AdminBulkArticleResultItem(BaseModel):
+    preview_id: str | None = None
+    success: bool
+    id: str | None = None
+    title: str | None = None
+    published: bool | None = None
+    error: str | None = None
+    code: str | None = None
+    existing: dict[str, Any] | None = None
+
+
+class AdminBulkArticlesResponse(BaseModel):
+    success_count: int
+    failure_count: int
+    results: list[AdminBulkArticleResultItem]
+
+
+class AdminBulkIdsRequest(BaseModel):
+    """Bulk action by existing published_articles ids."""
+
+    article_ids: list[str]
+
+
+class GenerateArticleCandidatesFromPreviewRequest(BaseModel):
+    preview: dict[str, Any]
+    filename: str | None = None
+    max_candidates: int | None = None
+    save_mode: str = "preview_only"

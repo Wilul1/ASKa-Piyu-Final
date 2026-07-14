@@ -103,6 +103,75 @@ def test_ingest_falls_back_to_cleaned_text_when_review_is_only_needs_review(
     assert chunks[0].text.startswith("Service: Enrollment")
 
 
+@patch("app.services.admin.knowledge_base_pipeline.prepare_review_document")
+@patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store")
+@patch("app.services.admin.knowledge_base_pipeline.ingest_document")
+def test_ingest_requirement_does_not_send_raw_extraction_to_chroma(
+    mock_ingest,
+    mock_store,
+    mock_prepare_review,
+):
+    extraction = _extraction()
+    extraction.cleaned_text = "Student Records Request Form\nName: ______\nType of Request: [ ] Transcript"
+    extraction.raw_extracted_text = "NOISY_OCR_SHOULD_NOT_BE_INDEXED"
+    mock_ingest.return_value = extraction
+    mock_prepare_review.return_value = SimpleNamespace(
+        raw_text=extraction.raw_extracted_text,
+        cleaned_text=extraction.cleaned_text,
+        review_text="""
+        Document Type:
+          Requirement / Form Document
+        Basic Information:
+          - Form Title: Student Records Request Form
+          - Office: Registrar
+          - Office Detection Source: extracted_from_document
+          - Form Code: LSPU-REG-SF-100
+          - Revision: REV. 0
+          - Date: August 2016
+        Generated Requirements:
+          - Name
+        Options / Services:
+          - Transcript
+        How to Fill Out:
+          - Fill in the required requester information.
+        Related Services:
+          - Transcript
+        Raw Extraction:
+        NOISY_OCR_SHOULD_NOT_BE_INDEXED
+        """,
+        structuring_method="deterministic",
+    )
+    store = mock_store.return_value
+    store.add_document_chunks.return_value = 1
+    store.collection_statistics.return_value = {
+        "documents_indexed": 1,
+        "total_chunks_indexed": 1,
+        "embedding_model": "ChromaDB default embedding function",
+        "vector_store": "ChromaDB",
+        "last_indexed_document": None,
+    }
+
+    ingest_document_into_knowledge_base(
+        b"%PDF",
+        filename="records.pdf",
+        content_type="application/pdf",
+        document_type="requirement",
+        preview_file_path="previews/records.png",
+    )
+
+    chunks = store.add_document_chunks.call_args.kwargs["chunks"]
+    chunk = chunks[0]
+    metadata = chunk.metadata or {}
+    metadata_blob = " ".join(str(value) for value in metadata.values())
+
+    assert "NOISY_OCR_SHOULD_NOT_BE_INDEXED" not in chunk.text
+    assert "Raw Extraction" not in chunk.text
+    assert "NOISY_OCR_SHOULD_NOT_BE_INDEXED" not in metadata_blob
+    assert metadata["raw_extraction_available"] is True
+    assert metadata["source_document"] == "records.pdf"
+    assert metadata["preview_file_path"] == "previews/records.png"
+
+
 @patch("app.services.admin.knowledge_base_pipeline.knowledge_base_statistics")
 @patch("app.services.admin.knowledge_base_pipeline.prepare_review_document")
 @patch("app.services.admin.knowledge_base_pipeline.ingest_document")
@@ -135,6 +204,43 @@ def test_extract_preview_falls_back_to_cleaned_text_when_review_is_only_needs_re
 
     assert result["review_text"] == extraction.cleaned_text
     assert result["extracted_text"] == extraction.cleaned_text
+
+
+@patch("app.services.admin.knowledge_base_pipeline.knowledge_base_statistics")
+@patch("app.services.admin.knowledge_base_pipeline.ingest_document")
+def test_extract_preview_keeps_raw_ocr_separate_from_clean_review_text(
+    mock_ingest,
+    mock_statistics,
+):
+    extraction = _extraction()
+    extraction.cleaned_text = """
+    Records Office
+    Document Request Form
+    Name: __________________
+    Type of Request: [ ] Transcript
+    """
+    extraction.raw_extracted_text = "NOISY_OCR_FOR_ADMIN_DEBUG_ONLY"
+    mock_ingest.return_value = extraction
+    mock_statistics.return_value = {
+        "documents_indexed": 0,
+        "total_chunks_indexed": 0,
+        "embedding_model": "ChromaDB default embedding function",
+        "vector_store": "ChromaDB",
+        "last_indexed_document": None,
+    }
+
+    result = extract_document_preview(
+        b"%PDF",
+        filename="records.pdf",
+        content_type="application/pdf",
+        document_type="requirement",
+    )
+
+    assert result["raw_text"] == "NOISY_OCR_FOR_ADMIN_DEBUG_ONLY"
+    assert "Raw Extraction" not in result["review_text"]
+    assert "NOISY_OCR_FOR_ADMIN_DEBUG_ONLY" not in result["review_text"]
+    assert "Document Type:" in result["review_text"]
+    assert "Generated Requirements:" in result["review_text"]
 
 
 @patch("app.services.admin.knowledge_base_pipeline.prepare_review_document")

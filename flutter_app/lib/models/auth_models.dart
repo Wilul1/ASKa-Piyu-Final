@@ -4,6 +4,7 @@ class AuthUser {
   final String fullName;
   final String role;
   final String? officeId;
+  final String? officeName;
   final String? studentId;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -14,6 +15,7 @@ class AuthUser {
     required this.fullName,
     required this.role,
     required this.officeId,
+    required this.officeName,
     required this.studentId,
     required this.createdAt,
     required this.updatedAt,
@@ -26,6 +28,7 @@ class AuthUser {
       fullName: (json['full_name'] ?? '').toString(),
       role: (json['role'] ?? 'student').toString(),
       officeId: _nullableString(json['office_id']),
+      officeName: _nullableString(json['office_name']),
       studentId: _nullableString(json['student_id']),
       createdAt: _parseDate(json['created_at']),
       updatedAt: _parseDate(json['updated_at']),

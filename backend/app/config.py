@@ -36,7 +36,14 @@ class Settings(BaseSettings):
     kb_rebuild_document_paths: str | None = None
     ticket_store_path: str = "./data/tickets.json"
     database_url: str | None = None
+    test_database_url: str | None = None
     database_init_on_startup: bool = False
+    # development | test | production — when env=test, active DB must end with _test
+    env: str = "development"
+    # Explicit override for DROP/TRUNCATE/DELETE helpers (never needed for normal tests)
+    allow_destructive_reset: bool = False
+    # Durable storage for original uploaded PDFs (citation / source viewer)
+    documents_persist_dir: str = "./data/documents"
     auth_secret_key: str | None = None
     auth_token_ttl_minutes: int = 60 * 24
     chunk_max_chars: int = 1200

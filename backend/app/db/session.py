@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 from app.db.base import Base
+from app.db.safety import assert_destructive_database_ops_allowed, database_name_from_url
 
 
 def safe_database_url(database_url: str | None = None) -> str | None:
@@ -37,6 +38,12 @@ def get_session_factory() -> sessionmaker[Session]:
     return sessionmaker(bind=get_engine(), autoflush=False, autocommit=False, expire_on_commit=False)
 
 
+def clear_engine_caches() -> None:
+    """Clear cached engine/session factory (used when tests rebind the DB URL)."""
+    get_engine.cache_clear()
+    get_session_factory.cache_clear()
+
+
 def get_db_session() -> Generator[Session, None, None]:
     session = get_session_factory()()
     try:
@@ -46,10 +53,54 @@ def get_db_session() -> Generator[Session, None, None]:
 
 
 def initialize_database(engine: Engine | None = None) -> None:
+    """
+    Create missing tables only.
+
+    Never drops, truncates, or deletes rows (including published_articles).
+    Also applies safe additive column upgrades for citation grounding.
+    """
     from app.models import db_models  # noqa: F401
 
     target_engine = engine or get_engine()
     Base.metadata.create_all(bind=target_engine)
+    _ensure_additive_schema_upgrades(target_engine)
+
+
+def _ensure_additive_schema_upgrades(engine: Engine) -> None:
+    """Add newly introduced columns without dropping existing data."""
+    dialect = engine.dialect.name
+    if dialect == "sqlite":
+        # Fresh sqlite create_all already includes new columns; skip ALTER IF NOT EXISTS
+        # which older sqlite builds used in unit tests may not support.
+        return
+    statements = [
+        "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS source_document_id VARCHAR(36)",
+        "CREATE INDEX IF NOT EXISTS ix_published_articles_source_document_id "
+        "ON published_articles (source_document_id)",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def drop_all_tables(engine: Engine | None = None) -> None:
+    """Drop all ORM tables — refused unless targeting a *_test DB (or explicit allow)."""
+    from app.models import db_models  # noqa: F401
+
+    target_engine = engine or get_engine()
+    url = str(target_engine.url)
+    assert_destructive_database_ops_allowed(url)
+    Base.metadata.drop_all(bind=target_engine)
+
+
+def truncate_published_articles(session: Session) -> int:
+    """Delete all published_articles rows — refused on non-test databases."""
+    from app.models.db_models import PublishedArticle
+
+    assert_destructive_database_ops_allowed()
+    deleted = session.query(PublishedArticle).delete()
+    session.commit()
+    return int(deleted or 0)
 
 
 def check_database_connection(engine: Engine | None = None) -> None:
@@ -81,4 +132,5 @@ def get_database_health() -> dict:
         "status": "ok",
         "configured": True,
         "database_url": safe_database_url(settings.database_url),
+        "database_name": database_name_from_url(settings.database_url),
     }

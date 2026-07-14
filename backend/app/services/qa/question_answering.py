@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from app.services.chroma_store import RetrievedChunk, get_knowledge_base_store
 from app.services.qa.groq_answer_service import GroqAnswerError, generate_groq_answer
 from app.services.knowledge_taxonomy import classify_question
 from app.services.retrieval_reranker import prepare_retrieval_query
+from app.services.qa.service_answer_formatter import (
+    format_service_procedure_answer,
+    is_artifact_or_requirement_form_chunk,
+    is_form_or_requirement_query,
+    is_service_howto_query,
+    is_service_procedure_chunk,
+    prefer_service_chunks,
+)
 from app.services.student.question_service import EmptyKnowledgeBaseError
 
 
@@ -137,7 +147,12 @@ def answer_qa_question(question: str) -> QAResult:
             top_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else FINAL_CONTEXT_CHUNKS,
             raw_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else RAW_RETRIEVAL_CANDIDATES,
         )
-        selected_context, context_filter = select_context_chunks(cleaned_question, retrieved, broad_query=broad_query)
+        retrieved = prefer_service_chunks(retrieved, question=cleaned_question)
+        selected_context, context_filter = select_context_chunks(
+            cleaned_question,
+            retrieved,
+            broad_query=broad_query,
+        )
     context = (
         format_collection_context(selected_context, cleaned_question, collection_intent)
         if collection_mode
@@ -166,6 +181,46 @@ def answer_qa_question(question: str) -> QAResult:
             collection_articles=[] if collection_mode else None,
             collection_chunk_count=0 if collection_mode else None,
             group_count=0 if collection_mode else None,
+            program_scope=program_scope,
+            ticket_routing=ticket_routing,
+            query_expansions_used=prepared_query.matched_expansion_rules,
+            rerank_reasons=_rerank_reasons_summary(retrieved),
+            fallback_used=False,
+            fallback_reason=None,
+            out_of_scope_detected=False,
+        )
+
+    typed_answer = _typed_answer_from_context(
+        selected_context,
+        sources,
+        question=cleaned_question,
+    )
+    if typed_answer:
+        typed_document_type = _kb_document_type(selected_context[0].metadata if selected_context else {})
+        return QAResult(
+            answer=typed_answer,
+            sources=sources,
+            confidence=_confidence_for(
+                retrieved,
+                selected_context,
+                typed_answer,
+                cleaned_question,
+                broad_query=broad_query,
+                collection_mode=collection_mode,
+            ),
+            retrieved_chunks=retrieved_debug,
+            normalized_query=prepared_query.normalized_query,
+            expanded_query=prepared_query.expanded_query,
+            matched_expansion_rules=prepared_query.matched_expansion_rules,
+            broad_query=broad_query,
+            broad_query_reason=broad_reason,
+            selected_context_count=len(selected_context),
+            grouped_context_summary=grouped_summary,
+            detected_intent=typed_document_type.upper() if typed_document_type else detected_intent,
+            collection_mode=collection_mode,
+            collection_articles=collection_articles if collection_mode else None,
+            collection_chunk_count=len(retrieved) if collection_mode else None,
+            group_count=len(grouped_summary or []) if collection_mode else None,
             program_scope=program_scope,
             ticket_routing=ticket_routing,
             query_expansions_used=prepared_query.matched_expansion_rules,
@@ -389,6 +444,9 @@ def select_context_chunks(
                 reasons.append("drop_duplicate_context_group")
         if rank != 1 and _has_strong_penalty(chunk):
             keep = False
+        if is_service_howto_query(normalized_query) and is_artifact_or_requirement_form_chunk(chunk):
+            keep = False
+            reasons.append("drop_requirement_form_artifact_for_service_query")
         if broad_query and _looks_like_noise(chunk):
             keep = False
         if keep and len(selected) >= limit:
@@ -631,21 +689,188 @@ def _fallback_answer_from_context(
     relevant = [chunk for chunk in selected_context if not _has_strong_penalty(chunk)]
     if not relevant:
         return OUT_OF_SCOPE_ANSWER, "low", []
-    excerpts = []
-    for chunk in relevant[:2]:
-        excerpt = _extractive_excerpt(chunk.text)
-        if excerpt:
-            excerpts.append(excerpt)
-    if not excerpts:
-        return OUT_OF_SCOPE_ANSWER, "low", []
-    body = "\n\n".join(excerpts)
-    answer = (
-        "ASKa-Piyu found relevant handbook information, but the AI answer service is temporarily busy. "
-        "Here is the most relevant handbook excerpt.\n\n"
-        f"{body}"
-    )
-    confidence = "medium" if _chunk_score(relevant[0]) >= 0.72 else "low"
+
+    for chunk in relevant:
+        if is_service_procedure_chunk(chunk) and not is_artifact_or_requirement_form_chunk(chunk):
+            answer = format_service_procedure_answer(chunk, sources, busy_fallback=True)
+            confidence = "medium" if _chunk_score(chunk) >= 0.72 else "low"
+            return answer, confidence, sources
+
+    top = relevant[0]
+    title = _display_title(top)
+    excerpt = _extractive_excerpt(top.text, limit=280)
+    if excerpt and not is_artifact_or_requirement_form_chunk(top):
+        answer = (
+            "The AI answer service is temporarily busy. "
+            f"From “{title}”, here is the key information:\n\n"
+            f"{excerpt}"
+        )
+    else:
+        answer = (
+            "The AI answer service is temporarily busy. "
+            f"Based on the indexed sources, the most relevant entry is “{title}”. "
+            "Please try again in a moment, or open the cited source for the full details."
+        )
+    confidence = "medium" if _chunk_score(top) >= 0.72 else "low"
     return answer, confidence, sources
+
+
+def _typed_answer_from_context(
+    selected_context: list[RetrievedChunk],
+    sources: list[dict[str, Any]],
+    *,
+    question: str = "",
+) -> str | None:
+    if not selected_context:
+        return None
+
+    form_intent = is_form_or_requirement_query(question)
+    service_intent = is_service_howto_query(question) or not form_intent
+
+    # Prefer a complete Citizen Charter / service procedure chunk.
+    for chunk in selected_context:
+        if is_artifact_or_requirement_form_chunk(chunk) and not form_intent:
+            continue
+        if is_service_procedure_chunk(chunk):
+            return format_service_procedure_answer(chunk, sources)
+
+    top = selected_context[0]
+    metadata = top.metadata or {}
+    document_type = _kb_document_type(metadata)
+
+    # Only dump form/requirement cards when the user asked about a form.
+    if form_intent and (
+        document_type == "requirement" or is_artifact_or_requirement_form_chunk(top)
+    ):
+        return _requirement_answer(top, sources)
+
+    if document_type == "procedure" and service_intent:
+        return format_service_procedure_answer(top, sources)
+
+    return None
+
+
+def _procedure_answer(chunk: RetrievedChunk, sources: list[dict[str, Any]]) -> str:
+    """Backward-compatible wrapper; prefer the conversational service formatter."""
+    return format_service_procedure_answer(chunk, sources)
+
+
+def _requirement_answer(chunk: RetrievedChunk, sources: list[dict[str, Any]]) -> str:
+    metadata = chunk.metadata or {}
+    title = _meta_text(metadata, "title") or _display_title(chunk)
+    requirements = _json_list(metadata.get("extracted_requirements"))
+    related_services = _json_list(metadata.get("related_services"))
+    how_to_fill_out = _json_list(metadata.get("how_to_fill_out"))
+    preview = _meta_text(metadata, "preview_file_path")
+    lines = [
+        title,
+        "",
+        "Summary:",
+        _meta_text(metadata, "summary") or _extract_label(chunk.text, "Summary") or "Use this form for the documented requirement.",
+        "",
+        "Requirements:",
+    ]
+    if requirements:
+        lines.extend(f"- {item}" for item in requirements)
+    else:
+        lines.append("- Not specified")
+    lines.extend(["", "How to Fill Out:"])
+    if how_to_fill_out:
+        lines.extend(f"- {item}" for item in how_to_fill_out)
+    else:
+        lines.append("- Fill in the required requester information.")
+    lines.extend(["", "Form Preview:", preview or "Preview is not available."])
+    lines.extend(["", "Related Services:"])
+    if related_services:
+        lines.extend(f"- {item}" for item in related_services)
+    else:
+        lines.append("- Not specified")
+    lines.extend(["", "Source:", _source_label(sources, fallback=_meta_text(metadata, "source_document") or chunk.source_filename)])
+    return "\n".join(lines).strip()
+
+
+def _kb_document_type(metadata: dict[str, Any]) -> str:
+    value = str((metadata or {}).get("document_type") or "").strip().lower()
+    return value if value in {"information", "procedure", "requirement"} else "information"
+
+
+def _json_list(value: Any) -> list[Any]:
+    parsed = _json_value(value)
+    return parsed if isinstance(parsed, list) else []
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    parsed = _json_value(value)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, (list, dict)):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
+
+
+def _meta_text(metadata: dict[str, Any], key: str) -> str:
+    value = metadata.get(key)
+    return str(value).strip() if value is not None and str(value).strip() else ""
+
+
+def _procedure_summary(metadata: dict[str, Any], title: str) -> str:
+    office = _meta_text(metadata, "office")
+    who = _meta_text(metadata, "who_may_avail")
+    if office and who:
+        return f"{title} is handled by {office} for {who}."
+    if office:
+        return f"{title} is handled by {office}."
+    return f"{title} is a documented service procedure."
+
+
+def _office_or_responsible(metadata: dict[str, Any], text: str) -> str:
+    office = _meta_text(metadata, "office")
+    responsible = _extract_label(text, "Person Responsible") or _extract_label(text, "Responsible Personnel")
+    if office and responsible:
+        return f"{office}; {responsible}"
+    return office or responsible or "Not specified"
+
+
+def _extract_label(text: str, label: str) -> str:
+    pattern = rf"(?im)^\s*{re.escape(label)}\s*:\s*(.+)$"
+    match = re.search(pattern, text or "")
+    return match.group(1).strip() if match else ""
+
+
+def _numbered_lines_from_text(text: str) -> list[str]:
+    lines = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if re.match(r"^\d+\.\s+", stripped):
+            lines.append(stripped)
+    return lines or ["1. See the cited source for the documented steps."]
+
+
+def _source_label(sources: list[dict[str, Any]], *, fallback: str | None = None) -> str:
+    """Build a human-readable source line for extractive/fallback answers."""
+    safe_fallback = (fallback or "").strip() or "Source document"
+    if not sources:
+        return safe_fallback
+    source = sources[0]
+    # Prefer Level-2 citation label when present.
+    citation_label = str(source.get("source_label") or "").strip()
+    if citation_label:
+        page = source.get("page_range") or source.get("page_number") or source.get("page")
+        if page:
+            return f"{citation_label} > page {page}"
+        return citation_label
+    parts = [str(source.get("title") or "").strip(), str(source.get("path") or "").strip()]
+    page = source.get("page_range") or source.get("page_number") or source.get("page")
+    if page:
+        parts.append(f"page {page}")
+    return " > ".join(part for part in parts if part) or safe_fallback
 
 
 def _extractive_excerpt(text: str, limit: int = 520) -> str:
@@ -693,15 +918,70 @@ def _strip_source_lines(answer: str) -> str:
 
 
 def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool = False) -> list[dict[str, Any]]:
+    from app.services.document_storage import resolve_citation_document, source_page_url, source_view_url
+
+    def _citation_fields(
+        *,
+        document_id: str | None,
+        page: int | None,
+        metadata: dict[str, Any],
+        chunk: RetrievedChunk,
+        index: int,
+    ) -> dict[str, Any]:
+        ready_row = resolve_citation_document(document_id)
+        pdf_ready = ready_row is not None
+        resolved_page = page or _page_number(metadata, chunk.text)
+        view_url = (
+            source_view_url(document_id, resolved_page)
+            if pdf_ready and document_id
+            else None
+        )
+        page_url = (
+            source_page_url(document_id, resolved_page)
+            if pdf_ready and document_id and resolved_page
+            else None
+        )
+        note = None if pdf_ready else (
+            "PDF source unavailable. Re-index this document to enable PDF viewing."
+        )
+        source_filename = str(
+            chunk.source_filename or metadata.get("source_filename") or ""
+        ).strip() or None
+        return {
+            "page": resolved_page,
+            "page_number": resolved_page,
+            "citation_id": str(
+                metadata.get("chunk_id") or f"{document_id or 'doc'}::{chunk.chunk_index or index}"
+            ),
+            "document_id": document_id if pdf_ready else document_id,
+            "source_filename": source_filename,
+            "source_section": _source_section(metadata) or _hierarchy_path(metadata) or None,
+            "source_excerpt": str(metadata.get("source_excerpt") or "").strip()
+            or _text_preview(chunk.text),
+            "source_label": _citation_source_label(metadata, source_filename),
+            "source_view_url": view_url,
+            "source_page_url": page_url,
+            "pdf_available": pdf_ready,
+            "citation_note": note,
+        }
+
     if not merge_articles:
         sources: list[dict[str, Any]] = []
         seen: set[tuple[str, str, int | None]] = set()
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks, start=1):
             metadata = chunk.metadata or {}
+            page = _page_number(metadata)
+            document_id = str(chunk.document_id or metadata.get("document_id") or "").strip() or None
             item = {
                 "title": _display_title(chunk),
                 "path": _hierarchy_path(metadata),
-                "page": _page_number(metadata),
+                **_citation_fields(
+                    document_id=document_id,
+                    page=page,
+                    metadata=metadata,
+                    chunk=chunk,
+                    index=index,
+                ),
             }
             key = (item["title"], item["path"], item["page"])
             if key in seen:
@@ -711,13 +991,14 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
         return sources
 
     grouped: dict[str, dict[str, Any]] = {}
-    for chunk in chunks:
+    for index, chunk in enumerate(chunks, start=1):
         metadata = chunk.metadata or {}
         path = _hierarchy_path(metadata)
         article = str(metadata.get("article") or "").strip()
         title = _display_clean_hierarchy_label(article) if article else _display_title(chunk)
         key = _normalize(f"{title}|{article or path}")
         page = _page_number(metadata)
+        document_id = str(chunk.document_id or metadata.get("document_id") or "").strip() or None
         existing = grouped.get(key)
         if existing:
             pages = existing.setdefault("_pages", set())
@@ -726,14 +1007,33 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
             existing["_matching_sections"] = int(existing.get("_matching_sections") or 1) + 1
             if existing.get("page") is None or (page is not None and page < existing["page"]):
                 existing["page"] = page
+                existing["page_number"] = page
+                fields = _citation_fields(
+                    document_id=document_id,
+                    page=page,
+                    metadata=metadata,
+                    chunk=chunk,
+                    index=index,
+                )
+                existing["source_view_url"] = fields["source_view_url"]
+                existing["pdf_available"] = fields["pdf_available"]
+                existing["citation_note"] = fields["citation_note"]
             continue
         item = {
             "title": title,
             "path": path,
-            "page": page,
+            **_citation_fields(
+                document_id=document_id,
+                page=page,
+                metadata=metadata,
+                chunk=chunk,
+                index=index,
+            ),
             "_matching_sections": 1,
             "_pages": {page} if page is not None else set(),
         }
+        # Prefer source_section from explicit section when merging.
+        item["source_section"] = _source_section(metadata) or path or None
         grouped[key] = item
     sources = []
     for item in grouped.values():
@@ -745,6 +1045,71 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
             item["page_range"] = f"{pages[0]}-{pages[-1]}"
         sources.append(item)
     return sources
+
+
+def _citations_from_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    citations: list[dict[str, Any]] = []
+    for index, source in enumerate(sources, start=1):
+        citation_id = str(source.get("citation_id") or f"citation-{index}")
+        citations.append(
+            {
+                "citation_id": citation_id,
+                "document_id": source.get("document_id"),
+                "source_filename": source.get("source_filename"),
+                "source_section": source.get("source_section") or source.get("path"),
+                "page_number": source.get("page_number")
+                if source.get("page_number") is not None
+                else source.get("page"),
+                "source_excerpt": source.get("source_excerpt"),
+                "source_view_url": source.get("source_view_url"),
+                "source_page_url": source.get("source_page_url"),
+                "source_label": source.get("source_label"),
+                "title": source.get("title"),
+                "path": source.get("path"),
+                "pdf_available": source.get("pdf_available"),
+                "citation_note": source.get("citation_note"),
+                "bbox": source.get("bbox"),
+                "page_width": source.get("page_width"),
+                "page_height": source.get("page_height"),
+                "text_position": source.get("text_position"),
+            }
+        )
+    return citations
+
+
+def _source_section(metadata: dict[str, Any]) -> str:
+    for key in (
+        "source_section",
+        "section_heading",
+        "section",
+        "article",
+        "canonical_topic",
+        "title",
+    ):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _citation_source_label(
+    metadata: dict[str, Any],
+    source_filename: str | None = None,
+    *,
+    fallback: str | None = None,
+) -> str:
+    """Resolve a display label for Level-2 citation cards."""
+    for key in ("source_label", "doc_source_label", "source_title"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    if source_filename:
+        stem = Path(source_filename).stem.replace("_", " ").replace("-", " ").strip()
+        if stem:
+            return stem
+        return source_filename
+    safe_fallback = (fallback or "").strip()
+    return safe_fallback or "Source document"
 
 
 def _retrieved_debug(
@@ -1174,10 +1539,21 @@ def _collection_display_group(chunk: RetrievedChunk, domain: str | None) -> str:
 
 def _display_title(chunk: RetrievedChunk) -> str:
     metadata = chunk.metadata or {}
-    for key in ("section", "article", "chapter"):
+    for key in (
+        "source_section",
+        "canonical_topic",
+        "procedure_title",
+        "title",
+        "section",
+        "article",
+        "chapter",
+    ):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
-            return _display_clean_hierarchy_label(value)
+            cleaned = _display_clean_hierarchy_label(value)
+            if cleaned.lower().startswith("requirement:"):
+                continue
+            return cleaned
     return chunk.title or "Untitled"
 
 
@@ -1196,18 +1572,31 @@ def _display_clean_hierarchy_label(value: str) -> str:
 def _hierarchy_path(metadata: dict[str, Any]) -> str:
     parts = [
         str(metadata.get(key))
-        for key in ("chapter", "article", "section", "appendix")
+        for key in ("chapter", "article", "section", "appendix", "source_section", "title")
         if metadata.get(key)
     ]
-    return " > ".join(parts)
+    # Prefer a compact path; drop duplicates while preserving order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for part in parts:
+        key = part.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(part)
+    return " > ".join(unique)
 
 
-def _page_number(metadata: dict[str, Any]) -> int | None:
-    page = metadata.get("page_start") or metadata.get("page")
+def _page_number(metadata: dict[str, Any], text: str | None = None) -> int | None:
+    page = metadata.get("page_number") or metadata.get("page_start") or metadata.get("page")
     if isinstance(page, int):
         return page
     if isinstance(page, str) and page.isdigit():
         return int(page)
+    if text:
+        match = re.search(r"(?im)^\s*Page:\s*(\d+)\s*$", text)
+        if match:
+            return int(match.group(1))
     return None
 
 

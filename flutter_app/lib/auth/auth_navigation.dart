@@ -9,6 +9,8 @@ const String loginRequiredMessage =
     'Please log in or create an account to submit and track support tickets.';
 const String adminRequiredMessage =
     'Please log in with an admin account to open admin tools.';
+const String officeRequiredMessage =
+    'Please log in with an office account to open office tools.';
 
 Future<void> openProtectedPage(
   BuildContext context, {
@@ -52,6 +54,33 @@ Future<void> openAdminPage(
 
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(content: Text('Admin access is required for this page.')),
+  );
+}
+
+Future<void> openOfficePage(
+  BuildContext context, {
+  required WidgetBuilder builder,
+}) async {
+  final auth = AuthScope.of(context);
+  if (auth.role == 'office') {
+    await Navigator.of(context).push(MaterialPageRoute(builder: builder));
+    return;
+  }
+
+  if (!auth.isAuthenticated) {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LoginPage(
+          returnTo: builder,
+          message: officeRequiredMessage,
+        ),
+      ),
+    );
+    return;
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('Office access is required for this page.')),
   );
 }
 

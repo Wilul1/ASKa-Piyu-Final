@@ -25,6 +25,7 @@ def user_to_schema(user: User) -> UserSchema:
         full_name=user.full_name,
         role=user.role,
         office_id=user.office_id,
+        office_name=user.office.name if user.office is not None else None,
         student_id=user.student_id,
         created_at=_datetime_to_iso(user.created_at),
         updated_at=_datetime_to_iso(user.updated_at),

@@ -441,3 +441,116 @@ def test_existing_natural_queries_still_rank_expected_chunks():
 
     for query, expected_title, chunks in cases:
         assert titles_for(expand_query(query), chunks)[0] == expected_title
+
+
+def test_validate_id_query_ranks_charter_id_validation_above_handbook_subject_validation():
+    ranked = rerank_chunks(
+        expand_query("How do I validate my ID?"),
+        [
+            RetrievedChunk(
+                document_id="legacy-handbook",
+                title="Student Handbook",
+                source_filename="Student_Handbook.pdf",
+                chunk_index=0,
+                text="Validation of subjects is done every semester after enrollment assessment.",
+                relevance_score=0.91,
+                original_score=0.91,
+                metadata={
+                    "section": "Validation of Subjects",
+                    "source_section": "Validation of Subjects",
+                    "document_type": "handbook",
+                    "page_number": 44,
+                },
+            ),
+            RetrievedChunk(
+                document_id="form-noise",
+                title="Requirement: Clearance, Request Form Accounting",
+                source_filename="form.pdf",
+                chunk_index=2,
+                text="Form Preview and Related Services for clearance.",
+                relevance_score=0.93,
+                original_score=0.93,
+                metadata={
+                    "title": "Requirement: Clearance, Request Form Accounting",
+                    "article_type": "requirement_form",
+                    "document_type": "requirement",
+                    "extraction_status": "rag_only",
+                },
+            ),
+            RetrievedChunk(
+                document_id="charter-ready",
+                title="ID Validation",
+                source_filename="Citizens_Charter_2026.pdf",
+                chunk_index=1,
+                text=(
+                    "Service: ID Validation\n"
+                    "Office / Division: Office of the Student Affairs and Services\n"
+                    "Present a valid school ID for validation."
+                ),
+                relevance_score=0.74,
+                original_score=0.74,
+                metadata={
+                    "title": "ID Validation",
+                    "source_section": "ID Validation",
+                    "document_type": "citizen_charter",
+                    "article_type": "service_procedure",
+                    "office": "Office of the Student Affairs and Services",
+                    "page_number": 18,
+                },
+            ),
+        ],
+    )
+
+    assert ranked[0].metadata["source_section"] == "ID Validation"
+    assert any("boost_identity_service_title" in reason for reason in (ranked[0].rerank_reasons or []))
+
+
+def test_citation_ready_chunk_preferred_when_scores_similar(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    from app.db.session import initialize_database
+    from app.services.document_storage import persist_uploaded_document
+
+    initialize_database()
+    ready_id = "ready-citation-doc"
+    persist_uploaded_document(
+        b"%PDF-1.4 ready",
+        document_id=ready_id,
+        filename="Citizens_Charter_2026.pdf",
+        content_type="application/pdf",
+        document_type="citizen_charter",
+        title="Citizen’s Charter 2026",
+    )
+    ranked = rerank_chunks(
+        "student services overview",
+        [
+            RetrievedChunk(
+                document_id="orphan-legacy",
+                title="Student Handbook",
+                source_filename="handbook.pdf",
+                chunk_index=0,
+                text="Student services overview and campus support offices.",
+                relevance_score=0.8,
+                original_score=0.8,
+                metadata={"section": "Student Services", "page_number": 10},
+            ),
+            RetrievedChunk(
+                document_id=ready_id,
+                title="Citizen’s Charter",
+                source_filename="Citizens_Charter_2026.pdf",
+                chunk_index=1,
+                text="Student services overview and campus support offices.",
+                relevance_score=0.8,
+                original_score=0.8,
+                metadata={
+                    "section": "Student Services",
+                    "page_number": 10,
+                    "document_id": ready_id,
+                },
+            ),
+        ],
+    )
+    assert ranked[0].document_id == ready_id
+    assert any("boost_level2_citation_ready" in reason for reason in (ranked[0].rerank_reasons or []))

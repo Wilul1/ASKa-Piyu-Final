@@ -12,6 +12,7 @@ from app.config import DOTENV_PATH, admin_key_sha256_prefix, safe_admin_config_d
 from app.db.session import get_database_health, initialize_database, safe_database_url
 from app.routes.admin.knowledge_base import chroma_router, kb_tools_router, router as admin_kb_router
 from app.routes.auth import router as auth_router
+from app.routes.documents import router as documents_router
 from app.routes.knowledge_base import router as kb_browser_router
 from app.routes.qa import router as qa_router
 from app.routes.student.chat import router as student_router
@@ -86,6 +87,7 @@ app.include_router(admin_kb_router)
 app.include_router(kb_tools_router)
 app.include_router(chroma_router)
 app.include_router(kb_browser_router)
+app.include_router(documents_router)
 app.include_router(qa_router)
 app.include_router(student_router)
 app.include_router(tickets_router)

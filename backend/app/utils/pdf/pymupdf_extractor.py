@@ -8,7 +8,7 @@ import fitz
 from PIL import Image
 
 from app.config import settings
-from app.utils.ocr.easyocr_engine import extract_text_from_pil_image
+from app.utils.ocr.easyocr_engine import extract_text_and_boxes_from_pil_image
 
 
 @dataclass
@@ -16,6 +16,9 @@ class PageExtraction:
     page_number: int
     text: str
     method: str  # "digital" | "ocr"
+    words: list[dict] | None = None  # word boxes: text, x0, y0, x1, y1, cy, height
+    table_regions: list[dict] | None = None  # PyMuPDF native table detection, if any
+    geometry_scale: float = 1.0  # multiply words coords by 1/geometry_scale for PDF points
 
 
 @dataclass
@@ -55,17 +58,26 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
 
     for index in range(len(doc)):
         page = doc[index]
-        digital = _extract_layout_text(page).strip()
+        word_items = _page_word_items(page)
+        digital = _extract_layout_text(page, word_items=word_items).strip()
 
         if len(digital) >= min_chars:
             pages.append(
-                PageExtraction(page_number=index + 1, text=digital, method="digital")
+                PageExtraction(
+                    page_number=index + 1,
+                    text=digital,
+                    method="digital",
+                    words=word_items or None,
+                    table_regions=_extract_table_regions(page) or None,
+                    geometry_scale=1.0,
+                )
             )
             continue
 
         pixmap = page.get_pixmap(matrix=matrix, alpha=False)
         image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
-        ocr_text = extract_text_from_pil_image(image).strip()
+        ocr_text, ocr_boxes = extract_text_and_boxes_from_pil_image(image)
+        ocr_text = ocr_text.strip()
 
         # Prefer digital remnants merged with OCR when both exist on sparse pages
         if digital and ocr_text:
@@ -73,24 +85,33 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
         else:
             combined = ocr_text or digital
 
+        if ocr_text:
+            page_words: list[dict] | None = ocr_boxes or None
+            scale = float(zoom) if zoom else 1.0
+        elif digital:
+            page_words = word_items or None
+            scale = 1.0
+        else:
+            page_words = None
+            scale = 1.0
+
         pages.append(
             PageExtraction(
                 page_number=index + 1,
                 text=combined,
                 method="ocr" if ocr_text or not digital else "digital",
+                words=page_words,
+                geometry_scale=scale,
             )
         )
 
     return pages
 
 
-def _extract_layout_text(page: fitz.Page) -> str:
-    """Extract digital PDF words by visual row so tables keep useful order."""
+def _page_word_items(page: fitz.Page) -> list[dict]:
+    """Raw digital-PDF word boxes: text plus x0/y0/x1/y1 in PDF point space."""
     words = page.get_text("words", sort=True) or []
-    if not words:
-        return (page.get_text("text", sort=True) or "").strip()
-
-    items = []
+    items: list[dict] = []
     for word in words:
         if len(word) < 5:
             continue
@@ -102,22 +123,53 @@ def _extract_layout_text(page: fitz.Page) -> str:
             {
                 "text": text,
                 "x0": float(x0),
+                "y0": float(y0),
                 "x1": float(x1),
+                "y1": float(y1),
                 "cy": (float(y0) + float(y1)) / 2,
                 "height": max(1.0, float(y1) - float(y0)),
             }
         )
+    return items
 
+
+def _extract_table_regions(page: fitz.Page) -> list[dict]:
+    """Best-effort native PyMuPDF table detection. Returns [] if unavailable."""
+    finder = getattr(page, "find_tables", None)
+    if finder is None:
+        return []
+    try:
+        result = finder()
+        tables = list(getattr(result, "tables", None) or [])
+    except Exception:
+        return []
+
+    regions: list[dict] = []
+    for table in tables:
+        try:
+            bbox = [float(v) for v in table.bbox]
+            rows = [
+                [str(cell).strip() if cell is not None else "" for cell in row]
+                for row in (table.extract() or [])
+            ]
+        except Exception:
+            continue
+        regions.append({"bbox": bbox, "rows": rows})
+    return regions
+
+
+def _cluster_rows(items: list[dict]) -> list[list[dict]]:
+    """Group word items into visual table/text rows by Y proximity."""
     if not items:
-        return (page.get_text("text", sort=True) or "").strip()
+        return []
 
-    items.sort(key=lambda item: (item["cy"], item["x0"]))
-    heights = sorted(item["height"] for item in items)
+    ordered = sorted(items, key=lambda item: (item["cy"], item["x0"]))
+    heights = sorted(item["height"] for item in ordered)
     median_height = heights[len(heights) // 2]
     row_threshold = max(3.0, median_height * 0.65)
 
     rows: list[list[dict]] = []
-    for item in items:
+    for item in ordered:
         if not rows:
             rows.append([item])
             continue
@@ -129,14 +181,25 @@ def _extract_layout_text(page: fitz.Page) -> str:
         else:
             rows.append([item])
 
+    return rows
+
+
+def _rows_to_text(rows: list[list[dict]]) -> str:
+    """Render clustered rows into pipe-delimited lines so columns stay visible."""
+    if not rows:
+        return ""
+
+    all_heights = sorted(cell["height"] for row in rows for cell in row)
+    median_height = all_heights[len(all_heights) // 2] if all_heights else 10.0
+
     lines: list[str] = []
     for row in rows:
-        row.sort(key=lambda item: item["x0"])
+        ordered_row = sorted(row, key=lambda item: item["x0"])
         column_gap = max(median_height * 2.0, 18)
 
         parts: list[str] = []
         previous_x1: float | None = None
-        for item in row:
+        for item in ordered_row:
             if previous_x1 is not None and item["x0"] - previous_x1 > column_gap:
                 parts.append("|")
             parts.append(item["text"])
@@ -147,3 +210,13 @@ def _extract_layout_text(page: fitz.Page) -> str:
             lines.append(line)
 
     return "\n".join(lines)
+
+
+def _extract_layout_text(page: fitz.Page, *, word_items: list[dict] | None = None) -> str:
+    """Extract digital PDF words by visual row so tables keep useful order."""
+    items = word_items if word_items is not None else _page_word_items(page)
+    if not items:
+        return (page.get_text("text", sort=True) or "").strip()
+
+    text = _rows_to_text(_cluster_rows(items))
+    return text or (page.get_text("text", sort=True) or "").strip()

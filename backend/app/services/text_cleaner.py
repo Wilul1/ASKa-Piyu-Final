@@ -25,15 +25,7 @@ OCR_REPLACEMENTS: dict[str, str] = {
     "Univcrsily": "University",
     "Universily": "University",
     "Unlversity": "University",
-    "ICTSERVICES": "ICT SERVICES",
     "Tochnoloay": "Technology",
-    "phoro Video": "Photo/Video",
-    "Phoro Video": "Photo/Video",
-    "Interner": "Internet",
-    "Connecion": "Connection",
-    "Visuai": "Visual",
-    "Preecnudlion": "Presentation",
-    "Encading": "Encoding",
     "Nomo": "Name",
     "Collcec/Omcc": "College/Office",
     "Duic": "Date",
@@ -142,9 +134,10 @@ OCR_SPLIT_JOIN_PATTERNS: tuple[tuple[str, str], ...] = (
 )
 
 TABLE_HEADERS = [
-    "CLIENT STEPS", "AGENCY ACTIONS", "AGENCY", "FEES TO BE PAID",
-    "FEES TO BE", "PROCESSING TIME", "PERSON RESPONSIBLE",
-    "RESPONSIBLE PERSON ACTIONS", "PAID", "CHECKLIST OF REQUIREMENTS",
+    "CLIENT STEPS", "AGENCY ACTIONS", "AGENCY ACTIONS", "AGENCY", "FEES TO BE PAID",
+    "FEES TO BE", "TO BE PAID", "PROCESSING TIME", "PERSON RESPONSIBLE",
+    "RESPONSIBLE PERSON ACTIONS", "RESPONSIBLE PERSONNEL", "RESPONSIBLE PERSON",
+    "PAID", "CHECKLIST OF REQUIREMENTS",
     "WHERE TO SECURE",
 ]
 

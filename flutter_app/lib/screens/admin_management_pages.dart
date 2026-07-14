@@ -331,6 +331,345 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
   }
 }
 
+class OfficeDashboardPage extends StatefulWidget {
+  const OfficeDashboardPage({super.key});
+
+  @override
+  State<OfficeDashboardPage> createState() => _OfficeDashboardPageState();
+}
+
+class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
+  final List<_AdminTicketEntry> _tickets = [];
+  bool _loading = false;
+  String? _error;
+  bool _requestedInitialLoad = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = AuthScope.of(context);
+    if (auth.role == 'office' && !_requestedInitialLoad) {
+      _requestedInitialLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadTickets();
+      });
+    }
+  }
+
+  Future<void> _loadTickets() async {
+    final officeError = _officeAssignmentError(context);
+    if (officeError != null) {
+      setState(() => _error = officeError);
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final tickets = await _loadOfficeTickets(context);
+      setState(() {
+        _tickets
+          ..clear()
+          ..addAll(tickets);
+      });
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final officeName =
+        AuthScope.of(context).currentUser?.officeName ?? 'Office';
+    final open = _tickets.where((ticket) => ticket.status == 'Open').length;
+    final progress =
+        _tickets.where((ticket) => ticket.status == 'In Progress').length;
+    final closed = _tickets.where((ticket) => ticket.status == 'Closed').length;
+    final highPriority = _tickets
+        .where((ticket) =>
+            ticket.priority == 'High' || ticket.priority == 'Urgent')
+        .length;
+    final repliesSent = _tickets.fold<int>(
+      0,
+      (total, ticket) =>
+          total +
+          ticket.messages
+              .where((message) => message.senderRole.toLowerCase() == 'office')
+              .length,
+    );
+
+    final cards = [
+      _AdminMetricData(
+          'Assigned Tickets', '${_tickets.length}', Icons.assignment_rounded),
+      _AdminMetricData('Open', '$open', Icons.mark_email_unread_rounded,
+          statusFilter: 'Open'),
+      _AdminMetricData('In Progress', '$progress', Icons.timelapse_rounded,
+          statusFilter: 'In Progress'),
+      _AdminMetricData('Closed', '$closed', Icons.check_circle_rounded,
+          statusFilter: 'Closed'),
+      _AdminMetricData(
+          'High Priority', '$highPriority', Icons.priority_high_rounded),
+      _AdminMetricData('Replies Sent', '$repliesSent', Icons.forum_rounded),
+    ];
+
+    return OfficeScaffold(
+      current: StudentNavItem.officeDashboard,
+      title: 'Office Dashboard',
+      description: 'Track tickets assigned to $officeName.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 3),
+          if (_error != null)
+            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 900
+                  ? 3
+                  : constraints.maxWidth >= 560
+                      ? 2
+                      : 1;
+              return StudentResponsiveWrap(
+                columns: columns,
+                spacing: 14,
+                children: cards
+                    .map((card) => _AdminMetricCard(
+                          data: card,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => OfficeAssignedTicketsPage(
+                                initialStatusFilter:
+                                    card.statusFilter ?? 'All',
+                              ),
+                            ),
+                          ),
+                        ))
+                    .toList(),
+              );
+            },
+          ),
+          const SizedBox(height: 18),
+          _AdminTicketList(
+            tickets: _tickets.take(5).toList(),
+            hasAnyTickets: _tickets.isNotEmpty,
+            onTicketTap: (ticket) => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => OfficeAssignedTicketsPage(
+                  initialSearch: ticket.id,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class OfficeAssignedTicketsPage extends StatefulWidget {
+  final String initialStatusFilter;
+  final String initialSearch;
+
+  const OfficeAssignedTicketsPage({
+    super.key,
+    this.initialStatusFilter = 'All',
+    this.initialSearch = '',
+  });
+
+  @override
+  State<OfficeAssignedTicketsPage> createState() =>
+      _OfficeAssignedTicketsPageState();
+}
+
+class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
+  final List<_AdminTicketEntry> _tickets = [];
+  final TextEditingController _searchCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+  late String _statusFilter;
+  String _priorityFilter = 'All';
+  bool _requestedInitialLoad = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _statusFilter = widget.initialStatusFilter;
+    _searchCtrl.text = widget.initialSearch;
+    _searchCtrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = AuthScope.of(context);
+    if (auth.role == 'office' && !_requestedInitialLoad) {
+      _requestedInitialLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadTickets();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadTickets() async {
+    final officeError = _officeAssignmentError(context);
+    if (officeError != null) {
+      setState(() => _error = officeError);
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final tickets = await _loadOfficeTickets(context);
+      setState(() {
+        _tickets
+          ..clear()
+          ..addAll(tickets);
+      });
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<_AdminTicketEntry> _patchTicket(
+    _AdminTicketEntry ticket,
+    Map<String, dynamic> payload,
+  ) async {
+    final request = html.HttpRequest();
+    request.open('PATCH', '${AppConfig.resolvedApiBase}/tickets/${ticket.id}');
+    AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
+    request.setRequestHeader('Content-Type', 'application/json');
+    request.send(jsonEncode(payload));
+    await request.onLoadEnd.first;
+    final data = _decodeObject(request.responseText);
+    final statusCode = request.status ?? 0;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not update ticket.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
+  Future<_AdminTicketEntry> _replyToTicket(
+    _AdminTicketEntry ticket,
+    String message,
+  ) async {
+    final request = html.HttpRequest();
+    request.open(
+        'POST', '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies');
+    AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
+    request.setRequestHeader('Content-Type', 'application/json');
+    request.send(jsonEncode({'message': message}));
+    await request.onLoadEnd.first;
+    final data = _decodeObject(request.responseText);
+    final statusCode = request.status ?? 0;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not send reply.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
+  void _replaceTicket(_AdminTicketEntry updated) {
+    setState(() {
+      final index = _tickets.indexWhere((ticket) => ticket.id == updated.id);
+      if (index == -1) {
+        _tickets.insert(0, updated);
+      } else {
+        _tickets[index] = updated;
+      }
+    });
+  }
+
+  Future<void> _openTicketDetails(_AdminTicketEntry ticket) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _AdminTicketDetailsDialog(
+        ticket: ticket,
+        offices: const [],
+        controlsTitle: 'Office controls',
+        replyHint: 'Write an office reply',
+        allowReassignment: false,
+        onUpdate: (payload) => _patchTicket(ticket, payload),
+        onReply: (message) => _replyToTicket(ticket, message),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final officeName =
+        AuthScope.of(context).currentUser?.officeName ?? 'Office';
+    final filteredTickets = _tickets
+        .where((ticket) => ticket.matches(
+              _searchCtrl.text,
+              _statusFilter,
+              _priorityFilter,
+              'All',
+            ))
+        .toList();
+
+    return OfficeScaffold(
+      current: StudentNavItem.officeAssignedTickets,
+      title: 'Assigned Tickets',
+      description: 'Manage tickets routed to $officeName.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 3),
+          if (_error != null)
+            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
+          _AdminTicketSummary(tickets: _tickets),
+          const SizedBox(height: 16),
+          _AdminTicketFilters(
+            searchCtrl: _searchCtrl,
+            statusFilter: _statusFilter,
+            priorityFilter: _priorityFilter,
+            officeFilter: 'All',
+            officeOptions: const ['All'],
+            showOfficeFilter: false,
+            onStatusChanged: (value) => setState(() => _statusFilter = value),
+            onPriorityChanged: (value) =>
+                setState(() => _priorityFilter = value),
+            onOfficeChanged: (_) {},
+            onRefresh: _loadTickets,
+            isRefreshing: _loading,
+          ),
+          const SizedBox(height: 16),
+          if (_loading && _tickets.isEmpty)
+            const _AdminTicketState(
+              icon: Icons.sync_rounded,
+              title: 'Loading tickets',
+              message: 'Fetching assigned tickets.',
+            )
+          else
+            _AdminTicketList(
+              tickets: filteredTickets,
+              hasAnyTickets: _tickets.isNotEmpty,
+              onTicketTap: _openTicketDetails,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class AdminUsersRolesPage extends StatelessWidget {
   const AdminUsersRolesPage({super.key});
 
@@ -499,7 +838,7 @@ class AdminScaffold extends StatelessWidget {
                         'Please log in with an admin account to open this page.',
                   ),
                   const SizedBox(height: 16),
-                  ElevatedButton.icon(
+                  ElevatedButton(
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => LoginPage(
@@ -509,8 +848,7 @@ class AdminScaffold extends StatelessWidget {
                         ),
                       ),
                     ),
-                    icon: const Icon(Icons.login_rounded, size: 18),
-                    label: const Text('Login'),
+                    child: const Text('Login'),
                   ),
                 ],
               ),
@@ -532,6 +870,120 @@ class AdminScaffold extends StatelessWidget {
                   children: [
                     const StudentIconBox(
                       icon: Icons.admin_panel_settings_rounded,
+                      color: DesignTokens.maroon,
+                      size: 52,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: StudentSectionTitle(
+                        title: title,
+                        subtitle: description,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              child,
+            ],
+          ),
+        );
+
+        if (isWide) {
+          return Scaffold(
+            backgroundColor: DesignTokens.bgGrey,
+            body: Row(
+              children: [
+                SizedBox(width: 220, child: AppSidebar(current: current)),
+                Expanded(child: content),
+              ],
+            ),
+          );
+        }
+
+        return Scaffold(
+          backgroundColor: DesignTokens.bgGrey,
+          drawer: Drawer(child: AppSidebar(current: current)),
+          appBar: AppBar(title: Text(title)),
+          body: content,
+        );
+      },
+    );
+  }
+}
+
+class OfficeScaffold extends StatelessWidget {
+  final StudentNavItem current;
+  final String title;
+  final String description;
+  final Widget child;
+
+  const OfficeScaffold({
+    super.key,
+    required this.current,
+    required this.title,
+    required this.description,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = AuthScope.of(context);
+    if (auth.role != 'office') {
+      return Scaffold(
+        backgroundColor: DesignTokens.bgGrey,
+        appBar: AppBar(title: Text(title)),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: StudentPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const StudentIconBox(
+                    icon: Icons.business_center_rounded,
+                    color: DesignTokens.maroon,
+                    size: 52,
+                  ),
+                  const SizedBox(height: 14),
+                  const StudentSectionTitle(
+                    title: 'Office access required',
+                    subtitle:
+                        'Please log in with an office account to open this page.',
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => LoginPage(
+                          returnTo: (_) => this,
+                          message:
+                              'Please log in with an office account to open office tools.',
+                        ),
+                      ),
+                    ),
+                    child: const Text('Login'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 900;
+        final content = StudentPage(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              StudentPanel(
+                child: Row(
+                  children: [
+                    const StudentIconBox(
+                      icon: Icons.business_center_rounded,
                       color: DesignTokens.maroon,
                       size: 52,
                     ),
@@ -719,6 +1171,7 @@ class _AdminTicketFilters extends StatelessWidget {
   final ValueChanged<String> onOfficeChanged;
   final Future<void> Function() onRefresh;
   final bool isRefreshing;
+  final bool showOfficeFilter;
 
   const _AdminTicketFilters({
     required this.searchCtrl,
@@ -731,6 +1184,7 @@ class _AdminTicketFilters extends StatelessWidget {
     required this.onOfficeChanged,
     required this.onRefresh,
     required this.isRefreshing,
+    this.showOfficeFilter = true,
   });
 
   @override
@@ -763,13 +1217,15 @@ class _AdminTicketFilters extends StatelessWidget {
               icon: Icons.priority_high_rounded,
               onChanged: onPriorityChanged,
             ),
-            _AdminFilterDropdown(
-              label: 'Office',
-              value: officeOptions.contains(officeFilter) ? officeFilter : 'All',
-              values: officeOptions.isEmpty ? const ['All'] : officeOptions,
-              icon: Icons.apartment_rounded,
-              onChanged: onOfficeChanged,
-            ),
+            if (showOfficeFilter)
+              _AdminFilterDropdown(
+                label: 'Office',
+                value:
+                    officeOptions.contains(officeFilter) ? officeFilter : 'All',
+                values: officeOptions.isEmpty ? const ['All'] : officeOptions,
+                icon: Icons.apartment_rounded,
+                onChanged: onOfficeChanged,
+              ),
           ];
 
           final refresh = Tooltip(
@@ -1030,6 +1486,9 @@ class _AdminTicketState extends StatelessWidget {
 class _AdminTicketDetailsDialog extends StatefulWidget {
   final _AdminTicketEntry ticket;
   final List<String> offices;
+  final String controlsTitle;
+  final String replyHint;
+  final bool allowReassignment;
   final Future<_AdminTicketEntry> Function(Map<String, dynamic> payload)
       onUpdate;
   final Future<_AdminTicketEntry> Function(String message) onReply;
@@ -1037,6 +1496,9 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
   const _AdminTicketDetailsDialog({
     required this.ticket,
     required this.offices,
+    this.controlsTitle = 'Admin controls',
+    this.replyHint = 'Write an admin reply',
+    this.allowReassignment = true,
     required this.onUpdate,
     required this.onReply,
   });
@@ -1149,7 +1611,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                     const SizedBox(height: 18),
                     _AdminDetailGrid(ticket: _ticket),
                     const SizedBox(height: 20),
-                    _AdminSectionTitle('Admin controls'),
+                    _AdminSectionTitle(widget.controlsTitle),
                     const SizedBox(height: 10),
                     StudentPanel(
                       shadow: false,
@@ -1176,21 +1638,23 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                                   onChanged: (value) =>
                                       setState(() => _priority = value),
                                 ),
-                                _AdminFilterDropdown(
-                                  label: 'Assigned office',
-                                  value: _office,
-                                  values: offices,
-                                  icon: Icons.apartment_rounded,
-                                  onChanged: (value) =>
-                                      setState(() => _office = value),
-                                ),
-                                TextField(
-                                  controller: _categoryCtrl,
-                                  decoration: _adminInputDecoration(
-                                    hintText: 'Category',
-                                    icon: Icons.category_outlined,
+                                if (widget.allowReassignment) ...[
+                                  _AdminFilterDropdown(
+                                    label: 'Assigned office',
+                                    value: _office,
+                                    values: offices,
+                                    icon: Icons.apartment_rounded,
+                                    onChanged: (value) =>
+                                        setState(() => _office = value),
                                   ),
-                                ),
+                                  TextField(
+                                    controller: _categoryCtrl,
+                                    decoration: _adminInputDecoration(
+                                      hintText: 'Category',
+                                      icon: Icons.category_outlined,
+                                    ),
+                                  ),
+                                ],
                               ];
                               if (compact) {
                                 return Column(
@@ -1260,7 +1724,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       minLines: 3,
                       maxLines: 5,
                       decoration: _adminInputDecoration(
-                        hintText: 'Write an admin reply',
+                        hintText: widget.replyHint,
                         icon: Icons.reply_rounded,
                       ),
                     ),
@@ -1296,8 +1760,8 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
       final updated = await widget.onUpdate({
         'status': _status,
         'priority': _priority,
-        'assigned_office': _office,
-        'category': _categoryCtrl.text.trim(),
+        if (widget.allowReassignment) 'assigned_office': _office,
+        if (widget.allowReassignment) 'category': _categoryCtrl.text.trim(),
       });
       setState(() {
         _ticket = updated;
@@ -1892,6 +2356,37 @@ Future<_TicketStats> _loadTicketStats(BuildContext context) async {
   return _TicketStats.fromJson(data);
 }
 
+String? _officeAssignmentError(BuildContext context) {
+  final user = AuthScope.of(context).currentUser;
+  if (user?.role.trim().toLowerCase() != 'office') return null;
+  final officeName = user?.officeName?.trim() ?? '';
+  if (officeName.isEmpty) {
+    return 'Your office account is not assigned to an office. Please contact the administrator.';
+  }
+  return null;
+}
+
+Future<List<_AdminTicketEntry>> _loadOfficeTickets(BuildContext context) async {
+  final officeName =
+      AuthScope.of(context).currentUser?.officeName?.trim() ?? '';
+  final request = html.HttpRequest();
+  request.open('GET', '${AppConfig.resolvedApiBase}/tickets');
+  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
+  request.send();
+  await request.onLoadEnd.first;
+  final data = _decodeObject(request.responseText);
+  final statusCode = request.status ?? 0;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not load assigned tickets.'));
+  }
+  final items = data['items'] is List ? data['items'] as List : const [];
+  return items
+      .whereType<Map>()
+      .map((item) => _AdminTicketEntry.fromJson(Map<String, dynamic>.from(item)))
+      .where((ticket) => _adminSame(ticket.assignedOffice, officeName))
+      .toList();
+}
+
 Map<String, dynamic> _decodeObject(String? responseText) {
   final text = (responseText ?? '').trim();
   if (text.isEmpty) return <String, dynamic>{};
@@ -2000,6 +2495,10 @@ String _adminTitleCase(String value) {
       .where((part) => part.isNotEmpty)
       .map((part) => part[0].toUpperCase() + part.substring(1).toLowerCase())
       .join(' ');
+}
+
+bool _adminSame(String left, String right) {
+  return left.trim().toLowerCase() == right.trim().toLowerCase();
 }
 
 Color _adminStatusColor(String status) {

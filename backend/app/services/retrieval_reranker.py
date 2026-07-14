@@ -160,6 +160,18 @@ QUERY_EXPANSION_RULES = (
         trigger_terms=("graduation requirements", "requirements for graduation"),
         expansion_terms=REQUIREMENT_TERMS,
     ),
+    QueryExpansionRule(
+        name="student_id_validation_service",
+        trigger_terms=("validate my id", "validate id", "id validation", "student id", "school id"),
+        expansion_terms=(
+            "id validation",
+            "processing of student id",
+            "student identification card",
+            "citizen charter",
+            "office of the student affairs and services",
+            "osas",
+        ),
+    ),
 )
 
 
@@ -188,6 +200,16 @@ def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
         expansions.extend(("retention policy", "academic dismissal", "scholastic delinquency"))
     if _is_honorable_dismissal_query(normalized):
         expansions.extend(("honorable dismissal", "voluntary withdrawal", "registrar"))
+    if _is_identity_document_query(normalized):
+        expansions.extend(
+            (
+                "id validation",
+                "processing of student id",
+                "student identification card",
+                "citizen charter",
+                "office of the student affairs and services",
+            )
+        )
     if _matches(normalized, r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b"):
         expansions.extend(ATTENDANCE_TERMS)
     if _matches(normalized, r"\bshift(?:ing)?\b.*\bcourse\b", r"\bchange\b.*\bcourse\b"):
@@ -213,6 +235,8 @@ def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
 def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[RetrievedChunk]:
     normalized_query = _normalize(query)
     profile = _query_profile(normalized_query)
+    intent_phrases = _intent_phrases(normalized_query)
+    citation_ready_cache: dict[str, bool] = {}
     reranked: list[RetrievedChunk] = []
 
     for chunk in chunks:
@@ -220,11 +244,22 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         score = float(original)
         reasons: list[str] = []
         metadata = chunk.metadata or {}
-        title = str(metadata.get("section") or metadata.get("article") or metadata.get("chapter") or chunk.title or "")
+        title = _chunk_service_title(chunk, metadata)
         path = _metadata_path(metadata)
         metadata_labels = " ".join(
             str(metadata.get(key) or "")
-            for key in ("category", "subcategory", "office", "responsible_office", "source_document", "source_filename")
+            for key in (
+                "category",
+                "subcategory",
+                "office",
+                "responsible_office",
+                "source_document",
+                "source_filename",
+                "document_type",
+                "article_type",
+                "source_type",
+                "parser_document_type",
+            )
         )
         content = f"{title} {path} {metadata_labels} {chunk.text}"
         normalized_content = _normalize(content)
@@ -232,6 +267,7 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         metadata_content_type = _normalize(str(metadata.get("content_type") or ""))
 
         score += _keyword_overlap_boost(normalized_query, normalized_title_path, reasons)
+        score += _service_title_similarity_boost(intent_phrases, normalized_title_path, reasons)
 
         domain = _detected_domain(profile)
         if domain:
@@ -281,6 +317,19 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if profile["campus_offer"] and _contains_any(normalized_content, ("all campuses", "campuses: all", "campus: all")):
             score += 0.2
             reasons.append("campus_availability_match")
+        score += _identity_document_service_boost(
+            profile=profile,
+            normalized_title_path=normalized_title_path,
+            metadata=metadata,
+            reasons=reasons,
+        )
+        score += _service_vs_form_boost(
+            profile=profile,
+            normalized_query=normalized_query,
+            normalized_title_path=normalized_title_path,
+            metadata=metadata,
+            reasons=reasons,
+        )
         metadata_score, metadata_reasons = category_metadata_boost(normalized_query, metadata)
         if metadata_score:
             score += metadata_score
@@ -288,6 +337,12 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if _has_valid_source_metadata(metadata):
             score += 0.04
             reasons.append("boost_valid_source_metadata")
+        score += _citation_grounding_boost(
+            chunk=chunk,
+            metadata=metadata,
+            cache=citation_ready_cache,
+            reasons=reasons,
+        )
         if profile["external_topic"] and _contains_any(normalized_title_path, ("administrative officials", "university president", "board of regents")):
             score -= 0.85
             reasons.append("penalty_external_topic_admin_title")
@@ -322,7 +377,14 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         chunk.rerank_reasons = reasons or ["semantic_similarity"]
         reranked.append(chunk)
 
-    return sorted(reranked, key=lambda item: (item.reranked_score or item.relevance_score), reverse=True)
+    return sorted(
+        reranked,
+        key=lambda item: (
+            item.reranked_score or item.relevance_score,
+            1 if _chunk_is_citation_ready(item, citation_ready_cache) else 0,
+        ),
+        reverse=True,
+    )
 
 
 def _query_profile(normalized_query: str) -> dict[str, bool]:
@@ -351,6 +413,15 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
         or "scholastic delinquency" in normalized_query
         or "dismissal" in normalized_query
     )
+    identity_document = _is_identity_document_query(normalized_query)
+    service_howto = identity_document or _matches(
+        normalized_query,
+        r"\bhow (?:do|can|to)\b",
+        r"\bwhere (?:do|can|to)\b",
+        r"\bsteps?\b",
+        r"\bprocedure\b",
+        r"\bprocess\b",
+    )
     return {
         "academic_risk": academic_risk,
         "retention": academic_risk or "retention" in normalized_query or "scholastic delinquency" in normalized_query,
@@ -374,7 +445,20 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
         "officials": _is_university_officials_query(normalized_query),
         "external_topic": _contains_any(normalized_query, EXTERNAL_PRESIDENT_TERMS)
         or _matches(normalized_query, r"\bweather\b", r"\bcapital of japan\b"),
+        "identity_document": identity_document,
+        "service_howto": service_howto,
+        "form_requirement": _is_form_requirement_query(normalized_query),
     }
+
+
+def _is_form_requirement_query(normalized_query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:form|fill out|how to fill|application form|request form|"
+            r"checklist of requirements)\b",
+            normalized_query,
+        )
+    )
 
 
 def _detected_domain(profile: dict[str, bool]) -> str | None:
@@ -384,15 +468,318 @@ def _detected_domain(profile: dict[str, bool]) -> str | None:
     return None
 
 
+def _chunk_service_title(chunk: RetrievedChunk, metadata: dict) -> str:
+    for key in (
+        "source_section",
+        "section_heading",
+        "canonical_topic",
+        "service_title",
+        "section",
+        "article",
+        "title",
+        "chapter",
+    ):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    return str(chunk.title or "").strip()
+
+
 def _metadata_path(metadata: dict) -> str:
-    return " ".join(str(metadata.get(key) or "") for key in ("chapter", "article", "section", "appendix"))
+    return " ".join(
+        str(metadata.get(key) or "")
+        for key in (
+            "chapter",
+            "article",
+            "section",
+            "appendix",
+            "source_section",
+            "section_heading",
+            "title",
+            "canonical_topic",
+            "hierarchy_path",
+            "office",
+            "responsible_office",
+        )
+    )
 
 
 def _has_valid_source_metadata(metadata: dict) -> bool:
-    page = metadata.get("page_start") or metadata.get("page")
+    page = metadata.get("page_number") or metadata.get("page_start") or metadata.get("page")
     has_page = isinstance(page, int) or (isinstance(page, str) and page.isdigit())
-    has_source = any(str(metadata.get(key) or "").strip() for key in ("source_filename", "source_document", "source_title"))
+    has_source = any(
+        str(metadata.get(key) or "").strip()
+        for key in ("source_filename", "source_document", "source_title", "document_id")
+    )
     return has_page and has_source
+
+
+def _is_identity_document_query(normalized_query: str) -> bool:
+    has_id = bool(
+        re.search(
+            r"\b(?:student\s+|school\s+)?ids?\b|\bidentification\s+card\b|\bid\s+card\b",
+            normalized_query,
+        )
+    )
+    if not has_id:
+        return False
+    if _contains_any(
+        normalized_query,
+        (
+            "id validation",
+            "validate id",
+            "validate my id",
+            "validation of id",
+            "student id",
+            "school id",
+            "processing of student id",
+            "process student id",
+            "id processing",
+        ),
+    ):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:validat\w*|process(?:ing)?|renew(?:al)?|replac\w*|issu\w*)\b",
+            normalized_query,
+        )
+    )
+
+
+def _intent_phrases(normalized_query: str) -> list[str]:
+    stop = {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "do",
+        "does",
+        "did",
+        "how",
+        "what",
+        "where",
+        "when",
+        "who",
+        "can",
+        "i",
+        "my",
+        "me",
+        "please",
+        "for",
+        "to",
+        "of",
+        "and",
+        "or",
+        "in",
+        "on",
+        "at",
+    }
+    tokens = [token for token in re.findall(r"[a-z0-9]+", normalized_query) if token not in stop and len(token) >= 2]
+    phrases = list(tokens)
+    for size in (2, 3):
+        for index in range(len(tokens) - size + 1):
+            phrases.append(" ".join(tokens[index : index + size]))
+    return _dedupe(phrases)
+
+
+def _service_title_similarity_boost(intent_phrases: list[str], normalized_title_path: str, reasons: list[str]) -> float:
+    if not intent_phrases or not normalized_title_path:
+        return 0.0
+    best = 0.0
+    best_phrase = ""
+    for phrase in intent_phrases:
+        if len(phrase) < 3:
+            continue
+        similarity = _phrase_title_similarity(phrase, normalized_title_path)
+        if similarity > best:
+            best = similarity
+            best_phrase = phrase
+    if best >= 0.95:
+        reasons.append(f"boost_exact_service_title:{best_phrase}")
+        return 0.5
+    if best >= 0.8:
+        reasons.append(f"boost_near_exact_service_title:{best_phrase}")
+        return 0.38
+    if best >= 0.55:
+        reasons.append(f"boost_service_title_similarity:{best_phrase}")
+        return 0.2
+    return 0.0
+
+
+def _phrase_title_similarity(phrase: str, title_path: str) -> float:
+    if phrase == title_path or phrase in title_path:
+        return 1.0 if phrase == title_path or len(phrase.split()) >= 2 else 0.82
+    phrase_tokens = phrase.split()
+    title_tokens = set(re.findall(r"[a-z0-9]+", title_path))
+    if not phrase_tokens:
+        return 0.0
+    overlap = sum(1 for token in phrase_tokens if token in title_tokens)
+    ratio = overlap / len(phrase_tokens)
+    if ratio == 1.0 and len(phrase_tokens) >= 2:
+        return 0.92
+    if ratio >= 0.67 and len(phrase_tokens) >= 2:
+        return 0.7
+    if ratio >= 0.5:
+        return 0.55
+    return 0.0
+
+
+def _identity_document_service_boost(
+    *,
+    profile: dict[str, bool],
+    normalized_title_path: str,
+    metadata: dict,
+    reasons: list[str],
+) -> float:
+    if not profile.get("identity_document"):
+        return 0.0
+
+    boost = 0.0
+    doc_type = _normalize(
+        str(
+            metadata.get("document_type")
+            or metadata.get("parser_document_type")
+            or metadata.get("source_document_type")
+            or ""
+        )
+    )
+    article_type = _normalize(str(metadata.get("article_type") or metadata.get("content_type") or ""))
+    office = _normalize(
+        str(metadata.get("office") or metadata.get("responsible_office") or metadata.get("office_or_division") or "")
+    )
+    source_type = _normalize(str(metadata.get("source_type") or ""))
+
+    if _is_identity_service_title(normalized_title_path):
+        boost += 0.42
+        reasons.append("boost_identity_service_title")
+    if doc_type in {"citizen_charter", "procedure"} or "citizen" in source_type:
+        boost += 0.3
+        reasons.append("boost_citizen_charter_document_type")
+    if article_type in {"service_procedure", "procedure"}:
+        boost += 0.22
+        reasons.append("boost_service_procedure_article_type")
+    if _contains_any(office, ("student affairs", "osas", "office of the student affairs and services")):
+        boost += 0.14
+        reasons.append("boost_student_affairs_office")
+    if _is_academic_subject_validation_title(normalized_title_path):
+        boost -= 0.55
+        reasons.append("penalty_subject_validation_for_id_query")
+    elif "validation" in normalized_title_path and not _contains_any(
+        normalized_title_path, ("id", "identification")
+    ):
+        boost -= 0.35
+        reasons.append("penalty_non_id_validation_for_id_query")
+    return boost
+
+
+def _service_vs_form_boost(
+    *,
+    profile: dict[str, bool],
+    normalized_query: str,
+    normalized_title_path: str,
+    metadata: dict,
+    reasons: list[str],
+) -> float:
+    """Boost complete service procedures; penalize form/artifact chunks for howto queries."""
+    if profile.get("form_requirement"):
+        return 0.0
+    if not (profile.get("service_howto") or profile.get("identity_document") or profile.get("requirements")):
+        # Still dampen bare requirement-form titles for general service-looking queries.
+        if not _matches(normalized_query, r"\bhow\b", r"\bwhere\b", r"\bavail\b", r"\bapply\b"):
+            return 0.0
+
+    article_type = _normalize(str(metadata.get("article_type") or metadata.get("content_type") or ""))
+    extraction_status = _normalize(str(metadata.get("extraction_status") or ""))
+    doc_type = _normalize(
+        str(metadata.get("document_type") or metadata.get("parser_document_type") or "")
+    )
+    boost = 0.0
+
+    if doc_type in {"citizen_charter", "procedure"} or article_type in {"service_procedure", "procedure"}:
+        boost += 0.2
+        reasons.append("boost_service_procedure_priority")
+    if article_type in {"requirement_form", "requirement", "form"} or extraction_status == "rag_only":
+        boost -= 0.55
+        reasons.append("penalty_requirement_form_for_service_query")
+    if normalized_title_path.startswith("requirement:"):
+        boost -= 0.6
+        reasons.append("penalty_requirement_title_prefix")
+    if "needs review" in normalized_title_path or "[needs review]" in normalized_title_path:
+        boost -= 0.5
+        reasons.append("penalty_needs_review_placeholder")
+    if _contains_any(
+        normalized_title_path,
+        (
+            "abstract of quotation",
+            "approving officials",
+            "nexus system",
+            "client steps",
+            "agency actions",
+        ),
+    ):
+        boost -= 0.45
+        reasons.append("penalty_artifact_like_title")
+    return boost
+
+
+def _is_identity_service_title(title_path: str) -> bool:
+    has_id = _contains_any(title_path, ("id", "identification"))
+    has_action = any(
+        token in title_path
+        for token in ("validat", "process", "issu", "renew", "replac")
+    )
+    return has_id and has_action
+
+
+def _is_academic_subject_validation_title(title_path: str) -> bool:
+    if "validation of subject" in title_path or "other validation case" in title_path:
+        return True
+    return "validation" in title_path and "subject" in title_path and "id" not in title_path
+
+
+def _citation_grounding_boost(
+    *,
+    chunk: RetrievedChunk,
+    metadata: dict,
+    cache: dict[str, bool],
+    reasons: list[str],
+) -> float:
+    document_id = str(chunk.document_id or metadata.get("document_id") or "").strip()
+    page = metadata.get("page_number") or metadata.get("page_start") or metadata.get("page")
+    has_page = isinstance(page, int) or (isinstance(page, str) and str(page).isdigit())
+    if not document_id:
+        reasons.append("penalty_missing_document_id")
+        return -0.08
+    ready = _chunk_is_citation_ready(chunk, cache)
+    delta = 0.0
+    if has_page:
+        delta += 0.05
+        reasons.append("boost_has_page_number")
+    if ready:
+        delta += 0.14
+        reasons.append("boost_level2_citation_ready")
+    else:
+        delta -= 0.1
+        reasons.append("penalty_orphan_or_missing_source_document")
+    return delta
+
+
+def _chunk_is_citation_ready(chunk: RetrievedChunk, cache: dict[str, bool]) -> bool:
+    metadata = chunk.metadata or {}
+    document_id = str(chunk.document_id or metadata.get("document_id") or "").strip()
+    if not document_id:
+        return False
+    if document_id not in cache:
+        try:
+            from app.services.document_storage import resolve_citation_document
+
+            cache[document_id] = resolve_citation_document(document_id) is not None
+        except Exception:
+            cache[document_id] = False
+    return bool(cache[document_id])
 
 
 def _path_domain_boost(domain: str, title_path: str, reasons: list[str]) -> float:
@@ -496,12 +883,21 @@ def _domain_noise_penalty(
 
     penalty = 0.0
     if _contains_any(normalized_content, DISCIPLINARY_TERMS) or content_type in {"disciplinary_rule", "offense"}:
-        penalty -= 0.55
-        reasons.append("penalty_disciplinary_offense_out_of_domain")
+        # Identity-document service answers often mention ID cards; do not treat as disciplinary noise.
+        if not (
+            profile.get("identity_document")
+            and _contains_any(normalized_content, ("identification card", "id validation", "student id"))
+        ):
+            penalty -= 0.55
+            reasons.append("penalty_disciplinary_offense_out_of_domain")
     if _contains_any(normalized_title_path, APPENDIX_TERMS) or "appendix" in content_type:
         penalty -= 0.45
         reasons.append("penalty_unrelated_appendix")
-    if _contains_any(normalized_content, PROCEDURAL_TERMS) or "procedure" in content_type:
+    if (
+        not profile.get("identity_document")
+        and not profile.get("service_howto")
+        and (_contains_any(normalized_content, PROCEDURAL_TERMS) or "procedure" in content_type)
+    ):
         penalty -= 0.4
         reasons.append("penalty_unrelated_procedure")
     if not profile["awards"] and _contains_any(normalized_content, AWARD_TERMS):

@@ -10,6 +10,7 @@ from enum import Enum
 from app.services.structured_document_parser import (
     StructuredDocument,
     build_structured_document,
+    classify_document_type,
     format_structured_document,
 )
 from app.services.handbook_policy_processor import (
@@ -19,7 +20,7 @@ from app.services.handbook_policy_processor import (
 )
 from app.services.text_cleaner import clean_extracted_text
 from app.utils.ocr.easyocr_engine import extract_text_from_image_bytes
-from app.utils.pdf.pymupdf_extractor import PdfExtractionResult, extract_pdf
+from app.utils.pdf.pymupdf_extractor import PageExtraction, PdfExtractionResult, extract_pdf
 
 
 class DocumentType(str, Enum):
@@ -51,6 +52,10 @@ class IngestionResult:
     cleaned_text: str = ""
     structured: StructuredDocument | HandbookPolicyDocument | None = None
     knowledge_document_type: str | None = None
+    # Backend-internal only (never serialized to the Flutter preview payload):
+    # per-page word/table geometry from PyMuPDF/OCR, for structured extractors
+    # like the Citizen's Charter V2 parser. None for images or when unavailable.
+    pdf_pages: list[PageExtraction] | None = None
 
 
 class UnsupportedDocumentError(ValueError):
@@ -101,6 +106,7 @@ def _finalize_extraction(
     page_count: int,
     structured_override: StructuredDocument | HandbookPolicyDocument | None = None,
     knowledge_document_type: str | None = None,
+    pdf_pages: list[PageExtraction] | None = None,
 ) -> IngestionResult:
     structured = structured_override or build_structured_document(cleaned)
     if isinstance(structured, HandbookPolicyDocument):
@@ -120,6 +126,7 @@ def _finalize_extraction(
         knowledge_document_type=knowledge_document_type,
         extraction_method=extraction_method,
         page_count=page_count,
+        pdf_pages=pdf_pages,
     )
 
 
@@ -152,6 +159,18 @@ def _ingest_pdf(file_bytes: bytes, *, filename: str | None = None) -> IngestionR
         method = "digital+ocr_fallback" if _any_digital_signal(page_texts) else "ocr"
 
     if is_handbook_policy_text(cleaned):
+        # Citizen's Charter / Service Process wins over handbook early-commit.
+        # Filename is not used; structural charter signals decide.
+        if classify_document_type(cleaned) == "citizen_charter":
+            return _finalize_extraction(
+                document_type=DocumentType.PDF,
+                raw=raw,
+                cleaned=cleaned,
+                page_texts=page_texts,
+                extraction_method=method,
+                page_count=len(pdf_result.pages),
+                pdf_pages=pdf_result.pages,
+            )
         handbook = build_handbook_policy_document(
             raw_text=raw,
             page_texts=page_texts,
@@ -166,6 +185,7 @@ def _ingest_pdf(file_bytes: bytes, *, filename: str | None = None) -> IngestionR
             page_count=len(pdf_result.pages),
             structured_override=handbook,
             knowledge_document_type=handbook.document_type,
+            pdf_pages=pdf_result.pages,
         )
 
     return _finalize_extraction(
@@ -175,6 +195,7 @@ def _ingest_pdf(file_bytes: bytes, *, filename: str | None = None) -> IngestionR
         page_texts=page_texts,
         extraction_method=method,
         page_count=len(pdf_result.pages),
+        pdf_pages=pdf_result.pages,
     )
 
 

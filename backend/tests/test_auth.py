@@ -184,3 +184,108 @@ def test_auth_me_rejects_invalid_token(auth_client):
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid authentication token."
+
+
+def _seed_admin(session: Session) -> User:
+    admin = User(
+        email="admin@aska.local",
+        password_hash=hash_password("admin12345"),
+        full_name="ASKa Admin",
+        role="admin",
+    )
+    session.add(admin)
+    session.commit()
+    session.refresh(admin)
+    return admin
+
+
+def test_list_users_admin_only(auth_client):
+    signup_student(auth_client)
+    student_token = auth_client.post(
+        "/auth/login",
+        json={"email": "student@example.edu", "password": "correct horse battery staple"},
+    ).json()["access_token"]
+
+    denied = auth_client.get(
+        "/auth/users",
+        headers={"Authorization": f"Bearer {student_token}"},
+    )
+    assert denied.status_code == 403
+
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        admin = _seed_admin(session)
+        office = Office(name="Registrar", service_category="Student Records")
+        session.add(office)
+        session.flush()
+        office_user = User(
+            email="registrar@aska.local",
+            password_hash=hash_password("office123"),
+            full_name="Registrar Staff",
+            role="office",
+            office_id=office.id,
+        )
+        session.add(office_user)
+        session.commit()
+        token = create_access_token(admin)
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass
+
+    response = auth_client.get(
+        "/auth/users",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] >= 3
+    roles = {item["role"] for item in data["items"]}
+    assert {"student", "office", "admin"}.issubset(roles)
+
+    office_only = auth_client.get(
+        "/auth/users",
+        params={"role": "office"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert office_only.status_code == 200
+    office_data = office_only.json()
+    assert office_data["total"] >= 1
+    assert all(item["role"] == "office" for item in office_data["items"])
+
+
+def test_create_office_account(auth_client):
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        admin = _seed_admin(session)
+        office = Office(name="ICT Office", service_category="ICT Services")
+        session.add(office)
+        session.commit()
+        session.refresh(office)
+        token = create_access_token(admin)
+        office_id = office.id
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass
+
+    response = auth_client.post(
+        "/auth/office-accounts",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "email": "ict.staff@aska.local",
+            "password": "office12345",
+            "full_name": "ICT Staff",
+            "office_id": office_id,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "office"
+    assert data["email"] == "ict.staff@aska.local"
+    assert data["office_id"] == office_id
+    assert data["office_name"] == "ICT Office"

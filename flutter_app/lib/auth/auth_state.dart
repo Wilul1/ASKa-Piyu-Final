@@ -61,24 +61,13 @@ class AuthController extends ChangeNotifier {
   }
 
   Map<String, String> ticketHeaders() {
-    final user = _currentUser;
     final token = _accessToken;
-    if (user == null || token == null) {
-      return const {
-        'x-user-id': 'student-001',
-        'x-user-role': 'student',
-        'x-user-name': 'Student',
-        'x-user-email': 'student@test.local',
-      };
+    if (token == null) {
+      return const {};
     }
 
     return {
       'Authorization': 'Bearer $token',
-      'x-user-id': user.id,
-      'x-user-role': user.role.trim().toLowerCase(),
-      'x-user-name': user.fullName,
-      'x-user-email': user.email,
-      if (user.officeName != null) 'x-user-office': user.officeName!,
     };
   }
 

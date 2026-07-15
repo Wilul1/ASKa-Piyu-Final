@@ -401,6 +401,22 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
               .where((message) => message.senderRole.toLowerCase() == 'office')
               .length,
     );
+    final needsAttention = _tickets
+        .where((ticket) =>
+            ticket.status == 'Open' || ticket.status == 'In Progress')
+        .toList()
+      ..sort((a, b) {
+        int rank(_AdminTicketEntry t) {
+          if (t.priority == 'Urgent') return 0;
+          if (t.priority == 'High') return 1;
+          if (t.status == 'Open') return 2;
+          return 3;
+        }
+
+        final byPriority = rank(a).compareTo(rank(b));
+        if (byPriority != 0) return byPriority;
+        return b.updatedAt.compareTo(a.updatedAt);
+      });
 
     final cards = [
       _AdminMetricData(
@@ -416,10 +432,20 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
       _AdminMetricData('Replies Sent', '$repliesSent', Icons.forum_rounded),
     ];
 
+    void openAssigned({String status = 'All'}) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => OfficeAssignedTicketsPage(
+            initialStatusFilter: status,
+          ),
+        ),
+      );
+    }
+
     return OfficeScaffold(
       current: StudentNavItem.officeDashboard,
       title: 'Office Dashboard',
-      description: 'Track tickets assigned to $officeName.',
+      description: 'Overview of workload for $officeName.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -439,13 +465,8 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
                 children: cards
                     .map((card) => _AdminMetricCard(
                           data: card,
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => OfficeAssignedTicketsPage(
-                                initialStatusFilter:
-                                    card.statusFilter ?? 'All',
-                              ),
-                            ),
+                          onTap: () => openAssigned(
+                            status: card.statusFilter ?? 'All',
                           ),
                         ))
                     .toList(),
@@ -453,15 +474,54 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
             },
           ),
           const SizedBox(height: 18),
-          _AdminTicketList(
-            tickets: _tickets.take(5).toList(),
-            hasAnyTickets: _tickets.isNotEmpty,
-            onTicketTap: (ticket) => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => OfficeAssignedTicketsPage(
-                  initialSearch: ticket.id,
+          StudentPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: StudentSectionTitle(
+                        title: 'Needs attention',
+                        subtitle:
+                            'Open and in-progress tickets that still need office action.',
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () => openAssigned(),
+                      icon: const Icon(Icons.assignment_turned_in_rounded,
+                          size: 18),
+                      label: const Text('Open assigned tickets'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: DesignTokens.maroon,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
+                const SizedBox(height: 12),
+                if (_loading && _tickets.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 18),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (needsAttention.isEmpty)
+                  const _AdminTicketState(
+                    icon: Icons.check_circle_outline_rounded,
+                    title: 'Nothing needs attention',
+                    message:
+                        'No open or in-progress tickets right now. Use Assigned Tickets to browse the full history.',
+                  )
+                else
+                  ...needsAttention.take(4).map(
+                        (ticket) => _OfficeAttentionRow(
+                          ticket: ticket,
+                          onOpenQueue: () => openAssigned(
+                            status: ticket.status,
+                          ),
+                        ),
+                      ),
+              ],
             ),
           ),
         ],
@@ -670,32 +730,322 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
   }
 }
 
-class AdminUsersRolesPage extends StatelessWidget {
+class AdminUsersRolesPage extends StatefulWidget {
   const AdminUsersRolesPage({super.key});
 
   @override
+  State<AdminUsersRolesPage> createState() => _AdminUsersRolesPageState();
+}
+
+class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
+  final List<_AdminUserEntry> _users = [];
+  final List<_AdminOfficeEntry> _offices = [];
+  bool _loading = false;
+  String? _error;
+  String _roleFilter = 'All';
+  bool _requestedInitialLoad = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = AuthScope.of(context);
+    if (auth.role == 'admin' && !_requestedInitialLoad) {
+      _requestedInitialLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load();
+      });
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final users = await _loadAdminUsers(context);
+      final offices = await _loadAdminOffices(context);
+      if (!mounted) return;
+      setState(() {
+        _users
+          ..clear()
+          ..addAll(users);
+        _offices
+          ..clear()
+          ..addAll(offices);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _createOfficeAccount() async {
+    final created = await showDialog<_AdminUserEntry>(
+      context: context,
+      builder: (_) => _CreateOfficeAccountDialog(offices: List.of(_offices)),
+    );
+    if (created == null) return;
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Office account created for ${created.email}')),
+    );
+  }
+
+  List<_AdminUserEntry> get _filtered {
+    if (_roleFilter == 'All') return _users;
+    return _users
+        .where((user) =>
+            user.role.toLowerCase() == _roleFilter.toLowerCase())
+        .toList();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const AdminPlaceholderPage(
+    final students =
+        _users.where((user) => user.role == 'student').length;
+    final offices =
+        _users.where((user) => user.role == 'office').length;
+    final admins = _users.where((user) => user.role == 'admin').length;
+    final filtered = _filtered;
+
+    return AdminScaffold(
       current: StudentNavItem.adminUsersRoles,
       title: 'Users & Roles',
       description:
-          'Manage student, office, and admin access when user-management endpoints are ready.',
-      icon: Icons.manage_accounts_rounded,
+          'View students, office staff, and admins. Create office logins linked to a campus office.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 3),
+          if (_error != null)
+            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 900
+                  ? 3
+                  : constraints.maxWidth >= 560
+                      ? 2
+                      : 1;
+              return StudentResponsiveWrap(
+                columns: columns,
+                spacing: 14,
+                children: [
+                  _AdminMetricCard(
+                    data: _AdminMetricData(
+                        'Students', '$students', Icons.school_rounded),
+                  ),
+                  _AdminMetricCard(
+                    data: _AdminMetricData(
+                        'Office Staff', '$offices', Icons.badge_rounded),
+                  ),
+                  _AdminMetricCard(
+                    data: _AdminMetricData(
+                        'Admins', '$admins', Icons.admin_panel_settings_rounded),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          StudentPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: StudentSectionTitle(
+                        title: 'Accounts',
+                        subtitle: 'Filter by role or create an office staff login.',
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _loading ? null : _load,
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('Refresh'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: _loading || _offices.isEmpty
+                          ? null
+                          : _createOfficeAccount,
+                      icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                      label: const Text('Create office account'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: DesignTokens.maroon,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  children: ['All', 'student', 'office', 'admin'].map((role) {
+                    final selected = _roleFilter == role;
+                    final label = role == 'All'
+                        ? 'All'
+                        : role[0].toUpperCase() + role.substring(1);
+                    return ChoiceChip(
+                      label: Text(label),
+                      selected: selected,
+                      onSelected: (_) => setState(() => _roleFilter = role),
+                      selectedColor: DesignTokens.maroon.withValues(alpha: 0.15),
+                      labelStyle: TextStyle(
+                        color: selected ? DesignTokens.maroon : DesignTokens.ink,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 14),
+                if (!_loading && filtered.isEmpty)
+                  const Text(
+                    'No users found for this filter.',
+                    style: TextStyle(color: DesignTokens.muted),
+                  )
+                else
+                  ...filtered.map((user) => _AdminUserTile(user: user)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class AdminOfficesPage extends StatelessWidget {
+class AdminOfficesPage extends StatefulWidget {
   const AdminOfficesPage({super.key});
 
   @override
+  State<AdminOfficesPage> createState() => _AdminOfficesPageState();
+}
+
+class _AdminOfficesPageState extends State<AdminOfficesPage> {
+  final List<_AdminOfficeEntry> _offices = [];
+  final List<_AdminUserEntry> _officeUsers = [];
+  bool _loading = false;
+  String? _error;
+  bool _requestedInitialLoad = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = AuthScope.of(context);
+    if (auth.role == 'admin' && !_requestedInitialLoad) {
+      _requestedInitialLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load();
+      });
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final offices = await _loadAdminOffices(context);
+      final users = await _loadAdminUsers(context, role: 'office');
+      if (!mounted) return;
+      setState(() {
+        _offices
+          ..clear()
+          ..addAll(offices);
+        _officeUsers
+          ..clear()
+          ..addAll(users);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _createOfficeAccount(_AdminOfficeEntry office) async {
+    final created = await showDialog<_AdminUserEntry>(
+      context: context,
+      builder: (_) => _CreateOfficeAccountDialog(
+        offices: List.of(_offices),
+        initialOfficeId: office.id,
+      ),
+    );
+    if (created == null) return;
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Office account created for ${created.email}')),
+    );
+  }
+
+  int _staffCount(_AdminOfficeEntry office) {
+    return _officeUsers.where((user) => user.officeId == office.id).length;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const AdminPlaceholderPage(
+    return AdminScaffold(
       current: StudentNavItem.adminOffices,
       title: 'Offices',
       description:
-          'Maintain routing offices, staff assignments, and service ownership.',
-      icon: Icons.apartment_rounded,
+          'Routing offices used for ticket assignment and office staff logins.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 3),
+          if (_error != null)
+            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
+          StudentPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: StudentSectionTitle(
+                        title: 'Campus offices',
+                        subtitle:
+                            '${_offices.length} office${_offices.length == 1 ? '' : 's'} · ${_officeUsers.length} staff login${_officeUsers.length == 1 ? '' : 's'}',
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _loading ? null : _load,
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('Refresh'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                if (!_loading && _offices.isEmpty)
+                  const Text(
+                    'No offices found. Seed office accounts or add offices in the database.',
+                    style: TextStyle(color: DesignTokens.muted),
+                  )
+                else
+                  ..._offices.map((office) {
+                    final staff = _officeUsers
+                        .where((user) => user.officeId == office.id)
+                        .toList();
+                    return _AdminOfficeTile(
+                      office: office,
+                      staffCount: _staffCount(office),
+                      staff: staff,
+                      onCreateAccount: () => _createOfficeAccount(office),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -794,6 +1144,340 @@ class AdminPlaceholderPage extends StatelessWidget {
         title: 'Coming soon',
         description: description,
       ),
+    );
+  }
+}
+
+class _AdminUserTile extends StatelessWidget {
+  final _AdminUserEntry user;
+
+  const _AdminUserTile({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Row(
+        children: [
+          StudentIconBox(
+            icon: user.role == 'admin'
+                ? Icons.admin_panel_settings_rounded
+                : user.role == 'office'
+                    ? Icons.badge_rounded
+                    : Icons.school_rounded,
+            color: DesignTokens.maroon,
+            size: 40,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  user.fullName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: DesignTokens.ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  user.email,
+                  style: const TextStyle(color: DesignTokens.muted, fontSize: 13),
+                ),
+                if ((user.officeName ?? '').trim().isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    user.officeName!,
+                    style: const TextStyle(
+                      color: DesignTokens.maroon,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: DesignTokens.maroon.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              user.role.toUpperCase(),
+              style: const TextStyle(
+                color: DesignTokens.maroon,
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminOfficeTile extends StatelessWidget {
+  final _AdminOfficeEntry office;
+  final int staffCount;
+  final List<_AdminUserEntry> staff;
+  final VoidCallback onCreateAccount;
+
+  const _AdminOfficeTile({
+    required this.office,
+    required this.staffCount,
+    required this.staff,
+    required this.onCreateAccount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const StudentIconBox(
+                icon: Icons.apartment_rounded,
+                color: DesignTokens.maroon,
+                size: 42,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      office.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        color: DesignTokens.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        if ((office.serviceCategory ?? '').trim().isNotEmpty)
+                          office.serviceCategory!.trim(),
+                        '$staffCount staff login${staffCount == 1 ? '' : 's'}',
+                      ].join(' · '),
+                      style: const TextStyle(
+                        color: DesignTokens.muted,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onCreateAccount,
+                icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                label: const Text('Add staff'),
+              ),
+            ],
+          ),
+          if (staff.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+            ...staff.map(
+              (user) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    const Icon(Icons.badge_outlined,
+                        size: 16, color: DesignTokens.muted),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${user.fullName} · ${user.email}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: DesignTokens.ink,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CreateOfficeAccountDialog extends StatefulWidget {
+  final List<_AdminOfficeEntry> offices;
+  final String? initialOfficeId;
+
+  const _CreateOfficeAccountDialog({
+    required this.offices,
+    this.initialOfficeId,
+  });
+
+  @override
+  State<_CreateOfficeAccountDialog> createState() =>
+      _CreateOfficeAccountDialogState();
+}
+
+class _CreateOfficeAccountDialogState extends State<_CreateOfficeAccountDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  late String? _officeId;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _officeId = widget.initialOfficeId ??
+        (widget.offices.isNotEmpty ? widget.offices.first.id : null);
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_officeId == null || _officeId!.isEmpty) {
+      setState(() => _error = 'Select an office.');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final user = await _createOfficeAccountRequest(
+        context,
+        fullName: _nameCtrl.text.trim(),
+        email: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text,
+        officeId: _officeId!,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(user);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Create office account'),
+      content: SizedBox(
+        width: 420,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(labelText: 'Full name'),
+                validator: (value) =>
+                    (value == null || value.trim().isEmpty)
+                        ? 'Enter a name.'
+                        : null,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _emailCtrl,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) return 'Enter an email.';
+                  if (!text.contains('@')) return 'Enter a valid email.';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _passwordCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Password'),
+                validator: (value) {
+                  final text = value ?? '';
+                  if (text.length < 8) return 'Use at least 8 characters.';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: _officeId,
+                decoration: const InputDecoration(labelText: 'Office'),
+                items: widget.offices
+                    .map(
+                      (office) => DropdownMenuItem(
+                        value: office.id,
+                        child: Text(office.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setState(() => _officeId = value),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: Color(0xFFB91C1C))),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _loading ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: DesignTokens.maroon,
+            foregroundColor: Colors.white,
+          ),
+          child: _loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Create'),
+        ),
+      ],
     );
   }
 }
@@ -1105,6 +1789,88 @@ class _AdminTicketSummary extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _OfficeAttentionRow extends StatelessWidget {
+  final _AdminTicketEntry ticket;
+  final VoidCallback onOpenQueue;
+
+  const _OfficeAttentionRow({
+    required this.ticket,
+    required this.onOpenQueue,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onOpenQueue,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          Text(
+                            ticket.id,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                              color: DesignTokens.muted,
+                            ),
+                          ),
+                          _AdminStatusChip(status: ticket.status),
+                          _AdminPriorityChip(priority: ticket.priority),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        ticket.subject,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: DesignTokens.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${ticket.userName} · ${ticket.category}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: DesignTokens.muted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.chevron_right_rounded,
+                    color: DesignTokens.muted),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1538,7 +2304,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
   @override
   Widget build(BuildContext context) {
     final offices = _mergeOption(widget.offices, _office);
-    final priorities = _mergeOption(const ['Low', 'Medium', 'High'], _priority);
+    final priorities = _mergeOption(const ['Low', 'Medium', 'High', 'Urgent'], _priority);
     final statuses =
         _mergeOption(const ['Open', 'In Progress', 'Resolved', 'Closed'], _status);
 
@@ -2259,7 +3025,7 @@ class _AdminTicketEntry {
     final rawMessages =
         json['messages'] is List ? json['messages'] as List : const <dynamic>[];
     return _AdminTicketEntry(
-      id: (json['id'] ?? '').toString(),
+      id: (json['ticket_id'] ?? json['id'] ?? '').toString(),
       userId: (json['user_id'] ?? '').toString(),
       userName: (json['user_name'] ?? 'Student').toString(),
       userEmail: _nullableAdminString(json['user_email']),
@@ -2270,7 +3036,8 @@ class _AdminTicketEntry {
       resolvedAt: _adminParseNullableDate(json['resolved_at']),
       closedAt: _adminParseNullableDate(json['closed_at']),
       category: (json['category'] ?? 'General').toString(),
-      assignedOffice: (json['assigned_office'] ?? 'Support Office').toString(),
+      assignedOffice: (json['assigned_office_name'] ?? json['assigned_office'] ?? 'Support Office')
+          .toString(),
       priority: _adminTitlePriority((json['priority'] ?? 'Low').toString()),
       description: (json['description'] ?? '').toString(),
       confidenceScore: _parseDouble(json['confidence_score']),
@@ -2354,6 +3121,129 @@ Future<_TicketStats> _loadTicketStats(BuildContext context) async {
     throw StateError(_extractError(data, 'Could not load ticket statistics.'));
   }
   return _TicketStats.fromJson(data);
+}
+
+Future<List<_AdminUserEntry>> _loadAdminUsers(
+  BuildContext context, {
+  String? role,
+}) async {
+  final params = <String, String>{
+    if (role != null && role.trim().isNotEmpty) 'role': role.trim().toLowerCase(),
+  };
+  final query = params.isEmpty ? '' : '?${Uri(queryParameters: params).query}';
+  final request = html.HttpRequest();
+  request.open('GET', '${AppConfig.resolvedApiBase}/auth/users$query');
+  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
+  request.send();
+  await request.onLoadEnd.first;
+  final data = _decodeObject(request.responseText);
+  final statusCode = request.status ?? 0;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not load users.'));
+  }
+  final items = data['items'] is List ? data['items'] as List : const [];
+  return items
+      .whereType<Map>()
+      .map((item) => _AdminUserEntry.fromJson(Map<String, dynamic>.from(item)))
+      .toList();
+}
+
+Future<List<_AdminOfficeEntry>> _loadAdminOffices(BuildContext context) async {
+  final request = html.HttpRequest();
+  request.open('GET', '${AppConfig.resolvedApiBase}/tickets/offices');
+  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
+  request.send();
+  await request.onLoadEnd.first;
+  final data = _decodeObject(request.responseText);
+  final statusCode = request.status ?? 0;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not load offices.'));
+  }
+  final items = data['items'] is List ? data['items'] as List : const [];
+  return items
+      .whereType<Map>()
+      .map((item) => _AdminOfficeEntry.fromJson(Map<String, dynamic>.from(item)))
+      .toList();
+}
+
+Future<_AdminUserEntry> _createOfficeAccountRequest(
+  BuildContext context, {
+  required String fullName,
+  required String email,
+  required String password,
+  required String officeId,
+}) async {
+  final request = html.HttpRequest();
+  request.open('POST', '${AppConfig.resolvedApiBase}/auth/office-accounts');
+  request.setRequestHeader('Content-Type', 'application/json');
+  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
+  request.send(jsonEncode({
+    'full_name': fullName,
+    'email': email,
+    'password': password,
+    'office_id': officeId,
+  }));
+  await request.onLoadEnd.first;
+  final data = _decodeObject(request.responseText);
+  final statusCode = request.status ?? 0;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not create office account.'));
+  }
+  return _AdminUserEntry.fromJson(data);
+}
+
+class _AdminUserEntry {
+  final String id;
+  final String email;
+  final String fullName;
+  final String role;
+  final String? officeId;
+  final String? officeName;
+
+  const _AdminUserEntry({
+    required this.id,
+    required this.email,
+    required this.fullName,
+    required this.role,
+    this.officeId,
+    this.officeName,
+  });
+
+  factory _AdminUserEntry.fromJson(Map<String, dynamic> json) {
+    return _AdminUserEntry(
+      id: (json['id'] ?? '').toString(),
+      email: (json['email'] ?? '').toString(),
+      fullName: (json['full_name'] ?? '').toString(),
+      role: (json['role'] ?? '').toString().toLowerCase(),
+      officeId: (json['office_id'] ?? '').toString().trim().isEmpty
+          ? null
+          : (json['office_id'] ?? '').toString().trim(),
+      officeName: (json['office_name'] ?? '').toString().trim().isEmpty
+          ? null
+          : (json['office_name'] ?? '').toString().trim(),
+    );
+  }
+}
+
+class _AdminOfficeEntry {
+  final String id;
+  final String name;
+  final String? serviceCategory;
+
+  const _AdminOfficeEntry({
+    required this.id,
+    required this.name,
+    this.serviceCategory,
+  });
+
+  factory _AdminOfficeEntry.fromJson(Map<String, dynamic> json) {
+    final category = (json['service_category'] ?? '').toString().trim();
+    return _AdminOfficeEntry(
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? '').toString(),
+      serviceCategory: category.isEmpty ? null : category,
+    );
+  }
 }
 
 String? _officeAssignmentError(BuildContext context) {

@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     allow_destructive_reset: bool = False
     # Durable storage for original uploaded PDFs (citation / source viewer)
     documents_persist_dir: str = "./data/documents"
+    ticket_attachments_dir: str = "./data/ticket_attachments"
     auth_secret_key: str | None = None
     auth_token_ttl_minutes: int = 60 * 24
     chunk_max_chars: int = 1200

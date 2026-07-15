@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import json
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.chroma_store import RetrievedChunk, get_knowledge_base_store
+from app.services.qa.conversational_fallback import format_conversational_fallback
 from app.services.qa.groq_answer_service import GroqAnswerError, generate_groq_answer
 from app.services.knowledge_taxonomy import classify_question
 from app.services.retrieval_reranker import prepare_retrieval_query
@@ -21,6 +23,8 @@ from app.services.qa.service_answer_formatter import (
     prefer_service_chunks,
 )
 from app.services.student.question_service import EmptyKnowledgeBaseError
+
+logger = logging.getLogger(__name__)
 
 
 FINAL_CONTEXT_CHUNKS = 5
@@ -236,9 +240,14 @@ def answer_qa_question(question: str) -> QAResult:
         else:
             answer = generate_groq_answer(question=cleaned_question, context=context)
     except GroqAnswerError as exc:
+        logger.warning(
+            "LLM answer generation unavailable; using conversational fallback. reason=%s",
+            str(exc),
+        )
         fallback_answer, fallback_confidence, fallback_sources = _fallback_answer_from_context(
             selected_context,
             sources,
+            question=cleaned_question,
             reason=str(exc),
         )
         return QAResult(
@@ -684,34 +693,40 @@ def _fallback_answer_from_context(
     selected_context: list[RetrievedChunk],
     sources: list[dict[str, Any]],
     *,
-    reason: str,
+    question: str = "",
+    reason: str = "",
 ) -> tuple[str, str, list[dict[str, Any]]]:
+    """Conversational extractive answer when the LLM is unavailable.
+
+    ``reason`` is for logs/debug only — never shown to students.
+    """
+    if reason:
+        logger.info("Building conversational fallback (llm_reason=%s)", reason)
+
     relevant = [chunk for chunk in selected_context if not _has_strong_penalty(chunk)]
     if not relevant:
         return OUT_OF_SCOPE_ANSWER, "low", []
 
-    for chunk in relevant:
-        if is_service_procedure_chunk(chunk) and not is_artifact_or_requirement_form_chunk(chunk):
-            answer = format_service_procedure_answer(chunk, sources, busy_fallback=True)
-            confidence = "medium" if _chunk_score(chunk) >= 0.72 else "low"
-            return answer, confidence, sources
+    top_score = max(_chunk_score(chunk) for chunk in relevant)
+    confidence = "medium" if top_score >= 0.72 else "low"
 
-    top = relevant[0]
-    title = _display_title(top)
-    excerpt = _extractive_excerpt(top.text, limit=280)
-    if excerpt and not is_artifact_or_requirement_form_chunk(top):
-        answer = (
-            "The AI answer service is temporarily busy. "
-            f"From “{title}”, here is the key information:\n\n"
-            f"{excerpt}"
-        )
-    else:
-        answer = (
-            "The AI answer service is temporarily busy. "
-            f"Based on the indexed sources, the most relevant entry is “{title}”. "
-            "Please try again in a moment, or open the cited source for the full details."
-        )
-    confidence = "medium" if _chunk_score(top) >= 0.72 else "low"
+    answer = format_conversational_fallback(
+        question,
+        relevant,
+        sources,
+        confidence=confidence,
+    )
+    if not answer.strip():
+        return OUT_OF_SCOPE_ANSWER, "low", []
+
+    # Never expose internal LLM/service status in the student answer.
+    if re.search(r"ai answer service is temporarily busy", answer, re.I):
+        answer = re.sub(
+            r"(?i)the\s+ai\s+answer\s+service\s+is\s+temporarily\s+busy\.?\s*",
+            "",
+            answer,
+        ).strip()
+
     return answer, confidence, sources
 
 

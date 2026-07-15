@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../screens/admin_management_pages.dart';
 import '../screens/login_page.dart';
 import '../screens/my_tickets_page.dart';
 import '../screens/student_home.dart';
@@ -91,7 +92,14 @@ void redirectAfterAuth(
 }
 
 WidgetBuilder _defaultTarget(String role) {
-  if (role == 'student') {
+  final normalized = role.trim().toLowerCase();
+  if (normalized == 'office') {
+    return (_) => const OfficeDashboardPage();
+  }
+  if (normalized == 'admin') {
+    return (_) => const AdminDashboardPage();
+  }
+  if (normalized == 'student') {
     return (_) => const MyTicketsPage();
   }
   return (_) => const StudentHomePage();

@@ -43,50 +43,54 @@ class AppSidebar extends StatelessWidget {
     final isStudent = role == 'student';
     final isOffice = role == 'office';
     final isAdmin = role == 'admin';
-    final items = <_SidebarData>[
-      const _SidebarData('Home', Icons.home_rounded, StudentNavItem.home),
-      const _SidebarData('Knowledge Base', Icons.menu_book_rounded,
-          StudentNavItem.knowledgeBase),
-      const _SidebarData(
-          'Ask ASKa-Piyu', Icons.chat_bubble_rounded, StudentNavItem.chatbot),
-      if (isStudent)
-        const _SidebarData(
-            'My Tickets', Icons.fact_check_rounded, StudentNavItem.myTickets),
-      if (isStudent)
-        const _SidebarData('Submit Ticket', Icons.add_task_rounded,
-            StudentNavItem.submitTicket),
-      if (isOffice)
-        const _SidebarData('Office Dashboard', Icons.dashboard_customize_rounded,
+
+    final items = <_SidebarData>[];
+    if (isOffice) {
+      items.addAll(const [
+        _SidebarData('Dashboard', Icons.dashboard_customize_rounded,
             StudentNavItem.officeDashboard),
-      if (isOffice)
-        const _SidebarData('Assigned Tickets', Icons.assignment_turned_in_rounded,
+        _SidebarData('Assigned Tickets', Icons.assignment_turned_in_rounded,
             StudentNavItem.officeAssignedTickets),
-      if (isAdmin)
-        const _SidebarData('Admin Dashboard', Icons.dashboard_rounded,
+      ]);
+    } else if (isAdmin) {
+      items.addAll(const [
+        _SidebarData('Dashboard', Icons.dashboard_rounded,
             StudentNavItem.adminDashboard),
-      if (isAdmin)
-        const _SidebarData('All Tickets', Icons.fact_check_rounded,
-            StudentNavItem.adminAllTickets),
-      if (isAdmin)
-        const _SidebarData('Knowledge Base Admin', Icons.library_books_rounded,
+        _SidebarData(
+            'All Tickets', Icons.fact_check_rounded, StudentNavItem.adminAllTickets),
+        _SidebarData('Knowledge Base', Icons.library_books_rounded,
             StudentNavItem.adminKnowledgeBase),
-      if (isAdmin)
-        const _SidebarData('Generate Articles', Icons.fact_check_rounded,
+        _SidebarData('Generate Articles', Icons.auto_awesome_rounded,
             StudentNavItem.adminGenerateArticles),
-      if (isAdmin)
-        const _SidebarData('Users & Roles', Icons.manage_accounts_rounded,
+        _SidebarData('Users & Roles', Icons.manage_accounts_rounded,
             StudentNavItem.adminUsersRoles),
-      if (isAdmin)
-        const _SidebarData(
+        _SidebarData(
             'Offices', Icons.apartment_rounded, StudentNavItem.adminOffices),
-      if (isAdmin)
-        const _SidebarData('Reports / Statistics', Icons.query_stats_rounded,
-            StudentNavItem.adminReports),
-      const _SidebarData('Announcements', Icons.campaign_rounded,
-          StudentNavItem.announcements),
-      const _SidebarData(
-          'Settings', Icons.settings_rounded, StudentNavItem.settings),
-    ];
+      ]);
+    } else {
+      // Guest + student: public/student support shell.
+      items.addAll(const [
+        _SidebarData('Home', Icons.home_rounded, StudentNavItem.home),
+        _SidebarData('Knowledge Base', Icons.menu_book_rounded,
+            StudentNavItem.knowledgeBase),
+        _SidebarData(
+            'Ask ASKa-Piyu', Icons.chat_bubble_rounded, StudentNavItem.chatbot),
+      ]);
+      if (isStudent) {
+        items.addAll(const [
+          _SidebarData(
+              'My Tickets', Icons.fact_check_rounded, StudentNavItem.myTickets),
+          _SidebarData('Submit Ticket', Icons.add_task_rounded,
+              StudentNavItem.submitTicket),
+        ]);
+      }
+    }
+
+    final brandSubtitle = isOffice
+        ? 'Office workspace'
+        : isAdmin
+            ? 'Admin workspace'
+            : 'Student support';
 
     return Container(
       decoration: const BoxDecoration(
@@ -99,26 +103,40 @@ class AppSidebar extends StatelessWidget {
           children: [
             Padding(
               padding:
-                  const EdgeInsets.symmetric(horizontal: 12.0, vertical: 20.0),
+                  const EdgeInsets.symmetric(horizontal: 12.0, vertical: 18.0),
               child: Row(
                 children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: DesignTokens.maroon,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(Icons.school_rounded,
-                        color: Colors.white, size: 22),
+                  Image.asset(
+                    'assets/logo.png',
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.high,
                   ),
                   const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text('ASKa-Piyu',
-                        style: TextStyle(
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'ASKa-Piyu',
+                          style: TextStyle(
                             fontWeight: FontWeight.w900,
                             fontSize: 15,
-                            color: DesignTokens.ink)),
+                            color: Color(0xFF5C0A0F),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          brandSubtitle,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11,
+                            color: DesignTokens.muted,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -149,7 +167,11 @@ class AppSidebar extends StatelessWidget {
                         MaterialPageRoute(builder: (_) => const LoginPage()),
                       ),
                     )
-                  : _UserAccount(userName: user.fullName, role: user.role),
+                  : _UserAccount(
+                      userName: user.fullName,
+                      role: user.role,
+                      officeName: user.officeName,
+                    ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
@@ -321,11 +343,19 @@ class _GuestAccount extends StatelessWidget {
 class _UserAccount extends StatelessWidget {
   final String userName;
   final String role;
+  final String? officeName;
 
-  const _UserAccount({required this.userName, required this.role});
+  const _UserAccount({
+    required this.userName,
+    required this.role,
+    this.officeName,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final subtitle = (officeName != null && officeName!.trim().isNotEmpty)
+        ? '${role.trim().toUpperCase()} · ${officeName!.trim()}'
+        : role.trim().toUpperCase();
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -354,10 +384,12 @@ class _UserAccount extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  role.trim().toUpperCase(),
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: DesignTokens.maroon,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w800,
                     fontSize: 10,
                   ),
                 ),

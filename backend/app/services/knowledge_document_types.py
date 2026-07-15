@@ -17,9 +17,48 @@ from app.services.structured_document_parser import (
 
 
 class KnowledgeDocumentType(str, Enum):
+    """Broad chunking / KB routing categories (information, procedure, requirement)."""
+
     INFORMATION = "information"
     PROCEDURE = "procedure"
     REQUIREMENT = "requirement"
+
+
+class KnowledgeDocumentTypeName(str, Enum):
+    """All document types accepted/returned by admin extract & ingest APIs.
+
+    Keep this in sync with API schemas via ``DOCUMENT_TYPE_VALUES``.
+    Specific names may map to a broad ``KnowledgeDocumentType`` via
+    ``to_base_document_type``.
+    """
+
+    INFORMATION = "information"
+    PROCEDURE = "procedure"
+    REQUIREMENT = "requirement"
+    CITIZEN_CHARTER = "citizen_charter"
+    SERVICE_PROCESS = "service_process"
+    HANDBOOK_POLICY = "handbook_policy"
+    MANUAL_POLICY = "manual_policy"
+    MEMO_ANNOUNCEMENT = "memo_announcement"
+    FORM_TEMPLATE = "form_template"
+    UNKNOWN = "unknown"
+
+
+DOCUMENT_TYPE_VALUES: tuple[str, ...] = tuple(item.value for item in KnowledgeDocumentTypeName)
+BASE_DOCUMENT_TYPE_VALUES: tuple[str, ...] = tuple(item.value for item in KnowledgeDocumentType)
+
+_SPECIFIC_TO_BASE: dict[str, KnowledgeDocumentType] = {
+    KnowledgeDocumentTypeName.INFORMATION.value: KnowledgeDocumentType.INFORMATION,
+    KnowledgeDocumentTypeName.PROCEDURE.value: KnowledgeDocumentType.PROCEDURE,
+    KnowledgeDocumentTypeName.REQUIREMENT.value: KnowledgeDocumentType.REQUIREMENT,
+    KnowledgeDocumentTypeName.CITIZEN_CHARTER.value: KnowledgeDocumentType.PROCEDURE,
+    KnowledgeDocumentTypeName.SERVICE_PROCESS.value: KnowledgeDocumentType.PROCEDURE,
+    KnowledgeDocumentTypeName.HANDBOOK_POLICY.value: KnowledgeDocumentType.INFORMATION,
+    KnowledgeDocumentTypeName.MANUAL_POLICY.value: KnowledgeDocumentType.INFORMATION,
+    KnowledgeDocumentTypeName.MEMO_ANNOUNCEMENT.value: KnowledgeDocumentType.INFORMATION,
+    KnowledgeDocumentTypeName.FORM_TEMPLATE.value: KnowledgeDocumentType.REQUIREMENT,
+    KnowledgeDocumentTypeName.UNKNOWN.value: KnowledgeDocumentType.INFORMATION,
+}
 
 
 @dataclass(frozen=True)
@@ -28,6 +67,52 @@ class KnowledgeDocumentTypeDetection:
     reason: str
     scores: dict[str, int] = field(default_factory=dict)
     manual_override: bool = False
+
+
+def to_base_document_type(value: str | KnowledgeDocumentType | KnowledgeDocumentTypeName | None) -> str:
+    """Map a specific API document type to the broad chunking category."""
+    if value is None:
+        return KnowledgeDocumentType.INFORMATION.value
+    if isinstance(value, KnowledgeDocumentType):
+        return value.value
+    if isinstance(value, KnowledgeDocumentTypeName):
+        return _SPECIFIC_TO_BASE[value.value].value
+    key = str(value).strip().lower().replace("-", "_")
+    mapped = _SPECIFIC_TO_BASE.get(key)
+    if mapped is not None:
+        return mapped.value
+    try:
+        normalized = normalize_knowledge_document_type(key)
+    except ValueError:
+        return KnowledgeDocumentType.INFORMATION.value
+    if normalized is not None:
+        return normalized.value
+    return KnowledgeDocumentType.INFORMATION.value
+
+
+def coerce_document_type_name(value: str | None) -> str:
+    """Return a valid ``KnowledgeDocumentTypeName`` value (never raises)."""
+    if value is None:
+        return KnowledgeDocumentTypeName.UNKNOWN.value
+    key = str(value).strip().lower().replace("-", "_")
+    if key in {item.value for item in KnowledgeDocumentTypeName}:
+        return key
+    aliases = {
+        "info": KnowledgeDocumentTypeName.INFORMATION.value,
+        "handbook": KnowledgeDocumentTypeName.HANDBOOK_POLICY.value,
+        "policy": KnowledgeDocumentTypeName.HANDBOOK_POLICY.value,
+        "manual": KnowledgeDocumentTypeName.MANUAL_POLICY.value,
+        "citizens_charter": KnowledgeDocumentTypeName.CITIZEN_CHARTER.value,
+        "charter": KnowledgeDocumentTypeName.CITIZEN_CHARTER.value,
+        "procedures": KnowledgeDocumentTypeName.PROCEDURE.value,
+        "service": KnowledgeDocumentTypeName.SERVICE_PROCESS.value,
+        "requirements": KnowledgeDocumentTypeName.REQUIREMENT.value,
+        "form": KnowledgeDocumentTypeName.FORM_TEMPLATE.value,
+        "forms": KnowledgeDocumentTypeName.FORM_TEMPLATE.value,
+        "memo": KnowledgeDocumentTypeName.MEMO_ANNOUNCEMENT.value,
+        "announcement": KnowledgeDocumentTypeName.MEMO_ANNOUNCEMENT.value,
+    }
+    return aliases.get(key, KnowledgeDocumentTypeName.UNKNOWN.value)
 
 
 def normalize_knowledge_document_type(value: str | None) -> KnowledgeDocumentType | None:
@@ -40,10 +125,17 @@ def normalize_knowledge_document_type(value: str | None) -> KnowledgeDocumentTyp
         "info": KnowledgeDocumentType.INFORMATION,
         "information": KnowledgeDocumentType.INFORMATION,
         "handbook": KnowledgeDocumentType.INFORMATION,
+        "handbook_policy": KnowledgeDocumentType.INFORMATION,
+        "manual_policy": KnowledgeDocumentType.INFORMATION,
+        "manual": KnowledgeDocumentType.INFORMATION,
+        "memo_announcement": KnowledgeDocumentType.INFORMATION,
+        "memo": KnowledgeDocumentType.INFORMATION,
+        "announcement": KnowledgeDocumentType.INFORMATION,
         "policy": KnowledgeDocumentType.INFORMATION,
         "procedure": KnowledgeDocumentType.PROCEDURE,
         "procedures": KnowledgeDocumentType.PROCEDURE,
         "service": KnowledgeDocumentType.PROCEDURE,
+        "service_process": KnowledgeDocumentType.PROCEDURE,
         "citizen_charter": KnowledgeDocumentType.PROCEDURE,
         "citizens_charter": KnowledgeDocumentType.PROCEDURE,
         "charter": KnowledgeDocumentType.PROCEDURE,
@@ -51,9 +143,11 @@ def normalize_knowledge_document_type(value: str | None) -> KnowledgeDocumentTyp
         "requirements": KnowledgeDocumentType.REQUIREMENT,
         "form": KnowledgeDocumentType.REQUIREMENT,
         "forms": KnowledgeDocumentType.REQUIREMENT,
+        "form_template": KnowledgeDocumentType.REQUIREMENT,
+        "unknown": KnowledgeDocumentType.INFORMATION,
     }
     if normalized not in aliases:
-        valid = ", ".join(item.value for item in KnowledgeDocumentType)
+        valid = ", ".join(DOCUMENT_TYPE_VALUES)
         raise ValueError(f"Invalid document_type. Use auto, {valid}.")
     return aliases[normalized]
 

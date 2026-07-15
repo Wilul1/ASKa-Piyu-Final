@@ -138,19 +138,17 @@ def format_service_procedure_answer(
     *,
     busy_fallback: bool = False,
 ) -> str:
+    """Format a Citizenship Charter / service procedure answer.
+
+    ``busy_fallback`` is retained for call-site compatibility but no longer
+    injects user-facing “AI busy” wording — LLM failures are logged only.
+    """
+    del busy_fallback  # unused; kept for API compatibility
     fields = extract_service_fields(chunk)
     title = fields["title"]
-    lines: list[str] = []
-    if busy_fallback:
-        lines.append(
-            "The AI answer service is temporarily busy, so here is the documented process "
-            "from the Citizen’s Charter."
-        )
-        lines.append("")
-
-    lines.append(f"To validate or complete **{title}**, follow the steps below.")
-    # Keep markdown light for Flutter plain Text: use non-bold phrasing.
-    lines[ -1] = f"To complete {title}, follow the steps below."
+    lines: list[str] = [
+        f"To complete {title}, follow the steps below.",
+    ]
 
     lines.extend(["", "Requirements:"])
     if fields["requirements"]:

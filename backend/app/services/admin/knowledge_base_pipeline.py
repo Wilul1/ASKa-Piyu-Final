@@ -31,6 +31,7 @@ from app.services.knowledge_document_types import (
     KnowledgeDocumentType,
     build_chunks_from_charter_v2_services,
     build_typed_chunks,
+    coerce_document_type_name,
     detect_knowledge_document_type,
 )
 from app.services.structured_document_parser import build_structured_document, format_structured_document
@@ -1088,19 +1089,17 @@ def extract_document_preview(
                 preview_file_path=preview_file_path,
             )
 
+    specific_document_type = coerce_document_type_name(
+        "citizen_charter"
+        if document_profile == "citizen_charter"
+        else _compat_response_document_type(result, detection.document_type)
+    )
     return {
-        "document_type": (
-            "citizen_charter"
-            if document_profile == "citizen_charter"
-            else _compat_response_document_type(result, detection.document_type)
-        ),
+        "document_type": specific_document_type,
         "document_profile": document_profile,
         "detected_document_type": {
-            "document_type": (
-                "citizen_charter"
-                if document_profile == "citizen_charter"
-                else detection.document_type.value
-            ),
+            "document_type": specific_document_type,
+            "base_document_type": detection.document_type.value,
             "reason": detection.reason,
             "scores": detection.scores,
             "manual_override": detection.manual_override,
@@ -1427,7 +1426,8 @@ def ingest_document_into_knowledge_base(
         diagnostic_report=_diagnostic_report(extraction),
         validation_report=validation,
         detected_document_type={
-            "document_type": response_document_type,
+            "document_type": coerce_document_type_name(response_document_type),
+            "base_document_type": detection.document_type.value,
             "reason": detection.reason,
             "scores": detection.scores,
             "manual_override": detection.manual_override,

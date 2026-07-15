@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
-import '../design_tokens.dart';
 import '../models/auth_models.dart';
-import '../widgets/student_ui.dart';
+import '../widgets/auth_split_shell.dart';
 import 'signup_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -22,6 +21,8 @@ class _LoginPageState extends State<LoginPage> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _loading = false;
+  bool _rememberMe = true;
+  bool _obscurePassword = true;
   String? _error;
 
   @override
@@ -55,162 +56,141 @@ class _LoginPageState extends State<LoginPage> {
   void _openSignup() {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => SignupPage(returnTo: widget.returnTo, message: widget.message),
+        builder: (_) =>
+            SignupPage(returnTo: widget.returnTo, message: widget.message),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: DesignTokens.bgGrey,
-      appBar: AppBar(title: const Text('Login')),
-      body: StudentPage(
-        maxWidth: 520,
-        child: StudentPanel(
-          padding: const EdgeInsets.all(24),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+    return AuthSplitShell(
+      form: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'SIGN IN',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w900,
+                color: AuthSplitShell.maroon,
+                letterSpacing: 1.2,
+              ),
+            ),
+            if (widget.message != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                widget.message!,
+                style: const TextStyle(
+                  color: Color(0xFF6B7280),
+                  height: 1.4,
+                ),
+              ),
+            ],
+            const SizedBox(height: 28),
+            TextFormField(
+              controller: _emailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+              validator: _validateEmail,
+              decoration: authFieldDecoration('Email'),
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _passwordCtrl,
+              obscureText: _obscurePassword,
+              onFieldSubmitted: (_) => _submit(),
+              validator: (value) => (value == null || value.isEmpty)
+                  ? 'Enter your password.'
+                  : null,
+              decoration: authFieldDecoration('Password').copyWith(
+                suffixIcon: IconButton(
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    color: const Color(0xFF9CA3AF),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
               children: [
-                const StudentIconBox(
-                  icon: Icons.lock_person_rounded,
-                  color: DesignTokens.maroon,
-                  size: 52,
+                SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: Checkbox(
+                    value: _rememberMe,
+                    onChanged: (value) =>
+                        setState(() => _rememberMe = value ?? false),
+                    activeColor: AuthSplitShell.maroon,
+                    side: const BorderSide(color: AuthSplitShell.maroon),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(width: 8),
                 const Text(
-                  'Log in to ASKa-Piyu',
+                  'Remember me!',
                   style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w900,
-                    color: DesignTokens.ink,
+                    color: AuthSplitShell.maroon,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
                   ),
                 ),
-                if (widget.message != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    widget.message!,
-                    style: const TextStyle(
-                      color: DesignTokens.muted,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 22),
-                TextFormField(
-                  controller: _emailCtrl,
-                  keyboardType: TextInputType.emailAddress,
-                  textInputAction: TextInputAction.next,
-                  validator: _validateEmail,
-                  decoration: _authDecoration(
-                    label: 'Email',
-                    icon: Icons.alternate_email_rounded,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextFormField(
-                  controller: _passwordCtrl,
-                  obscureText: true,
-                  onFieldSubmitted: (_) => _submit(),
-                  validator: (value) =>
-                      (value == null || value.isEmpty) ? 'Enter your password.' : null,
-                  decoration: _authDecoration(
-                    label: 'Password',
-                    icon: Icons.password_rounded,
-                  ),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 14),
-                  _ErrorBanner(message: _error!),
-                ],
-                const SizedBox(height: 22),
-                ElevatedButton(
-                  onPressed: _loading ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: DesignTokens.maroon,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: _loading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Text(_loading ? 'Logging in...' : 'Login'),
-                ),
-                const SizedBox(height: 12),
+                const Spacer(),
                 TextButton(
-                  onPressed: _loading ? null : _openSignup,
-                  child: const Text('Create a student account'),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Contact ICT or your campus admin to reset your password.',
+                        ),
+                      ),
+                    );
+                  },
+                  style: TextButton.styleFrom(
+                    foregroundColor: AuthSplitShell.maroon,
+                    padding: EdgeInsets.zero,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text(
+                    'Forgot password?',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
                 ),
               ],
             ),
-          ),
+            if (_error != null) ...[
+              const SizedBox(height: 14),
+              AuthErrorBanner(message: _error!),
+            ],
+            const SizedBox(height: 22),
+            AuthPrimaryButton(
+              label: 'LOGIN',
+              loading: _loading,
+              onPressed: _submit,
+            ),
+            const SizedBox(height: 22),
+            const AuthOrDivider(text: "Don't have an account?"),
+            const SizedBox(height: 18),
+            AuthSecondaryButton(
+              label: 'CREATE ACCOUNT',
+              onPressed: _loading ? null : _openSignup,
+            ),
+          ],
         ),
       ),
     );
   }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  final String message;
-
-  const _ErrorBanner({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF7ED),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFED7AA)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline_rounded, color: Color(0xFFC2410C)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(color: Color(0xFF9A3412), height: 1.35),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-InputDecoration _authDecoration({required String label, required IconData icon}) {
-  return InputDecoration(
-    labelText: label,
-    filled: true,
-    fillColor: const Color(0xFFF8FAFC),
-    prefixIcon: Icon(icon, size: 20),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: DesignTokens.border),
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: DesignTokens.border),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: DesignTokens.maroon, width: 1.4),
-    ),
-  );
 }
 
 String? _validateEmail(String? value) {

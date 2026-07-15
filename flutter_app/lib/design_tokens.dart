@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+/// Brand maroon used on public site / chat chrome (matches logo & chat pill).
+const Color kBrandMaroon = Color(0xFF5C0A0F);
+
 class DesignTokens {
-  static const Color maroon = Color(0xFF7B1113);
+  static const Color maroon = kBrandMaroon;
   static const Color gold = Color(0xFFD4A017);
   static const Color ink = Color(0xFF1F2937);
   static const Color muted = Color(0xFF64748B);

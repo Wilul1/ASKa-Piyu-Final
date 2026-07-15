@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: aska-piyu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: aska1234
+      POSTGRES_DB: aska_piyu
+    ports:
+      - "5432:5432"
+    volumes:
+      - aska_pgdata:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aska_piyu"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  aska_pgdata:

@@ -77,10 +77,22 @@ def _ensure_additive_schema_upgrades(engine: Engine) -> None:
         "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS source_document_id VARCHAR(36)",
         "CREATE INDEX IF NOT EXISTS ix_published_articles_source_document_id "
         "ON published_articles (source_document_id)",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_office_id VARCHAR(36)",
+        "CREATE INDEX IF NOT EXISTS ix_tickets_assigned_office_id ON tickets (assigned_office_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tickets_user_id_updated_at ON tickets (user_id, updated_at)",
+        "CREATE INDEX IF NOT EXISTS ix_tickets_office_status_updated "
+        "ON tickets (assigned_office_id, status, updated_at)",
+        "ALTER TABLE tickets DROP CONSTRAINT IF EXISTS ck_tickets_priority",
+        "ALTER TABLE tickets ADD CONSTRAINT ck_tickets_priority "
+        "CHECK (priority IN ('Urgent', 'High', 'Medium', 'Low'))",
     ]
     with engine.begin() as connection:
         for statement in statements:
-            connection.execute(text(statement))
+            try:
+                connection.execute(text(statement))
+            except SQLAlchemyError:
+                # Constraint may already match or table may be empty on fresh DBs.
+                pass
 
 
 def drop_all_tables(engine: Engine | None = None) -> None:

@@ -6,15 +6,23 @@ import 'package:flutter/material.dart';
 import '../app_config.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
-import '../widgets/sidebar.dart';
+import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
 import '../widgets/student_ui.dart';
 import 'chatbot_page.dart';
+import 'student_home.dart';
 
 const _articleFontFamily = 'Inter';
 
 class KnowledgeBasePage extends StatefulWidget {
-  const KnowledgeBasePage({super.key});
+  final String? initialCategory;
+  final String? initialQuery;
+
+  const KnowledgeBasePage({
+    super.key,
+    this.initialCategory,
+    this.initialQuery,
+  });
 
   @override
   State<KnowledgeBasePage> createState() => _KnowledgeBasePageState();
@@ -33,6 +41,15 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
   @override
   void initState() {
     super.initState();
+    final initialQuery = widget.initialQuery?.trim() ?? '';
+    if (initialQuery.isNotEmpty) {
+      _searchController.text = initialQuery;
+      _activeQuery = initialQuery;
+    }
+    final initialCategory = widget.initialCategory?.trim();
+    if (initialCategory != null && initialCategory.isNotEmpty) {
+      _activeCategory = initialCategory;
+    }
     _loadInitialData();
   }
 
@@ -55,12 +72,18 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
       }
       setState(() {
         _categories = _categoryItems(data);
-        _articles = [];
-        _suggestions = [];
-        _activeQuery = '';
-        _activeCategory = null;
         _loading = false;
       });
+      final shouldLoadArticles =
+          (_activeQuery.isNotEmpty) || (_activeCategory != null);
+      if (shouldLoadArticles) {
+        await _loadArticles(query: _activeQuery, category: _activeCategory);
+      } else {
+        setState(() {
+          _articles = [];
+          _suggestions = [];
+        });
+      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -137,11 +160,18 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
   }
 
   void _selectCategory(String? category) {
-    _loadArticles(category: category ?? '');
+    _searchController.clear();
+    _loadArticles(query: '', category: category ?? '');
   }
 
   void _showCategoryBrowse() {
     _searchController.clear();
+    setState(() {
+      _activeQuery = '';
+      _activeCategory = null;
+      _articles = [];
+      _suggestions = [];
+    });
     // Always re-fetch so newly published articles appear after admin work.
     _loadInitialData();
   }
@@ -159,49 +189,40 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 900;
-        final body = _KnowledgeBaseBody(
-          searchController: _searchController,
-          articles: _articles,
-          categories: _categories,
-          suggestions: _suggestions,
-          loading: _loading,
-          error: _error,
-          activeQuery: _activeQuery,
-          activeCategory: _activeCategory,
-          onSearch: _performSearch,
-          onRetry: _loadInitialData,
-          onSelectCategory: _selectCategory,
-          onShowCategories: _showCategoryBrowse,
-          onOpenArticle: _openArticle,
-        );
-
-        if (isWide) {
-          return Scaffold(
-            backgroundColor: DesignTokens.bgGrey,
-            body: Row(
-              children: [
-                const SizedBox(
-                  width: 220,
-                  child: AppSidebar(current: StudentNavItem.knowledgeBase),
-                ),
-                Expanded(child: body),
-              ],
-            ),
-          );
-        }
-
-        return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
-          drawer: const Drawer(
-            child: AppSidebar(current: StudentNavItem.knowledgeBase),
-          ),
-          appBar: AppBar(title: const Text('Knowledge Base')),
-          body: body,
+    final body = _KnowledgeBaseBody(
+      searchController: _searchController,
+      articles: _articles,
+      categories: _categories,
+      suggestions: _suggestions,
+      loading: _loading,
+      error: _error,
+      activeQuery: _activeQuery,
+      activeCategory: _activeCategory,
+      onSearch: _performSearch,
+      onRetry: _loadInitialData,
+      onSelectCategory: _selectCategory,
+      onShowCategories: _showCategoryBrowse,
+      onOpenArticle: _openArticle,
+      onGoHome: () {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const StudentHomePage()),
+          (route) => false,
         );
       },
+    );
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Column(
+        children: [
+          const PublicSiteHeader(knowledgeBaseActive: true),
+          Expanded(
+            child: SingleChildScrollView(
+              child: body,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -220,6 +241,7 @@ class _KnowledgeBaseBody extends StatelessWidget {
   final ValueChanged<String?> onSelectCategory;
   final VoidCallback onShowCategories;
   final ValueChanged<_KbArticle> onOpenArticle;
+  final VoidCallback onGoHome;
 
   const _KnowledgeBaseBody({
     required this.searchController,
@@ -235,41 +257,276 @@ class _KnowledgeBaseBody extends StatelessWidget {
     required this.onSelectCategory,
     required this.onShowCategories,
     required this.onOpenArticle,
+    required this.onGoHome,
   });
 
   @override
   Widget build(BuildContext context) {
-    return StudentPage(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _HeroSearch(
-            controller: searchController,
-            activeQuery: activeQuery,
-            onSearch: onSearch,
+    final browsingCategory =
+        activeCategory != null && activeCategory!.trim().isNotEmpty;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 980),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 48),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!browsingCategory || activeQuery.isNotEmpty) ...[
+                _HeroSearch(
+                  controller: searchController,
+                  activeQuery: activeQuery,
+                  onSearch: onSearch,
+                ),
+                const SizedBox(height: 28),
+              ],
+              if (activeQuery.isEmpty && activeCategory == null)
+                _CategorySections(
+                  categories: categories,
+                  loading: loading,
+                  error: error,
+                  onRetry: onRetry,
+                  onSelectCategory: onSelectCategory,
+                )
+              else if (browsingCategory && activeQuery.isEmpty)
+                _CategoryHelpCenterView(
+                  categoryName: activeCategory!,
+                  articles: articles,
+                  loading: loading,
+                  error: error,
+                  onRetry: onRetry,
+                  onGoHome: onGoHome,
+                  onBrowseCategories: onShowCategories,
+                  onOpenArticle: onOpenArticle,
+                  searchController: searchController,
+                  onSearch: onSearch,
+                )
+              else
+                _ArticleResults(
+                  articles: articles,
+                  suggestions: suggestions,
+                  loading: loading,
+                  error: error,
+                  activeQuery: activeQuery,
+                  activeCategory: activeCategory,
+                  onRetry: onRetry,
+                  onShowCategories: onShowCategories,
+                  onOpenArticle: onOpenArticle,
+                ),
+            ],
           ),
-          const SizedBox(height: 22),
-          if (activeQuery.isEmpty && activeCategory == null)
-            _CategorySections(
-              categories: categories,
-              loading: loading,
-              error: error,
-              onRetry: onRetry,
-              onSelectCategory: onSelectCategory,
-            )
-          else
-            _ArticleResults(
-              articles: articles,
-              suggestions: suggestions,
-              loading: loading,
-              error: error,
-              activeQuery: activeQuery,
-              activeCategory: activeCategory,
-              onRetry: onRetry,
-              onShowCategories: onShowCategories,
-              onOpenArticle: onOpenArticle,
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryHelpCenterView extends StatelessWidget {
+  final String categoryName;
+  final List<_KbArticle> articles;
+  final bool loading;
+  final String? error;
+  final VoidCallback onRetry;
+  final VoidCallback onGoHome;
+  final VoidCallback onBrowseCategories;
+  final ValueChanged<_KbArticle> onOpenArticle;
+  final TextEditingController searchController;
+  final ValueChanged<String?> onSearch;
+
+  const _CategoryHelpCenterView({
+    required this.categoryName,
+    required this.articles,
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+    required this.onGoHome,
+    required this.onBrowseCategories,
+    required this.onOpenArticle,
+    required this.searchController,
+    required this.onSearch,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: onGoHome,
+            style: TextButton.styleFrom(
+              foregroundColor: DesignTokens.ink,
+              padding: EdgeInsets.zero,
             ),
-        ],
+            child: const Text(
+              'Home',
+              style: TextStyle(
+                decoration: TextDecoration.underline,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Center(
+          child: Column(
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: DesignTokens.maroon.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.menu_book_rounded,
+                  color: DesignTokens.maroon,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                categoryName,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 36,
+                  fontWeight: FontWeight.w900,
+                  color: DesignTokens.ink,
+                  height: 1.15,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Browse published articles in this category',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: DesignTokens.muted,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 22),
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 12),
+              const Icon(Icons.search_rounded, color: DesignTokens.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: searchController,
+                  onSubmitted: onSearch,
+                  decoration: const InputDecoration(
+                    hintText: 'Search',
+                    border: InputBorder.none,
+                    isDense: true,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => onSearch(null),
+                icon: const Icon(Icons.arrow_forward_rounded,
+                    color: DesignTokens.maroon),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 28),
+        const Divider(height: 1, color: Color(0xFFE5E7EB)),
+        const SizedBox(height: 18),
+        if (loading)
+          const _LoadingState()
+        else if (error != null)
+          _ErrorState(message: error!, onRetry: onRetry)
+        else if (articles.isEmpty)
+          const Text(
+            'No published articles in this category yet.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: DesignTokens.muted),
+          )
+        else
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final twoCol = constraints.maxWidth >= 720;
+              final gap = 14.0;
+              final width = twoCol
+                  ? (constraints.maxWidth - gap) / 2
+                  : constraints.maxWidth;
+              return Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: articles.map((article) {
+                  return SizedBox(
+                    width: width,
+                    child: _HelpCenterArticleTile(
+                      title: article.title,
+                      onTap: () => onOpenArticle(article),
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        const SizedBox(height: 20),
+        Align(
+          alignment: Alignment.center,
+          child: TextButton(
+            onPressed: onBrowseCategories,
+            child: const Text('Browse all categories'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HelpCenterArticleTile extends StatelessWidget {
+  final String title;
+  final VoidCallback onTap;
+
+  const _HelpCenterArticleTile({
+    required this.title,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF5C0A0F),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Icon(Icons.expand_more_rounded, color: Colors.white),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -945,47 +1202,28 @@ class _ArticleReaderPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 900;
-        final body = FutureBuilder<_KbArticleDetail>(
-          future: _loadDetail(),
-          builder: (context, snapshot) {
-            final content = _ArticleReaderBody(
-              article: article,
-              detail: snapshot.data,
-              loading: snapshot.connectionState != ConnectionState.done,
-              error: snapshot.hasError,
-            );
-
-            if (isWide) {
-              return Row(
-                children: [
-                  const SizedBox(
-                    width: 220,
-                    child: AppSidebar(current: StudentNavItem.knowledgeBase),
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Column(
+        children: [
+          const PublicSiteHeader(knowledgeBaseActive: true),
+          Expanded(
+            child: FutureBuilder<_KbArticleDetail>(
+              future: _loadDetail(),
+              builder: (context, snapshot) {
+                return SingleChildScrollView(
+                  child: _ArticleReaderBody(
+                    article: article,
+                    detail: snapshot.data,
+                    loading: snapshot.connectionState != ConnectionState.done,
+                    error: snapshot.hasError,
                   ),
-                  Expanded(child: content),
-                ],
-              );
-            }
-
-            return Scaffold(
-              backgroundColor: DesignTokens.bgGrey,
-              drawer: const Drawer(
-                child: AppSidebar(current: StudentNavItem.knowledgeBase),
-              ),
-              appBar: AppBar(title: const Text('Article')),
-              body: content,
-            );
-          },
-        );
-
-        if (isWide) {
-          return Scaffold(backgroundColor: DesignTokens.bgGrey, body: body);
-        }
-        return body;
-      },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1005,101 +1243,53 @@ class _ArticleReaderBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StudentPage(
-      maxWidth: 1280,
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 30),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final loaded = detail;
-          final displayArticle = loaded?.article ?? article;
+    final loaded = detail;
+    final displayArticle = loaded?.article ?? article;
 
-          return Column(
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 820),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 56),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _BreadcrumbBar(
-                article: displayArticle,
-                onBack: () => Navigator.of(context).pop(),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: TextButton.styleFrom(
+                  foregroundColor: DesignTokens.maroon,
+                  padding: EdgeInsets.zero,
+                ),
+                child: const Text(
+                  '← Back',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
+              Text(
+                displayArticle.category,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: DesignTokens.muted,
+                ),
+              ),
+              const SizedBox(height: 18),
               if (loading)
-                const StudentPanel(
+                const Padding(
                   padding: EdgeInsets.symmetric(vertical: 80),
                   child: _LoadingState(),
                 )
               else if (error || loaded == null)
-                StudentPanel(
-                  child: _ErrorState(
-                    message: 'Could not load this article.',
-                    onRetry: () => Navigator.of(context).pop(),
-                  ),
+                _ErrorState(
+                  message: 'Could not load this article.',
+                  onRetry: () => Navigator.of(context).pop(),
                 )
               else
                 _ArticleDocument(detail: loaded),
             ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _BreadcrumbBar extends StatelessWidget {
-  final _KbArticle article;
-  final VoidCallback onBack;
-
-  const _BreadcrumbBar({required this.article, required this.onBack});
-
-  @override
-  Widget build(BuildContext context) {
-    return StudentPanel(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      shadow: false,
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Back',
-            onPressed: onBack,
-            icon: const Icon(Icons.arrow_back_rounded,
-                color: DesignTokens.maroon),
           ),
-          const SizedBox(width: 2),
-          Expanded(
-            child: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 7,
-              runSpacing: 6,
-              children: [
-                const Text(
-                  'Knowledge Base',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                    color: DesignTokens.maroon,
-                  ),
-                ),
-                const Icon(Icons.chevron_right_rounded,
-                    size: 17, color: DesignTokens.muted),
-                Text(
-                  article.category,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: DesignTokens.muted,
-                  ),
-                ),
-                const Icon(Icons.chevron_right_rounded,
-                    size: 17, color: DesignTokens.muted),
-                const Text(
-                  'Article',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: DesignTokens.muted),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1113,76 +1303,114 @@ class _ArticleDocument extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final blocks = _formatArticleBlocks(detail.content);
-    return StudentPanel(
-      padding: const EdgeInsets.fromLTRB(40, 36, 40, 40),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 960),
-        child: Column(
+    final modified = _formatModifiedOn(detail.updatedAt ?? detail.publishedAt);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              detail.title,
-              style: const TextStyle(
-                fontFamily: _articleFontFamily,
-                fontSize: 36,
-                height: 1.2,
-                fontWeight: FontWeight.w700,
-                color: DesignTokens.ink,
+            Expanded(
+              child: Text(
+                detail.title,
+                style: const TextStyle(
+                  fontFamily: _articleFontFamily,
+                  fontSize: 34,
+                  height: 1.2,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF5C0A0F),
+                ),
               ),
             ),
-            const SizedBox(height: 22),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _MetaChip(
-                    icon: Icons.folder_outlined,
-                    label: detail.article.category),
-                _MetaChip(
-                    icon: Icons.menu_book_outlined,
-                    label: _sourceLabel(detail.article)),
-                if (detail.article.office.trim().isNotEmpty)
-                  _MetaChip(
-                      icon: Icons.apartment_outlined,
-                      label: detail.article.office),
-                if (_documentTypeChipLabel(detail.article) != null)
-                  _MetaChip(
-                      icon: Icons.label_outline_rounded,
-                      label: _documentTypeChipLabel(detail.article)!),
-                if (detail.article.page != null)
-                  _MetaChip(
-                      icon: Icons.bookmark_border_rounded,
-                      label: 'Page ${detail.article.page}'),
-              ],
+            const SizedBox(width: 12),
+            TextButton.icon(
+              onPressed: () => html.window.print(),
+              icon: const Icon(Icons.print_outlined, size: 18),
+              label: const Text('Print'),
+              style: TextButton.styleFrom(
+                foregroundColor: DesignTokens.maroon,
+              ),
             ),
-            const SizedBox(height: 22),
-            _PathNote(path: detail.path),
-            const SizedBox(height: 34),
-            const Divider(height: 1, color: DesignTokens.border),
-            const SizedBox(height: 34),
-            if (blocks.isEmpty)
-              const Text(
-                'No content available.',
-                style: TextStyle(
-                  fontFamily: _articleFontFamily,
-                  fontSize: 17,
-                  height: 1.75,
-                  color: DesignTokens.muted,
-                ),
-              )
-            else
-              ...blocks.map((block) => _ArticleBlockView(block: block)),
-            const SizedBox(height: 32),
-            const Divider(height: 1, color: DesignTokens.border),
-            const SizedBox(height: 20),
-            _ArticleSourceFooter(article: detail.article),
-            const SizedBox(height: 24),
-            const _AskPanel(),
           ],
         ),
-      ),
+        if (modified != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Modified on: $modified',
+            style: const TextStyle(
+              fontSize: 13,
+              color: DesignTokens.muted,
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        const Divider(height: 1, color: Color(0xFFE5E7EB)),
+        const SizedBox(height: 26),
+        if (detail.summary.trim().isNotEmpty) ...[
+          Text(
+            detail.summary.trim(),
+            style: const TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 16,
+              height: 1.65,
+              fontStyle: FontStyle.italic,
+              color: Color(0xFF475569),
+            ),
+          ),
+          const SizedBox(height: 28),
+        ],
+        if (blocks.isEmpty)
+          const Text(
+            'No content available.',
+            style: TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 16,
+              height: 1.7,
+              color: DesignTokens.muted,
+            ),
+          )
+        else
+          ...blocks.map((block) => _ArticleBlockView(block: block)),
+        const SizedBox(height: 36),
+        const Divider(height: 1, color: Color(0xFFE5E7EB)),
+        const SizedBox(height: 20),
+        _ArticleSourceFooter(article: detail.article),
+        const SizedBox(height: 24),
+        const _AskPanel(),
+      ],
     );
   }
+}
+
+String? _formatModifiedOn(String? raw) {
+  final value = (raw ?? '').trim();
+  if (value.isEmpty) return null;
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) return value;
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  final local = parsed.toLocal();
+  final weekday = weekdays[local.weekday - 1];
+  final month = months[local.month - 1];
+  final hour24 = local.hour;
+  final hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12;
+  final ampm = hour24 >= 12 ? 'PM' : 'AM';
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$weekday, ${local.day} $month, ${local.year} at $hour12:$minute $ampm';
 }
 
 class _ArticleSourceFooter extends StatelessWidget {
@@ -1201,101 +1429,54 @@ class _ArticleSourceFooter extends StatelessWidget {
     final canView = (article.sourceViewUrl ?? '').trim().isNotEmpty &&
         (article.documentId ?? '').trim().isNotEmpty;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Source information',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: DesignTokens.ink,
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Source',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF5C0A0F),
           ),
-          const SizedBox(height: 10),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Source document: $sourceDoc',
+          style: const TextStyle(fontSize: 13, height: 1.5, color: DesignTokens.muted),
+        ),
+        if (section.isNotEmpty)
           Text(
-            'Source document: $sourceDoc',
-            style: const TextStyle(fontSize: 13, height: 1.45, color: DesignTokens.muted),
+            'Source section: $section',
+            style: const TextStyle(fontSize: 13, height: 1.5, color: DesignTokens.muted),
           ),
-          if (section.isNotEmpty)
-            Text(
-              'Source section: $section',
-              style: const TextStyle(fontSize: 13, height: 1.45, color: DesignTokens.muted),
+        Text(
+          article.page == null
+              ? 'Page: Not specified'
+              : 'Page: ${article.page}',
+          style: const TextStyle(fontSize: 13, height: 1.5, color: DesignTokens.muted),
+        ),
+        if (canView) ...[
+          const SizedBox(height: 12),
+          TextButton.icon(
+            onPressed: () => showSourcePdfViewer(
+              context,
+              title: article.title,
+              sourceLabel: sourceDoc,
+              sourceSection: section,
+              page: article.page,
+              viewUrl: article.sourceViewUrl,
+              pageUrl: article.sourcePageUrl,
             ),
-          Text(
-            article.page == null
-                ? 'Page: Not specified'
-                : 'Page: ${article.page}',
-            style: const TextStyle(fontSize: 13, height: 1.45, color: DesignTokens.muted),
-          ),
-          if (canView) ...[
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => showSourcePdfViewer(
-                context,
-                title: article.title,
-                sourceLabel: sourceDoc,
-                sourceSection: section,
-                page: article.page,
-                viewUrl: article.sourceViewUrl,
-                pageUrl: article.sourcePageUrl,
-              ),
-              icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-              label: const Text('View Source'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: DesignTokens.maroon,
-                side: const BorderSide(color: DesignTokens.maroon),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _PathNote extends StatelessWidget {
-  final String path;
-
-  const _PathNote({required this.path});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: DesignTokens.gold.withValues(alpha: 0.09),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: DesignTokens.gold.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.account_tree_outlined,
-              size: 19, color: DesignTokens.maroon),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              path.isEmpty ? 'Path not specified' : path,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.5,
-                fontWeight: FontWeight.w500,
-                color: DesignTokens.ink,
-              ),
+            icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+            label: const Text('View Source'),
+            style: TextButton.styleFrom(
+              foregroundColor: DesignTokens.maroon,
+              padding: EdgeInsets.zero,
             ),
           ),
         ],
-      ),
+      ],
     );
   }
 }
@@ -1306,11 +1487,12 @@ class _AskPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
       decoration: BoxDecoration(
-        color: DesignTokens.maroon.withValues(alpha: 0.045),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: DesignTokens.maroon.withValues(alpha: 0.14)),
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1318,35 +1500,31 @@ class _AskPanel extends StatelessWidget {
           const Text(
             'Still have questions?',
             style: TextStyle(
-                fontSize: 20,
-                height: 1.25,
-                fontWeight: FontWeight.w700,
-                color: DesignTokens.ink),
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.ink,
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           const Text(
             'ASKa-Piyu can explain this article in simpler student-friendly language.',
-            style: TextStyle(
-                fontSize: 14, height: 1.55, color: DesignTokens.muted),
+            style: TextStyle(fontSize: 14, height: 1.5, color: DesignTokens.muted),
           ),
-          const SizedBox(height: 18),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: SizedBox(
-              height: 44,
-              child: ElevatedButton.icon(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ChatbotPage()),
-                ),
-                icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
-                label: const Text('Ask ASKa-Piyu'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: DesignTokens.maroon,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 42,
+            child: ElevatedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ChatbotPage()),
+              ),
+              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+              label: const Text('Ask ASKa-Piyu'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5C0A0F),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
                 ),
               ),
             ),
@@ -1366,19 +1544,111 @@ class _ArticleBlockView extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (block.kind) {
       case _ArticleBlockKind.heading:
-        return _SectionHeading(text: block.text);
-      case _ArticleBlockKind.subheading:
         return Padding(
-          padding: const EdgeInsets.only(top: 24, bottom: 12),
+          padding: const EdgeInsets.only(top: 22, bottom: 10),
           child: Text(
             block.text,
             style: const TextStyle(
               fontFamily: _articleFontFamily,
-              fontSize: 23,
-              height: 1.35,
-              fontWeight: FontWeight.w600,
-              color: DesignTokens.maroon,
+              fontSize: 22,
+              height: 1.3,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF5C0A0F),
             ),
+          ),
+        );
+      case _ArticleBlockKind.subheading:
+        return Padding(
+          padding: const EdgeInsets.only(top: 18, bottom: 8),
+          child: Text(
+            block.text,
+            style: const TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 18,
+              height: 1.35,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF5C0A0F),
+            ),
+          ),
+        );
+      case _ArticleBlockKind.fieldLabel:
+        return Padding(
+          padding: const EdgeInsets.only(top: 18, bottom: 4),
+          child: Text(
+            block.text,
+            style: const TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: DesignTokens.muted,
+            ),
+          ),
+        );
+      case _ArticleBlockKind.fieldValue:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            block.text,
+            style: const TextStyle(
+              fontFamily: _articleFontFamily,
+              fontSize: 22,
+              height: 1.35,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF5C0A0F),
+            ),
+          ),
+        );
+      case _ArticleBlockKind.requirement:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14, left: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Icon(Icons.circle, size: 7, color: Color(0xFF5C0A0F)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text.rich(
+                      TextSpan(
+                        style: const TextStyle(
+                          fontFamily: _articleFontFamily,
+                          fontSize: 16,
+                          height: 1.5,
+                          color: Color(0xFF5C0A0F),
+                        ),
+                        children: [
+                          const TextSpan(
+                            text: 'Requirement: ',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          TextSpan(
+                            text: block.text,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if ((block.marker ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Where to Secure: ${block.marker}',
+                        style: const TextStyle(
+                          fontFamily: _articleFontFamily,
+                          fontSize: 14,
+                          height: 1.45,
+                          color: DesignTokens.muted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ),
         );
       case _ArticleBlockKind.numbered:
@@ -1392,7 +1662,7 @@ class _ArticleBlockView extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: const Color(0xFFFFF7ED),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFFFED7AA)),
           ),
           child: Text(
@@ -1401,70 +1671,24 @@ class _ArticleBlockView extends StatelessWidget {
               fontFamily: _articleFontFamily,
               fontSize: 14,
               height: 1.6,
-              fontWeight: FontWeight.w400,
               color: DesignTokens.ink,
             ),
           ),
         );
       case _ArticleBlockKind.paragraph:
         return Padding(
-          padding: const EdgeInsets.only(bottom: 18),
+          padding: const EdgeInsets.only(bottom: 14),
           child: Text(
             block.text,
             style: const TextStyle(
               fontFamily: _articleFontFamily,
-              fontSize: 17,
-              height: 1.78,
-              fontWeight: FontWeight.w400,
-              color: DesignTokens.ink,
+              fontSize: 16,
+              height: 1.7,
+              color: Color(0xFF334155),
             ),
           ),
         );
     }
-  }
-}
-
-class _SectionHeading extends StatelessWidget {
-  final String text;
-
-  const _SectionHeading({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final parts = _sectionHeadingParts(text);
-    return Padding(
-      padding: const EdgeInsets.only(top: 28, bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (parts.label != null) ...[
-            Text(
-              parts.label!,
-              style: const TextStyle(
-                fontFamily: _articleFontFamily,
-                fontSize: 12.5,
-                height: 1.35,
-                letterSpacing: 0.8,
-                fontWeight: FontWeight.w700,
-                color: DesignTokens.maroon,
-              ),
-            ),
-            const SizedBox(height: 6),
-          ],
-          if (parts.title != parts.label)
-            Text(
-              parts.title,
-              style: const TextStyle(
-                fontFamily: _articleFontFamily,
-                fontSize: 23,
-                height: 1.35,
-                fontWeight: FontWeight.w600,
-                color: DesignTokens.ink,
-              ),
-            ),
-        ],
-      ),
-    );
   }
 }
 
@@ -1494,7 +1718,7 @@ class _ListBlock extends StatelessWidget {
                     width: 6,
                     height: 6,
                     decoration: const BoxDecoration(
-                      color: DesignTokens.maroon,
+                      color: Color(0xFF5C0A0F),
                       shape: BoxShape.circle,
                     ),
                   )
@@ -1502,9 +1726,9 @@ class _ListBlock extends StatelessWidget {
                     prefix,
                     style: const TextStyle(
                       fontFamily: _articleFontFamily,
-                      fontSize: 14,
+                      fontSize: 15,
                       fontWeight: FontWeight.w700,
-                      color: DesignTokens.maroon,
+                      color: Color(0xFF5C0A0F),
                     ),
                   ),
           ),
@@ -1514,10 +1738,9 @@ class _ListBlock extends StatelessWidget {
               text,
               style: const TextStyle(
                 fontFamily: _articleFontFamily,
-                fontSize: 16.5,
-                height: 1.72,
-                fontWeight: FontWeight.w400,
-                color: DesignTokens.ink,
+                fontSize: 16,
+                height: 1.65,
+                color: Color(0xFF334155),
               ),
             ),
           ),
@@ -1530,10 +1753,13 @@ class _ListBlock extends StatelessWidget {
 enum _ArticleBlockKind {
   heading,
   subheading,
+  fieldLabel,
+  fieldValue,
+  requirement,
   paragraph,
   numbered,
   bullet,
-  note
+  note,
 }
 
 class _ArticleBlock {
@@ -1544,32 +1770,51 @@ class _ArticleBlock {
   const _ArticleBlock(this.kind, this.text, {this.marker});
 }
 
-class _HeadingParts {
-  final String? label;
-  final String title;
+const _fieldSectionHeadings = {
+  'office / division',
+  'office',
+  'classification',
+  'type of transaction',
+  'fees',
+  'total processing time',
+  'processing time',
+};
 
-  const _HeadingParts({required this.label, required this.title});
-}
+const _valueAfterHeading = {
+  'who may avail',
+  'office / division',
+  'office',
+  'classification',
+  'type of transaction',
+  'fees',
+  'total processing time',
+  'processing time',
+};
 
-_HeadingParts _sectionHeadingParts(String text) {
-  final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-  final structural = RegExp(
-    r'^(Section|Chapter|Article)\s+([IVXLCDM]+|\d+|[A-Z])(?:\s*[\-:·]\s*|\s+)?(.*)$',
-    caseSensitive: false,
-  ).firstMatch(cleaned);
-
-  if (structural == null) {
-    return _HeadingParts(label: null, title: cleaned);
-  }
-
-  final kind = structural.group(1)!.toUpperCase();
-  final number = structural.group(2)!.toUpperCase();
-  final title = (structural.group(3) ?? '').trim();
-  return _HeadingParts(
-    label: '$kind $number',
-    title: title.isEmpty ? '$kind $number' : title,
-  );
-}
+const _majorSectionHeadings = {
+  'overview',
+  'who may avail',
+  'requirements',
+  'checklist of requirements',
+  'process',
+  'process / steps',
+  'client steps',
+  'agency actions',
+  'important notes',
+  'notes',
+  'key points',
+  'important reminders',
+  'eligibility / conditions',
+  'details',
+  'purpose',
+  'when to use',
+  'how to fill out',
+  'instructions',
+  'instructions / how to submit',
+  'how to submit',
+  'related service / office',
+  'source',
+};
 
 List<_ArticleBlock> _formatArticleBlocks(String content) {
   final normalized = content
@@ -1587,8 +1832,76 @@ List<_ArticleBlock> _formatArticleBlocks(String content) {
       .toList();
   final blocks = <_ArticleBlock>[];
 
-  for (final line in lines) {
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
     if (_isPageMarker(line)) {
+      continue;
+    }
+
+    final headingKey = line.replaceAll(RegExp(r'[:：]\s*$'), '').trim().toLowerCase();
+
+    if (_fieldSectionHeadings.contains(headingKey) ||
+        _majorSectionHeadings.contains(headingKey)) {
+      if (_fieldSectionHeadings.contains(headingKey)) {
+        blocks.add(_ArticleBlock(
+          _ArticleBlockKind.fieldLabel,
+          _titleCase(headingKey),
+        ));
+      } else {
+        blocks.add(_ArticleBlock(
+          _ArticleBlockKind.heading,
+          _titleCase(headingKey),
+        ));
+      }
+      if (_valueAfterHeading.contains(headingKey) && i + 1 < lines.length) {
+        final next = lines[i + 1];
+        final nextKey =
+            next.replaceAll(RegExp(r'[:：]\s*$'), '').trim().toLowerCase();
+        if (!_fieldSectionHeadings.contains(nextKey) &&
+            !_majorSectionHeadings.contains(nextKey) &&
+            !_isPageMarker(next) &&
+            !RegExp(r'^(?:[-•*]\s*)?Requirement:', caseSensitive: false)
+                .hasMatch(next)) {
+          blocks.add(_ArticleBlock(_ArticleBlockKind.fieldValue, next));
+          i++;
+        }
+      }
+      continue;
+    }
+
+    final requirement = RegExp(
+      r'^(?:[-•*]\s*)?Requirement:\s*(.+)$',
+      caseSensitive: false,
+    ).firstMatch(line);
+    if (requirement != null) {
+      String? where;
+      if (i + 1 < lines.length) {
+        final whereMatch = RegExp(
+          r'^(?:[-•*]\s*)?Where to Secure:\s*(.+)$',
+          caseSensitive: false,
+        ).firstMatch(lines[i + 1]);
+        if (whereMatch != null) {
+          where = whereMatch.group(1)!.trim();
+          i++;
+        }
+      }
+      blocks.add(_ArticleBlock(
+        _ArticleBlockKind.requirement,
+        requirement.group(1)!.trim(),
+        marker: where,
+      ));
+      continue;
+    }
+
+    final whereOnly = RegExp(
+      r'^(?:[-•*]\s*)?Where to Secure:\s*(.+)$',
+      caseSensitive: false,
+    ).firstMatch(line);
+    if (whereOnly != null) {
+      blocks.add(_ArticleBlock(
+        _ArticleBlockKind.paragraph,
+        'Where to Secure: ${whereOnly.group(1)!.trim()}',
+      ));
       continue;
     }
 
@@ -2189,21 +2502,34 @@ class _KbArticleDetail {
   final String title;
   final String path;
   final String content;
+  final String summary;
+  final String? updatedAt;
+  final String? publishedAt;
 
   const _KbArticleDetail({
     required this.article,
     required this.title,
     required this.path,
     required this.content,
+    required this.summary,
+    this.updatedAt,
+    this.publishedAt,
   });
 
   factory _KbArticleDetail.fromJson(Map<String, dynamic> json) {
     final article = _KbArticle.fromJson(json);
+    final updated = (json['updated_at'] ?? '').toString().trim();
+    final published = (json['published_at'] ?? '').toString().trim();
     return _KbArticleDetail(
       article: article,
       title: article.title,
       path: article.path,
-      content: (json['content'] ?? json['text'] ?? '').toString(),
+      content: (json['content'] ?? json['text'] ?? json['body'] ?? '').toString(),
+      summary: (json['summary'] ?? json['short_summary'] ?? article.summary)
+          .toString()
+          .trim(),
+      updatedAt: updated.isEmpty ? null : updated,
+      publishedAt: published.isEmpty ? null : published,
     );
   }
 }

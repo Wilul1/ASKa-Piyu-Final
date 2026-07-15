@@ -2,6 +2,8 @@
 
 This guide gets the project running on a new machine from GitHub: what to install, how to configure it, and how to start the backend + Flutter app.
 
+**Short path for teammates:** see [`TEAMMATE_QUICKSTART.md`](TEAMMATE_QUICKSTART.md) (Docker Postgres + checklist).
+
 ---
 
 ## What this project is
@@ -79,6 +81,24 @@ ASKa-piyu/
 
 ## 3. Set up PostgreSQL
 
+### Recommended — Docker (same password on every laptop)
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+2. From the repo root:
+
+```bat
+scripts\start_postgres.bat
+```
+
+3. Use these URLs in `backend/.env` (matches `docker-compose.yml`):
+
+```env
+ASKA_DATABASE_URL=postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu
+ASKA_TEST_DATABASE_URL=postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu_test
+```
+
+### Alternative — install PostgreSQL locally
+
 1. Install PostgreSQL and remember the **postgres** user password.
 2. Create two databases (app + tests):
 
@@ -92,6 +112,8 @@ psql -U postgres -c "CREATE DATABASE aska_piyu_test;"
 ```
 
 > Pytest **always** uses `aska_piyu_test`. Never point the test URL at `aska_piyu`.
+
+> **ConnectionTimeout / startup failed:** Postgres is not running or the password/port in `.env` is wrong. Fix the DB first — Flutter “Could not load Knowledge Base” is a symptom of that.
 
 ---
 
@@ -175,13 +197,25 @@ python scripts/seed_office_aliases.py
 
 **Seeded office logins** (password for all: `office123`):
 
+The seed script creates one staff login per office row in PostgreSQL.
+
+Well-known shortcuts:
+
 | Email | Office |
 |-------|--------|
 | `ict@aska.local` | ICT Office |
 | `registrar@aska.local` | Registrar |
 | `osas@aska.local` | Office of Student Affairs |
+| `admissions@aska.local` | Admission and Testing Services |
+| `accounting@aska.local` | Accounting Unit |
+| `cashier@aska.local` | Cashier Unit |
+| `guidance@aska.local` | Guidance Office |
+| `hr@aska.local` | Human Resource Management Office |
+
+Other offices get an email like `college-of-engineering@aska.local`.
 
 Students can register via the app’s signup. Public signup creates **student** accounts only.
+Admins can also create office accounts via `POST /auth/office-accounts` (JWT admin required).
 
 ### 4.5 Start the backend
 

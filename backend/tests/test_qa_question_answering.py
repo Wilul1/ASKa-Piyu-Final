@@ -1044,8 +1044,9 @@ def test_qa_groq_failure_returns_graceful_response_with_debug_chunks():
     assert result.confidence == "medium"
     assert result.fallback_used is True
     assert result.fallback_reason == "timeout"
-    assert "AI answer service is temporarily busy" in result.answer
+    assert "AI answer service is temporarily busy" not in result.answer
     assert "Groq answer generation timed out" not in result.answer
+    assert "excuse slip" in result.answer.lower() or "illness" in result.answer.lower()
     assert result.sources
     assert result.retrieved_chunks[0]["boost_reasons"] == ["test_match"]
 
@@ -1078,10 +1079,10 @@ def test_groq_recoverable_errors_use_extractive_fallback(error_message: str, fal
 
     assert result.fallback_used is True
     assert result.fallback_reason == fallback_reason
-    assert "AI answer service is temporarily busy" in result.answer
+    assert "AI answer service is temporarily busy" not in result.answer
     assert "rate_limit_exceeded" not in result.answer
     assert "Groq" not in result.answer
-    assert "secure an excuse slip" in result.answer
+    assert "secure an excuse slip" in result.answer or "Excuse Slip" in result.answer
     assert result.sources[0]["title"] == "Excuse Slip"
 
 

@@ -2,6 +2,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.services.knowledge_document_types import (
+    KnowledgeDocumentType,
+    KnowledgeDocumentTypeName,
+    coerce_document_type_name,
+    to_base_document_type,
+)
+
 
 class ErrorResponse(BaseModel):
     status: str = "error"
@@ -50,18 +57,37 @@ class KnowledgeValidationReportSchema(BaseModel):
 
 
 class DocumentTypeDetectionSchema(BaseModel):
-    document_type: Literal[
-        "information",
-        "procedure",
-        "requirement",
-        "citizen_charter",
-        "service_process",
-    ]
+    """Detected knowledge document typing for admin extract/ingest.
+
+    ``document_type`` is the specific type (e.g. handbook_policy).
+    ``base_document_type`` is the broad chunking category (information /
+    procedure / requirement). Types are shared with
+    ``KnowledgeDocumentTypeName`` so schema and detector cannot drift.
+    """
+
+    document_type: KnowledgeDocumentTypeName
+    base_document_type: KnowledgeDocumentType = KnowledgeDocumentType.INFORMATION
     reason: str
     scores: dict[str, int] = Field(default_factory=dict)
     manual_override: bool = False
     admin_selected_document_type: str | None = None
     parser_kind: str | None = None
+
+    @field_validator("document_type", mode="before")
+    @classmethod
+    def _coerce_document_type(cls, value: Any) -> Any:
+        if isinstance(value, KnowledgeDocumentTypeName):
+            return value
+        return coerce_document_type_name(None if value is None else str(value))
+
+    @field_validator("base_document_type", mode="before")
+    @classmethod
+    def _coerce_base_document_type(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return KnowledgeDocumentType.INFORMATION
+        if isinstance(value, KnowledgeDocumentType):
+            return value
+        return to_base_document_type(str(value))
 
 
 class KnowledgeUnitSchema(BaseModel):
@@ -335,16 +361,57 @@ class DocumentSourceMetaSchema(BaseModel):
 
 
 TicketStatus = Literal["Open", "In Progress", "Resolved", "Closed"]
-TicketPriority = Literal["High", "Medium", "Low"]
+TicketPriority = Literal["Urgent", "High", "Medium", "Low"]
 TicketSenderRole = Literal["student", "office", "admin"]
 
 
 class TicketTriageSchema(BaseModel):
     category: str
     assigned_office: str
+    assigned_office_id: str | None = None
     priority: TicketPriority
     confidence: float
     method: str
+    suggested_office_confirmed: bool = False
+
+
+class OfficeSummarySchema(BaseModel):
+    id: str
+    name: str
+    service_category: str | None = None
+
+
+class OfficeListResponse(BaseModel):
+    items: list[OfficeSummarySchema]
+    total: int
+
+
+class TicketAuditEventSchema(BaseModel):
+    id: str
+    ticket_id: str
+    actor_id: str | None = None
+    actor_role: str
+    action: str
+    field_name: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
+    created_at: str
+
+
+class NotificationSchema(BaseModel):
+    id: str
+    ticket_id: str | None = None
+    type: str
+    title: str
+    body: str
+    is_read: bool
+    created_at: str
+
+
+class NotificationListResponse(BaseModel):
+    items: list[NotificationSchema]
+    total: int
+    unread_count: int
 
 
 class TicketMessageSchema(BaseModel):
@@ -357,24 +424,48 @@ class TicketMessageSchema(BaseModel):
     created_at: str
 
 
+class TicketCreatedBySchema(BaseModel):
+    user_id: str
+    full_name: str
+    email: str | None = None
+
+
+class TicketAttachmentSchema(BaseModel):
+    id: str
+    ticket_id: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    uploaded_by_id: str
+    created_at: str
+    download_url: str
+
+
 class TicketSchema(BaseModel):
     id: str
+    ticket_id: str
     user_id: str
     user_name: str
     user_email: str | None = None
     original_question: str
     description: str
     category: str
+    assigned_office_id: str | None = None
     assigned_office: str
+    assigned_office_name: str
     priority: TicketPriority
     status: TicketStatus
     confidence_score: float | None = None
     source_from_chatbot: bool = False
+    created_by: TicketCreatedBySchema
     created_at: str
     updated_at: str
     resolved_at: str | None = None
     closed_at: str | None = None
+    latest_reply_preview: str | None = None
+    replies_count: int = 0
     messages: list[TicketMessageSchema] = Field(default_factory=list)
+    attachments: list[TicketAttachmentSchema] = Field(default_factory=list)
 
 
 class CreateTicketRequest(BaseModel):
@@ -382,11 +473,15 @@ class CreateTicketRequest(BaseModel):
     description: str = Field("", max_length=4000)
     confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     source_from_chatbot: bool = False
+    preferred_office_id: str | None = Field(default=None, min_length=2, max_length=36)
+    preferred_office: str | None = Field(default=None, min_length=2, max_length=120)
+    preferred_priority: TicketPriority | None = None
 
 
 class UpdateTicketRequest(BaseModel):
     status: TicketStatus | None = None
     assigned_office: str | None = Field(default=None, min_length=2, max_length=120)
+    assigned_office_id: str | None = Field(default=None, min_length=2, max_length=36)
     category: str | None = Field(default=None, min_length=2, max_length=120)
     priority: TicketPriority | None = None
 
@@ -456,6 +551,27 @@ class SignupRequest(BaseModel):
         return student_id or None
 
 
+class CreateOfficeAccountRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=256)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    office_id: str | None = Field(default=None, min_length=2, max_length=36)
+    office_name: str | None = Field(default=None, min_length=2, max_length=120)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+            raise ValueError("Enter a valid email address.")
+        return email
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_full_name(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=1, max_length=256)
@@ -470,6 +586,11 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserSchema
+
+
+class UserListResponse(BaseModel):
+    items: list[UserSchema]
+    total: int
 
 
 # --- Admin: PublishedArticle management ---

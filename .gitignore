@@ -1,2 +1,4 @@
 backend/.env
 .env
+aska_piyu_demo.sql
+*.sql.bak

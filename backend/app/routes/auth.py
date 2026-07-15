@@ -9,10 +9,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
-from app.models.db_models import User
-from app.models.schemas import AuthResponse, LoginRequest, SignupRequest, UserSchema
+from app.models.db_models import Office, User
+from app.models.schemas import (
+    AuthResponse,
+    CreateOfficeAccountRequest,
+    LoginRequest,
+    SignupRequest,
+    UserListResponse,
+    UserSchema,
+)
 from app.services.auth import create_access_token, get_current_user
 from app.services.passwords import hash_password, verify_password
+from app.services.ticket_office_resolver import resolve_office_for_ticket
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -75,3 +83,73 @@ def login(payload: LoginRequest, session: Session = Depends(get_db_session)) -> 
 @router.get("/me", response_model=UserSchema)
 def me(current_user: User = Depends(get_current_user)) -> UserSchema:
     return user_to_schema(current_user)
+
+
+@router.get("/users", response_model=UserListResponse)
+def list_users(
+    role: str | None = None,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> UserListResponse:
+    """Admin-only: list application users (students, office staff, admins)."""
+    if actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can list users.")
+
+    query = session.query(User).order_by(User.created_at.desc())
+    if role is not None:
+        normalized = role.strip().lower()
+        if normalized not in {"student", "office", "admin"}:
+            raise HTTPException(status_code=422, detail="role must be student, office, or admin.")
+        query = query.filter(User.role == normalized)
+
+    users = query.all()
+    return UserListResponse(
+        items=[user_to_schema(user) for user in users],
+        total=len(users),
+    )
+
+
+@router.post("/office-accounts", response_model=UserSchema)
+def create_office_account(
+    payload: CreateOfficeAccountRequest,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> UserSchema:
+    """Admin-only: create an office staff login linked to an office."""
+    if actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can create office accounts.")
+
+    if session.query(User).filter(User.email == payload.email).first() is not None:
+        raise HTTPException(status_code=409, detail="Email is already registered.")
+
+    office: Office | None = None
+    if payload.office_id:
+        office = session.get(Office, payload.office_id)
+        if office is None:
+            raise HTTPException(status_code=422, detail="Office was not found.")
+    elif payload.office_name:
+        try:
+            office_id, _ = resolve_office_for_ticket(session, payload.office_name)
+            office = session.get(Office, office_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if office is None:
+            raise HTTPException(status_code=422, detail="Office was not found.")
+    else:
+        raise HTTPException(status_code=422, detail="Provide office_id or office_name.")
+
+    user = User(
+        email=payload.email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name.strip(),
+        role="office",
+        office_id=office.id,
+    )
+    session.add(user)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Email is already registered.") from exc
+    session.refresh(user)
+    return user_to_schema(user)

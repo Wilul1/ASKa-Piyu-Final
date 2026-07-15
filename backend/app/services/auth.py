@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.db.session import get_db_session
@@ -87,7 +87,12 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Missing bearer authentication token.")
 
     payload = decode_access_token(credentials.credentials)
-    user = session.get(User, payload["sub"])
+    user = (
+        session.query(User)
+        .options(joinedload(User.office))
+        .filter(User.id == payload["sub"])
+        .one_or_none()
+    )
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid authentication token.")
     return user

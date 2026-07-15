@@ -77,15 +77,21 @@ class User(Base):
 class Ticket(Base):
     __tablename__ = "tickets"
     __table_args__ = (
-        CheckConstraint("priority IN ('High', 'Medium', 'Low')", name="ck_tickets_priority"),
+        CheckConstraint(
+            "priority IN ('Urgent', 'High', 'Medium', 'Low')",
+            name="ck_tickets_priority",
+        ),
         CheckConstraint("status IN ('Open', 'In Progress', 'Resolved', 'Closed')", name="ck_tickets_status"),
     )
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True, nullable=False)
     original_question: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     category: Mapped[str] = mapped_column(String(120), nullable=False)
+    assigned_office_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("offices.id"), index=True, nullable=True
+    )
     assigned_office: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
     priority: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="Open", index=True, nullable=False)
@@ -102,7 +108,17 @@ class Ticket(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="tickets", foreign_keys=[user_id])
-    replies: Mapped[list["TicketReply"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
+    assigned_office_ref: Mapped["Office | None"] = relationship(foreign_keys=[assigned_office_id])
+    replies: Mapped[list["TicketReply"]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="TicketReply.created_at",
+    )
+    attachments: Mapped[list["TicketAttachment"]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="TicketAttachment.created_at",
+    )
 
 
 class TicketReply(Base):
@@ -121,6 +137,53 @@ class TicketReply(Base):
 
     ticket: Mapped[Ticket] = relationship(back_populates="replies")
     sender: Mapped[User] = relationship(back_populates="replies", foreign_keys=[sender_id])
+
+
+class TicketAttachment(Base):
+    __tablename__ = "ticket_attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ticket_id: Mapped[str] = mapped_column(String(32), ForeignKey("tickets.id"), index=True, nullable=False)
+    uploaded_by_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    stored_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    ticket: Mapped[Ticket] = relationship(back_populates="attachments")
+    uploaded_by: Mapped[User] = relationship(foreign_keys=[uploaded_by_id])
+
+
+class TicketAuditEvent(Base):
+    """Append-only history of ticket field / lifecycle changes."""
+
+    __tablename__ = "ticket_audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ticket_id: Mapped[str] = mapped_column(String(32), ForeignKey("tickets.id"), index=True, nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), index=True, nullable=True)
+    actor_role: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    field_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class Notification(Base):
+    """In-app notification for ticket replies and lifecycle updates."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True, nullable=False)
+    ticket_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("tickets.id"), index=True, nullable=True)
+    type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True, nullable=False)
 
 
 class PublishedArticle(Base):

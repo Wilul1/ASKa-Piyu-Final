@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import '../auth/auth_navigation.dart';
 import '../app_config.dart';
 import '../design_tokens.dart';
-import '../widgets/sidebar.dart';
+import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
 import 'my_tickets_page.dart';
 
@@ -103,43 +103,24 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 900;
-        final body = _ChatBody(
-          controller: _controller,
-          scrollController: _scrollController,
-          turns: _turns,
-          isLoading: _isLoading,
-          error: _error,
-          onSend: _sendQuestion,
-          onSubmitTicket: _submitTicketForQuestion,
-        );
-
-        if (isWide) {
-          return Scaffold(
-            backgroundColor: DesignTokens.bgGrey,
-            body: Row(
-              children: [
-                const SizedBox(
-                    width: 220,
-                    child: AppSidebar(current: StudentNavItem.chatbot)),
-                Expanded(child: body),
-              ],
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Column(
+        children: [
+          const PublicSiteHeader(askAssistantActive: true),
+          Expanded(
+            child: _ChatBody(
+              controller: _controller,
+              scrollController: _scrollController,
+              turns: _turns,
+              isLoading: _isLoading,
+              error: _error,
+              onSend: _sendQuestion,
+              onSubmitTicket: _submitTicketForQuestion,
             ),
-          );
-        }
-
-        return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
-          drawer:
-              const Drawer(child: AppSidebar(current: StudentNavItem.chatbot)),
-          appBar: AppBar(
-            title: const Text('Ask ASKa-Piyu'),
           ),
-          body: body,
-        );
-      },
+        ],
+      ),
     );
   }
 }
@@ -201,27 +182,57 @@ class _ChatHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: DesignTokens.border)),
+        color: Color(0xFF5C0A0F),
       ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'ASKa-Piyu Assistant',
-            style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                color: DesignTokens.ink),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(7),
+                child: Image.asset(
+                  'assets/logo.png',
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.high,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Chat with ASKa-Piyu',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Ask about policies, services, requirements, and next steps.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFFFFE4E8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          SizedBox(height: 4),
-          Text(
-            'Ask about policies, services, requirements, and next steps.',
-            style: TextStyle(fontSize: 13, color: DesignTokens.muted),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -242,10 +253,23 @@ class _EmptyChatState extends StatelessWidget {
         boxShadow: DesignTokens.softShadow(0.045),
       ),
       child: Row(
-        children: const [
-          Icon(Icons.chat_bubble_outline_rounded, color: DesignTokens.maroon),
-          SizedBox(width: 12),
-          Expanded(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color(0xFF5C0A0F).withValues(alpha: 0.08),
+              shape: BoxShape.circle,
+            ),
+            padding: const EdgeInsets.all(7),
+            child: Image.asset(
+              'assets/logo.png',
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
             child: Text(
               'Ask about enrollment, attendance, graduation, policies, or requirements.',
               style: TextStyle(
@@ -316,11 +340,16 @@ class _AnswerBubble extends StatelessWidget {
                   width: 28,
                   height: 28,
                   decoration: BoxDecoration(
-                    color: DesignTokens.maroon.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(10),
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
                   ),
-                  child: const Icon(Icons.support_agent_rounded,
-                      color: DesignTokens.maroon, size: 18),
+                  padding: const EdgeInsets.all(4),
+                  child: Image.asset(
+                    'assets/logo.png',
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.high,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 const Text(

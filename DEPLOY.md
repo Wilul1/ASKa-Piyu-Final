@@ -51,7 +51,7 @@ python scripts/seed_office_aliases.py
 
 After seeding, office staff can sign in (examples: `registrar@aska.local`, `ict@aska.local`, `osas@aska.local`) with `ASKA_SEED_OFFICE_PASSWORD`. Add more offices later in Admin → Offices, then re-run `seed_office_accounts.py` to create matching logins.
 
-**Docker Compose:** run the same seed commands against the compose DB (from a host venv with `ASKA_DATABASE_URL` pointing at the published Postgres, or):
+**Docker Compose:** production compose does **not** publish Postgres to the host. Seed via `exec` into the API container (HTTPS overlay uses the same `api` service):
 
 ```bat
 docker compose --profile full exec api python scripts/seed_admin.py --email admin@your.edu --password "YourStrongPass1"

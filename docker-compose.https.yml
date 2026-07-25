@@ -15,3 +15,5 @@ services:
       - ./deploy/nginx.https.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/nginx-proxy-locations.inc:/etc/nginx/aska/nginx-proxy-locations.inc:ro
       - ./deploy/certs:/etc/nginx/certs:ro
+      # Let's Encrypt HTTP-01 webroot (see deploy/certs/README.md)
+      - ./deploy/certbot-www:/var/www/certbot:ro

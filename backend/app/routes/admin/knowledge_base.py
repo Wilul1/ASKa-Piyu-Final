@@ -190,6 +190,12 @@ def _rag_publish_failure_detail(_exc: BaseException | None = None) -> str:
     )
 
 
+def _public_admin_error(exc: BaseException, *, fallback: str) -> str:
+    """Sanitize exception text for admin JSON bodies (no paths/stack internals)."""
+    del exc  # logged by caller; never returned
+    return fallback
+
+
 def _admin_internal_error(public_detail: str, exc: BaseException) -> HTTPException:
     logger.error("%s", public_detail, exc_info=exc)
     return HTTPException(status_code=500, detail=public_detail)
@@ -502,7 +508,13 @@ async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_key)) -> 
         return _rebuild_failure_payload(
             collection=collection,
             stage="source_documents",
-            error=str(exc),
+            error=_public_admin_error(
+                exc,
+                fallback=(
+                    "Invalid or unreadable ASKA_KB_REBUILD_DOCUMENT_PATHS. "
+                    "Check server logs for details."
+                ),
+            ),
             reset_completed=False,
             started=started,
         )
@@ -556,7 +568,13 @@ async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_key)) -> 
         failure = _rebuild_failure_payload(
             collection=collection,
             stage=stage,
-            error=str(exc),
+            error=_public_admin_error(
+                exc,
+                fallback=(
+                    f"Knowledge base rebuild failed during {stage}. "
+                    "Check server logs for details."
+                ),
+            ),
             reset_completed=reset_completed,
             started=started,
         )
@@ -734,7 +752,15 @@ def _reingest_configured_documents_after_reset() -> dict[str, Any]:
             "skipped": False,
             "documents_reingested": 0,
             "document_reingest_failed": 1,
-            "document_reingest_errors": [{"path": "", "error": str(exc)}],
+            "document_reingest_errors": [
+                {
+                    "path": "",
+                    "error": _public_admin_error(
+                        exc,
+                        fallback="Invalid rebuild document paths. Check server logs.",
+                    ),
+                }
+            ],
         }
     if not source_paths:
         return {
@@ -759,7 +785,15 @@ def _reingest_configured_documents_after_reset() -> dict[str, Any]:
             ok += 1
         except Exception as exc:
             logger.exception("Failed to re-ingest %s after Chroma reset", path)
-            errors.append({"path": str(path), "error": str(exc)})
+            errors.append(
+                {
+                    "path": path.name,
+                    "error": _public_admin_error(
+                        exc,
+                        fallback="Document re-ingest failed. Check server logs.",
+                    ),
+                }
+            )
     return {
         "skipped": False,
         "documents_reingested": ok,
@@ -1445,7 +1479,10 @@ def admin_bulk_unpublish(
                         success=False,
                         id=article_id,
                         title=art.title,
-                        error=str(exc),
+                        error=_public_admin_error(
+                            exc,
+                            fallback="Unpublish failed. Check server logs.",
+                        ),
                         code="unpublish_failed",
                     )
                 )
@@ -1736,12 +1773,16 @@ def _bulk_persist_articles(
                 )
             except Exception as exc:  # noqa: BLE001 — per-item isolation
                 session.rollback()
+                logger.exception("Bulk persist failed for preview %s", preview_id)
                 results.append(
                     AdminBulkArticleResultItem(
                         preview_id=preview_id,
                         success=False,
                         title=item.title,
-                        error=str(exc),
+                        error=_public_admin_error(
+                            exc,
+                            fallback="Save failed. Check server logs.",
+                        ),
                         code="persist_error",
                     )
                 )

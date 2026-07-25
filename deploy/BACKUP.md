@@ -13,9 +13,18 @@ Back up **Postgres + Chroma (+ documents)** together. Restoring Postgres alone w
 
 ## Backup (Docker Compose `full` profile)
 
+**Windows:**
+
 ```bat
 REM From repo root. Creates deploy\backups\<timestamp>\
 scripts\backup_aska.bat
+```
+
+**Linux VPS:**
+
+```bash
+chmod +x scripts/backup_aska.sh
+./scripts/backup_aska.sh
 ```
 
 Or manually:
@@ -35,11 +44,17 @@ docker compose --profile full exec -T api \
 
 Keep copies off the VPS (USB, campus NAS, or object storage).
 
+Suggested cron (Linux):
+
+```cron
+30 2 * * * /opt/ASKa-piyu/scripts/backup_aska.sh >> /var/log/aska-backup.log 2>&1
+```
+
 ## Restore
 
 1. Stop API/nginx (Postgres can stay up for `pg_restore`):
 
-```bat
+```bash
 docker compose --profile full stop api nginx
 ```
 
@@ -53,15 +68,21 @@ docker compose --profile full exec -T postgres \
 3. Restore data volumes into the API container paths:
 
 ```bash
-docker compose --profile full run --rm --no-deps -v "$(pwd)/deploy/backups/<stamp>/data_volumes.tgz:/backup.tgz:ro" api \
+docker compose --profile full run --rm --no-deps \
+  -v "$(pwd)/deploy/backups/<stamp>/data_volumes.tgz:/backup.tgz:ro" api \
   sh -c 'rm -rf /data/chroma/* /data/documents/* /data/ticket_attachments/* && tar -C /data -xzf /backup.tgz'
 ```
 
-4. Start services and verify:
+4. Start services and verify health:
 
-```bat
+```bash
+# Lab HTTP profile:
 docker compose --profile full start api nginx
 curl -fsS http://127.0.0.1:8080/health
+
+# Campus HTTPS overlay (ports: !override — no :8080):
+docker compose --profile full -f docker-compose.yml -f docker-compose.https.yml start api nginx
+curl -fsSk https://127.0.0.1/health
 ```
 
 5. Spot-check: admin login, public KB article count, Ask a known handbook question.

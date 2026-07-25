@@ -159,7 +159,9 @@ def test_admin_kb_rebuild_failed_ingestion_returns_success_false(
     assert data["success"] is False
     assert data["stage"] == "ingest"
     assert data["reset_completed"] is True
-    assert "ingest exploded" in data["error"]
+    # Client-facing errors must not embed exception text (paths/DB internals).
+    assert "ingest exploded" not in data["error"]
+    assert "rebuild failed during ingest" in data["error"].lower()
     assert data["articles_rag_flags_cleared"] == 2
     mock_clear_flags.assert_called_once_with()
 

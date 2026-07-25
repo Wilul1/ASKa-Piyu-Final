@@ -24,6 +24,10 @@ deploy/certs/*
 # Local / host backup dumps
 deploy/backups/
 
+# Certbot ACME webroot challenge files (keep directory)
+deploy/certbot-www/*
+!deploy/certbot-www/.gitkeep
+
 # Python
 **/__pycache__/
 **/*.py[cod]

@@ -39,12 +39,20 @@ def ticket_client(monkeypatch) -> Generator[TestClient, None, None]:
     monkeypatch.setattr("app.services.auth.settings.auth_token_ttl_minutes", 60)
     app.dependency_overrides[get_db_session] = override_get_db_session
 
+    from app.services.auth_rate_limit import reset_auth_rate_limits
+    from app.services.triage_rate_limit import reset_triage_rate_limits
+
+    reset_auth_rate_limits()
+    reset_triage_rate_limits()
+
     with session_factory() as session:
         _seed_offices_and_users(session)
 
     try:
         yield TestClient(app)
     finally:
+        reset_auth_rate_limits()
+        reset_triage_rate_limits()
         app.dependency_overrides.clear()
 
 
@@ -89,7 +97,13 @@ def _seed_offices_and_users(session: Session) -> None:
         full_name="Admin User",
         role="admin",
     )
-    session.add_all([student, other_student, ict_staff, registrar_staff, admin])
+    faculty = User(
+        email="faculty1@aska.local",
+        password_hash=hash_password("faculty123"),
+        full_name="Faculty Member",
+        role="faculty",
+    )
+    session.add_all([student, other_student, ict_staff, registrar_staff, admin, faculty])
     session.commit()
 
 
@@ -112,9 +126,33 @@ def _get_user(session_factory, email: str) -> User:
         return user
 
 
+def _student_headers(ticket_client: TestClient) -> dict[str, str]:
+    from app.services.auth_rate_limit import reset_auth_rate_limits
+
+    reset_auth_rate_limits()
+    login = ticket_client.post(
+        "/auth/login",
+        json={"email": "student1@aska.local", "password": "student123"},
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+def test_ticket_triage_requires_auth(ticket_client):
+    response = ticket_client.post(
+        "/tickets/triage",
+        json={
+            "original_question": "I cannot access my student portal account before enrollment.",
+            "description": "",
+        },
+    )
+    assert response.status_code == 401
+
+
 def test_ticket_triage_detects_technical_high_priority(ticket_client):
     response = ticket_client.post(
         "/tickets/triage",
+        headers=_student_headers(ticket_client),
         json={
             "original_question": "I cannot access my student portal account before enrollment.",
             "description": "",
@@ -132,6 +170,7 @@ def test_ticket_triage_detects_technical_high_priority(ticket_client):
 def test_cannot_log_in_with_spaces_is_high_priority(ticket_client):
     response = ticket_client.post(
         "/tickets/triage",
+        headers=_student_headers(ticket_client),
         json={
             "original_question": "I cannot log in to my student portal.",
             "description": (
@@ -504,6 +543,7 @@ def test_student_can_confirm_preferred_office(ticket_client):
 def test_urgent_priority_from_strong_urgency_language(ticket_client):
     response = ticket_client.post(
         "/tickets/triage",
+        headers=_student_headers(ticket_client),
         json={
             "original_question": "URGENT emergency: portal is completely down and I cannot graduate",
             "description": "Need help ASAP",
@@ -511,6 +551,48 @@ def test_urgent_priority_from_strong_urgency_language(ticket_client):
     )
     assert response.status_code == 200
     assert response.json()["priority"] == "Urgent"
+
+
+def test_faculty_can_list_and_open_own_tickets(ticket_client):
+    faculty_login = ticket_client.post(
+        "/auth/login",
+        json={"email": "faculty1@aska.local", "password": "faculty123"},
+    )
+    headers = {"Authorization": f"Bearer {faculty_login.json()['access_token']}"}
+
+    created = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": "How do I request teaching load adjustment?",
+            "description": "Need guidance for faculty load.",
+        },
+    )
+    assert created.status_code == 200
+    ticket_id = created.json()["id"]
+
+    listed = ticket_client.get("/tickets", headers=headers)
+    assert listed.status_code == 200
+    assert any(item["id"] == ticket_id for item in listed.json()["items"])
+
+    fetched = ticket_client.get(f"/tickets/{ticket_id}", headers=headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["id"] == ticket_id
+
+
+def test_requester_cannot_self_set_urgent_priority(ticket_client):
+    headers = _student_headers(ticket_client)
+    response = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": "I need help with enrollment.",
+            "description": "Please assist.",
+            "preferred_priority": "Urgent",
+        },
+    )
+    assert response.status_code == 422
+    assert "Urgent" in response.text
 
 
 def test_office_reply_creates_student_notification(ticket_client):
@@ -574,10 +656,11 @@ def test_student_can_upload_ticket_attachment(ticket_client, tmp_path, monkeypat
         json={"original_question": "Portal screenshot issue", "description": "See attached"},
     ).json()
 
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"fakepngbytes"
     upload = ticket_client.post(
         f"/tickets/{created['id']}/attachments",
         headers=headers,
-        files={"file": ("portal.png", b"fakepngbytes", "image/png")},
+        files={"file": ("portal.png", png_bytes, "image/png")},
     )
     assert upload.status_code == 200
     assert upload.json()["original_filename"] == "portal.png"
@@ -591,7 +674,7 @@ def test_student_can_upload_ticket_attachment(ticket_client, tmp_path, monkeypat
         headers=headers,
     )
     assert download.status_code == 200
-    assert download.content == b"fakepngbytes"
+    assert download.content == png_bytes
 
 
 def test_triage_rate_limit_returns_429(ticket_client, monkeypatch):
@@ -606,11 +689,12 @@ def test_triage_rate_limit_returns_429(ticket_client, monkeypatch):
 
     monkeypatch.setattr(tickets_routes, "check_triage_rate_limit", limited)
 
+    headers = _student_headers(ticket_client)
     body = {
         "original_question": "Where is the registrar?",
         "description": "",
     }
-    assert ticket_client.post("/tickets/triage", json=body).status_code == 200
-    assert ticket_client.post("/tickets/triage", json=body).status_code == 200
-    assert ticket_client.post("/tickets/triage", json=body).status_code == 200
-    assert ticket_client.post("/tickets/triage", json=body).status_code == 429
+    assert ticket_client.post("/tickets/triage", headers=headers, json=body).status_code == 200
+    assert ticket_client.post("/tickets/triage", headers=headers, json=body).status_code == 200
+    assert ticket_client.post("/tickets/triage", headers=headers, json=body).status_code == 200
+    assert ticket_client.post("/tickets/triage", headers=headers, json=body).status_code == 429

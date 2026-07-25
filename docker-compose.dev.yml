@@ -1,0 +1,11 @@
+# Local development overlay: publish Postgres to the host loopback only.
+# Never use this file on a public VPS.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+#
+# Or: scripts\start_postgres.bat
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"

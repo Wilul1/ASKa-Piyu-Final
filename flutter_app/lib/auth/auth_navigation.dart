@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../screens/admin_management_pages.dart';
+import '../screens/chatbot_page.dart';
 import '../screens/login_page.dart';
-import '../screens/my_tickets_page.dart';
 import '../screens/student_home.dart';
 import 'auth_state.dart';
 
@@ -47,6 +47,7 @@ Future<void> openAdminPage(
         builder: (_) => LoginPage(
           returnTo: builder,
           message: adminRequiredMessage,
+          gateRole: 'admin',
         ),
       ),
     );
@@ -74,6 +75,7 @@ Future<void> openOfficePage(
         builder: (_) => LoginPage(
           returnTo: builder,
           message: officeRequiredMessage,
+          gateRole: 'office',
         ),
       ),
     );
@@ -86,8 +88,16 @@ Future<void> openOfficePage(
 }
 
 void redirectAfterAuth(
-    BuildContext context, String role, WidgetBuilder? returnTo) {
-  final target = returnTo ?? _defaultTarget(role);
+  BuildContext context,
+  String role,
+  WidgetBuilder? returnTo, {
+  String? gateRole,
+}) {
+  final normalized = role.trim().toLowerCase();
+  final required = gateRole?.trim().toLowerCase();
+  final honorReturnTo =
+      returnTo != null && (required == null || required == normalized);
+  final target = (honorReturnTo ? returnTo : null) ?? _defaultTarget(role);
   Navigator.of(context).pushReplacement(MaterialPageRoute(builder: target));
 }
 
@@ -99,8 +109,9 @@ WidgetBuilder _defaultTarget(String role) {
   if (normalized == 'admin') {
     return (_) => const AdminDashboardPage();
   }
-  if (normalized == 'student') {
-    return (_) => const MyTicketsPage();
+  // Students and faculty land on Ask Assistant (not My Tickets).
+  if (normalized == 'student' || normalized == 'faculty') {
+    return (_) => const ChatbotPage();
   }
   return (_) => const StudentHomePage();
 }

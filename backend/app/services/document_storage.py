@@ -89,10 +89,27 @@ def source_page_url(document_id: str, page_number: int | None = None) -> str | N
 
 
 def resolve_stored_path(stored_file_path: str) -> Path:
-    path = Path(stored_file_path)
-    if not path.is_absolute():
-        path = documents_root() / path
-    return path.resolve()
+    """Resolve a stored path, confined under ``documents_root()``.
+
+    Rejects absolute paths and ``..`` escapes outside the documents root.
+    """
+    root = documents_root().resolve()
+    raw = (stored_file_path or "").strip()
+    if not raw:
+        raise ValueError("Stored file path is empty.")
+    path = Path(raw)
+    if path.is_absolute():
+        resolved = path.resolve()
+    else:
+        # Normalize separators; block escape attempts before resolve.
+        if ".." in path.parts:
+            raise ValueError("Stored file path escapes the documents root.")
+        resolved = (root / path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Stored file path escapes the documents root.") from exc
+    return resolved
 
 
 def persist_uploaded_document(
@@ -192,16 +209,24 @@ def get_source_document(document_id: str, session: Session | None = None) -> Sou
 def resolve_citation_document(
     document_id: str | None,
     *,
+    source_filename: str | None = None,
     session: Session | None = None,
 ) -> SourceDocument | None:
-    """Return SourceDocument only when the DB row and stored PDF both exist."""
+    """Return SourceDocument when the DB row and stored PDF both exist.
+
+    Falls back to filename match when Chroma ``document_id`` is a stale UUID
+    from an older ingest that no longer matches ``source_documents.id``.
+    """
     doc_id = (document_id or "").strip()
-    if not doc_id:
-        return None
-    row = get_source_document(doc_id, session=session)
-    if not is_source_file_available(row):
-        return None
-    return row
+    if doc_id and not doc_id.startswith("faq:"):
+        row = get_source_document(doc_id, session=session)
+        if is_source_file_available(row):
+            return row
+    if source_filename:
+        row = find_source_document_by_filename(source_filename, session=session)
+        if is_source_file_available(row):
+            return row
+    return None
 
 
 def citation_readiness_for_document_id(document_id: str | None) -> dict[str, Any]:

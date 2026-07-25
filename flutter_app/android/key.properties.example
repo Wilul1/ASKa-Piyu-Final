@@ -1,0 +1,12 @@
+# Copy to key.properties (gitignored) and fill in real values.
+# Create a keystore once and keep a secure backup — losing it means you cannot
+# update the same app id on Play Store / many MDM systems.
+#
+#   keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias aska-piyu
+#
+# storeFile can be absolute, or relative to flutter_app/android/
+
+storePassword=your-store-password
+keyPassword=your-key-password
+keyAlias=aska-piyu
+storeFile=upload-keystore.jks

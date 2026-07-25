@@ -90,12 +90,14 @@ ASKa-piyu/
 scripts\start_postgres.bat
 ```
 
-3. Use these URLs in `backend/.env` (matches `docker-compose.yml`):
+3. `scripts\start_postgres.bat` creates a repo-root `.env` with local password `aska1234` and publishes Postgres to **127.0.0.1:5432** only (via `docker-compose.dev.yml`). Use matching URLs in `backend/.env`:
 
 ```env
 ASKA_DATABASE_URL=postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu
 ASKA_TEST_DATABASE_URL=postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu_test
 ```
+
+> Production / VPS: set a strong `POSTGRES_PASSWORD` in repo-root `.env` and run compose **without** `docker-compose.dev.yml` so port 5432 is not published.
 
 ### Alternative — install PostgreSQL locally
 
@@ -160,7 +162,7 @@ ASKA_DOCUMENTS_PERSIST_DIR=./data/documents
 ASKA_DATABASE_INIT_ON_STARTUP=true
 
 ASKA_AUTH_SECRET_KEY=change-this-auth-secret
-ASKA_AUTH_TOKEN_TTL_MINUTES=1440
+ASKA_AUTH_TOKEN_TTL_MINUTES=480
 
 ASKA_GROQ_API_KEY=
 ASKA_GROQ_MODEL=llama-3.3-70b-versatile
@@ -169,7 +171,10 @@ ASKA_GROQ_TIMEOUT_SECONDS=30
 ASKA_CHROMA_PERSIST_DIR=./data/chroma
 ASKA_CHROMA_COLLECTION_NAME=aska_knowledge_base
 ASKA_RAG_TOP_K=5
-ASKA_CORS_ORIGINS=["*"]
+# Prefer explicit origins. For Flutter web use a fixed port:
+# flutter run -d chrome --web-port=8080
+ASKA_CORS_ORIGINS=["http://localhost:8080","http://127.0.0.1:8080"]
+ASKA_ALLOW_ADMIN_API_KEY=true
 ```
 
 **Important fields:**
@@ -178,13 +183,16 @@ ASKA_CORS_ORIGINS=["*"]
 |----------|-------------|
 | `ASKA_DATABASE_URL` | Your Postgres password + `aska_piyu` |
 | `ASKA_TEST_DATABASE_URL` | Same password + `aska_piyu_test` |
-| `ASKA_ADMIN_API_KEY` | Any secret string; enter the **same** value in the Flutter Admin panel |
-| `ASKA_AUTH_SECRET_KEY` | Any long random string (for login tokens) |
+| `ASKA_ADMIN_API_KEY` | Dev/scripts only when `ASKA_ALLOW_ADMIN_API_KEY=true` |
+| `ASKA_AUTH_SECRET_KEY` | Long random string (required in production) |
+| `ASKA_CORS_ORIGINS` | Explicit browser origins — never `*` in production |
 | `ASKA_GROQ_API_KEY` | Optional. Without it, chatbot still works with extractive fallbacks; with it, answers are better via Groq |
 
 Get a free Groq key at https://console.groq.com (optional but recommended for demos).
 
 Ask a teammate privately for keys if the team shares one Groq/admin key. **Do not commit `.env` to GitHub.**
+
+**Production (`ASKA_ENV=production`):** API refuses to start with placeholder secrets, missing auth secret, or CORS `*`. Shared `X-Admin-Key` is off by default — log in as admin instead (or set `ASKA_ALLOW_ADMIN_API_KEY=true` for scripts only). Put reverse-proxy rate limits on `/auth/login`, `/auth/signup`, and `/qa/ask`.
 
 ### 4.4 Seed office accounts (recommended)
 
@@ -195,7 +203,7 @@ python scripts/seed_office_accounts.py
 python scripts/seed_office_aliases.py
 ```
 
-**Seeded office logins** (password for all: `office123`):
+**Seeded office logins** (set `ASKA_SEED_OFFICE_PASSWORD`; local-dev default is `office123` only when `ASKA_ENV` is not production):
 
 The seed script creates one staff login per office row in PostgreSQL.
 
@@ -261,13 +269,31 @@ flutter run -d chrome --dart-define=ASKA_API_BASE_URL=http://localhost:8000
 flutter run -d windows --dart-define=ASKA_API_BASE_URL=http://localhost:8000
 ```
 
-If the API base is empty, chat / admin / KB API calls will fail.
+If the API base is empty, chat / admin / KB API calls will fail on mobile/desktop.
+**Release builds require** `--dart-define=ASKA_API_BASE_URL=…` (the app throws if it is missing).
 
-### 5.3 Admin panel key
+**Release / production builds** (from project root):
 
-1. Open Admin panel in the app.
-2. Paste the same value as `ASKA_ADMIN_API_KEY` from `backend/.env`.
-3. That key is stored in browser local storage for the session.
+```bat
+copy flutter_app\api_base.url.example flutter_app\api_base.url
+REM edit flutter_app\api_base.url to your real API origin
+scripts\build_flutter_web.bat
+scripts\build_flutter_apk.bat
+```
+
+Or set `ASKA_API_BASE_URL` in the environment (overrides the file). The build scripts refuse the placeholder `https://api.example.com`.
+
+### 5.3 Admin panel access
+
+**Preferred:** log in with an **admin** account (Bearer token). Admin KB tools accept that session automatically.
+
+**Optional (local/scripts):** paste `ASKA_ADMIN_API_KEY` into the Admin panel. That key stays **in memory only** for the session (not saved to disk). In production, shared key auth is disabled unless `ASKA_ALLOW_ADMIN_API_KEY=true`.
+
+For Flutter web CORS, pin the port to match `.env`:
+
+```bat
+flutter run -d chrome --web-port=8080 --dart-define=ASKA_API_BASE_URL=http://localhost:8000
+```
 
 ---
 
@@ -374,7 +400,51 @@ Share this file + the GitHub clone URL with your groupmate; they create their ow
 
 ---
 
-## 12. More docs inside the repo
+## 12. Self-improving knowledge (ticket → FAQ → chatbot)
+
+ASKa-Piyu can grow without developer re-indexing when offices resolve tickets and admins publish FAQs.
+
+### Production workflow (pilot)
+
+1. Student/faculty asks the chatbot; if unanswered, they submit a ticket.
+2. Office staff resolve the ticket with an approved answer.
+3. On a **Resolved/Closed** ticket, office/admin clicks **Convert to Knowledge Base** and saves a **draft** FAQ (title, audience, body).
+4. Admin opens Article Library and **publishes** the draft.
+5. Publish indexes the FAQ into **Chroma** automatically. The next similar question can be answered by the chatbot.
+6. Unpublish removes the FAQ from Chroma.
+
+### Roles
+
+| Role | Can convert ticket → draft | Can publish to public KB + Chroma | Retrieval audience |
+|------|----------------------------|-----------------------------------|--------------------|
+| Office | Assigned tickets only | No | Full corpus (support) |
+| Admin | Yes | Yes | Full corpus |
+| Student | No | No | `student` + `both` (+ legacy) |
+| Faculty | No | No | `faculty` + `both` (+ legacy) |
+
+Public signup supports **student** accounts only. Faculty/office/admin accounts are admin-created (`POST /auth/faculty-accounts`, `POST /auth/office-accounts`).
+
+### Audience tagging
+
+- Ticket FAQs set `audience` (`student` / `faculty` / `both`) at convert time.
+- PDF ingest auto-tags RAG `audience` from filename/title (Faculty Manual → `faculty`, Student Handbook → `student`, Citizen's Charter → `both`). Re-index existing manuals after upgrading so filters apply.
+- Publish/unpublish/delete (single + bulk), PATCH, and create-with-publish all commit Postgres **before** Chroma mutations. Failed re-index restores prior FAQ vectors and does **not** wipe them on cleanup. Chatbot QA (`/qa/ask` and `/student/ask`, same pipeline) requires login, drops unpublished `faq:{id}` orphans, filters by audience, and rate-limits asks. Source PDF downloads require login and block students from faculty-only manuals. Bulk article create accepts/infers `audience` (unclear defaults to `student`). After a failed rebuild that wiped Chroma, FAQ `rag_indexed` flags are cleared so Library shows **RAG stale**; use **Reindex all stale**. `GET /admin/debug/config` requires admin auth.
+- FAQ re-index snapshots existing Chroma chunks and restores them if the new write fails (avoids empty-vector split-brain).
+- Admin Chroma reset clears `rag_indexed` flags, re-ingests PDFs listed in `ASKA_KB_REBUILD_DOCUMENT_PATHS`, then re-indexes published FAQ articles. If that path list is empty/wrong, reset returns `success: false` unless `allow_skip_documents=true` (FAQ-only recovery). Full rebuild sets `success: false` when FAQ re-index fails.
+- FAQ re-index aborts if existing vectors cannot be snapshotted (no delete). If restore fails after a failed write, `rag_indexed` is cleared in a separate commit; Article Library shows a **RAG stale** badge/filter and a one-click **Reindex chatbot** action (`POST /admin/kb/articles/{id}/reindex`).
+- Article slugs are unique (helper + DB unique index); bulk create/update uses the same unique-slug helper as single create.
+
+### Ops notes (real deployment)
+
+- Keep Postgres and Chroma data directories on persistent volumes; back them up together.
+- Bind the API to `0.0.0.0` behind HTTPS; never commit `.env` secrets.
+- Set `ASKA_KB_REBUILD_DOCUMENT_PATHS` to the real handbook/charter PDF paths before relying on Chroma reset in production.
+- If publish returns a RAG indexing error after the article was marked published, Library shows **RAG stale** — use **Reindex chatbot** (or fix Chroma disk/permissions and retry).
+- Pilot SOP: thesis team acts as admin publishers; offices resolve + convert drafts. After university adoption, designated office publishers may be granted admin publish rights separately.
+
+---
+
+## 13. More docs inside the repo
 
 | File | Contents |
 |------|----------|

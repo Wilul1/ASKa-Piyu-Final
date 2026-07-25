@@ -1,19 +1,22 @@
-ASKa-Piyu — Flutter Student Home prototype
+# ASKa-Piyu (Flutter)
 
-This folder contains a minimal Flutter scaffold for the Student Home page UI prototype.
+Campus client for knowledge base browse, Ask assistant, tickets, and admin tools.
 
-Prerequisites
+**Version:** see `pubspec.yaml` (`1.0.0+1`).  
+**Android application id:** `ph.edu.lspu.aska_piyu`  
+**Display name:** ASKa-Piyu
+
+## Prerequisites
+
 - Install Flutter: https://flutter.dev/docs/get-started/install
 
-Run (from this folder):
+## Run (from this folder)
 
 ```bash
 flutter pub get
-flutter run -d chrome   # for web preview
+flutter run -d chrome   # web preview
 # or
-flutter run -d windows  # for desktop (if supported)
+flutter run -d windows  # desktop
 ```
 
-Notes
-- Add a `logo.png` image to `assets/` (or update `pubspec.yaml` accordingly).
-- The UI is intentionally minimal; tell me if you want pixel-perfect adjustments to match the Figma mockup.
+Point the API with `flutter_app/api_base.url` or `ASKA_API_BASE_URL` (see repo `scripts/build_flutter_*.bat`).

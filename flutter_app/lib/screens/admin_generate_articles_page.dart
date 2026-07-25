@@ -1,5 +1,3 @@
-import 'dart:html' as html;
-
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
@@ -13,10 +11,13 @@ import '../widgets/sidebar.dart';
 import 'admin_kb_article_library_section.dart';
 import 'admin_kb_generate_articles_section.dart';
 import 'admin_kb_outline.dart';
-import 'admin_management_pages.dart';
+import 'admin_scaffold.dart';
 
 class AdminGenerateArticlesPage extends StatefulWidget {
-  const AdminGenerateArticlesPage({super.key});
+  const AdminGenerateArticlesPage({super.key, this.focusArticleId});
+
+  /// When set, expands Article Library and highlights this article.
+  final String? focusArticleId;
 
   @override
   State<AdminGenerateArticlesPage> createState() =>
@@ -139,7 +140,7 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
     );
   }
 
-  void _setAdminHeader(html.HttpRequest request) {
+  void _setAdminHeader(Map<String, String> headers) {
     final auth = AuthScope.of(context);
     final token = auth.accessToken;
     if (auth.role != 'admin') {
@@ -148,7 +149,7 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
     if (token == null || token.trim().isEmpty) {
       throw StateError('missing_admin_token');
     }
-    request.setRequestHeader('Authorization', 'Bearer $token');
+    headers['Authorization'] = 'Bearer $token';
   }
 
   int? _optionalRecommendedPreviewLimit() {
@@ -301,6 +302,7 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
           AdminKbArticleLibrarySection(
             setAdminHeader: _setAdminHeader,
             refreshToken: _articleLibraryRefreshToken,
+            focusArticleId: widget.focusArticleId,
           ),
         ],
       ),

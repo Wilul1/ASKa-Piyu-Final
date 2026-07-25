@@ -1,10 +1,22 @@
 import '../models/admin_article_models.dart';
+import '../services/download_file.dart';
+import 'admin_article_preview_export.dart';
 
-void downloadArticlePreviewTxt({
+Future<void> downloadArticlePreviewTxt({
   required AdminArticle article,
   required String bucketLabel,
   CandidateSummary? candidate,
   String? fallbackSourceFilename,
 }) {
-  // Non-web platforms: export helpers remain available; browser download is web-only.
+  final text = buildArticlePreviewTxt(
+    article: article,
+    bucketLabel: bucketLabel,
+    candidate: candidate,
+    fallbackSourceFilename: fallbackSourceFilename,
+  );
+  final filename = safePreviewFilename(
+    title: article.title,
+    bucketLabel: bucketLabel,
+  );
+  return downloadTextFile(filename: filename, text: text);
 }

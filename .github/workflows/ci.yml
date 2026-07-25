@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: aska1234
+          POSTGRES_DB: aska_piyu_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aska_piyu_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      ASKA_ENV: development
+      ASKA_TEST_DATABASE_URL: postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu_test
+      ASKA_DATABASE_URL: postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu_test
+      ASKA_AUTH_SECRET_KEY: ci-test-auth-secret-key-xyz
+      ASKA_ADMIN_API_KEY: ci-test-admin-key-xyz
+      ASKA_ALLOW_ADMIN_API_KEY: "true"
+      ASKA_DATABASE_INIT_ON_STARTUP: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Alembic upgrade head (fresh DB)
+        # Catches 0001/0002 clashes and missing additive revisions before Docker boot.
+        run: |
+          alembic upgrade head
+          alembic upgrade head
+          alembic current | tee /tmp/alembic-current.txt
+          grep -q "20260725_0003" /tmp/alembic-current.txt
+      - name: Pytest
+        run: python -m pytest -q --tb=line
+
+  docker-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose env for production-like boot
+        run: |
+          printf '%s\n' 'POSTGRES_PASSWORD=ci-docker-postgres-secret' > .env
+          cat > backend/.env <<'EOF'
+ASKA_ENV=production
+ASKA_AUTH_SECRET_KEY=ci-docker-auth-secret-key-not-placeholder
+ASKA_CORS_ORIGINS=["https://aska.example.edu"]
+ASKA_DATABASE_INIT_ON_STARTUP=false
+ASKA_ALLOW_ADMIN_API_KEY=false
+ASKA_GROQ_API_KEY=
+EOF
+      - name: Build and start Postgres + API + nginx
+        run: docker compose --profile full up -d --build
+      - name: Wait for API health through nginx
+        run: |
+          set -e
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:8080/health" | tee /tmp/health.json; then
+              exit 0
+            fi
+            echo "waiting for health ($i)..."
+            docker compose --profile full ps
+            docker compose --profile full logs --no-color api 2>&1 | tail -n 40 || true
+            sleep 5
+          done
+          echo "API did not become healthy"
+          docker compose --profile full logs --no-color
+          exit 1
+      - name: Confirm Alembic head inside API container
+        run: |
+          docker compose --profile full exec -T api alembic current | tee /tmp/alembic-docker.txt
+          grep -q "20260725_0003" /tmp/alembic-docker.txt
+      - name: Tear down
+        if: always()
+        run: docker compose --profile full down -v
+
+  flutter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: flutter analyze

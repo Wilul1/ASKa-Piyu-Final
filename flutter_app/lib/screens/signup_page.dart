@@ -9,8 +9,14 @@ import 'login_page.dart';
 class SignupPage extends StatefulWidget {
   final WidgetBuilder? returnTo;
   final String? message;
+  final String? gateRole;
 
-  const SignupPage({super.key, this.returnTo, this.message});
+  const SignupPage({
+    super.key,
+    this.returnTo,
+    this.message,
+    this.gateRole,
+  });
 
   @override
   State<SignupPage> createState() => _SignupPageState();
@@ -50,9 +56,15 @@ class _SignupPageState extends State<SignupPage> {
         email: _emailCtrl.text,
         studentId: _studentIdCtrl.text,
         password: _passwordCtrl.text,
+        role: 'student',
       ));
       if (!mounted) return;
-      redirectAfterAuth(context, user.role, widget.returnTo);
+      redirectAfterAuth(
+        context,
+        user.role,
+        widget.returnTo,
+        gateRole: widget.gateRole,
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = _friendlyError(error));
@@ -64,8 +76,11 @@ class _SignupPageState extends State<SignupPage> {
   void _openLogin() {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) =>
-            LoginPage(returnTo: widget.returnTo, message: widget.message),
+        builder: (_) => LoginPage(
+          returnTo: widget.returnTo,
+          message: widget.message,
+          gateRole: widget.gateRole,
+        ),
       ),
     );
   }
@@ -131,7 +146,14 @@ class _SignupPageState extends State<SignupPage> {
               validator: (value) {
                 final text = value ?? '';
                 if (text.isEmpty) return 'Enter a password.';
-                if (text.length < 8) return 'Use at least 8 characters.';
+                if (text.length < 10) {
+                  return 'Use at least 10 characters.';
+                }
+                final hasLetter = text.contains(RegExp(r'[A-Za-z]'));
+                final hasDigit = text.contains(RegExp(r'\d'));
+                if (!hasLetter || !hasDigit) {
+                  return 'Include at least one letter and one number.';
+                }
                 return null;
               },
               decoration: authFieldDecoration('Password').copyWith(

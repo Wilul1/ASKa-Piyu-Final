@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import get_db_session, initialize_database
 from app.main import app
-from app.models.db_models import Office, User
+from app.models.db_models import Office, Ticket, TicketReply, User
 from app.services.auth import create_access_token
 from app.services.passwords import hash_password
 
@@ -33,9 +33,14 @@ def auth_client(monkeypatch) -> Generator[TestClient, None, None]:
     monkeypatch.setattr("app.services.auth.settings.auth_secret_key", "test-auth-secret")
     monkeypatch.setattr("app.services.auth.settings.auth_token_ttl_minutes", 60)
     app.dependency_overrides[get_db_session] = override_get_db_session
+
+    from app.services.auth_rate_limit import reset_auth_rate_limits
+
+    reset_auth_rate_limits()
     try:
         yield TestClient(app)
     finally:
+        reset_auth_rate_limits()
         app.dependency_overrides.clear()
 
 
@@ -44,7 +49,7 @@ def signup_student(client: TestClient, email: str = "student@example.edu") -> di
         "/auth/signup",
         json={
             "email": email,
-            "password": "correct horse battery staple",
+            "password": "correct horse battery staple1",
             "full_name": "Piyu Student",
             "student_id": "2026-0001",
         },
@@ -71,7 +76,7 @@ def test_duplicate_email_rejected(auth_client):
         "/auth/signup",
         json={
             "email": "student@example.edu",
-            "password": "another strong password",
+            "password": "another strong password1",
             "full_name": "Other Student",
         },
     )
@@ -85,14 +90,84 @@ def test_public_signup_cannot_create_admin(auth_client):
         "/auth/signup",
         json={
             "email": "admin@example.edu",
-            "password": "correct horse battery staple",
+            "password": "correct horse battery staple1",
             "full_name": "Admin User",
             "role": "admin",
         },
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Public signup can create student accounts only."
+    assert response.status_code == 422
+    assert "student accounts only" in response.text
+
+
+def test_public_signup_cannot_create_faculty(auth_client):
+    response = auth_client.post(
+        "/auth/signup",
+        json={
+            "email": "faculty@example.edu",
+            "password": "correct horse battery staple1",
+            "full_name": "Faculty User",
+            "role": "faculty",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "student accounts only" in response.text
+
+
+def test_admin_can_create_faculty_account(auth_client):
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        admin = User(
+            email="admin@example.edu",
+            password_hash=hash_password("admin-password-1"),
+            full_name="Admin User",
+            role="admin",
+        )
+        session.add(admin)
+        session.commit()
+        session.refresh(admin)
+        token = create_access_token(admin)
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass
+
+    response = auth_client.post(
+        "/auth/faculty-accounts",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "email": "faculty@example.edu",
+            "password": "faculty12345",
+            "full_name": "Faculty Member",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "faculty"
+    assert data["email"] == "faculty@example.edu"
+
+
+def test_login_rate_limit_returns_429(auth_client, monkeypatch):
+    from app.services import auth_rate_limit
+
+    auth_rate_limit.reset_auth_rate_limits()
+    signup_student(auth_client)
+
+    import app.routes.auth as auth_routes
+
+    def limited(key: str, *, limit: int, window_seconds: int = 60) -> bool:
+        return auth_rate_limit.check_auth_rate_limit(key, limit=3, window_seconds=window_seconds)
+
+    monkeypatch.setattr(auth_routes, "check_auth_rate_limit", limited)
+
+    body = {"email": "student@example.edu", "password": "wrong-password"}
+    assert auth_client.post("/auth/login", json=body).status_code == 401
+    assert auth_client.post("/auth/login", json=body).status_code == 401
+    assert auth_client.post("/auth/login", json=body).status_code == 401
+    assert auth_client.post("/auth/login", json=body).status_code == 429
 
 
 def test_successful_login(auth_client):
@@ -100,7 +175,7 @@ def test_successful_login(auth_client):
 
     response = auth_client.post(
         "/auth/login",
-        json={"email": "STUDENT@example.edu", "password": "correct horse battery staple"},
+        json={"email": "STUDENT@example.edu", "password": "correct horse battery staple1"},
     )
 
     assert response.status_code == 200
@@ -203,7 +278,7 @@ def test_list_users_admin_only(auth_client):
     signup_student(auth_client)
     student_token = auth_client.post(
         "/auth/login",
-        json={"email": "student@example.edu", "password": "correct horse battery staple"},
+        json={"email": "student@example.edu", "password": "correct horse battery staple1"},
     ).json()["access_token"]
 
     denied = auth_client.get(
@@ -289,3 +364,66 @@ def test_create_office_account(auth_client):
     assert data["email"] == "ict.staff@aska.local"
     assert data["office_id"] == office_id
     assert data["office_name"] == "ICT Office"
+
+
+def test_hard_delete_user_succeeds_when_user_owns_tickets(auth_client):
+    """Ticket FKs must not block admin hard-delete."""
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        admin = _seed_admin(session)
+        student = User(
+            email="doomed@example.edu",
+            password_hash=hash_password("student12345"),
+            full_name="Doomed Student",
+            role="student",
+        )
+        session.add(student)
+        session.flush()
+        ticket = Ticket(
+            id="TKT-DEL-001",
+            user_id=student.id,
+            original_question="Where is my TOR?",
+            description="Need TOR",
+            category="Student Records",
+            assigned_office="Registrar",
+            priority="Medium",
+            status="Open",
+        )
+        session.add(ticket)
+        session.flush()
+        session.add(
+            TicketReply(
+                ticket_id=ticket.id,
+                sender_id=student.id,
+                sender_role="student",
+                sender_name=student.full_name,
+                message="Following up",
+            )
+        )
+        session.commit()
+        student_id = student.id
+        token = create_access_token(admin)
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass
+
+    response = auth_client.delete(
+        f"/auth/users/{student_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted_user_id"] == student_id
+
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        assert session.get(User, student_id) is None
+        assert session.get(Ticket, "TKT-DEL-001") is None
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass

@@ -51,7 +51,10 @@ class OfficeAlias(Base):
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
-        CheckConstraint("role IN ('student', 'office', 'admin')", name="ck_users_role"),
+        CheckConstraint(
+            "role IN ('student', 'faculty', 'office', 'admin')",
+            name="ck_users_role",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -61,6 +64,8 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     office_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("offices.id"), nullable=True)
     student_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    credentials_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -82,6 +87,10 @@ class Ticket(Base):
             name="ck_tickets_priority",
         ),
         CheckConstraint("status IN ('Open', 'In Progress', 'Resolved', 'Closed')", name="ck_tickets_status"),
+        CheckConstraint(
+            "kb_conversion_status IN ('none', 'draft', 'published')",
+            name="ck_tickets_kb_conversion_status",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -97,6 +106,8 @@ class Ticket(Base):
     status: Mapped[str] = mapped_column(String(20), default="Open", index=True, nullable=False)
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_from_chatbot: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    kb_article_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    kb_conversion_status: Mapped[str] = mapped_column(String(20), default="none", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -124,7 +135,10 @@ class Ticket(Base):
 class TicketReply(Base):
     __tablename__ = "ticket_replies"
     __table_args__ = (
-        CheckConstraint("sender_role IN ('student', 'office', 'admin')", name="ck_ticket_replies_sender_role"),
+        CheckConstraint(
+            "sender_role IN ('student', 'faculty', 'office', 'admin')",
+            name="ck_ticket_replies_sender_role",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -188,10 +202,20 @@ class Notification(Base):
 
 class PublishedArticle(Base):
     __tablename__ = "published_articles"
+    __table_args__ = (
+        CheckConstraint(
+            "audience IN ('student', 'faculty', 'both')",
+            name="ck_published_articles_audience",
+        ),
+        CheckConstraint(
+            "kb_origin IN ('document', 'ticket_resolution')",
+            name="ck_published_articles_kb_origin",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     category: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     subcategory: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     path: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -200,6 +224,16 @@ class PublishedArticle(Base):
     office: Mapped[str | None] = mapped_column(String(120), nullable=True)
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    source_ticket_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("tickets.id"), unique=True, nullable=True, index=True
+    )
+    audience: Mapped[str] = mapped_column(String(20), default="both", nullable=False, index=True)
+    kb_origin: Mapped[str] = mapped_column(String(40), default="document", nullable=False, index=True)
+    resolution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    published_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    rag_indexed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    rag_document_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     chunk_count: Mapped[int | None] = mapped_column(CheckConstraint("chunk_count >= 0"), nullable=True)
     published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -235,6 +269,25 @@ class SourceDocument(Base):
     page_width: Mapped[float | None] = mapped_column(Float, nullable=True)
     page_height: Mapped[float | None] = mapped_column(Float, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+
+class Announcement(Base):
+    """Campus announcements shown in the student/faculty Announcements page."""
+
+    __tablename__ = "announcements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

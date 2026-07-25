@@ -1,12 +1,12 @@
-import 'dart:convert';
-import 'dart:html' as html;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
 import '../auth/auth_navigation.dart';
+import '../auth/auth_state.dart';
 import '../design_tokens.dart';
+import '../services/api_client.dart';
 import '../widgets/public_site_header.dart';
 import 'chatbot_page.dart';
 import 'knowledge_base_page.dart';
@@ -26,10 +26,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
   List<_LandingCategory> _categories = const [];
   List<_LandingArticle> _articles = const [];
   String _quickTab = 'Common topics';
+  bool _kbLoadStarted = false;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_kbLoadStarted) return;
+    _kbLoadStarted = true;
     _loadPublicKb();
   }
 
@@ -39,8 +42,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
       _error = null;
     });
     try {
-      final categoriesData = await _getJson('/kb/categories');
-      final articlesData = await _getJson('/kb/articles?limit=12');
+      final authHeaders = AuthScope.of(context).ticketHeaders();
+      final categoriesData =
+          await _getJson('/kb/categories', headers: authHeaders);
+      final articlesData =
+          await _getJson('/kb/articles?limit=12', headers: authHeaders);
       final categoryItems =
           categoriesData['items'] is List ? categoriesData['items'] as List : const [];
       final articleItems =
@@ -867,23 +873,17 @@ class _QuickLinkItem {
   });
 }
 
-Future<Map<String, dynamic>> _getJson(String path) async {
-  final uri = '${AppConfig.resolvedApiBase}$path';
-  final request = html.HttpRequest();
-  request.open('GET', uri);
-  request.send();
-  await request.onLoadEnd.first;
-  final status = request.status ?? 0;
-  final text = (request.responseText ?? '').trim();
-  Map<String, dynamic> decoded = {};
-  if (text.isNotEmpty) {
-    try {
-      final value = jsonDecode(text);
-      if (value is Map<String, dynamic>) decoded = value;
-    } catch (_) {}
+Future<Map<String, dynamic>> _getJson(
+  String path, {
+  Map<String, String> headers = const {},
+}) async {
+  final result = await ApiClient.send(
+    method: 'GET',
+    url: '${AppConfig.resolvedApiBase}$path',
+    headers: headers,
+  );
+  if (!result.ok) {
+    throw StateError('Request failed (${result.statusCode}) for $path');
   }
-  if (status < 200 || status >= 300) {
-    throw StateError('Request failed ($status) for $path');
-  }
-  return decoded;
+  return result.jsonObject;
 }

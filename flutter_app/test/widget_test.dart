@@ -169,15 +169,15 @@ class _FakeAuthService extends AuthService {
   _FakeAuthService(this.user);
 
   @override
-  String? readAccessToken() => _token;
+  Future<String?> readAccessToken() async => _token;
 
   @override
-  void storeAccessToken(String token) {
+  Future<void> storeAccessToken(String token, {required bool persist}) async {
     _token = token;
   }
 
   @override
-  void clearAccessToken() {
+  Future<void> clearAccessToken() async {
     _token = null;
   }
 

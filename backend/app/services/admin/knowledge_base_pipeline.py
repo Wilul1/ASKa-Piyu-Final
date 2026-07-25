@@ -26,6 +26,10 @@ from app.services.handbook_policy_processor import (
     KNOWN_CAMPUS_NAMES,
     handbook_ocr_split_audit,
 )
+from app.services.article_rag_indexer import (
+    infer_rag_audience_from_document,
+    stamp_chunks_with_audience,
+)
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
 from app.services.knowledge_document_types import (
     KnowledgeDocumentType,
@@ -1328,6 +1332,12 @@ def ingest_document_into_knowledge_base(
         title=display_title,
         source_document=source_document,
     )
+    rag_audience = infer_rag_audience_from_document(
+        filename=source_document,
+        title=display_title,
+        document_type=response_document_type,
+    )
+    chunks = stamp_chunks_with_audience(chunks, rag_audience)
     if not used_v2_chunks:
         units = _knowledge_units_for_extraction(
             extraction,
@@ -1394,7 +1404,9 @@ def ingest_document_into_knowledge_base(
             **{
                 key.lower().replace(" ", "_"): value
                 for key, value in dynamic.metadata.items()
+                if key.lower().replace(" ", "_") != "audience"
             },
+            "audience": rag_audience,
         },
     )
 

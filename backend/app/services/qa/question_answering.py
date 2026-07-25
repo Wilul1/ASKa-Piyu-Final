@@ -15,8 +15,10 @@ from app.services.qa.groq_answer_service import GroqAnswerError, generate_groq_a
 from app.services.knowledge_taxonomy import classify_question
 from app.services.retrieval_reranker import prepare_retrieval_query
 from app.services.qa.service_answer_formatter import (
+    format_requirements_detail_answer,
     format_service_procedure_answer,
     is_artifact_or_requirement_form_chunk,
+    is_factual_service_detail_query,
     is_form_or_requirement_query,
     is_service_howto_query,
     is_service_procedure_chunk,
@@ -27,9 +29,10 @@ from app.services.student.question_service import EmptyKnowledgeBaseError
 logger = logging.getLogger(__name__)
 
 
-FINAL_CONTEXT_CHUNKS = 5
-RAW_RETRIEVAL_CANDIDATES = 10
-DEFAULT_CONTEXT_CHUNKS = 3
+FINAL_CONTEXT_CHUNKS = 7
+RAW_RETRIEVAL_CANDIDATES = 18
+DEFAULT_CONTEXT_CHUNKS = 7
+FACTUAL_CONTEXT_CHUNKS = 8
 BROAD_RETRIEVAL_CANDIDATES = 30
 BROAD_CONTEXT_CHUNKS = 15
 COLLECTION_CONTEXT_GROUPS = 15
@@ -54,7 +57,10 @@ MISSING_INFO_PHRASES = (
     "outside the scope",
     "insufficient information",
 )
-OUT_OF_SCOPE_ANSWER = "The LSPU handbook does not contain information about this topic."
+OUT_OF_SCOPE_ANSWER = (
+    "The indexed LSPU documents (Citizen's Charter / student handbook) "
+    "do not contain enough information about this topic."
+)
 NORMAL_QA = "NORMAL_QA"
 DEFINITION_QUESTION = "DEFINITION_QUESTION"
 PROCEDURE_QUESTION = "PROCEDURE_QUESTION"
@@ -96,16 +102,23 @@ class QAResult:
     out_of_scope_detected: bool = False
 
 
-def answer_qa_question(question: str) -> QAResult:
+def answer_qa_question(
+    question: str,
+    *,
+    user_role: str | None = None,
+    history: list[Any] | None = None,
+) -> QAResult:
     cleaned_question = question.strip()
-    prepared_query = prepare_retrieval_query(cleaned_question)
+    chat_history = list(history or [])
+    retrieval_question = resolve_followup_question(cleaned_question, chat_history)
+    prepared_query = prepare_retrieval_query(retrieval_question)
     ticket_routing = _ticket_routing_for_question(cleaned_question)
     qa_intent = detect_question_intent(cleaned_question)
     out_of_scope = qa_intent == OUT_OF_SCOPE_QUESTION
-    collection_intent = detect_collection_intent(cleaned_question)
+    collection_intent = detect_collection_intent(retrieval_question)
     collection_mode = collection_intent != NORMAL_QA
     detected_intent = collection_intent if collection_mode else qa_intent
-    broad_query, broad_reason = detect_broad_query(cleaned_question)
+    broad_query, broad_reason = detect_broad_query(retrieval_question)
     broad_query = broad_query or collection_mode
     if collection_mode and broad_reason is None:
         broad_reason = collection_intent.lower()
@@ -140,25 +153,27 @@ def answer_qa_question(question: str) -> QAResult:
     program_scope: dict[str, Any] | None = None
     if collection_mode and hasattr(store, "list_chunks"):
         retrieved = collect_intent_chunks(store, collection_intent)
+        retrieved = _apply_audience_filter(retrieved, user_role)
         selected_context, context_filter, program_scope = select_collection_context_chunks(
-            cleaned_question,
+            retrieval_question,
             retrieved,
             collection_intent,
         )
     else:
         retrieved = store.search(
-            cleaned_question,
+            retrieval_question,
             top_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else FINAL_CONTEXT_CHUNKS,
             raw_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else RAW_RETRIEVAL_CANDIDATES,
         )
-        retrieved = prefer_service_chunks(retrieved, question=cleaned_question)
+        retrieved = prefer_service_chunks(retrieved, question=retrieval_question)
+        retrieved = _apply_audience_filter(retrieved, user_role)
         selected_context, context_filter = select_context_chunks(
-            cleaned_question,
+            retrieval_question,
             retrieved,
             broad_query=broad_query,
         )
     context = (
-        format_collection_context(selected_context, cleaned_question, collection_intent)
+        format_collection_context(selected_context, retrieval_question, collection_intent)
         if collection_mode
         else format_retrieved_context(selected_context)
     )
@@ -194,12 +209,20 @@ def answer_qa_question(question: str) -> QAResult:
             out_of_scope_detected=False,
         )
 
+    # Follow-up expansion is used for retrieval AND offline extractors so pronouns
+    # like "that" resolve for any prior topic — not only when Groq is available.
+    extractor_question = answer_question_for_extractors(
+        cleaned_question,
+        retrieval_question,
+    )
     typed_answer = _typed_answer_from_context(
         selected_context,
         sources,
-        question=cleaned_question,
+        question=extractor_question,
     )
-    if typed_answer:
+    # Prefer Groq for how-tos; keep form/requirement cards as immediate typed answers.
+    use_typed_now = bool(typed_answer) and not is_service_howto_query(extractor_question)
+    if use_typed_now:
         typed_document_type = _kb_document_type(selected_context[0].metadata if selected_context else {})
         return QAResult(
             answer=typed_answer,
@@ -235,21 +258,70 @@ def answer_qa_question(question: str) -> QAResult:
         )
 
     try:
-        if broad_query:
-            answer = generate_groq_answer(question=cleaned_question, context=context, broad_mode=True)
-        else:
-            answer = generate_groq_answer(question=cleaned_question, context=context)
+        answer = generate_groq_answer(
+            question=cleaned_question,
+            context=context,
+            broad_mode=broad_query,
+            history=chat_history,
+        )
     except GroqAnswerError as exc:
         logger.warning(
             "LLM answer generation unavailable; using conversational fallback. reason=%s",
             str(exc),
         )
+        # How-to templates are a solid fallback when Groq is unavailable.
+        if typed_answer and is_service_howto_query(extractor_question):
+            return QAResult(
+                answer=typed_answer,
+                sources=sources,
+                confidence=_confidence_for(
+                    retrieved,
+                    selected_context,
+                    typed_answer,
+                    extractor_question,
+                    broad_query=broad_query,
+                    collection_mode=collection_mode,
+                ),
+                retrieved_chunks=retrieved_debug,
+                normalized_query=prepared_query.normalized_query,
+                expanded_query=prepared_query.expanded_query,
+                matched_expansion_rules=prepared_query.matched_expansion_rules,
+                broad_query=broad_query,
+                broad_query_reason=broad_reason,
+                selected_context_count=len(selected_context),
+                grouped_context_summary=grouped_summary,
+                detected_intent=detected_intent,
+                collection_mode=collection_mode,
+                collection_articles=collection_articles if collection_mode else None,
+                collection_chunk_count=len(retrieved) if collection_mode else None,
+                group_count=len(grouped_summary or []) if collection_mode else None,
+                program_scope=program_scope,
+                ticket_routing=ticket_routing,
+                query_expansions_used=prepared_query.matched_expansion_rules,
+                rerank_reasons=_rerank_reasons_summary(retrieved),
+                fallback_used=True,
+                fallback_reason=_safe_fallback_reason(str(exc)),
+                out_of_scope_detected=False,
+            )
         fallback_answer, fallback_confidence, fallback_sources = _fallback_answer_from_context(
             selected_context,
             sources,
-            question=cleaned_question,
+            question=extractor_question,
             reason=str(exc),
         )
+        recovered = _recover_factual_charter_answer(
+            extractor_question,
+            selected_context,
+            sources,
+        )
+        if recovered and (
+            not fallback_answer.strip()
+            or fallback_answer == OUT_OF_SCOPE_ANSWER
+            or _indicates_missing_information(fallback_answer)
+            or _should_prefer_recovered_factual(extractor_question, fallback_answer)
+        ):
+            fallback_answer = recovered
+            fallback_confidence = "medium"
         return QAResult(
             answer=fallback_answer,
             sources=fallback_sources,
@@ -280,13 +352,27 @@ def answer_qa_question(question: str) -> QAResult:
         retrieved,
         selected_context,
         answer,
-        cleaned_question,
+        extractor_question,
         broad_query=broad_query,
         collection_mode=collection_mode,
     )
+    final_answer = _student_facing_answer(answer, confidence)
+    recovered = _recover_factual_charter_answer(
+        extractor_question,
+        selected_context,
+        sources,
+    )
+    if recovered and (
+        final_answer == OUT_OF_SCOPE_ANSWER
+        or _indicates_missing_information(final_answer)
+        or _indicates_missing_information(answer)
+        or _should_prefer_recovered_factual(extractor_question, final_answer)
+    ):
+        final_answer = recovered
+        confidence = "medium" if confidence == "low" else confidence
 
     return QAResult(
-        answer=_student_facing_answer(answer, confidence),
+        answer=final_answer,
         sources=sources,
         confidence=confidence,
         retrieved_chunks=retrieved_debug,
@@ -312,6 +398,157 @@ def answer_qa_question(question: str) -> QAResult:
     )
 
 
+def resolve_followup_question(question: str, history: list[Any] | None) -> str:
+    """Expand follow-ups with prior topic for better retrieval (any subject).
+
+    Uses the last user question and, when helpful, topic anchors from the last
+    assistant answer so pronouns like "that" / "it" resolve without hardcoding
+    specific services.
+    """
+    cleaned = (question or "").strip()
+    if not cleaned or not history:
+        return cleaned
+
+    last_user, last_assistant = _last_history_turns(history)
+    if not last_user and not last_assistant:
+        return cleaned
+
+    normalized = cleaned.casefold()
+    followup_prefix = bool(
+        re.match(
+            r"^(what about|how about|how much|how long|and the|the fee|the office|"
+            r"which office|what office|who handles|who is responsible|same for|"
+            r"for that|that one|and for|also|what if|and then|then what)\b",
+            normalized,
+        )
+    )
+    has_pronoun = bool(
+        re.search(r"\b(?:that|this|it|those|them|there|same)\b", normalized)
+    )
+    content_tokens = _content_tokens(normalized)
+    # Standalone if the question already names a concrete topic (2+ content words)
+    # and has no follow-up cues.
+    standalone = (
+        len(content_tokens) >= 2
+        and not followup_prefix
+        and not has_pronoun
+        and len(cleaned.split()) > 6
+    )
+    short_followup = len(cleaned.split()) <= 8 and not standalone
+    if not (followup_prefix or has_pronoun or short_followup):
+        return cleaned
+
+    topic = _topic_anchor_from_history(last_user, last_assistant)
+    if not topic:
+        return cleaned
+    return f"{cleaned}\n\n(Prior question context: {topic})"
+
+
+def _last_history_turns(history: list[Any]) -> tuple[str, str]:
+    last_user = ""
+    last_assistant = ""
+    for item in reversed(list(history)):
+        if isinstance(item, dict):
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+        else:
+            role = str(getattr(item, "role", "") or "").strip().lower()
+            content = str(getattr(item, "content", "") or "").strip()
+        if not content:
+            continue
+        if role == "assistant" and not last_assistant:
+            last_assistant = content
+        elif role == "user" and not last_user:
+            last_user = content
+        if last_user and last_assistant:
+            break
+    return last_user, last_assistant
+
+
+def _content_tokens(text: str) -> set[str]:
+    stop = {
+        "what", "which", "who", "how", "when", "where", "why", "the", "a", "an",
+        "is", "are", "was", "were", "do", "does", "did", "can", "could", "would",
+        "should", "for", "of", "to", "in", "on", "at", "by", "with", "from",
+        "about", "that", "this", "it", "those", "them", "there", "same", "also",
+        "and", "or", "my", "me", "i", "you", "your", "please", "tell", "need",
+        "want", "office", "handles", "responsible", "process", "service",
+    }
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", (text or "").casefold())
+        if token not in stop and len(token) >= 3
+    }
+
+
+def _topic_anchor_from_history(last_user: str, last_assistant: str) -> str:
+    """Build a topic string from prior turns — not tied to one FAQ."""
+    parts: list[str] = []
+    if last_user:
+        parts.append(last_user.strip()[:240])
+    if last_assistant:
+        extracted = _extract_topic_phrases(last_assistant)
+        for phrase in extracted:
+            if phrase and phrase.casefold() not in " ".join(parts).casefold():
+                parts.append(phrase)
+    joined = " | ".join(parts).strip()
+    return joined[:400]
+
+
+def _extract_topic_phrases(assistant_text: str) -> list[str]:
+    text = (assistant_text or "").strip()
+    if not text:
+        return []
+    phrases: list[str] = []
+    patterns = (
+        r"(?i)responsible for\s+(.+?)\s+is\s+",
+        r"(?i)may avail of\s+(.+?),",
+        r"(?i)(?:fee|processing time)\s+for\s+(.+?)\s+is\s+",
+        r"(?i)assistance for\s+(.+?)(?:\.|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            phrase = re.sub(r"\s+", " ", match.group(1)).strip(" .:;-")
+            if 3 <= len(phrase) <= 120:
+                phrases.append(phrase)
+    # First short line often carries the service/section title from templates.
+    first_line = re.sub(r"\s+", " ", text.splitlines()[0]).strip()
+    if 8 <= len(first_line) <= 90 and not first_line.lower().startswith(
+        ("sure", "here", "the retrieved", "this may", "overview")
+    ):
+        phrases.append(first_line)
+    # Dedupe preserving order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for phrase in phrases:
+        key = phrase.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(phrase)
+    return unique[:3]
+
+
+def answer_question_for_extractors(cleaned_question: str, retrieval_question: str) -> str:
+    """Flatten follow-up expansion so offline extractors see the prior topic."""
+    cleaned = (cleaned_question or "").strip()
+    retrieval = (retrieval_question or "").strip()
+    if not retrieval or retrieval == cleaned:
+        return cleaned
+    match = re.search(
+        r"\(Prior question context:\s*(.+?)\)\s*$",
+        retrieval,
+        flags=re.S,
+    )
+    if not match:
+        return cleaned
+    prior = re.sub(r"\s+", " ", match.group(1)).strip()
+    if not prior:
+        return cleaned
+    return f"{cleaned} regarding {prior}"
+
+
 def _ticket_routing_for_question(question: str) -> dict[str, Any]:
     classification = classify_question(question)
     return {
@@ -324,26 +561,96 @@ def _ticket_routing_for_question(question: str) -> dict[str, Any]:
     }
 
 
+def _apply_audience_filter(chunks: list[RetrievedChunk], user_role: str | None) -> list[RetrievedChunk]:
+    from app.services.article_rag_indexer import (
+        filter_chunks_for_audience,
+        filter_unpublished_faq_chunks,
+    )
+
+    return filter_chunks_for_audience(
+        filter_unpublished_faq_chunks(chunks),
+        user_role,
+    )
+
+
 def detect_collection_intent(question: str) -> str:
+    """Detect list-style collection questions only.
+
+    Specific charter/service FAQs (which office, fees, requirements for one
+    named service) must stay on the normal RAG + Groq path.
+    """
     normalized = _normalize(question)
     if _is_specific_query(normalized):
         return NORMAL_QA
 
     tokens = set(re.findall(r"[a-z0-9]+", normalized))
-    if _contains_any(normalized, ("scholarship", "scholarships", "financial assistance", "grant", "grants", "aid")):
+    listish = _contains_any(
+        normalized,
+        (
+            "list",
+            "all",
+            "available",
+            "what are the",
+            "what are",
+            "are there",
+            "categories",
+            "types",
+            "what requirements",
+            "what documents",
+            "what services",
+            "what offices",
+            "what programs",
+            "what scholarships",
+            "what courses",
+            "what colleges",
+        ),
+    )
+
+    if listish and _contains_any(
+        normalized,
+        ("scholarship", "scholarships", "financial assistance", "grant", "grants", "aid"),
+    ):
         return SCHOLARSHIP_COLLECTION
-    if _contains_any(normalized, ("student service", "student services", "guidance service", "health service")) or (
-        _contains_any(normalized, ("service", "services")) and _contains_any(normalized, ("osas", "student", "available", "provide", "provided"))
+    if listish and (
+        _contains_any(normalized, ("student service", "student services", "guidance service", "health service"))
+        or (
+            _contains_any(normalized, ("service", "services"))
+            and _contains_any(normalized, ("osas", "student", "available", "provide", "provided"))
+        )
     ):
         return SERVICE_COLLECTION
-    if _contains_any(normalized, ("office", "offices", "department", "departments", "registrar", "cashier", "guidance", "osas", "library")):
+    if (
+        _contains_any(normalized, ("offices", "departments"))
+        or (
+            listish
+            and _contains_any(normalized, ("office", "department"))
+            and not _contains_any(
+                normalized,
+                ("which office", "what office", "responsible", "handles", "in charge"),
+            )
+        )
+    ):
         return OFFICE_COLLECTION
-    if _contains_any(normalized, ("requirement", "requirements", "documents", "needed", "clearance", "forms", "checklist", "application")):
+    if listish and _contains_any(
+        normalized,
+        ("requirement", "requirements", "documents", "clearance", "forms", "checklist"),
+    ):
+        # Named service + requirements is a normal FAQ, not a collection sweep.
+        if _has_named_service_anchor(normalized):
+            return NORMAL_QA
         return REQUIREMENT_COLLECTION
-    if _contains_any(normalized, ("policy", "policies", "rules", "guidelines")) and _contains_any(normalized, ("list", "all", "what are", "available", "categories", "types")):
+    if _contains_any(normalized, ("policy", "policies", "rules", "guidelines")) and listish:
+        # Faculty-specific policy questions should use normal RAG, not a broad policy sweep.
+        if _contains_any(
+            normalized,
+            ("faculty", "teaching load", "professor", "instructor", "grading sheets"),
+        ):
+            return NORMAL_QA
         return POLICY_COLLECTION
     program_signals = tokens & {"program", "programs", "course", "courses", "degree", "degrees", "college", "colleges", "offered"}
-    if program_signals or _contains_any(normalized, ("curricular offering", "curricular offerings")):
+    if (program_signals or _contains_any(normalized, ("curricular offering", "curricular offerings"))) and (
+        listish or _contains_any(normalized, ("offered", "offerings"))
+    ):
         return PROGRAM_COLLECTION
     return NORMAL_QA
 
@@ -426,9 +733,12 @@ def select_context_chunks(
 
     normalized_query = _normalize(question)
     query_domain = _detected_query_domain(normalized_query)
-    limit = BROAD_CONTEXT_CHUNKS if broad_query else (
-        5 if _is_broad_context_query(normalized_query) else DEFAULT_CONTEXT_CHUNKS
-    )
+    if broad_query:
+        limit = BROAD_CONTEXT_CHUNKS
+    elif _is_factual_charter_query(normalized_query) or _is_broad_context_query(normalized_query):
+        limit = FACTUAL_CONTEXT_CHUNKS
+    else:
+        limit = DEFAULT_CONTEXT_CHUNKS
     top_score = _chunk_score(chunks[0])
     selected: list[RetrievedChunk] = []
     decisions: dict[int, tuple[bool, list[str]]] = {}
@@ -572,12 +882,14 @@ def format_retrieved_context(chunks: list[RetrievedChunk]) -> str:
         title = _display_title(chunk)
         path = _hierarchy_path(metadata) or title
         page = _page_label(metadata)
+        meta_lines = _charter_metadata_context_lines(metadata)
         blocks.append(
             "\n".join(
                 [
                     f"Title: {title}",
                     f"Path: {path}",
                     f"Page: {page}",
+                    *meta_lines,
                     "",
                     "Content:",
                     chunk.text.strip(),
@@ -679,9 +991,183 @@ def _confidence_for(
 
 
 def _student_facing_answer(answer: str, confidence: str) -> str:
-    if confidence == "low" and _indicates_missing_information(answer):
+    from app.services.qa.groq_answer_service import _strip_pointer_phrasing
+
+    cleaned = _strip_pointer_phrasing(_strip_source_lines(answer))
+    # Only collapse to the stock OOS line when the reply is basically a refusal —
+    # keep partial useful answers that also mention missing details.
+    if (
+        confidence == "low"
+        and _indicates_missing_information(cleaned)
+        and _is_mostly_missing_info_reply(cleaned)
+    ):
         return OUT_OF_SCOPE_ANSWER
-    return _strip_source_lines(answer)
+    return cleaned
+
+
+def _is_mostly_missing_info_reply(answer: str) -> bool:
+    text = (answer or "").strip()
+    if not text:
+        return True
+    if re.search(r"(?m)^\s*(?:[-*•]|\d+\.)\s+\S", text):
+        return False
+    if len(text) > 280:
+        return False
+    return True
+
+
+def _should_prefer_recovered_factual(question: str, answer: str) -> bool:
+    """Replace wrong office-only dumps when the user asked for documents/fees/etc."""
+    normalized_q = _normalize(question)
+    normalized_a = _normalize(answer)
+    if not answer.strip():
+        return True
+    asks_documents = bool(
+        re.search(
+            r"\b(?:document|documents|requirement|requirements|what must|what additional)\b",
+            normalized_q,
+        )
+    )
+    asks_who = bool(re.search(r"\b(?:who may|who can avail)\b", normalized_q))
+    asks_fee = bool(re.search(r"\b(?:how much|fee|fees|cost)\b", normalized_q))
+    asks_time = bool(re.search(r"\b(?:how long|processing time)\b", normalized_q))
+    office_only = bool(
+        re.search(r"\bresponsible office\b", normalized_a)
+        and not re.search(r"\b(?:required|requirement|document|fee|processing time|who may)\b", normalized_a)
+    )
+    if asks_documents and office_only:
+        return True
+    if asks_who and office_only:
+        return True
+    if asks_fee and office_only:
+        return True
+    if asks_time and office_only:
+        return True
+    return False
+
+
+def _recover_factual_charter_answer(
+    question: str,
+    chunks: list[RetrievedChunk],
+    sources: list[dict[str, Any]],
+) -> str | None:
+    """Extract office / who-may-avail / fee / time from charter chunks when LLM misses."""
+    if not chunks or not is_factual_service_detail_query(question):
+        return None
+    normalized = _normalize(question)
+    ranked = sorted(chunks, key=lambda chunk: _charter_recovery_rank(chunk, normalized))
+    for chunk in ranked:
+        metadata = chunk.metadata or {}
+        title = (
+            _meta_text(metadata, "source_section")
+            or _meta_text(metadata, "canonical_topic")
+            or _meta_text(metadata, "title")
+            or _display_title(chunk)
+            or "this service"
+        )
+        source_label = _source_label(
+            sources,
+            fallback=_meta_text(metadata, "source_label")
+            or _meta_text(metadata, "source_document")
+            or chunk.source_filename,
+        )
+
+        if re.search(r"\b(?:who may|who can avail|who can)\b", normalized):
+            who = _meta_text(metadata, "who_may_avail") or _extract_labeled_line(
+                chunk.text or "",
+                ("Who May Avail", "Who May Avail of the Service", "Clientele"),
+            )
+            if who:
+                return (
+                    f"{who} may avail of {title}, according to the {source_label}."
+                )
+
+        if re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized):
+            office = (
+                _meta_text(metadata, "office")
+                or _meta_text(metadata, "responsible_office")
+                or _extract_labeled_line(chunk.text or "", ("Office / Division", "Office"))
+            )
+            if office:
+                return f"The office responsible for {title} is {office} ({source_label})."
+
+        if re.search(r"\b(?:how long|processing time)\b", normalized):
+            time_value = _meta_text(metadata, "total_processing_time") or _extract_labeled_line(
+                chunk.text or "",
+                ("Total Processing Time",),
+            )
+            if time_value:
+                return f"The total processing time for {title} is {time_value} ({source_label})."
+
+        if re.search(r"\b(?:how much|fee|fees|cost)\b", normalized):
+            fee = (
+                _meta_text(metadata, "total_fees")
+                or _meta_text(metadata, "fees")
+                or _extract_labeled_line(chunk.text or "", ("Fees", "Fee", "Total Fees"))
+            )
+            if fee:
+                return f"The listed fee for {title} is {fee} ({source_label})."
+
+        if re.search(
+            r"\b(?:what documents|what additional|what must|documents? (?:are )?required|"
+            r"requirements? (?:for|from|needed)|what (?:are|is) the (?:requirement|requirements|document|documents))\b",
+            normalized,
+        ):
+            answer = format_requirements_detail_answer(question, chunk, sources)
+            if answer:
+                return answer
+    return None
+
+
+def _charter_recovery_rank(chunk: RetrievedChunk, normalized_question: str) -> tuple[int, float]:
+    title = _normalize(
+        " ".join(
+            str(value or "")
+            for value in (
+                (chunk.metadata or {}).get("source_section"),
+                (chunk.metadata or {}).get("title"),
+                chunk.title,
+            )
+        )
+    )
+    score = -_chunk_score(chunk)
+    if "enroll" in normalized_question:
+        if (
+            "ip registration" in title
+            or "assessment of fee" in title
+            or "visitation" in title
+            or "article 3" in title
+        ):
+            return (3, score)
+        if "enrollment" in title or "enrolment" in title:
+            return (0, score)
+        if "registration" in title and "enrollment" not in title:
+            return (3, score)
+        return (1, score)
+    return (0, score)
+
+
+def _extract_labeled_line(text: str, labels: tuple[str, ...]) -> str:
+    for label in labels:
+        match = re.search(
+            rf"(?im)^{re.escape(label)}\s*[:\-]?\s*(.+)$",
+            text or "",
+        )
+        if match:
+            value = match.group(1).strip()
+            if value and value.lower() not in {"not specified", "none", "n/a", "[needs review]"}:
+                return value
+    # Also accept inline "Who May Avail: Students"
+    for label in labels:
+        match = re.search(
+            rf"(?is){re.escape(label)}\s*[:\-]\s*([^\n]+)",
+            text or "",
+        )
+        if match:
+            value = match.group(1).strip()
+            if value and value.lower() not in {"not specified", "none", "n/a", "[needs review]"}:
+                return value
+    return ""
 
 
 def _indicates_missing_information(answer: str) -> bool:
@@ -736,18 +1222,21 @@ def _typed_answer_from_context(
     *,
     question: str = "",
 ) -> str | None:
+    """Return a deterministic answer only for clear how-to / form intents.
+
+    Factual charter questions (fees, times, who may avail, vision, edition,
+    which office, document lists) must reach Groq so answers match the asked
+    detail instead of a generic step dump.
+    """
     if not selected_context:
         return None
 
     form_intent = is_form_or_requirement_query(question)
-    service_intent = is_service_howto_query(question) or not form_intent
-
-    # Prefer a complete Citizen Charter / service procedure chunk.
-    for chunk in selected_context:
-        if is_artifact_or_requirement_form_chunk(chunk) and not form_intent:
-            continue
-        if is_service_procedure_chunk(chunk):
-            return format_service_procedure_answer(chunk, sources)
+    howto_intent = is_service_howto_query(question)
+    # Empty question keeps legacy typed path for unit tests / callers.
+    allow_typed_procedure = howto_intent or not str(question or "").strip()
+    if is_factual_service_detail_query(question):
+        allow_typed_procedure = False
 
     top = selected_context[0]
     metadata = top.metadata or {}
@@ -759,7 +1248,17 @@ def _typed_answer_from_context(
     ):
         return _requirement_answer(top, sources)
 
-    if document_type == "procedure" and service_intent:
+    if not allow_typed_procedure:
+        return None
+
+    # Prefer a complete Citizen Charter / service procedure chunk for how-tos.
+    for chunk in selected_context:
+        if is_artifact_or_requirement_form_chunk(chunk) and not form_intent:
+            continue
+        if is_service_procedure_chunk(chunk):
+            return format_service_procedure_answer(chunk, sources)
+
+    if document_type == "procedure":
         return format_service_procedure_answer(top, sources)
 
     return None
@@ -943,32 +1442,39 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
         chunk: RetrievedChunk,
         index: int,
     ) -> dict[str, Any]:
-        ready_row = resolve_citation_document(document_id)
+        source_filename = str(
+            chunk.source_filename or metadata.get("source_filename") or ""
+        ).strip() or None
+        ready_row = resolve_citation_document(
+            document_id,
+            source_filename=source_filename,
+        )
         pdf_ready = ready_row is not None
+        # Prefer the Postgres source_documents.id so /documents/{id}/source works
+        # even when Chroma still carries a stale ingest UUID.
+        resolved_document_id = ready_row.id if ready_row is not None else document_id
         resolved_page = page or _page_number(metadata, chunk.text)
         view_url = (
-            source_view_url(document_id, resolved_page)
-            if pdf_ready and document_id
+            source_view_url(resolved_document_id, resolved_page)
+            if pdf_ready and resolved_document_id
             else None
         )
         page_url = (
-            source_page_url(document_id, resolved_page)
-            if pdf_ready and document_id and resolved_page
+            source_page_url(resolved_document_id, resolved_page)
+            if pdf_ready and resolved_document_id and resolved_page
             else None
         )
         note = None if pdf_ready else (
             "PDF source unavailable. Re-index this document to enable PDF viewing."
         )
-        source_filename = str(
-            chunk.source_filename or metadata.get("source_filename") or ""
-        ).strip() or None
         return {
             "page": resolved_page,
             "page_number": resolved_page,
             "citation_id": str(
-                metadata.get("chunk_id") or f"{document_id or 'doc'}::{chunk.chunk_index or index}"
+                metadata.get("chunk_id")
+                or f"{resolved_document_id or 'doc'}::{chunk.chunk_index or index}"
             ),
-            "document_id": document_id if pdf_ready else document_id,
+            "document_id": resolved_document_id,
             "source_filename": source_filename,
             "source_section": _source_section(metadata) or _hierarchy_path(metadata) or None,
             "source_excerpt": str(metadata.get("source_excerpt") or "").strip()
@@ -1574,14 +2080,23 @@ def _display_title(chunk: RetrievedChunk) -> str:
 
 def _display_clean_hierarchy_label(value: str) -> str:
     cleaned = value.strip()
-    first_part = cleaned.split(">", 1)[0].strip()
-    if ">" in cleaned and not re.match(
-        r"^(chapter|article|sec\.?|section|appendix)\s+[\w.-]+",
-        first_part,
-        flags=re.I,
-    ):
-        return cleaned
-    return cleaned.split(">", 1)[-1].strip()
+    # Drop extraction breadcrumb scaffolding: "Parent > Child > Leaf" → leaf.
+    if " > " in cleaned:
+        parts = [part.strip() for part in cleaned.split(">") if part.strip()]
+        if len(parts) >= 2:
+            leaf = parts[-1]
+            first = parts[0]
+            if not re.match(
+                r"^(chapter|article|sec\.?|section|appendix)\s+[\w.-]+",
+                first,
+                flags=re.I,
+            ):
+                cleaned = leaf
+            else:
+                cleaned = cleaned.split(">", 1)[-1].strip()
+    # Drop trailing mid-word truncation markers often left by PDF extractors.
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned
 
 
 def _hierarchy_path(metadata: dict[str, Any]) -> str:
@@ -1756,6 +2271,110 @@ def _is_broad_context_query(normalized_query: str) -> bool:
     )
 
 
+def _has_named_service_anchor(normalized_query: str) -> bool:
+    """True when the question targets one known campus service/topic."""
+    return _contains_any(
+        normalized_query,
+        (
+            "enrollment",
+            "enroll",
+            "transcript",
+            "tor",
+            "good moral",
+            "id validation",
+            "student id",
+            "scholarship",
+            "financial assistance",
+            "library reference",
+            "entrance exam",
+            "entrance examination",
+            "dropping",
+            "drop a subject",
+            "drop subject",
+            "ojt",
+            "on-the-job",
+            "statement of account",
+            "web posting",
+            "icts",
+            "certified true copy",
+            "citizen",
+            "charter",
+            "edition",
+            "inc",
+            "removal",
+        ),
+    )
+
+
+def _is_factual_detail_cue(normalized_query: str) -> bool:
+    return _contains_any(
+        normalized_query,
+        (
+            "how much",
+            "how long",
+            "how many",
+            "fee",
+            "fees",
+            "cost",
+            "price",
+            "processing time",
+            "who may",
+            "who can avail",
+            "which office",
+            "what office",
+            "responsible",
+            "what documents",
+            "what additional",
+            "what must",
+            "what edition",
+            "what year",
+            "vision",
+            "per page",
+            "per unit",
+            "requirements for",
+            "requirement for",
+            "documents required",
+            "documents may be required",
+        ),
+    )
+
+
+def _is_factual_charter_query(normalized_query: str) -> bool:
+    """Fees, times, who-may-avail, edition, and similar detail questions."""
+    return _is_factual_detail_cue(normalized_query)
+
+
+def _charter_metadata_context_lines(metadata: dict[str, Any]) -> list[str]:
+    """Surface structured charter fields in Groq context when present."""
+    lines: list[str] = []
+    mapping = (
+        ("office", "Office"),
+        ("who_may_avail", "Who May Avail"),
+        ("total_processing_time", "Total Processing Time"),
+        ("total_fees", "Fees"),
+        ("source_label", "Source Label"),
+        ("document_edition", "Document Edition"),
+        ("charter_edition", "Charter Edition"),
+        ("extraction_quality", "Extraction Quality"),
+    )
+    for key, label in mapping:
+        value = str(metadata.get(key) or "").strip()
+        if value and value.lower() not in {"none", "null", "n/a", "[needs review]"}:
+            lines.append(f"{label}: {value}")
+    for key, label in (
+        ("extracted_requirements", "Structured Requirements"),
+        ("extracted_steps", "Structured Steps"),
+    ):
+        raw = metadata.get(key)
+        if not raw:
+            continue
+        text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=True)
+        text = text.strip()
+        if text and text not in {"[]", "{}", "null"}:
+            lines.append(f"{label}: {text[:1200]}")
+    return lines
+
+
 def _is_specific_query(normalized_query: str) -> bool:
     specific_patterns = (
         r"\bwhat is scholastic delinquency\b",
@@ -1767,8 +2386,19 @@ def _is_specific_query(normalized_query: str) -> bool:
         r"\bshift course\b",
         r"\bfail\s+75\s*%\b",
         r"\b75\s*%\s+of my units\b",
+        r"\bwhat edition\b",
+        r"\bcitizen(?:'s)? charter\b",
+        r"\bhow much (?:is|are|does)\b",
+        r"\bhow long (?:is|does|should)\b",
+        r"\bwhich office\b",
+        r"\bwho may avail\b",
     )
-    return any(re.search(pattern, normalized_query) for pattern in specific_patterns)
+    if any(re.search(pattern, normalized_query) for pattern in specific_patterns):
+        return True
+    # Named service + detail cue => normal RAG, not collection sweep.
+    if _has_named_service_anchor(normalized_query) and _is_factual_detail_cue(normalized_query):
+        return True
+    return False
 
 
 def _is_out_of_scope_query(normalized_query: str) -> bool:
@@ -1799,6 +2429,8 @@ def _is_out_of_scope_query(normalized_query: str) -> bool:
         "lspu",
         "university",
         "handbook",
+        "charter",
+        "citizen",
         "student",
         "registrar",
         "admission",
@@ -1810,6 +2442,11 @@ def _is_out_of_scope_query(normalized_query: str) -> bool:
         "program",
         "scholarship",
         "guidance",
+        "enrollment",
+        "library",
+        "osas",
+        "vision",
+        "edition",
     )
     return _contains_any(normalized_query, external_terms) and not _contains_any(normalized_query, handbook_terms)
 

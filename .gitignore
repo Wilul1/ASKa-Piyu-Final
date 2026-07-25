@@ -1,4 +1,51 @@
-backend/.env
+# Secrets / local dumps
 .env
+backend/.env
 aska_piyu_demo.sql
 *.sql.bak
+
+# Local Flutter API origin (copy from api_base.url.example)
+flutter_app/api_base.url
+
+# Android release signing (never commit keystores or passwords)
+flutter_app/android/key.properties
+flutter_app/android/*.jks
+flutter_app/android/*.keystore
+**/*.jks
+**/*.keystore
+
+# TLS private material for nginx HTTPS (keep README)
+deploy/certs/*
+!deploy/certs/README.md
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+backend/venv/
+backend/.venv/
+*.egg-info/
+dist/
+backend/ci_alembic_check.db
+backend/*.db
+
+# Flutter
+flutter_app/.dart_tool/
+flutter_app/build/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.packages
+**/.DS_Store
+
+# Local runtime data (Postgres-backed app still uses these dirs)
+backend/data/
+backend/.EasyOCR/
+
+# Editor / agent scratch
+.agents/
+.idea/
+.vscode/
+*.swp
+*~

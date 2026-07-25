@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,8 @@ from app.db.session import get_db_session
 from app.models.db_models import User
 from app.models.schemas import (
     AddTicketReplyRequest,
+    ConvertTicketToArticleRequest,
+    CreateOfficeRequest,
     CreateTicketRequest,
     NotificationListResponse,
     NotificationSchema,
@@ -17,6 +19,7 @@ from app.models.schemas import (
     OfficeSummarySchema,
     TicketAttachmentSchema,
     TicketAuditEventSchema,
+    TicketKbArticleSchema,
     TicketListResponse,
     TicketSchema,
     TicketStatisticsResponse,
@@ -26,6 +29,13 @@ from app.models.schemas import (
 from app.services.auth import get_current_user
 from app.services.ticket_attachments import add_ticket_attachment, attachment_file_path
 from app.services.ticket_audit import list_ticket_audit_events
+from app.services.ticket_knowledge import (
+    TicketKnowledgeAccessError,
+    TicketKnowledgeError,
+    TicketKnowledgeNotFoundError,
+    convert_ticket_to_draft_article,
+    get_ticket_kb_article,
+)
 from app.services.ticket_notifications import (
     list_notifications,
     mark_all_notifications_read,
@@ -38,6 +48,7 @@ from app.services.ticketing import (
     TicketNotFoundError,
     TicketValidationError,
     add_ticket_reply,
+    create_office,
     create_ticket,
     get_ticket,
     list_offices,
@@ -55,11 +66,11 @@ router = APIRouter(prefix="/tickets", tags=["Smart Ticketing"])
 @router.post("/triage", response_model=TicketTriageSchema)
 async def triage_ticket_preview(
     payload: CreateTicketRequest,
-    request: Request,
+    actor: User = Depends(get_current_user),
     session: Session = Depends(get_db_session),
 ) -> TicketTriageSchema:
-    client = request.client.host if request.client else "unknown"
-    if not check_triage_rate_limit(client):
+    rate_key = f"user:{actor.id}"
+    if not check_triage_rate_limit(rate_key):
         raise HTTPException(status_code=429, detail="Too many triage requests. Please wait a moment.")
     return TicketTriageSchema(**triage_ticket(payload.original_question, payload.description, session=session))
 
@@ -75,6 +86,30 @@ async def list_offices_endpoint(
         for office in offices
     ]
     return OfficeListResponse(items=items, total=len(items))
+
+
+@router.post("/offices", response_model=OfficeSummarySchema)
+async def create_office_endpoint(
+    payload: CreateOfficeRequest,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> OfficeSummarySchema:
+    if str(actor.role).strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can create offices.")
+    try:
+        office = create_office(
+            session,
+            name=payload.name,
+            service_category=payload.service_category,
+            description=payload.description,
+        )
+    except TicketValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return OfficeSummarySchema(
+        id=office.id,
+        name=office.name,
+        service_category=office.service_category,
+    )
 
 
 @router.post("", response_model=TicketSchema)
@@ -192,6 +227,50 @@ async def get_ticket_audit_endpoint(
         )
         for event in events
     ]
+
+
+@router.get("/{ticket_id}/kb-article", response_model=TicketKbArticleSchema | None)
+async def get_ticket_kb_article_endpoint(
+    ticket_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketKbArticleSchema | None:
+    try:
+        payload = get_ticket_kb_article(session, ticket_id=ticket_id, actor=actor)
+    except TicketKnowledgeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketKnowledgeAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if payload is None:
+        return None
+    return TicketKbArticleSchema(**payload)
+
+
+@router.post("/{ticket_id}/convert-to-article", response_model=TicketKbArticleSchema)
+async def convert_ticket_to_article_endpoint(
+    ticket_id: str,
+    payload: ConvertTicketToArticleRequest | None = None,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketKbArticleSchema:
+    body = payload or ConvertTicketToArticleRequest()
+    try:
+        result = convert_ticket_to_draft_article(
+            session,
+            ticket_id=ticket_id,
+            actor=actor,
+            title=body.title,
+            content=body.content,
+            summary=body.summary,
+            audience=body.audience,
+        )
+    except TicketKnowledgeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketKnowledgeAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TicketKnowledgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TicketKbArticleSchema(**result)
 
 
 @router.patch("/{ticket_id}", response_model=TicketSchema)

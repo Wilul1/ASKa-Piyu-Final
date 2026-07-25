@@ -1,25 +1,38 @@
-import 'dart:convert';
-import 'dart:html' as html;
-
 import '../app_config.dart';
 import '../models/auth_models.dart';
+import 'api_client.dart';
+import 'local_store.dart';
+
+/// Thrown by auth API calls so UI can tell session death from network blips.
+class AuthRequestException implements Exception {
+  AuthRequestException(
+    this.message, {
+    this.statusCode,
+    this.isUnauthorized = false,
+  });
+
+  final String message;
+  final int? statusCode;
+
+  /// True for 401/403 — safe to clear the stored JWT.
+  final bool isUnauthorized;
+
+  /// Timeouts, DNS, connection resets, 5xx — keep the session token.
+  bool get isTransient => !isUnauthorized;
+
+  @override
+  String toString() => message;
+}
 
 class AuthService {
-  static const String _tokenKey = 'aska_access_token';
+  Future<String?> readAccessToken() => LocalStore.readSecureToken();
 
-  String? readAccessToken() {
-    final value = html.window.localStorage[_tokenKey]?.trim();
-    return value == null || value.isEmpty ? null : value;
+  Future<void> storeAccessToken(String token, {required bool persist}) async {
+    await LocalStore.storeAccessToken(token, persist: persist);
   }
 
-  void storeAccessToken(String token) {
-    final cleaned = token.trim();
-    if (cleaned.isEmpty) return;
-    html.window.localStorage[_tokenKey] = cleaned;
-  }
-
-  void clearAccessToken() {
-    html.window.localStorage.remove(_tokenKey);
+  Future<void> clearAccessToken() async {
+    await LocalStore.clearAccessToken();
   }
 
   Future<AuthResponse> signup(SignupRequest payload) async {
@@ -40,18 +53,52 @@ class AuthService {
     return AuthResponse.fromJson(data);
   }
 
-  Future<AuthUser> getCurrentUser(String token) async {
-    final request = html.HttpRequest();
-    request.open('GET', '${AppConfig.resolvedApiBase}/auth/me');
-    request.setRequestHeader('Authorization', 'Bearer $token');
-    request.send();
-    await request.onLoadEnd.first;
-    final data = _decodeObject(request.responseText);
-    final statusCode = request.status ?? 0;
-    if (statusCode < 200 || statusCode >= 300) {
-      throw StateError(_extractError(data, 'Could not load your account.'));
+  Future<AuthResponse> changePassword(
+    ChangePasswordRequest payload, {
+    required String accessToken,
+  }) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/auth/change-password',
+      headers: {'Authorization': 'Bearer $accessToken'},
+      jsonBody: payload.toJson(),
+    );
+    final data = result.jsonObject;
+    if (!result.ok) {
+      throw AuthRequestException(
+        ApiClient.extractError(data, fallback: 'Could not change password.'),
+        statusCode: result.statusCode,
+        isUnauthorized: result.statusCode == 401 || result.statusCode == 403,
+      );
     }
-    return AuthUser.fromJson(data);
+    return AuthResponse.fromJson(data);
+  }
+
+  Future<AuthUser> getCurrentUser(String token) async {
+    try {
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/auth/me',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      final data = result.jsonObject;
+      if (!result.ok) {
+        throw AuthRequestException(
+          ApiClient.extractError(data, fallback: 'Could not load your account.'),
+          statusCode: result.statusCode,
+          isUnauthorized: result.statusCode == 401 || result.statusCode == 403,
+        );
+      }
+      return AuthUser.fromJson(data);
+    } on AuthRequestException {
+      rethrow;
+    } catch (_) {
+      throw AuthRequestException(
+        'Could not reach the server to verify your session.',
+        statusCode: null,
+        isUnauthorized: false,
+      );
+    }
   }
 
   Future<Map<String, dynamic>> _sendJson(
@@ -59,38 +106,17 @@ class AuthService {
     String url,
     Map<String, dynamic> body,
   ) async {
-    final request = html.HttpRequest();
-    request.open(method, url);
-    request.setRequestHeader('Content-Type', 'application/json');
-    request.send(jsonEncode(body));
-    await request.onLoadEnd.first;
-    final data = _decodeObject(request.responseText);
-    final statusCode = request.status ?? 0;
-    if (statusCode < 200 || statusCode >= 300) {
-      throw StateError(_extractError(data, 'Authentication failed.'));
+    final result = await ApiClient.send(
+      method: method,
+      url: url,
+      jsonBody: body,
+    );
+    final data = result.jsonObject;
+    if (!result.ok) {
+      throw StateError(
+        ApiClient.extractError(data, fallback: 'Authentication failed.'),
+      );
     }
     return data;
   }
-}
-
-Map<String, dynamic> _decodeObject(String? responseText) {
-  final text = (responseText ?? '').trim();
-  if (text.isEmpty) return <String, dynamic>{};
-  try {
-    final decoded = jsonDecode(text);
-    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
-  } catch (_) {
-    return <String, dynamic>{'detail': text};
-  }
-}
-
-String _extractError(Map<String, dynamic> data, String fallback) {
-  final detail = data['detail'];
-  if (detail is String && detail.trim().isNotEmpty) return detail;
-  if (detail is List && detail.isNotEmpty) {
-    return detail.map((item) => item.toString()).join('\n');
-  }
-  final message = data['message'];
-  if (message is String && message.trim().isNotEmpty) return message;
-  return fallback;
 }

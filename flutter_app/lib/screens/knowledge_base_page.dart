@@ -1,11 +1,12 @@
-import 'dart:convert';
-import 'dart:html' as html;
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
+import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
+import '../services/api_client.dart';
+import '../services/print_helper.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
 import '../widgets/student_ui.dart';
@@ -136,16 +137,16 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
   }
 
   Future<Map<String, dynamic>> _getJson(String path) async {
-    final request = html.HttpRequest();
-    request.open('GET', '${AppConfig.resolvedApiBase}$path');
-    request.send();
-    await request.onLoadEnd.first;
+    final result = await ApiClient.send(
+      method: 'GET',
+      url: '${AppConfig.resolvedApiBase}$path',
+      headers: AuthScope.of(context).ticketHeaders(),
+    );
 
-    if (request.status != 200) {
-      throw StateError('Request failed with status ${request.status}');
+    if (result.statusCode != 200) {
+      throw StateError('Request failed with status ${result.statusCode}');
     }
-    final decoded = jsonDecode(request.responseText ?? '{}');
-    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+    return result.jsonObject;
   }
 
   void _performSearch([String? value]) {
@@ -1187,17 +1188,16 @@ class _ArticleReaderPage extends StatelessWidget {
     required this.article,
   });
 
-  Future<_KbArticleDetail> _loadDetail() async {
-    final request = html.HttpRequest();
-    request.open(
-        'GET', '$apiBase/kb/articles/${Uri.encodeComponent(article.id)}');
-    request.send();
-    await request.onLoadEnd.first;
-    if (request.status != 200) {
+  Future<_KbArticleDetail> _loadDetail(BuildContext context) async {
+    final result = await ApiClient.send(
+      method: 'GET',
+      url: '$apiBase/kb/articles/${Uri.encodeComponent(article.id)}',
+      headers: AuthScope.of(context).ticketHeaders(),
+    );
+    if (result.statusCode != 200) {
       throw StateError('Unable to load article detail');
     }
-    final decoded = jsonDecode(request.responseText ?? '{}');
-    return _KbArticleDetail.fromJson(Map<String, dynamic>.from(decoded as Map));
+    return _KbArticleDetail.fromJson(result.jsonObject);
   }
 
   @override
@@ -1209,7 +1209,7 @@ class _ArticleReaderPage extends StatelessWidget {
           const PublicSiteHeader(knowledgeBaseActive: true),
           Expanded(
             child: FutureBuilder<_KbArticleDetail>(
-              future: _loadDetail(),
+              future: _loadDetail(context),
               builder: (context, snapshot) {
                 return SingleChildScrollView(
                   child: _ArticleReaderBody(
@@ -1323,15 +1323,17 @@ class _ArticleDocument extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
-            TextButton.icon(
-              onPressed: () => html.window.print(),
-              icon: const Icon(Icons.print_outlined, size: 18),
-              label: const Text('Print'),
-              style: TextButton.styleFrom(
-                foregroundColor: DesignTokens.maroon,
+            if (kIsWeb) ...[
+              const SizedBox(width: 12),
+              TextButton.icon(
+                onPressed: () => printCurrentDocument(),
+                icon: const Icon(Icons.print_outlined, size: 18),
+                label: const Text('Print'),
+                style: TextButton.styleFrom(
+                  foregroundColor: DesignTokens.maroon,
+                ),
               ),
-            ),
+            ],
           ],
         ),
         if (modified != null) ...[

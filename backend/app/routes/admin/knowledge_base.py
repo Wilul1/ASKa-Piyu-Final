@@ -4,6 +4,7 @@ Admin routes — knowledge base creation flow only.
 OCR / PDF extraction → clean → chunk → embeddings → ChromaDB
 """
 
+import hmac
 import logging
 import mimetypes
 import re
@@ -11,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 
 from app.config import settings
 from app.db.session import get_session_factory
@@ -161,25 +162,85 @@ def _publish_gate_error(
     return _content_blocks_publish(content)
 
 
+def _revert_article_to_draft_after_rag_failure(session, article_id: str, exc: BaseException) -> None:
+    """Fail-closed: never leave published=true without searchable RAG chunks."""
+    from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import cleanup_failed_faq_index
+    from app.services.ticket_knowledge import sync_ticket_kb_status
+
+    session.rollback()
+    cleanup_failed_faq_index(exc, article_id)
+    art = session.get(PublishedArticle, article_id)
+    if art is None:
+        return
+    art.published = False
+    art.published_at = None
+    art.rag_indexed = False
+    art.rag_document_id = None
+    sync_ticket_kb_status(session, art)
+    session.add(art)
+    session.commit()
+
+
+def _rag_publish_failure_detail(exc: BaseException) -> str:
+    return (
+        "RAG indexing failed; article was reverted to unpublished "
+        f"(rag_indexed=false): {exc}"
+    )
+
+
 def require_admin_key(
     x_admin_key: str | None = Header(
         default=None,
         alias="x-admin-key",
-        description="Administrator API key. Must match ASKA_ADMIN_API_KEY.",
+        description="Administrator API key. Must match ASKA_ADMIN_API_KEY when key auth is enabled.",
     ),
     authorization: str | None = Header(
         default=None,
         alias="authorization",
         description="Bearer token for a logged-in admin account.",
     ),
-) -> None:
+) -> str | None:
+    """Authorize admin access.
+
+    Returns the admin user id when Bearer auth is used; ``None`` for API-key auth
+    (no user actor is available for attribution).
+
+    In production, shared X-Admin-Key auth is disabled unless
+    ``ASKA_ALLOW_ADMIN_API_KEY=true``.
+    """
+    from app.config import admin_api_key_auth_enabled
+
     configured_key = settings.admin_api_key
-    if configured_key and x_admin_key and x_admin_key == configured_key:
-        return
+    if (
+        admin_api_key_auth_enabled()
+        and configured_key
+        and x_admin_key
+    ):
+        try:
+            key_ok = hmac.compare_digest(x_admin_key, configured_key)
+        except (TypeError, ValueError):
+            key_ok = False
+        if key_ok:
+            return None
 
     if authorization and authorization.lower().startswith("bearer "):
-        _require_admin_bearer_token(authorization.split(" ", 1)[1].strip())
-        return
+        return _require_admin_bearer_token(authorization.split(" ", 1)[1].strip())
+
+    if x_admin_key and not admin_api_key_auth_enabled():
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Shared admin API key auth is disabled. "
+                "Log in with an admin account (Bearer token)."
+            ),
+        )
+
+    if not configured_key and not admin_api_key_auth_enabled():
+        raise HTTPException(
+            status_code=401,
+            detail="Admin authorization failed. Log in as admin.",
+        )
 
     if not configured_key:
         raise HTTPException(
@@ -189,7 +250,8 @@ def require_admin_key(
     raise HTTPException(status_code=401, detail="Invalid admin key.")
 
 
-def _require_admin_bearer_token(token: str) -> None:
+def _require_admin_bearer_token(token: str) -> str:
+    """Same revoke/disable rules as get_current_user, plus role=admin."""
     try:
         payload = decode_access_token(token)
         session_factory = get_session_factory()
@@ -205,8 +267,20 @@ def _require_admin_bearer_token(token: str) -> None:
 
     if user is None:
         raise HTTPException(status_code=401, detail="Admin authorization failed.")
+    if not bool(getattr(user, "is_active", True)):
+        raise HTTPException(status_code=401, detail="Account is disabled.")
+    try:
+        token_cv_int = int(payload.get("cv", 0))
+    except (TypeError, ValueError):
+        token_cv_int = 0
+    if token_cv_int != int(getattr(user, "credentials_version", 0) or 0):
+        raise HTTPException(status_code=401, detail="Authentication token has been revoked.")
     if str(user.role).strip().lower() != "admin":
-        raise HTTPException(status_code=403, detail="Only admin accounts can use Knowledge Base Admin tools.")
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin accounts can use Knowledge Base Admin tools.",
+        )
+    return str(user.id)
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -468,20 +542,58 @@ async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_key)) -> 
             reset_completed,
             stage,
         )
-        return _rebuild_failure_payload(
+        failure = _rebuild_failure_payload(
             collection=collection,
             stage=stage,
             error=str(exc),
             reset_completed=reset_completed,
             started=started,
         )
+        # Chroma was wiped — never leave Postgres claiming FAQs are still indexed.
+        if reset_completed:
+            failure.update(_clear_rag_flags_after_chroma_wipe())
+        return failure
 
     summary = _rebuild_success_payload(collection=collection, results=results, started=started)
+    # Rebuild wipes Chroma; restore published ticket FAQs after PDF ingest.
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        from app.services.article_rag_indexer import (
+            clear_all_article_rag_flags,
+            reindex_published_faq_articles,
+        )
+
+        clear_all_article_rag_flags(session)
+        session.commit()
+        faq_summary = reindex_published_faq_articles(session)
+        summary["faq_reindexed"] = faq_summary.get("faq_reindexed", 0)
+        summary["faq_reindex_failed"] = faq_summary.get("faq_reindex_failed", 0)
+        summary["faq_reindex_errors"] = faq_summary.get("faq_reindex_errors") or []
+    except Exception:
+        session.rollback()
+        logger.exception("Rebuild finished PDF ingest but FAQ re-index failed")
+        summary["faq_reindexed"] = 0
+        summary["faq_reindex_failed"] = -1
+        summary["faq_reindex_errors"] = [{"error": "FAQ re-index failed after rebuild"}]
+    finally:
+        session.close()
+
+    faq_failed = int(summary.get("faq_reindex_failed") or 0)
+    if faq_failed:
+        summary["success"] = False
+        summary["message"] = (
+            "Knowledge base PDF rebuild finished, but published FAQ re-index failed. "
+            "Check faq_reindex_errors and re-index stale FAQs from Article Library."
+        )
+
     logger.info(
-        "Knowledge base rebuild completed: collection=%s documents=%s chunks=%s processing_time_seconds=%s",
+        "Knowledge base rebuild completed: collection=%s documents=%s chunks=%s faq_reindexed=%s success=%s processing_time_seconds=%s",
         collection,
         summary["documents_processed"],
         summary["chunks_created"],
+        summary.get("faq_reindexed"),
+        summary.get("success"),
         summary["processing_time_seconds"],
     )
     return summary
@@ -492,32 +604,261 @@ async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_key)) -> 
     responses={500: {"model": ErrorResponse}},
     summary="[Admin] Reset ChromaDB knowledge base collection",
 )
-async def admin_reset_chroma(_: None = Depends(require_admin_key)) -> dict:
+async def admin_reset_chroma(
+    _: None = Depends(require_admin_key),
+    allow_skip_documents: bool = Query(
+        default=False,
+        description=(
+            "If true, allow reset when ASKA_KB_REBUILD_DOCUMENT_PATHS is empty "
+            "(FAQ-only recovery). Default false so missing handbook paths fail loudly."
+        ),
+    ),
+) -> dict:
+    # Validate rebuild sources BEFORE wiping Chroma — never leave an empty KB by accident.
+    try:
+        source_paths = _configured_rebuild_document_paths()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid ASKA_KB_REBUILD_DOCUMENT_PATHS ({exc}). "
+                "Fix the paths before resetting Chroma."
+            ),
+        ) from exc
+    if not source_paths and not allow_skip_documents:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "ASKA_KB_REBUILD_DOCUMENT_PATHS is empty. "
+                "Set handbook/charter paths before resetting, or pass "
+                "allow_skip_documents=true for FAQ-only recovery."
+            ),
+        )
+
     try:
         result = get_knowledge_base_store().reset_collection()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Chroma reset failed: {exc}") from exc
 
-    return {
-        "success": True,
-        "message": "Chroma knowledge base has been reset.",
-        "collection": result["collection"],
+    # Clear stale FAQ flags, re-ingest configured PDF/manual corpora, then re-index FAQs.
+    articles_rag_flags_cleared = 0
+    document_summary = _reingest_configured_documents_after_reset()
+    reindex_summary: dict[str, Any] = {
+        "faq_reindexed": 0,
+        "faq_reindex_failed": 0,
+        "faq_reindex_errors": [],
+        "published_article_count": 0,
     }
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        from app.services.article_rag_indexer import (
+            clear_all_article_rag_flags,
+            reindex_published_faq_articles,
+        )
+
+        articles_rag_flags_cleared = clear_all_article_rag_flags(session)
+        session.commit()
+        reindex_summary = reindex_published_faq_articles(session)
+    except Exception:
+        session.rollback()
+        logger.exception("Chroma was reset but FAQ flag clear / re-index failed")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Chroma was reset, but clearing/re-indexing published FAQ articles failed. "
+                "Run a knowledge-base rebuild or re-publish FAQs manually."
+            ),
+        ) from None
+    finally:
+        session.close()
+
+    faq_failed = int(reindex_summary.get("faq_reindex_failed") or 0)
+    faq_reindexed = int(reindex_summary.get("faq_reindexed") or 0)
+    docs_failed = int(document_summary.get("document_reingest_failed") or 0)
+    docs_ok = int(document_summary.get("documents_reingested") or 0)
+    docs_skipped = bool(document_summary.get("skipped"))
+    success = faq_failed == 0 and docs_failed == 0 and (not docs_skipped or allow_skip_documents)
+    message = (
+        "Chroma knowledge base has been reset; configured PDF/manual corpora and "
+        "published FAQs were restored."
+    )
+    if docs_skipped:
+        message = (
+            "Chroma knowledge base was reset and published FAQs were re-indexed, but "
+            "ASKA_KB_REBUILD_DOCUMENT_PATHS is empty — handbook/charter corpora were NOT restored. "
+            "Set the paths and reset again, or pass allow_skip_documents=true for FAQ-only recovery."
+        )
+    if faq_failed or docs_failed:
+        message = (
+            "Chroma knowledge base has been reset with partial recovery. "
+            f"Documents re-ingested={docs_ok} failed={docs_failed}; "
+            f"FAQs re-indexed={faq_reindexed} failed={faq_failed}."
+        )
+
+    return {
+        "success": success,
+        "message": message,
+        "collection": result["collection"],
+        "articles_rag_flags_cleared": articles_rag_flags_cleared,
+        "documents_reingested": docs_ok,
+        "document_reingest_failed": docs_failed,
+        "document_reingest_errors": document_summary.get("document_reingest_errors") or [],
+        "document_reingest_skipped": docs_skipped,
+        "faq_reindexed": faq_reindexed,
+        "faq_reindex_failed": faq_failed,
+        "faq_reindex_errors": reindex_summary.get("faq_reindex_errors") or [],
+        "published_article_count": int(reindex_summary.get("published_article_count") or 0),
+    }
+
+
+def _reingest_configured_documents_after_reset() -> dict[str, Any]:
+    """Re-ingest handbook/charter PDFs after a Chroma wipe (collection already empty)."""
+    try:
+        source_paths = _configured_rebuild_document_paths()
+    except Exception as exc:
+        logger.exception("Configured rebuild document paths are invalid after Chroma reset")
+        return {
+            "skipped": False,
+            "documents_reingested": 0,
+            "document_reingest_failed": 1,
+            "document_reingest_errors": [{"path": "", "error": str(exc)}],
+        }
+    if not source_paths:
+        return {
+            "skipped": True,
+            "documents_reingested": 0,
+            "document_reingest_failed": 0,
+            "document_reingest_errors": [],
+        }
+
+    from app.services.admin.knowledge_base_pipeline import ingest_document_into_knowledge_base
+
+    ok = 0
+    errors: list[dict[str, str]] = []
+    for path in source_paths:
+        try:
+            ingest_document_into_knowledge_base(
+                path.read_bytes(),
+                filename=path.name,
+                content_type=_content_type_for_path(path),
+                title=path.stem,
+            )
+            ok += 1
+        except Exception as exc:
+            logger.exception("Failed to re-ingest %s after Chroma reset", path)
+            errors.append({"path": str(path), "error": str(exc)})
+    return {
+        "skipped": False,
+        "documents_reingested": ok,
+        "document_reingest_failed": len(errors),
+        "document_reingest_errors": errors[:20],
+    }
+
+
+def _documents_persist_root() -> Path:
+    raw = (settings.documents_persist_dir or "./data/documents").strip()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        backend_root = Path(__file__).resolve().parents[3]
+        path = backend_root / path
+    return path
+
+
+def _resolve_rebuild_source_path(configured: str) -> Path:
+    """Resolve handbook/charter paths for host uvicorn and Docker Compose.
+
+    Host .env often uses ``./data/documents/<id>/handbook.pdf``. Compose mounts
+    the same files at ``ASKA_DOCUMENTS_PERSIST_DIR`` (``/data/documents``), so a
+    naive resolve under ``/app/data/documents`` would skip rebuild PDFs.
+    """
+    text = configured.strip()
+    raw = Path(text).expanduser()
+    backend_root = Path(__file__).resolve().parents[3]
+    persist = _documents_persist_root()
+    candidates: list[Path] = []
+
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append((backend_root / raw).resolve())
+        candidates.append((Path.cwd() / raw).resolve())
+        candidates.append((persist / raw).resolve())
+
+    normalized = text.replace("\\", "/")
+    marker = "data/documents/"
+    lower = normalized.lower()
+    idx = lower.find(marker)
+    if idx >= 0:
+        relative = normalized[idx + len(marker) :]
+        if relative:
+            candidates.append((persist / relative).resolve())
+
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.is_file():
+            return candidate
+
+    # Prefer the persist-mapped path in the error when the host-style prefix was used.
+    if idx >= 0 and normalized[idx + len(marker) :]:
+        return (persist / normalized[idx + len(marker) :]).resolve()
+    if raw.is_absolute():
+        return raw
+    return (backend_root / raw).resolve()
 
 
 def _configured_rebuild_document_paths() -> list[Path]:
     raw = settings.kb_rebuild_document_paths or ""
     values = [value.strip() for value in re.split(r"[;,\n]+", raw) if value.strip()]
     paths: list[Path] = []
-    backend_root = Path(__file__).resolve().parents[3]
     for value in values:
-        path = Path(value).expanduser()
-        if not path.is_absolute():
-            path = backend_root / path
+        path = _resolve_rebuild_source_path(value)
         if not path.is_file():
-            raise FileNotFoundError(f"Configured rebuild source document does not exist: {path}")
+            raise FileNotFoundError(
+                "Configured rebuild source document does not exist: "
+                f"{path} (from ASKA_KB_REBUILD_DOCUMENT_PATHS={value!r}; "
+                f"ASKA_DOCUMENTS_PERSIST_DIR={settings.documents_persist_dir!r}). "
+                "In Docker, use paths under /data/documents/... or keep "
+                "./data/documents/... and ensure the file is in the documents volume."
+            )
         paths.append(path)
     return paths
+
+
+def _clear_rag_flags_after_chroma_wipe() -> dict[str, Any]:
+    """Clear ``rag_indexed`` after a Chroma wipe so Library shows RAG-stale honestly."""
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        from app.services.article_rag_indexer import clear_all_article_rag_flags
+
+        cleared = clear_all_article_rag_flags(session)
+        session.commit()
+        return {
+            "articles_rag_flags_cleared": cleared,
+            "message": (
+                "Knowledge base rebuild failed after Chroma reset. "
+                "Published FAQ rag_indexed flags were cleared — use Reindex stale FAQs "
+                "after fixing the ingest error."
+            ),
+        }
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to clear FAQ rag_indexed flags after rebuild wipe")
+        return {
+            "articles_rag_flags_cleared": -1,
+            "message": (
+                "Knowledge base rebuild failed after Chroma reset, and clearing "
+                "rag_indexed flags also failed. Check logs and reindex stale FAQs."
+            ),
+        }
+    finally:
+        session.close()
 
 
 @kb_tools_router.get("/articles", response_model=list[AdminPublishedArticleSchema])
@@ -536,7 +877,10 @@ def admin_list_articles(_: None = Depends(require_admin_key)) -> list[AdminPubli
 
 
 @kb_tools_router.post("/articles", response_model=AdminPublishedArticleSchema)
-def admin_create_article(payload: AdminPublishedArticleCreate, _: None = Depends(require_admin_key)) -> AdminPublishedArticleSchema:
+def admin_create_article(
+    payload: AdminPublishedArticleCreate,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> AdminPublishedArticleSchema:
     from datetime import datetime, timezone
 
     from app.models.db_models import PublishedArticle
@@ -565,22 +909,51 @@ def admin_create_article(payload: AdminPublishedArticleCreate, _: None = Depends
                         "Use the Unpublish endpoint to remove it from the public Knowledge Base."
                     ),
                 )
+            from app.services.ticket_knowledge import ensure_unique_article_slug
+
             art.title = payload.title
-            art.slug = re.sub(r"[^a-z0-9]+", "-", payload.title.lower()).strip("-")
+            art.slug = ensure_unique_article_slug(
+                session, payload.title, exclude_id=art.id
+            )
             art.category = payload.category
             art.summary = payload.summary
             art.content = payload.content
             art.office = payload.office
             art.source_filename = payload.source_document
+            if payload.audience is not None:
+                art.audience = payload.audience
             art.chunk_count = len(payload.chunk_ids or []) if payload.chunk_ids else art.chunk_count
+            becoming_published = bool(payload.publish_status) and not bool(art.published)
             art.published = bool(payload.publish_status)
             if art.published:
                 art.published_at = datetime.now(timezone.utc)
+                if becoming_published:
+                    art.rag_indexed = False
+                if admin_actor_id:
+                    art.published_by_user_id = admin_actor_id
             else:
                 art.published_at = None
             session.add(art)
+            from app.services.ticket_knowledge import sync_ticket_kb_status
+
+            sync_ticket_kb_status(session, art)
+            # Commit Postgres before Chroma so orphans cannot outlive unpublished rows.
             session.commit()
             session.refresh(art)
+            if art.published:
+                try:
+                    from app.services.article_rag_indexer import index_published_article
+
+                    index_published_article(session, art)
+                    session.commit()
+                    session.refresh(art)
+                except Exception as exc:
+                    logger.exception("Failed to index article %s into Chroma", art.id)
+                    _revert_article_to_draft_after_rag_failure(session, art.id, exc)
+                    raise HTTPException(
+                        status_code=502,
+                        detail=_rag_publish_failure_detail(exc),
+                    ) from exc
             return _admin_article_schema(art)
 
         if not payload.force_create:
@@ -607,9 +980,11 @@ def admin_create_article(payload: AdminPublishedArticleCreate, _: None = Depends
                     },
                 )
 
+        from app.services.ticket_knowledge import ensure_unique_article_slug
+
         art = PublishedArticle(
             title=payload.title,
-            slug=re.sub(r"[^a-z0-9]+", "-", payload.title.lower()).strip("-"),
+            slug=ensure_unique_article_slug(session, payload.title),
             category=payload.category,
             subcategory=None,
             path=None,
@@ -619,6 +994,9 @@ def admin_create_article(payload: AdminPublishedArticleCreate, _: None = Depends
             source_filename=payload.source_document,
             chunk_count=len(payload.chunk_ids or []) if payload.chunk_ids else None,
             published=bool(payload.publish_status),
+            audience=payload.audience or "student",
+            kb_origin="ticket_resolution" if payload.source_ticket_id else "document",
+            source_ticket_id=payload.source_ticket_id,
         )
         try:
             from app.services.article_content_formatter import extract_embedded_article_metadata
@@ -635,9 +1013,29 @@ def admin_create_article(payload: AdminPublishedArticleCreate, _: None = Depends
             logger.exception("Could not link published article to source_documents")
         if art.published:
             art.published_at = datetime.now(timezone.utc)
+            art.rag_indexed = False
+            if admin_actor_id:
+                art.published_by_user_id = admin_actor_id
         session.add(art)
+        from app.services.ticket_knowledge import sync_ticket_kb_status
+
+        sync_ticket_kb_status(session, art)
         session.commit()
         session.refresh(art)
+        if art.published:
+            try:
+                from app.services.article_rag_indexer import index_published_article
+
+                index_published_article(session, art)
+                session.commit()
+                session.refresh(art)
+            except Exception as exc:
+                logger.exception("Failed to index article %s into Chroma", art.id)
+                _revert_article_to_draft_after_rag_failure(session, art.id, exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=_rag_publish_failure_detail(exc),
+                ) from exc
         return _admin_article_schema(art)
     finally:
         session.close()
@@ -658,8 +1056,20 @@ def admin_get_article(article_id: str, _: None = Depends(require_admin_key)) -> 
 
 
 @kb_tools_router.patch("/articles/{article_id}", response_model=AdminPublishedArticleSchema)
-def admin_update_article(article_id: str, payload: AdminPublishedArticleUpdate, _: None = Depends(require_admin_key)) -> AdminPublishedArticleSchema:
+def admin_update_article(
+    article_id: str,
+    payload: AdminPublishedArticleUpdate,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> AdminPublishedArticleSchema:
+    from datetime import datetime, timezone
+
     from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import (
+        cleanup_failed_faq_index,
+        index_published_article,
+    )
+    from app.services.ticket_knowledge import ensure_unique_article_slug, sync_ticket_kb_status
+
     session_factory = get_session_factory()
     session = session_factory()
     try:
@@ -673,10 +1083,10 @@ def admin_update_article(article_id: str, payload: AdminPublishedArticleUpdate, 
             from app.services.article_content_formatter import merge_article_content_update
 
             updates["content"] = merge_article_content_update(art.content, updates["content"])
-        # Map API publish_status onto the DB published column.
-        if "publish_status" in updates:
-            from datetime import datetime, timezone
 
+        # Map API publish_status onto the DB published column.
+        becoming_published = False
+        if "publish_status" in updates:
             publish = bool(updates.pop("publish_status"))
             if bool(art.published) and not publish:
                 raise HTTPException(
@@ -691,13 +1101,50 @@ def admin_update_article(article_id: str, payload: AdminPublishedArticleUpdate, 
                 gate = _publish_gate_error(content=next_content)
                 if gate:
                     raise HTTPException(status_code=400, detail=gate)
+                if admin_actor_id:
+                    art.published_by_user_id = admin_actor_id
+                becoming_published = not bool(art.published)
             art.published = publish
             art.published_at = datetime.now(timezone.utc) if publish else None
+            if becoming_published:
+                art.rag_indexed = False
+        if "title" in updates and updates["title"]:
+            updates["slug"] = ensure_unique_article_slug(
+                session, str(updates["title"]), exclude_id=art.id
+            )
         for field, value in updates.items():
             if hasattr(art, field):
                 setattr(art, field, value)
         session.add(art)
-        session.commit()
+        if becoming_published:
+            sync_ticket_kb_status(session, art)
+        # Commit Postgres first when newly publishing so Chroma cannot outlive an unpublished row.
+        if becoming_published:
+            session.commit()
+            session.refresh(art)
+        else:
+            session.flush()
+        # Keep Chroma aligned with Postgres for any published article edit/publish.
+        if art.published:
+            try:
+                index_published_article(session, art)
+                session.commit()
+            except Exception as exc:
+                logger.exception("Failed to re-index article %s into Chroma", article_id)
+                if becoming_published:
+                    _revert_article_to_draft_after_rag_failure(session, article_id, exc)
+                    raise HTTPException(
+                        status_code=502,
+                        detail=_rag_publish_failure_detail(exc),
+                    ) from exc
+                session.rollback()
+                cleanup_failed_faq_index(exc, article_id)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Article was not saved because RAG indexing failed: {exc}",
+                ) from exc
+        else:
+            session.commit()
         session.refresh(art)
         return _admin_article_schema(art)
     finally:
@@ -705,8 +1152,16 @@ def admin_update_article(article_id: str, payload: AdminPublishedArticleUpdate, 
 
 
 @kb_tools_router.post("/articles/{article_id}/publish")
-def admin_publish_article(article_id: str, _: None = Depends(require_admin_key)) -> dict[str, Any]:
+def admin_publish_article(
+    article_id: str,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
     from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import index_published_article
+    from app.services.ticket_knowledge import sync_ticket_kb_status
+
     session_factory = get_session_factory()
     session = session_factory()
     try:
@@ -716,21 +1171,115 @@ def admin_publish_article(article_id: str, _: None = Depends(require_admin_key))
         gate = _publish_gate_error(content=art.content)
         if gate:
             raise HTTPException(status_code=400, detail=gate)
+        # Commit published first so a later Chroma write cannot outlive an unpublished row.
         art.published = True
-        from datetime import datetime, timezone
-
         art.published_at = datetime.now(timezone.utc)
+        art.rag_indexed = False
+        if admin_actor_id:
+            art.published_by_user_id = admin_actor_id
         session.add(art)
+        sync_ticket_kb_status(session, art)
         session.commit()
         session.refresh(art)
+        try:
+            chunk_count = index_published_article(session, art)
+            session.commit()
+            session.refresh(art)
+        except Exception as exc:
+            logger.exception("Failed to index article %s into Chroma after publish", article_id)
+            _revert_article_to_draft_after_rag_failure(session, article_id, exc)
+            raise HTTPException(
+                status_code=502,
+                detail=_rag_publish_failure_detail(exc),
+            ) from exc
         schema = _admin_article_schema(art)
         return {
             "success": True,
             "id": art.id,
             "title": art.title,
             "published": True,
+            "rag_indexed": bool(art.rag_indexed),
+            "chunk_count": chunk_count,
+            "published_by_user_id": art.published_by_user_id,
             "persistence_table": "published_articles",
             "persistence_debug": schema.persistence_debug,
+        }
+    finally:
+        session.close()
+
+
+@kb_tools_router.post("/articles/{article_id}/reindex")
+def admin_reindex_article(
+    article_id: str,
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Re-index a published article into Chroma (fixes RAG-stale FAQs)."""
+    from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import (
+        cleanup_failed_faq_index,
+        index_published_article,
+    )
+
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        art = session.get(PublishedArticle, article_id)
+        if art is None:
+            raise HTTPException(status_code=404, detail="Article not found")
+        if not art.published:
+            raise HTTPException(
+                status_code=400,
+                detail="Only published articles can be re-indexed for the chatbot.",
+            )
+        gate = _publish_gate_error(content=art.content)
+        if gate:
+            raise HTTPException(status_code=400, detail=gate)
+        try:
+            chunk_count = index_published_article(session, art)
+            session.commit()
+            session.refresh(art)
+        except Exception as exc:
+            session.rollback()
+            cleanup_failed_faq_index(exc, article_id)
+            logger.exception("Failed to re-index article %s", article_id)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Re-index failed: {exc}",
+            ) from exc
+        return {
+            "success": True,
+            "id": art.id,
+            "rag_indexed": bool(art.rag_indexed),
+            "chunk_count": chunk_count,
+        }
+    finally:
+        session.close()
+
+
+@kb_tools_router.post(
+    "/articles/reindex-stale",
+    summary="[Admin] Re-index all published FAQs missing from Chroma",
+)
+def admin_reindex_stale_articles(_: None = Depends(require_admin_key)) -> dict[str, Any]:
+    """One-click recovery for RAG-stale published articles after rebuild/reset issues."""
+    from app.services.article_rag_indexer import reindex_stale_published_faq_articles
+
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        summary = reindex_stale_published_faq_articles(session)
+        failed = int(summary.get("faq_reindex_failed") or 0)
+        return {
+            "success": failed == 0,
+            "faq_reindexed": summary.get("faq_reindexed", 0),
+            "faq_reindex_failed": failed,
+            "faq_reindex_errors": summary.get("faq_reindex_errors") or [],
+            "stale_article_count": summary.get("published_article_count", 0),
+            "message": (
+                "All stale FAQs were re-indexed."
+                if failed == 0
+                else "Some stale FAQs failed to re-index. Check faq_reindex_errors."
+            ),
         }
     finally:
         session.close()
@@ -739,17 +1288,31 @@ def admin_publish_article(article_id: str, _: None = Depends(require_admin_key))
 @kb_tools_router.post("/articles/{article_id}/unpublish")
 def admin_unpublish_article(article_id: str, _: None = Depends(require_admin_key)) -> dict[str, Any]:
     from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import best_effort_remove_faq_document
+    from app.services.ticket_knowledge import sync_ticket_kb_status
+
     session_factory = get_session_factory()
     session = session_factory()
     try:
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        # Commit unpublished first so Chroma leftovers cannot answer after a PG rollback.
         art.published = False
         art.published_at = None
+        art.rag_indexed = False
+        art.rag_document_id = None
+        art.chunk_count = 0
         session.add(art)
+        sync_ticket_kb_status(session, art)
         session.commit()
-        return {"success": True, "id": art.id}
+        best_effort_remove_faq_document(article_id)
+        return {
+            "success": True,
+            "id": art.id,
+            "published": False,
+            "rag_indexed": False,
+        }
     finally:
         session.close()
 
@@ -757,14 +1320,26 @@ def admin_unpublish_article(article_id: str, _: None = Depends(require_admin_key
 @kb_tools_router.delete("/articles/{article_id}")
 def admin_delete_article(article_id: str, _: None = Depends(require_admin_key)) -> dict[str, Any]:
     from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import best_effort_remove_faq_document
+
     session_factory = get_session_factory()
     session = session_factory()
     try:
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        if art.source_ticket_id:
+            from app.models.db_models import Ticket
+
+            ticket = session.get(Ticket, art.source_ticket_id)
+            if ticket is not None:
+                ticket.kb_article_id = None
+                ticket.kb_conversion_status = "none"
+                session.add(ticket)
+        # Delete Postgres row first; orphan Chroma FAQ vectors are filtered at ask-time.
         session.delete(art)
         session.commit()
+        best_effort_remove_faq_document(article_id)
         return {"success": True, "id": article_id}
     finally:
         session.close()
@@ -789,9 +1364,13 @@ def admin_bulk_save_draft(
 )
 def admin_bulk_publish(
     payload: AdminBulkArticlesRequest,
-    _: None = Depends(require_admin_key),
+    admin_actor_id: str | None = Depends(require_admin_key),
 ) -> AdminBulkArticlesResponse:
-    return _bulk_persist_articles(payload, publish=True)
+    return _bulk_persist_articles(
+        payload,
+        publish=True,
+        published_by_user_id=admin_actor_id,
+    )
 
 
 @kb_tools_router.post(
@@ -804,6 +1383,8 @@ def admin_bulk_unpublish(
     _: None = Depends(require_admin_key),
 ) -> AdminBulkArticlesResponse:
     from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import best_effort_remove_faq_document
+    from app.services.ticket_knowledge import sync_ticket_kb_status
 
     results: list[AdminBulkArticleResultItem] = []
     session_factory = get_session_factory()
@@ -831,19 +1412,36 @@ def admin_bulk_unpublish(
                     )
                 )
                 continue
-            art.published = False
-            art.published_at = None
-            session.add(art)
-            session.commit()
-            session.refresh(art)
-            results.append(
-                AdminBulkArticleResultItem(
-                    success=True,
-                    id=art.id,
-                    title=art.title,
-                    published=False,
+            try:
+                art.published = False
+                art.published_at = None
+                art.rag_indexed = False
+                art.rag_document_id = None
+                art.chunk_count = 0
+                session.add(art)
+                sync_ticket_kb_status(session, art)
+                session.commit()
+                best_effort_remove_faq_document(article_id)
+                results.append(
+                    AdminBulkArticleResultItem(
+                        success=True,
+                        id=art.id,
+                        title=art.title,
+                        published=False,
+                    )
                 )
-            )
+            except Exception as exc:
+                session.rollback()
+                logger.exception("Bulk unpublish failed for %s", article_id)
+                results.append(
+                    AdminBulkArticleResultItem(
+                        success=False,
+                        id=article_id,
+                        title=art.title,
+                        error=str(exc),
+                        code="unpublish_failed",
+                    )
+                )
     finally:
         session.close()
 
@@ -874,14 +1472,31 @@ def _bulk_item_blocked(*, publish: bool, planner_bucket: str, needs_review: bool
     return None
 
 
+def _resolve_bulk_article_audience(item: Any) -> str:
+    """Resolve audience for bulk create/update (explicit field, else filename/title heuristics)."""
+    from app.services.article_rag_indexer import infer_rag_audience_from_document
+
+    explicit = str(getattr(item, "audience", None) or "").strip().lower()
+    if explicit in {"student", "faculty", "both"}:
+        return explicit
+    return infer_rag_audience_from_document(
+        filename=getattr(item, "source_document", None),
+        title=getattr(item, "title", None),
+        document_type=getattr(item, "document_type", None),
+    )
+
+
 def _bulk_persist_articles(
     payload: AdminBulkArticlesRequest,
     *,
     publish: bool,
+    published_by_user_id: str | None = None,
 ) -> AdminBulkArticlesResponse:
     from datetime import datetime, timezone
 
     from app.models.db_models import PublishedArticle
+    from app.services.article_rag_indexer import index_published_article
+    from app.services.ticket_knowledge import sync_ticket_kb_status
 
     results: list[AdminBulkArticleResultItem] = []
     session_factory = get_session_factory()
@@ -954,8 +1569,12 @@ def _bulk_persist_articles(
                         )
                         continue
                     if item.title:
+                        from app.services.ticket_knowledge import ensure_unique_article_slug
+
                         art.title = item.title
-                        art.slug = re.sub(r"[^a-z0-9]+", "-", item.title.lower()).strip("-")
+                        art.slug = ensure_unique_article_slug(
+                            session, item.title, exclude_id=art.id
+                        )
                     if item.category:
                         art.category = item.category
                     if item.summary is not None:
@@ -966,11 +1585,42 @@ def _bulk_persist_articles(
                         art.office = item.office
                     if item.source_document is not None:
                         art.source_filename = item.source_document
+                    if item.audience is not None or item.title or item.source_document:
+                        art.audience = _resolve_bulk_article_audience(item)
                     art.published = publish
                     art.published_at = datetime.now(timezone.utc) if publish else None
+                    if publish:
+                        art.rag_indexed = False
+                        if published_by_user_id:
+                            art.published_by_user_id = published_by_user_id
                     session.add(art)
+                    if publish:
+                        sync_ticket_kb_status(session, art)
+                    # Commit Postgres before Chroma so orphans cannot outlive unpublished rows.
                     session.commit()
                     session.refresh(art)
+                    if publish:
+                        try:
+                            index_published_article(session, art)
+                            session.commit()
+                            session.refresh(art)
+                        except Exception as exc:
+                            logger.exception(
+                                "Failed to index bulk article %s into Chroma", art.id
+                            )
+                            _revert_article_to_draft_after_rag_failure(session, art.id, exc)
+                            results.append(
+                                AdminBulkArticleResultItem(
+                                    preview_id=preview_id,
+                                    success=False,
+                                    id=art.id,
+                                    title=art.title,
+                                    published=False,
+                                    error=_rag_publish_failure_detail(exc),
+                                    code="rag_index_failed",
+                                )
+                            )
+                            continue
                     results.append(
                         AdminBulkArticleResultItem(
                             preview_id=preview_id,
@@ -1020,9 +1670,11 @@ def _bulk_persist_articles(
                         )
                         continue
 
+                from app.services.ticket_knowledge import ensure_unique_article_slug
+
                 art = PublishedArticle(
                     title=title,
-                    slug=re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-"),
+                    slug=ensure_unique_article_slug(session, title),
                     category=category,
                     subcategory=None,
                     path=None,
@@ -1032,12 +1684,40 @@ def _bulk_persist_articles(
                     source_filename=item.source_document,
                     chunk_count=None,
                     published=publish,
+                    rag_indexed=False,
+                    audience=_resolve_bulk_article_audience(item),
                 )
                 if publish:
                     art.published_at = datetime.now(timezone.utc)
+                    if published_by_user_id:
+                        art.published_by_user_id = published_by_user_id
                 session.add(art)
+                if publish:
+                    sync_ticket_kb_status(session, art)
                 session.commit()
                 session.refresh(art)
+                if publish:
+                    try:
+                        index_published_article(session, art)
+                        session.commit()
+                        session.refresh(art)
+                    except Exception as exc:
+                        logger.exception(
+                            "Failed to index bulk article %s into Chroma", art.id
+                        )
+                        _revert_article_to_draft_after_rag_failure(session, art.id, exc)
+                        results.append(
+                            AdminBulkArticleResultItem(
+                                preview_id=preview_id,
+                                success=False,
+                                id=art.id,
+                                title=title,
+                                published=False,
+                                error=_rag_publish_failure_detail(exc),
+                                code="rag_index_failed",
+                            )
+                        )
+                        continue
                 results.append(
                     AdminBulkArticleResultItem(
                         preview_id=preview_id,
@@ -1251,6 +1931,13 @@ def _admin_article_schema(art) -> AdminPublishedArticleSchema:
         source_section=source_section,
         article_type=article_type,
         document_type=document_type,
+        audience=getattr(art, "audience", None) or "student",
+        kb_origin=getattr(art, "kb_origin", None) or "document",
+        source_ticket_id=getattr(art, "source_ticket_id", None),
+        resolution_summary=getattr(art, "resolution_summary", None),
+        published_by_user_id=getattr(art, "published_by_user_id", None),
+        rag_indexed=bool(getattr(art, "rag_indexed", False)),
+        rag_document_id=getattr(art, "rag_document_id", None),
     )
 
 

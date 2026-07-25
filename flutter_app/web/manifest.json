@@ -1,11 +1,11 @@
 {
-    "name": "aska_piyu",
-    "short_name": "aska_piyu",
+    "name": "ASKa-Piyu",
+    "short_name": "ASKa-Piyu",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#5C0A0F",
+    "theme_color": "#5C0A0F",
+    "description": "LSPU campus knowledge base, Ask assistant, and support tickets.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

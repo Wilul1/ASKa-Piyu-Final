@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "aska_piyu" "\0"
+            VALUE "CompanyName", "LSPU" "\0"
+            VALUE "FileDescription", "ASKa-Piyu" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "aska_piyu" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 LSPU. All rights reserved." "\0"
             VALUE "OriginalFilename", "aska_piyu.exe" "\0"
-            VALUE "ProductName", "aska_piyu" "\0"
+            VALUE "ProductName", "ASKa-Piyu" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

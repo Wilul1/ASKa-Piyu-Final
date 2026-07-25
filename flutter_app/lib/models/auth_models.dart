@@ -78,20 +78,40 @@ class SignupRequest {
   final String email;
   final String? studentId;
   final String password;
+  final String role;
 
   const SignupRequest({
     required this.fullName,
     required this.email,
     required this.studentId,
     required this.password,
+    this.role = 'student',
   });
 
   Map<String, dynamic> toJson() {
     return {
       'full_name': fullName.trim(),
       'email': email.trim(),
-      'student_id': studentId?.trim(),
+      'student_id': role == 'student' ? studentId?.trim() : null,
       'password': password,
+      'role': role,
+    };
+  }
+}
+
+class ChangePasswordRequest {
+  final String currentPassword;
+  final String newPassword;
+
+  const ChangePasswordRequest({
+    required this.currentPassword,
+    required this.newPassword,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'current_password': currentPassword,
+      'new_password': newPassword,
     };
   }
 }

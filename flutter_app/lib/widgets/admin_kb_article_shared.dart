@@ -16,6 +16,7 @@ class AdminArticleCard extends StatelessWidget {
     required this.onEdit,
     this.onPublish,
     this.onUnpublish,
+    this.onReindex,
     this.onDelete,
     this.onSaveDraft,
     this.onDiscard,
@@ -42,6 +43,7 @@ class AdminArticleCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback? onPublish;
   final VoidCallback? onUnpublish;
+  final VoidCallback? onReindex;
   final VoidCallback? onDelete;
   final VoidCallback? onSaveDraft;
   final VoidCallback? onDiscard;
@@ -183,6 +185,18 @@ class AdminArticleCard extends StatelessWidget {
                         foreground:
                             article.published ? DesignTokens.maroon : DesignTokens.ink,
                       ),
+                    if (article.ragStale)
+                      const KbBadge(
+                        label: 'RAG stale',
+                        background: Color(0xFFFEE2E2),
+                        foreground: Color(0xFFB91C1C),
+                      )
+                    else if (article.published && article.ragIndexed)
+                      const KbBadge(
+                        label: 'In chatbot',
+                        background: Color(0xFFDCFCE7),
+                        foreground: Color(0xFF15803D),
+                      ),
                     if (showPublicReadinessLabels) ...[
                       if (article.needsReview || article.reviewReasons.isNotEmpty)
                         const KbBadge(
@@ -237,6 +251,15 @@ class AdminArticleCard extends StatelessWidget {
               children: [
                 if (lightweight && officeLabel != 'Not specified')
                   _MetaLine('Office', officeLabel),
+                if (lightweight)
+                  _MetaLine(
+                    'Audience',
+                    article.audience == 'faculty'
+                        ? 'Faculty'
+                        : article.audience == 'student'
+                            ? 'Student'
+                            : 'Both',
+                  ),
                 if (lightweight && groupLabel != null && groupLabel.isNotEmpty)
                   _MetaLine('Group', groupLabel),
                 if (lightweight && sourceFilename != 'Not specified')
@@ -354,6 +377,17 @@ class AdminArticleCard extends StatelessWidget {
                     onPressed: onUnpublish,
                     child: const Text('Unpublish'),
                   ),
+                if (!isUnsavedPreview &&
+                    article.ragStale &&
+                    onReindex != null)
+                  ElevatedButton(
+                    onPressed: onReindex,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFB91C1C),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Reindex chatbot'),
+                  ),
                 if (isUnsavedPreview && !alreadyPublishedLabel && onDiscard != null)
                   TextButton(
                     onPressed: onDiscard,
@@ -465,6 +499,22 @@ Future<void> showAdminArticleViewDialog(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _DialogField('Category', full.category),
+                    _DialogField(
+                      'Audience',
+                      full.audience == 'faculty'
+                          ? 'Faculty'
+                          : full.audience == 'student'
+                              ? 'Student'
+                              : 'Both',
+                    ),
+                    _DialogField(
+                      'Chatbot index',
+                      full.ragStale
+                          ? 'Stale — published but missing from Chroma (use Reindex chatbot)'
+                          : full.ragIndexed
+                              ? 'Indexed for chatbot retrieval'
+                              : 'Not indexed',
+                    ),
                     if (showContentSummary)
                       _DialogField('Short Summary', shortSummary),
                     const Text(
@@ -664,6 +714,7 @@ class _AdminArticleEditDialogBodyState extends State<_AdminArticleEditDialogBody
           text: widget.article.metadata['article_type']?.toString() ??
               widget.article.documentType ??
               '');
+  late String audience = widget.article.audience;
   var saving = false;
 
   @override
@@ -708,6 +759,7 @@ class _AdminArticleEditDialogBodyState extends State<_AdminArticleEditDialogBody
           content: content,
           office: officeController.text.trim(),
           sourceFilename: sourceController.text.trim(),
+          audience: audience,
           metadata: meta,
           displayContent: cleanArticleContentForDisplay(content.split(marker).first.trim()),
         );
@@ -726,6 +778,7 @@ class _AdminArticleEditDialogBodyState extends State<_AdminArticleEditDialogBody
           content: content,
           office: officeController.text.trim(),
           sourceFilename: sourceController.text.trim(),
+          audience: audience,
         ),
       );
       if (mounted) Navigator.of(context).pop(true);
@@ -764,6 +817,22 @@ class _AdminArticleEditDialogBodyState extends State<_AdminArticleEditDialogBody
               TextField(
                 controller: categoryController,
                 decoration: const InputDecoration(labelText: 'Category'),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: audience,
+                decoration: const InputDecoration(labelText: 'Audience'),
+                items: const [
+                  DropdownMenuItem(value: 'student', child: Text('Student')),
+                  DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
+                  DropdownMenuItem(value: 'both', child: Text('Both')),
+                ],
+                onChanged: saving
+                    ? null
+                    : (value) {
+                        if (value == null) return;
+                        setState(() => audience = value);
+                      },
               ),
               const SizedBox(height: 10),
               TextField(

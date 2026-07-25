@@ -1,9 +1,12 @@
 import 'dart:convert';
-import 'dart:html' as html;
+import 'dart:typed_data';
+
+import 'package:http/http.dart' as http;
 
 import '../models/admin_article_models.dart';
+import 'api_client.dart';
 
-typedef AdminHeaderSetter = void Function(html.HttpRequest request);
+typedef AdminHeaderSetter = void Function(Map<String, String> headers);
 
 class AdminArticleService {
   AdminArticleService({
@@ -79,6 +82,24 @@ class AdminArticleService {
 
   Future<void> publishArticle(String id) async {
     await _request(method: 'POST', path: '/admin/kb/articles/$id/publish');
+  }
+
+  Future<void> reindexArticle(String id) async {
+    await _request(method: 'POST', path: '/admin/kb/articles/$id/reindex');
+  }
+
+  Future<Map<String, dynamic>> reindexStaleArticles() async {
+    final data = await _request(
+      method: 'POST',
+      path: '/admin/kb/articles/reindex-stale',
+    );
+    if (data is! Map) {
+      throw AdminArticleRequestException(
+        message: 'Invalid reindex-stale response.',
+        responseBody: data?.toString(),
+      );
+    }
+    return Map<String, dynamic>.from(data);
   }
 
   Future<void> unpublishArticle(String id) async {
@@ -198,27 +219,32 @@ class AdminArticleService {
   }
 
   Future<CandidateGenerationResult> generateFromSource({
-    required html.File file,
+    required Uint8List bytes,
+    required String filename,
     String? documentType,
     int? maxCandidates,
     String? previewFilePath,
   }) async {
-    final formData = html.FormData();
-    formData.appendBlob('file', file, file.name);
-    if (documentType != null && documentType.isNotEmpty && documentType != 'auto') {
-      formData.append('document_type', documentType);
+    final fields = <String, String>{};
+    if (documentType != null &&
+        documentType.isNotEmpty &&
+        documentType != 'auto') {
+      fields['document_type'] = documentType;
     }
     if (maxCandidates != null && maxCandidates > 0) {
-      formData.append('max_candidates', '$maxCandidates');
+      fields['max_candidates'] = '$maxCandidates';
     }
     if (previewFilePath != null && previewFilePath.trim().isNotEmpty) {
-      formData.append('preview_file_path', previewFilePath.trim());
+      fields['preview_file_path'] = previewFilePath.trim();
     }
 
     final data = await _request(
       method: 'POST',
       path: '/admin/kb/articles/generate-from-source',
-      formData: formData,
+      fields: fields,
+      files: [
+        http.MultipartFile.fromBytes('file', bytes, filename: filename),
+      ],
     );
     if (data is! Map) {
       throw AdminArticleRequestException(
@@ -250,39 +276,42 @@ class AdminArticleService {
     required String method,
     required String path,
     Map<String, dynamic>? body,
-    html.FormData? formData,
+    Map<String, String>? fields,
+    List<http.MultipartFile>? files,
   }) async {
     final url = apiBase.isEmpty ? path : '$apiBase$path';
-    final request = html.HttpRequest();
-    request.open(method, url);
+    final headers = <String, String>{};
     try {
-      setAdminHeader(request);
+      setAdminHeader(headers);
     } catch (error) {
       throw AdminArticleRequestException(message: error.toString());
     }
-    if (formData != null) {
-      request.send(formData);
-    } else if (body != null) {
-      request.setRequestHeader('Content-Type', 'application/json');
-      request.send(jsonEncode(body));
+
+    final ApiResult result;
+    if (files != null || fields != null) {
+      result = await ApiClient.multipart(
+        method: method,
+        url: url,
+        headers: headers,
+        fields: fields,
+        files: files,
+      );
     } else {
-      request.send();
-    }
-    await request.onLoadEnd.first;
-
-    final status = request.status;
-    final responseText = request.responseText ?? '';
-    dynamic decoded;
-    if (responseText.isNotEmpty) {
-      try {
-        decoded = jsonDecode(responseText);
-      } catch (_) {
-        decoded = responseText;
-      }
+      result = await ApiClient.send(
+        method: method,
+        url: url,
+        headers: headers,
+        jsonBody: body,
+      );
     }
 
-    if (status == null || status < 200 || status >= 300) {
-      throw _buildRequestException(status: status, decoded: decoded, responseText: responseText);
+    final decoded = result.json;
+    if (!result.ok) {
+      throw _buildRequestException(
+        status: result.statusCode,
+        decoded: decoded,
+        responseText: result.body,
+      );
     }
     return decoded;
   }

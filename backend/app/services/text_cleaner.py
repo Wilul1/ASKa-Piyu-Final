@@ -188,6 +188,353 @@ def _fix_hyphenated_line_breaks(text: str) -> str:
     return re.sub(r"(\w)-\n(\w)", r"\1\2", text)
 
 
+def _fix_inline_hyphen_word_breaks(text: str) -> str:
+    """Join OCR/PDF hyphen splits that appear on the same line (e.g. 'appertain- ing')."""
+    return re.sub(r"(\w)-\s+(\w)", r"\1\2", text)
+
+
+# Roman-numeral major section markers used by policy manuals (I., II., …).
+# Require Title Case after the numeral so middle initials like "C. CALLO" do not match.
+_ROMAN_SECTION_RE = re.compile(r"\b([IVX]+)\.\s+[A-Z][a-z]+")
+_BREADCRUMB_RE = re.compile(r"\s+>\s+")
+_PAGE_MARKER_RE = re.compile(r"^Page\s*:\s*\d+\s*$", re.I)
+_PART_ONLY_RE = re.compile(r"^Part\s+\d+\s*$", re.I)
+_PART_SUFFIX_RE = re.compile(r"\s+-\s+Part\s+\d+\s*$", re.I)
+_SEPARATOR_RE = re.compile(r"^[-–—]{2,}\s*$")
+# Numbered leaf in a breadcrumb path, e.g. "1.2.1" or "Section 6.0".
+_BREADCRUMB_NUMBER_RE = re.compile(
+    r"^(?:Section\s+)?(\d+(?:\.\d+)*)\.?\s*$",
+    re.I,
+)
+_TITLE_CASE_WORD_RE = re.compile(r"^[A-Z][A-Za-z'’]*$")
+_LOWERCASE_START_RE = re.compile(r"^[a-z]")
+# Major section heading at line start (allows all-caps titles).
+_MAJOR_SECTION_LINE_RE = re.compile(r"^[IVXLCDM]+\.\s+\S")
+_MAJOR_SECTION_KEY_RE = re.compile(r"^([IVXLCDM]+)\.\s+")
+
+
+def _is_separator_or_page_artifact(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if _SEPARATOR_RE.match(stripped):
+        return True
+    if _PAGE_MARKER_RE.match(stripped):
+        return True
+    if _PART_ONLY_RE.match(stripped):
+        return True
+    return False
+
+
+def _is_toc_contamination(line: str) -> bool:
+    """Detect jammed TOC rows that splice unrelated section titles together."""
+    stripped = line.strip()
+    if not stripped or len(stripped) < 40:
+        return False
+    roman_hits = _ROMAN_SECTION_RE.findall(stripped)
+    if len(roman_hits) >= 2:
+        return True
+    # Ellipsis / dotted leaders between titles (common in PDF TOC extracts).
+    if "..." in stripped and _ROMAN_SECTION_RE.search(stripped):
+        return True
+    return False
+
+
+def _strip_part_suffix(line: str) -> str:
+    return _PART_SUFFIX_RE.sub("", line.strip()).strip()
+
+
+def _normalize_breadcrumb_line(line: str) -> str | None:
+    """
+    Collapse extraction breadcrumb paths.
+
+    Returns:
+    - None to drop the line (duplicate path or pure navigation noise)
+    - a reconstructed numbered lead-in when the leaf is a truncated fragment heading
+    - the leaf text when it is a real unique heading
+    """
+    parts = [p.strip() for p in _BREADCRUMB_RE.split(line.strip()) if p.strip()]
+    if len(parts) < 2:
+        return line.strip()
+
+    # Duplicate section labels: "II. Foo > II. Foo"
+    if len(parts) == 2 and parts[0].casefold() == parts[1].casefold():
+        return None
+
+    leaf = parts[-1]
+    number = None
+    for part in reversed(parts[:-1]):
+        match = _BREADCRUMB_NUMBER_RE.match(part)
+        if match:
+            number = match.group(1)
+            break
+
+    # Truncated Title Case leaf: reconstruct numbered lead-in for joining.
+    if _heading_leaf_is_truncated(leaf):
+        if number:
+            return f"{number}. {leaf.lower()}" if leaf else None
+        return None
+
+    # Real leaf heading from a path: prefer numbered form when available.
+    if number:
+        return f"{number}. {leaf}"
+
+    # Parent incorrectly prefixed onto a later subsection.
+    if any(p.casefold() == leaf.casefold() for p in parts[:-1]):
+        return leaf
+
+    return leaf
+
+
+def _looks_like_title_case_heading(line: str) -> bool:
+    words = [w for w in re.split(r"\s+", line.strip()) if w]
+    if len(words) < 3:
+        return False
+    # Allow short connectors inside title-case headings.
+    connectors = {"a", "an", "the", "of", "on", "in", "for", "to", "and", "or", "by", "as"}
+    title_like = 0
+    for word in words:
+        bare = word.strip(".,;:()[]\"'/")
+        if not bare:
+            continue
+        if bare.casefold() in connectors:
+            title_like += 1
+            continue
+        if _TITLE_CASE_WORD_RE.match(bare) or bare.isupper():
+            title_like += 1
+        else:
+            return False
+    return title_like >= 3
+
+
+def _looks_like_truncated_title_case_heading(line: str) -> bool:
+    """Heuristic: Title Case line that ends mid-word (no terminal punctuation)."""
+    stripped = line.strip()
+    if not stripped or stripped[-1] in ".:;!?":
+        return False
+    if re.match(r"^[IVXLCDM]+\.\s+\S", _strip_part_suffix(stripped)):
+        return False
+    if not _looks_like_title_case_heading(stripped):
+        return False
+    last = re.split(r"\s+", stripped)[-1].strip(".,;:()[]\"'/")
+    if not last or len(last) < 2:
+        return True
+    # Truncated OCR/PDF heading slices often end on a short stem (Col, Chan, Con).
+    vowels = set("aeiouAEIOU")
+    if len(last) <= 4 and not last.isupper():
+        return True
+    if len(last) <= 6 and last[-1] not in "sydnegrt" and sum(ch in vowels for ch in last) <= 1:
+        return True
+    return False
+
+
+def _heading_leaf_is_truncated(leaf: str) -> bool:
+    """True when a heading leaf ends on a mid-word stem (with or without Title Case)."""
+    stripped = leaf.strip()
+    if not stripped or stripped[-1] in ".:;!?":
+        return False
+    if _MAJOR_SECTION_LINE_RE.match(_strip_part_suffix(stripped)):
+        return False
+    if _looks_like_truncated_title_case_heading(stripped):
+        return True
+    last = re.split(r"\s+", stripped)[-1].strip(".,;:()[]\"'/")
+    if not last:
+        return True
+    # After lowercasing a reconstructed leaf, still detect short trailing stems.
+    return bool(len(last) <= 4 and last.isalpha() and not last.isupper())
+
+
+def _is_major_section_heading(line: str) -> bool:
+    return bool(_MAJOR_SECTION_LINE_RE.match(_strip_part_suffix(line)))
+
+
+def _major_section_key(line: str) -> str | None:
+    match = _MAJOR_SECTION_KEY_RE.match(_strip_part_suffix(line))
+    return match.group(1).upper() if match else None
+
+
+def _roman_value(roman: str) -> int:
+    values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+    total = 0
+    prev = 0
+    for ch in reversed(roman.upper()):
+        val = values.get(ch, 0)
+        if val < prev:
+            total -= val
+        else:
+            total += val
+            prev = val
+    return total
+
+
+def _join_truncated_heading_with_continuation(heading: str, continuation: str) -> str:
+    """Join '… About A Col' + 'league or…' → '… About A Colleague or…'."""
+    h = heading.rstrip()
+    c = continuation.lstrip()
+    if not h or not c:
+        return f"{h} {c}".strip()
+    # If heading already includes a reconstructed number prefix, keep it.
+    h_words = h.split()
+    c_first, _, c_rest = c.partition(" ")
+    last = h_words[-1]
+    # Mid-word split across the heading/continuation boundary.
+    if last and c_first and last[0].isalpha() and c_first[0].islower():
+        merged_last = last + c_first
+        # Preserve capitalization of the stem when it was Title Case.
+        if last[0].isupper() and len(last) <= 6:
+            merged_last = merged_last[0].upper() + merged_last[1:]
+        joined = " ".join(h_words[:-1] + [merged_last])
+        return f"{joined} {c_rest}".strip() if c_rest else joined
+    return f"{h} {c}".strip()
+
+
+def clean_rag_extraction_text(text: str) -> str:
+    """
+    Clean PDF/OCR extraction text for RAG indexing.
+
+    Applies general heuristics only (no document-specific hardcoded titles):
+    - drop TOC mashups, page/part markers, and separator lines
+    - drop duplicate breadcrumb section labels and truncated fragment headings
+    - repair hyphenated word breaks
+    - drop stale major-section restarts that belong to an earlier section number
+    """
+    if not text:
+        return ""
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _fix_hyphenated_line_breaks(text)
+    text = _fix_inline_hyphen_word_breaks(text)
+
+    raw_lines = text.split("\n")
+    pending_fragment: str | None = None
+    seen_major_sections: set[str] = set()
+    highest_major = 0
+    out: list[str] = []
+
+    def flush_pending() -> None:
+        nonlocal pending_fragment
+        if pending_fragment:
+            out.append(pending_fragment)
+            pending_fragment = None
+
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        stripped = line.strip()
+
+        if not stripped:
+            # Keep pending truncated fragments across blank lines so they can
+            # join with a following lowercase continuation.
+            if pending_fragment is None:
+                out.append("")
+            i += 1
+            continue
+
+        if _is_separator_or_page_artifact(stripped):
+            i += 1
+            continue
+
+        if _is_toc_contamination(stripped):
+            i += 1
+            continue
+
+        stripped = _strip_part_suffix(stripped)
+        if not stripped:
+            i += 1
+            continue
+
+        # Breadcrumb / hierarchy path lines from structured extractors.
+        if " > " in stripped:
+            normalized = _normalize_breadcrumb_line(stripped)
+            if normalized is None:
+                # Duplicate path — if we already hold a matching fragment, keep it.
+                i += 1
+                continue
+            leaf = re.sub(r"^\d+(?:\.\d+)*\.\s+", "", normalized)
+            if _heading_leaf_is_truncated(leaf):
+                pending_fragment = normalized
+                i += 1
+                continue
+            # Non-truncated leaf heading from a path: keep once (preferably numbered).
+            flush_pending()
+            stripped = normalized
+
+        # Standalone truncated Title Case fragment headings.
+        # Also drop Title Case lines that only duplicate the next breadcrumb leaf
+        # (generated fragment headings from structured extractors).
+        if _looks_like_title_case_heading(stripped) or _looks_like_truncated_title_case_heading(
+            stripped
+        ):
+            j = i + 1
+            while j < len(raw_lines) and not raw_lines[j].strip():
+                j += 1
+            nxt = raw_lines[j].strip() if j < len(raw_lines) else ""
+            nxt = _strip_part_suffix(nxt)
+            if " > " in nxt:
+                leaf = [p.strip() for p in _BREADCRUMB_RE.split(nxt) if p.strip()][-1]
+                if leaf.casefold() == stripped.casefold():
+                    if _is_major_section_heading(stripped):
+                        # Keep the real major heading; breadcrumb duplicate drops later.
+                        pass
+                    else:
+                        # Drop generated Title Case duplicate; breadcrumb keeps leaf once.
+                        i += 1
+                        continue
+            if _looks_like_truncated_title_case_heading(stripped):
+                pending_fragment = stripped
+                i += 1
+                continue
+
+        # Stale major-section restart (earlier roman numeral after a later one).
+        major = _major_section_key(stripped)
+        if major and _is_major_section_heading(stripped):
+            value = _roman_value(major)
+            if major in seen_major_sections and value < highest_major:
+                # Duplicate earlier section label injected into later content.
+                i += 1
+                continue
+            if major in seen_major_sections and stripped.casefold() in {
+                x.casefold() for x in out if _is_major_section_heading(x)
+            }:
+                i += 1
+                continue
+            seen_major_sections.add(major)
+            highest_major = max(highest_major, value)
+
+        # Join pending truncated fragment with lowercase continuation.
+        if pending_fragment and _LOWERCASE_START_RE.match(stripped):
+            joined = _join_truncated_heading_with_continuation(pending_fragment, stripped)
+            pending_fragment = None
+            out.append(joined)
+            i += 1
+            continue
+
+        flush_pending()
+        out.append(stripped)
+        i += 1
+
+    flush_pending()
+
+    # Second pass: drop exact duplicate consecutive headings / blank spam.
+    deduped: list[str] = []
+    prev_nonempty = ""
+    for line in out:
+        if not line.strip():
+            if deduped and deduped[-1] == "":
+                continue
+            deduped.append("")
+            continue
+        if line.casefold() == prev_nonempty.casefold() and _is_major_section_heading(line):
+            continue
+        deduped.append(line)
+        prev_nonempty = line
+
+    text = "\n".join(deduped)
+    text = _fix_inline_hyphen_word_breaks(text)
+    text = repair_ocr_word_splits(text)
+    return normalize_whitespace(text)
+
+
 def _strip_repeated_headers_footers(text: str, page_texts: list[str]) -> str:
     if len(page_texts) < 2:
         return text
@@ -363,6 +710,8 @@ def clean_extracted_text(
     if page_texts:
         text = _strip_repeated_headers_footers("\n\n".join(page_texts), page_texts)
 
+    # RAG extraction cleanup (TOC/breadcrumb/fragment artifacts) before OCR norms.
+    text = clean_rag_extraction_text(text)
     return clean_ocr_text(text)
 
 

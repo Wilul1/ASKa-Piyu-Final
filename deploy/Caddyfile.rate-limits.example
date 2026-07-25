@@ -1,0 +1,32 @@
+# Sample Caddy reverse-proxy snippet for ASKa-Piyu (BE-03).
+# Adjust hostnames and upstream.
+
+api.example.com {
+	encode gzip
+
+	@auth path /auth/login /auth/signup
+	handle @auth {
+		rate_limit {
+			zone auth
+			key {remote_host}
+			events 5
+			window 1m
+		}
+		reverse_proxy api:8000
+	}
+
+	@qa path /qa/ask /student/ask
+	handle @qa {
+		rate_limit {
+			zone qa
+			key {remote_host}
+			events 30
+			window 1m
+		}
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy api:8000
+	}
+}

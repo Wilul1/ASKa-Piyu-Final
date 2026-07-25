@@ -1,0 +1,17 @@
+# Production overlay: terminate TLS on nginx (ports 80 + 443 only).
+# Requires deploy/certs/fullchain.pem and deploy/certs/privkey.pem
+#
+#   docker compose --profile full -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#
+# ports: !override replaces the lab HTTP mapping (${PROXY_PORT:-8080}:80) so
+# cleartext :8080 is not left published beside HTTPS.
+
+services:
+  nginx:
+    ports: !override
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx.https.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx-proxy-locations.inc:/etc/nginx/aska/nginx-proxy-locations.inc:ro
+      - ./deploy/certs:/etc/nginx/certs:ro

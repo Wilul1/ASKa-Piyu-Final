@@ -37,6 +37,23 @@ def _safe_filename(name: str) -> str:
     return cleaned or "attachment"
 
 
+def detect_content_type(content: bytes) -> str | None:
+    """Sniff allowed types from magic bytes (ignore client Content-Type)."""
+    if not content:
+        return None
+    if content.startswith(b"%PDF"):
+        return "application/pdf"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(content) >= 3 and content[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        return "image/gif"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def add_ticket_attachment(
     session: Session,
     ticket_id: str,
@@ -54,14 +71,20 @@ def add_ticket_attachment(
     if ticket.status == "Closed":
         raise TicketValidationError("Closed tickets do not accept attachments.")
 
-    ctype = (content_type or "application/octet-stream").split(";")[0].strip().lower()
-    if ctype not in ALLOWED_CONTENT_TYPES:
-        raise TicketValidationError("Only images (JPG/PNG/WebP/GIF) and PDF files are allowed.")
     if len(content) > MAX_TICKET_ATTACHMENT_BYTES:
         raise TicketValidationError("Attachment exceeds the 10 MB limit.")
     if not content:
         raise TicketValidationError("Attachment file is empty.")
 
+    sniffed = detect_content_type(content)
+    if sniffed is None or sniffed not in ALLOWED_CONTENT_TYPES:
+        raise TicketValidationError("Only images (JPG/PNG/WebP/GIF) and PDF files are allowed.")
+
+    claimed = (content_type or "").split(";")[0].strip().lower()
+    if claimed and claimed in ALLOWED_CONTENT_TYPES and claimed != sniffed:
+        raise TicketValidationError("Attachment content does not match the declared file type.")
+
+    ctype = sniffed
     attachment_id = str(uuid.uuid4())
     stored_name = f"{attachment_id}_{_safe_filename(filename)}"
     ticket_dir = _attachments_root() / ticket.id

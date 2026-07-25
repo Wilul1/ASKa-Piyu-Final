@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     documents_persist_dir: str = "./data/documents"
     ticket_attachments_dir: str = "./data/ticket_attachments"
     auth_secret_key: str | None = None
-    auth_token_ttl_minutes: int = 60 * 24
+    # Shorter default reduces stolen-token window (no server-side revoke list).
+    auth_token_ttl_minutes: int = 60 * 8
     chunk_max_chars: int = 1200
     chunk_overlap: int = 150
 
@@ -59,10 +60,56 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     groq_timeout_seconds: float = 30.0
 
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost:64833",
+        "http://127.0.0.1:64833",
+    ]
+    # None = auto (enabled outside production). Set true/false to override.
+    # In production, prefer admin Bearer login; keep true only for scripts/CI.
+    allow_admin_api_key: bool | None = None
+    # None = auto (enabled unless env=production). Set true/false to override.
+    expose_openapi: bool | None = None
+    # When true, rate limits use X-Forwarded-For / X-Real-IP (only enable behind
+    # a trusted reverse proxy such as the Compose nginx service).
+    trust_proxy: bool = False
 
 
 settings = Settings()
+
+
+_PLACEHOLDER_SECRET_MARKERS = (
+    "change-me",
+    "change-this",
+    "aska-piyu-dev",
+    "aska-dev",
+    "dev-secret",
+    "replace-me",
+)
+
+
+def is_placeholder_secret(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return True
+    return any(marker in text for marker in _PLACEHOLDER_SECRET_MARKERS)
+
+
+def openapi_enabled() -> bool:
+    if settings.expose_openapi is not None:
+        return bool(settings.expose_openapi)
+    return settings.env != "production"
+
+
+def admin_api_key_auth_enabled() -> bool:
+    """Whether shared X-Admin-Key auth is accepted.
+
+    Production defaults to Bearer-only admin unless ASKA_ALLOW_ADMIN_API_KEY=true.
+    """
+    if settings.allow_admin_api_key is not None:
+        return bool(settings.allow_admin_api_key)
+    return settings.env != "production"
 
 
 def admin_key_sha256_prefix() -> str:
@@ -73,12 +120,14 @@ def admin_key_sha256_prefix() -> str:
 
 
 def safe_admin_config_diagnostics() -> dict:
+    """Minimal ops diagnostics — no filesystem paths or secret material."""
     admin_key = settings.admin_api_key or ""
     return {
-        "cwd": str(Path.cwd()),
-        "dotenv_path": str(DOTENV_PATH),
+        "env": settings.env,
         "admin_key_loaded": bool(admin_key),
-        "admin_key_length": len(admin_key),
-        "admin_key_sha256_prefix": admin_key_sha256_prefix(),
+        "admin_key_configured_length": len(admin_key) if admin_key else 0,
+        "admin_api_key_auth_enabled": admin_api_key_auth_enabled(),
+        "openapi_enabled": openapi_enabled(),
+        "cors_origin_count": len(settings.cors_origins or []),
         "header_name": "x-admin-key",
     }

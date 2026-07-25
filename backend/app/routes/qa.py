@@ -1,19 +1,25 @@
 """Production ASKa-Piyu QA chatbot endpoint."""
 
-from fastapi import APIRouter, HTTPException, Query
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.config import settings
+from app.models.db_models import User
 from app.models.schemas import QAAskRequest, QAAskResponse
+from app.services.auth import get_current_user, require_admin_user
 from app.services.chroma_store import get_knowledge_base_store
 from app.services.qa.question_answering import answer_qa_question, _citations_from_sources
+from app.services.qa_rate_limit import enforce_qa_rate_limit
 from app.services.student.question_service import EmptyKnowledgeBaseError
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/qa", tags=["ASKa-Piyu QA"])
 
 
 @router.get("/health", summary="Check ASKa-Piyu QA readiness")
-async def qa_health() -> dict:
+async def qa_health(_: User = Depends(require_admin_user)) -> dict:
     store = get_knowledge_base_store()
     return {
         "groq_configured": bool(settings.groq_api_key),
@@ -30,16 +36,34 @@ async def qa_health() -> dict:
 )
 async def qa_ask(
     payload: QAAskRequest,
+    request: Request,
     debug: bool | None = Query(default=None),
+    current_user: User = Depends(get_current_user),
 ) -> QAAskResponse:
+    enforce_qa_rate_limit(request, current_user)
+
     try:
-        result = answer_qa_question(payload.question)
+        history = [
+            {"role": item.role, "content": item.content}
+            for item in (payload.history or [])
+        ]
+        result = answer_qa_question(
+            payload.question,
+            user_role=current_user.role,
+            history=history,
+        )
     except EmptyKnowledgeBaseError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"QA request failed: {exc}") from exc
+        logger.exception("QA request failed")
+        raise HTTPException(
+            status_code=500,
+            detail="QA request failed. Please try again later.",
+        ) from exc
 
-    debug_enabled = payload.debug if debug is None else debug
+    # Retrieval internals only for admins — never for students/faculty/office.
+    wants_debug = bool(payload.debug if debug is None else debug)
+    debug_enabled = wants_debug and current_user.role == "admin"
     sources = result.sources or []
     citations = _citations_from_sources(sources)
     return QAAskResponse(
@@ -63,6 +87,7 @@ async def qa_ask(
         program_scope=result.program_scope if debug_enabled else None,
         query_expansions_used=result.query_expansions_used if debug_enabled else None,
         rerank_reasons=result.rerank_reasons if debug_enabled else None,
+        degraded=bool(result.fallback_used),
         fallback_used=result.fallback_used if debug_enabled else None,
         fallback_reason=result.fallback_reason if debug_enabled else None,
         out_of_scope_detected=result.out_of_scope_detected if debug_enabled else None,

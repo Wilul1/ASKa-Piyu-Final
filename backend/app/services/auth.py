@@ -42,6 +42,7 @@ def create_access_token(user: User) -> str:
         "sub": user.id,
         "email": user.email,
         "role": user.role,
+        "cv": int(getattr(user, "credentials_version", 0) or 0),
         "iat": int(issued_at.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
@@ -95,4 +96,47 @@ def get_current_user(
     )
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid authentication token.")
+    if not bool(getattr(user, "is_active", True)):
+        raise HTTPException(status_code=401, detail="Account is disabled.")
+    token_cv = payload.get("cv", 0)
+    try:
+        token_cv_int = int(token_cv)
+    except (TypeError, ValueError):
+        token_cv_int = 0
+    if token_cv_int != int(getattr(user, "credentials_version", 0) or 0):
+        raise HTTPException(status_code=401, detail="Authentication token has been revoked.")
     return user
+
+
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    session: Session = Depends(get_db_session),
+) -> User | None:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        return None
+    try:
+        payload = decode_access_token(credentials.credentials)
+    except HTTPException:
+        return None
+    user = (
+        session.query(User)
+        .options(joinedload(User.office))
+        .filter(User.id == payload["sub"])
+        .one_or_none()
+    )
+    if user is None or not bool(getattr(user, "is_active", True)):
+        return None
+    try:
+        token_cv_int = int(payload.get("cv", 0))
+    except (TypeError, ValueError):
+        token_cv_int = 0
+    if token_cv_int != int(getattr(user, "credentials_version", 0) or 0):
+        return None
+    return user
+
+
+def require_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """Require an authenticated user with role=admin."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return current_user

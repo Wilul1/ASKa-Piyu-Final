@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.db_models import Office, Ticket, TicketReply, User
@@ -51,8 +51,25 @@ def triage_ticket(question: str, description: str = "", *, session: Session | No
 
 
 def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -> TicketSchema:
-    _require_role(actor, {"student", "admin"})
+    _require_role(actor, {"student", "faculty", "admin", "office"})
     triage = triage_ticket(payload.original_question, payload.description, session=session)
+
+    owner = actor
+    on_behalf_email = (getattr(payload, "on_behalf_of_email", None) or "").strip().lower()
+    if actor.role == "office":
+        if not on_behalf_email:
+            raise TicketValidationError(
+                "Office staff must provide on_behalf_of_email for the requester."
+            )
+        owner = session.query(User).filter(User.email == on_behalf_email).first()
+        if owner is None:
+            raise TicketValidationError("Requester account was not found for on_behalf_of_email.")
+        if owner.role not in {"student", "faculty"}:
+            raise TicketValidationError("Tickets can only be opened on behalf of students or faculty.")
+    elif on_behalf_email and actor.role == "admin":
+        owner = session.query(User).filter(User.email == on_behalf_email).first()
+        if owner is None:
+            raise TicketValidationError("Requester account was not found for on_behalf_of_email.")
 
     if payload.preferred_office_id or payload.preferred_office:
         if payload.preferred_office_id:
@@ -65,11 +82,22 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
     else:
         office_id, office_name = resolve_office_for_ticket(session, triage["assigned_office"])
 
-    priority = payload.preferred_priority or triage["priority"]
+    priority = triage["priority"]
+    if payload.preferred_priority:
+        # Requesters may suggest Low/Medium/High only — Urgent is staff-set.
+        if actor.role in {"student", "faculty"}:
+            if payload.preferred_priority == "Urgent":
+                raise TicketValidationError(
+                    "Only office staff or admins can set Urgent priority."
+                )
+            if payload.preferred_priority in {"Low", "Medium", "High"}:
+                priority = payload.preferred_priority
+        else:
+            priority = payload.preferred_priority
     now = _utc_now()
     ticket = Ticket(
         id=_ticket_id(),
-        user_id=actor.id,
+        user_id=owner.id,
         original_question=payload.original_question.strip(),
         description=payload.description.strip(),
         category=triage["category"],
@@ -131,7 +159,7 @@ def list_tickets(
         joinedload(Ticket.attachments),
     )
 
-    if actor.role == "student":
+    if actor.role in {"student", "faculty"}:
         query = query.filter(Ticket.user_id == actor.id)
     elif actor.role == "office":
         office_filters = []
@@ -364,17 +392,61 @@ def ticket_statistics(session: Session, actor: User) -> dict[str, Any]:
     _require_role(actor, {"admin"})
     tickets = session.query(Ticket).all()
     by_office: dict[str, int] = {}
+    by_priority: dict[str, int] = {}
+    by_category: dict[str, int] = {}
     for ticket in tickets:
-        label = ticket.assigned_office or "Unassigned"
-        by_office[label] = by_office.get(label, 0) + 1
+        office_label = ticket.assigned_office or "Unassigned"
+        by_office[office_label] = by_office.get(office_label, 0) + 1
+        priority_label = (ticket.priority or "Medium").strip() or "Medium"
+        by_priority[priority_label] = by_priority.get(priority_label, 0) + 1
+        category_label = (ticket.category or "Uncategorized").strip() or "Uncategorized"
+        by_category[category_label] = by_category.get(category_label, 0) + 1
     return {
         "total": len(tickets),
         "open": sum(1 for ticket in tickets if ticket.status == "Open"),
         "in_progress": sum(1 for ticket in tickets if ticket.status == "In Progress"),
         "resolved": sum(1 for ticket in tickets if ticket.status == "Resolved"),
         "closed": sum(1 for ticket in tickets if ticket.status == "Closed"),
-        "by_office": by_office,
+        "high_priority": sum(
+            1
+            for ticket in tickets
+            if (ticket.priority or "").strip() in {"High", "Urgent"}
+            and ticket.status in {"Open", "In Progress"}
+        ),
+        "by_office": dict(sorted(by_office.items(), key=lambda item: (-item[1], item[0]))),
+        "by_priority": by_priority,
+        "by_category": dict(
+            sorted(by_category.items(), key=lambda item: (-item[1], item[0]))
+        ),
     }
+
+
+def create_office(
+    session: Session,
+    *,
+    name: str,
+    service_category: str | None = None,
+    description: str | None = None,
+) -> Office:
+    cleaned_name = " ".join((name or "").split())
+    if not cleaned_name:
+        raise TicketValidationError("Office name is required.")
+    existing = (
+        session.query(Office)
+        .filter(func.lower(Office.name) == cleaned_name.lower())
+        .first()
+    )
+    if existing is not None:
+        raise TicketValidationError("An office with that name already exists.")
+    office = Office(
+        name=cleaned_name,
+        service_category=(service_category or "").strip() or None,
+        description=(description or "").strip() or None,
+    )
+    session.add(office)
+    session.commit()
+    session.refresh(office)
+    return office
 
 
 def list_offices(session: Session) -> list[Office]:
@@ -452,6 +524,8 @@ def _ticket_schema(session: Session, ticket: Ticket) -> TicketSchema:
             )
             for item in sorted(ticket.attachments or [], key=lambda row: row.created_at)
         ],
+        kb_article_id=ticket.kb_article_id,
+        kb_conversion_status=(ticket.kb_conversion_status or "none"),  # type: ignore[arg-type]
     )
 
 
@@ -475,7 +549,7 @@ def _load_ticket(session: Session, ticket_id: str) -> Ticket:
 def _can_view(ticket: Ticket, actor: User, session: Session) -> bool:
     if actor.role == "admin":
         return True
-    if actor.role == "student":
+    if actor.role in {"student", "faculty"}:
         return ticket.user_id == actor.id
     if actor.role == "office":
         return _office_matches_ticket(actor, ticket, session)
@@ -487,7 +561,7 @@ def _can_update(ticket: Ticket, actor: User, session: Session) -> bool:
         return True
     if actor.role == "office":
         return _office_matches_ticket(actor, ticket, session)
-    if actor.role == "student":
+    if actor.role in {"student", "faculty"}:
         return ticket.user_id == actor.id and ticket.status == "Resolved"
     return False
 
@@ -513,7 +587,8 @@ def _valid_status_transition(current: str, next_status: str, role: str) -> bool:
     }
     if role == "admin":
         return True
-    if role == "student":
+    if role in {"student", "faculty"}:
+        # Owners may only close a Resolved ticket — not reopen it.
         return current == "Resolved" and next_status == "Closed"
     return next_status in transitions.get(current, set())
 

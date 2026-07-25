@@ -26,7 +26,14 @@ ATTENDANCE_TERMS = ("attendance", "excuse slip", "medical certificate", "osas", 
 RETENTION_TERMS = ("retention", "retention policies", "scholastic delinquency", "probation", "dismissal", "dropped")
 GRADUATION_TERMS = ("graduation", "graduate requirements", "candidate for graduation", "clearance")
 PROGRAM_TERMS = ("curricular offerings", "programs", "campuses", "college of")
-ENROLLMENT_TERMS = ("enrollment", "enroll", "registration", "assessment of fees", "registrar")
+ENROLLMENT_TERMS = ("enrollment", "enroll", "enrolment", "office of the registrar")
+FEE_ASSESSMENT_TERMS = ("assessment of fees", "assessment of fee", "enrolment stub", "enrollment stub")
+RELATED_REGISTRATION_NOISE = (
+    "ip registration",
+    "system information registration",
+    "registration/modification",
+    "registration modification",
+)
 RECORD_TERMS = ("transcript of records", "tor", "student records", "registrar", "certificate of registration")
 COUNSELING_TERMS = ("guidance", "counseling", "counselling", "guidance office", "student welfare")
 REQUIREMENT_TERMS = ("requirements", "graduation requirements", "documentary requirements", "clearance", "application form")
@@ -49,6 +56,60 @@ DISCIPLINARY_TERMS = (
 PROCEDURAL_TERMS = ("ojt", "on-the-job", "on the job", "procedure", "procedures", "process flow")
 APPENDIX_TERMS = ("appendix", "appendices", "form template")
 AWARD_TERMS = ("award", "awards", "honor", "honors", "medal", "recognition")
+FACULTY_AUDIENCE_TERMS = (
+    "faculty",
+    "faculty member",
+    "faculty members",
+    "professor",
+    "instructor",
+    "teaching load",
+    "faculty load",
+    "faculty manual",
+    "workload",
+)
+TEACHING_LOAD_TERMS = (
+    "teaching load",
+    "faculty teaching load",
+    "faculty load",
+    "time allotment",
+    "teaching loads",
+    "load assignment",
+    "workload",
+)
+STUDENT_COURSE_LOAD_TERMS = (
+    "course load",
+    "academic load",
+    "graduate studies course load",
+    "undergraduate academic load",
+)
+FACULTY_GRADING_TERMS = (
+    "grading sheets",
+    "faculty grading",
+    "submission of grades",
+    "academic records",
+    "grades",
+)
+STUDENT_GRADE_CHANGE_TERMS = (
+    "change/rectification of grades",
+    "rectification of grades",
+    "change of grade",
+    "grade rectification",
+)
+FACULTY_RESPONSIBILITY_TERMS = (
+    "commitment of the lspu faculty",
+    "commitment of faculty",
+    "code of ethics",
+    "duties of faculty",
+    "faculty responsibilities",
+    "responsibilities of faculty",
+)
+NARROW_FACULTY_ROLE_TERMS = (
+    "designated as chairperson",
+    "designated as dean",
+    "designated as associate dean",
+    "designated as vice president",
+    "regular faculty designated",
+)
 DOMAIN_PATH_TERMS = {
     "attendance": ("attendance",),
     "retention": ("retention policies", "retention", "scholastic delinquency"),
@@ -142,8 +203,31 @@ QUERY_EXPANSION_RULES = (
     ),
     QueryExpansionRule(
         name="enrollment_procedure",
-        trigger_terms=("how do i enroll", "enroll", "enrollment", "registration"),
-        expansion_terms=ENROLLMENT_TERMS,
+        trigger_terms=("how do i enroll", "enroll", "enrollment", "enrolment"),
+        expansion_terms=(
+            "enrollment",
+            "office of the registrar",
+            "who may avail",
+            "citizen charter",
+        ),
+        blocked_terms=("assessment of fees", "ip registration"),
+    ),
+    QueryExpansionRule(
+        name="enrollment_responsible_office",
+        trigger_terms=("which office", "what office", "responsible", "handles"),
+        expansion_terms=("office of the registrar", "enrollment", "citizen charter"),
+        required_any_terms=("enroll", "enrollment", "enrolment"),
+    ),
+    QueryExpansionRule(
+        name="who_may_avail_service",
+        trigger_terms=("who may avail", "who can avail", "who may", "who can"),
+        expansion_terms=("who may avail", "clientele", "eligible", "citizen charter"),
+    ),
+    QueryExpansionRule(
+        name="enrollment_who_may_avail",
+        trigger_terms=("who may", "who can", "avail"),
+        expansion_terms=("enrollment", "who may avail", "office of the registrar", "citizen charter"),
+        required_any_terms=("enroll", "enrollment", "enrolment"),
     ),
     QueryExpansionRule(
         name="student_records_tor",
@@ -170,6 +254,148 @@ QUERY_EXPANSION_RULES = (
             "citizen charter",
             "office of the student affairs and services",
             "osas",
+        ),
+    ),
+    QueryExpansionRule(
+        name="citizens_charter_edition_vision",
+        trigger_terms=("citizen", "charter", "edition", "vision", "asean polytechnic"),
+        expansion_terms=(
+            "citizen's charter",
+            "2026",
+            "1st edition",
+            "vision",
+            "ASEAN Polytechnic University by 2030",
+        ),
+    ),
+    QueryExpansionRule(
+        name="good_moral_certificate",
+        trigger_terms=("good moral", "good moral certificate", "certificate of good moral"),
+        expansion_terms=(
+            "issuance of good moral certificate",
+            "undergraduate",
+            "alumnus",
+            "office of the student affairs",
+            "citizen charter",
+        ),
+    ),
+    QueryExpansionRule(
+        name="tor_fees_and_certifications",
+        trigger_terms=("tor", "transcript", "transcript of records", "cav", "copy of grades", "certificate of transfer"),
+        expansion_terms=(
+            "transcript of records",
+            "registrar",
+            "per page",
+            "undergraduate",
+            "graduate",
+            "certification",
+            "citizen charter",
+        ),
+    ),
+    QueryExpansionRule(
+        name="faculty_teaching_load",
+        trigger_terms=("teaching load", "faculty load", "faculty teaching", "workload"),
+        expansion_terms=(
+            "teaching load",
+            "faculty teaching load",
+            "faculty workload",
+            "time allotment",
+            "load assignment",
+            "faculty manual",
+            "teaching loads and other assignment",
+        ),
+        required_any_terms=("teaching", "faculty", "workload", "assigned", "assignment"),
+        blocked_terms=("course load", "academic load"),
+    ),
+    QueryExpansionRule(
+        name="faculty_grading_policies",
+        trigger_terms=("faculty grading", "grading policies", "grading sheets", "faculty grades"),
+        expansion_terms=(
+            "grading sheets",
+            "faculty grading",
+            "academic records",
+            "submission of grades",
+            "faculty manual",
+        ),
+        required_any_terms=("faculty", "grading", "grades", "grade"),
+    ),
+    QueryExpansionRule(
+        name="faculty_responsibilities",
+        trigger_terms=(
+            "faculty responsibilities",
+            "responsibilities of faculty",
+            "duties of faculty",
+            "faculty members",
+            "commitment of faculty",
+        ),
+        expansion_terms=(
+            "commitment of the lspu faculty",
+            "code of ethics",
+            "duties of faculty",
+            "faculty responsibilities",
+            "faculty manual",
+        ),
+        required_any_terms=("faculty", "professor", "instructor"),
+    ),
+    QueryExpansionRule(
+        name="scholarship_financial_assistance",
+        trigger_terms=("scholarship", "financial assistance", "grant", "grants"),
+        expansion_terms=(
+            "processing of scholarship and financial assistance",
+            "application form",
+            "certified copy of grades",
+            "citizen charter",
+        ),
+    ),
+    QueryExpansionRule(
+        name="library_reference_assistance",
+        trigger_terms=("library", "reference assistance", "library reference"),
+        expansion_terms=(
+            "library reference assistance",
+            "lspu id",
+            "outside researchers",
+            "citizen charter",
+        ),
+    ),
+    QueryExpansionRule(
+        name="dropping_of_subjects",
+        trigger_terms=("dropping", "drop a subject", "drop subject", "drop subjects"),
+        expansion_terms=(
+            "dropping of subjects",
+            "registrar",
+            "per unit",
+            "faculty-in-charge",
+            "dean",
+            "citizen charter",
+        ),
+    ),
+    QueryExpansionRule(
+        name="ojt_deployment",
+        trigger_terms=("ojt", "on-the-job", "on the job", "deployment"),
+        expansion_terms=(
+            "ojt deployment",
+            "host training establishment",
+            "orientation",
+            "citizen charter",
+        ),
+    ),
+    QueryExpansionRule(
+        name="statement_of_account",
+        trigger_terms=("statement of account", "payment history", "balance", "soa"),
+        expansion_terms=(
+            "statement of account",
+            "accounting",
+            "student id",
+            "citizen charter",
+        ),
+    ),
+    QueryExpansionRule(
+        name="entrance_examination",
+        trigger_terms=("entrance exam", "entrance examination", "admission test"),
+        expansion_terms=(
+            "lspu entrance examination",
+            "guidance and counseling",
+            "report card",
+            "citizen charter",
         ),
     ),
 )
@@ -220,6 +446,15 @@ def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
         expansions.extend(("graduate studies", "master", "doctorate", "PhD", "MA", "MS"))
     if _matches(normalized, r"\bcollege\b.*\bprogram", r"\bcampus(?:es)?\b.*\boffer", r"\boffer(?:ed|s)?\b.*\bprogram"):
         expansions.extend(PROGRAM_TERMS)
+    if _is_teaching_load_query(normalized):
+        expansions.extend(TEACHING_LOAD_TERMS)
+        expansions.append("faculty manual")
+    if _is_faculty_grading_query(normalized):
+        expansions.extend(FACULTY_GRADING_TERMS)
+        expansions.append("faculty manual")
+    if _is_faculty_responsibilities_query(normalized):
+        expansions.extend(FACULTY_RESPONSIBILITY_TERMS)
+        expansions.append("faculty manual")
 
     unique = _dedupe(expansions)
     normalized_for_retrieval = _normalize_student_phrasing(normalized, unique)
@@ -293,6 +528,22 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if profile["enrollment"] and _contains_any(normalized_content, ENROLLMENT_TERMS):
             score += 0.24
             reasons.append("enrollment_procedure_match")
+            # Prefer the Enrollment service card over Assessment of Fees.
+            if _title_is_primary_enrollment_service(normalized_title_path):
+                score += 0.45
+                reasons.append("boost_primary_enrollment_service_title")
+            if _contains_any(normalized_title_path, FEE_ASSESSMENT_TERMS) and not _title_is_primary_enrollment_service(
+                normalized_title_path
+            ):
+                score -= 0.35
+                reasons.append("penalty_fee_assessment_for_enrollment_query")
+        if profile["office_responsibility"]:
+            score += _office_responsibility_boost(
+                normalized_query=normalized_query,
+                normalized_title_path=normalized_title_path,
+                metadata=metadata,
+                reasons=reasons,
+            )
         if profile["records"] and _contains_any(normalized_content, RECORD_TERMS):
             score += 0.28
             reasons.append("student_records_match")
@@ -347,6 +598,13 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
             score -= 0.85
             reasons.append("penalty_external_topic_admin_title")
 
+        score += _faculty_audience_rerank_delta(
+            profile=profile,
+            normalized_title_path=normalized_title_path,
+            normalized_content=normalized_content,
+            reasons=reasons,
+        )
+
         if profile["academic_risk"] and "honorable dismissal" in normalized_content and not profile["honorable"]:
             score -= 0.35
             reasons.append("penalty_honorable_not_academic")
@@ -393,7 +651,7 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
     graduate = _matches(normalized_query, r"\bgraduate\b", r"\bmaster\b", r"\bdoctorate\b", r"\bphd\b", r"\bma\b", r"\bms\b")
     failing = _matches(normalized_query, r"\bfail(?:ed|ing)?\b", r"\bmany subjects?\b", r"\b75\s*%", r"\bfailed units?\b")
     attendance = _matches(normalized_query, r"\battendance\b", r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b")
-    enrollment = _matches(normalized_query, r"\benroll(?:ment)?\b", r"\bregistration\b", r"\bhow do i enroll\b")
+    enrollment = _matches(normalized_query, r"\benroll(?:ment)?\b", r"\benrolment\b", r"\bhow do i enroll\b")
     records = _matches(normalized_query, r"\btor\b", r"\btranscript\b", r"\bcopy of grades\b", r"\bgood moral\b", r"\bcertificate of registration\b")
     counseling = _matches(normalized_query, r"\bcounsel(?:ing|ling)\b", r"\bguidance\b", r"\bwho handles counseling\b")
     requirements = _matches(normalized_query, r"\brequirements?\b", r"\bdocuments?\b", r"\bwhat do i need\b")
@@ -448,6 +706,18 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
         "identity_document": identity_document,
         "service_howto": service_howto,
         "form_requirement": _is_form_requirement_query(normalized_query),
+        "office_responsibility": _matches(
+            normalized_query,
+            r"\bwhich office\b",
+            r"\bwhat office\b",
+            r"\bwho handles\b",
+            r"\bresponsible (?:for|office)\b",
+            r"\bin charge of\b",
+        ),
+        "faculty": _is_faculty_audience_query(normalized_query),
+        "teaching_load": _is_teaching_load_query(normalized_query),
+        "faculty_grading": _is_faculty_grading_query(normalized_query),
+        "faculty_responsibilities": _is_faculty_responsibilities_query(normalized_query),
     }
 
 
@@ -466,6 +736,80 @@ def _detected_domain(profile: dict[str, bool]) -> str | None:
         if profile.get(domain):
             return domain
     return None
+
+
+def _title_is_primary_enrollment_service(normalized_title_path: str) -> bool:
+    """True for the Enrollment service itself, not Assessment of Fees / IP Registration."""
+    if _contains_any(normalized_title_path, FEE_ASSESSMENT_TERMS):
+        return False
+    if _contains_any(normalized_title_path, RELATED_REGISTRATION_NOISE):
+        return False
+    title_tokens = set(re.findall(r"[a-z0-9]+", normalized_title_path))
+    if "enrollment" not in title_tokens and "enrolment" not in title_tokens:
+        return False
+    # Reject titles that are mostly about another registration workflow.
+    if "registration" in title_tokens and "enrollment" not in title_tokens and "enrolment" not in title_tokens:
+        return False
+    return True
+
+
+def _office_responsibility_boost(
+    *,
+    normalized_query: str,
+    normalized_title_path: str,
+    metadata: dict,
+    reasons: list[str],
+) -> float:
+    """Boost the service card that owns the asked process for which-office questions."""
+    boost = 0.0
+    office = _normalize(
+        str(metadata.get("office") or metadata.get("responsible_office") or metadata.get("office_or_division") or "")
+    )
+    if _matches(normalized_query, r"\benroll(?:ment)?\b", r"\benrolment\b"):
+        if _title_is_primary_enrollment_service(normalized_title_path):
+            boost += 0.65
+            reasons.append("boost_enrollment_office_responsibility_title")
+        if _title_is_primary_enrollment_service(normalized_title_path) and _contains_any(
+            office, ("registrar", "office of the registrar")
+        ):
+            boost += 0.3
+            reasons.append("boost_registrar_office_metadata")
+        if _contains_any(normalized_title_path, FEE_ASSESSMENT_TERMS):
+            boost -= 0.45
+            reasons.append("penalty_fee_assessment_for_office_question")
+        if _contains_any(normalized_title_path, RELATED_REGISTRATION_NOISE):
+            boost -= 0.5
+            reasons.append("penalty_related_registration_for_enrollment_office_question")
+    # Generic: exact service token overlap between query and title.
+    query_tokens = set(re.findall(r"[a-z0-9]+", normalized_query)) - {
+        "which",
+        "what",
+        "office",
+        "is",
+        "are",
+        "the",
+        "for",
+        "of",
+        "a",
+        "an",
+        "to",
+        "in",
+        "responsible",
+        "process",
+        "service",
+        "who",
+        "handles",
+        "charge",
+    }
+    title_tokens = set(re.findall(r"[a-z0-9]+", normalized_title_path))
+    overlap = query_tokens & title_tokens
+    if len(overlap) >= 1 and any(len(token) >= 5 for token in overlap):
+        boost += 0.18
+        reasons.append("boost_office_query_title_token_overlap")
+    if office and office not in {"none", "not specified", "[needs review]"}:
+        boost += 0.08
+        reasons.append("boost_has_office_metadata")
+    return boost
 
 
 def _chunk_service_title(chunk: RetrievedChunk, metadata: dict) -> str:
@@ -770,16 +1114,26 @@ def _citation_grounding_boost(
 def _chunk_is_citation_ready(chunk: RetrievedChunk, cache: dict[str, bool]) -> bool:
     metadata = chunk.metadata or {}
     document_id = str(chunk.document_id or metadata.get("document_id") or "").strip()
-    if not document_id:
+    source_filename = str(
+        chunk.source_filename or metadata.get("source_filename") or ""
+    ).strip()
+    cache_key = f"{document_id}|{source_filename}"
+    if not document_id and not source_filename:
         return False
-    if document_id not in cache:
+    if cache_key not in cache:
         try:
             from app.services.document_storage import resolve_citation_document
 
-            cache[document_id] = resolve_citation_document(document_id) is not None
+            cache[cache_key] = (
+                resolve_citation_document(
+                    document_id or None,
+                    source_filename=source_filename or None,
+                )
+                is not None
+            )
         except Exception:
-            cache[document_id] = False
-    return bool(cache[document_id])
+            cache[cache_key] = False
+    return bool(cache[cache_key])
 
 
 def _path_domain_boost(domain: str, title_path: str, reasons: list[str]) -> float:
@@ -995,6 +1349,121 @@ def _keyword_overlap_boost(query: str, title_path: str, reasons: list[str]) -> f
     boost = min(0.18, 0.045 * len(matched))
     reasons.append("title_path_keyword_match")
     return boost
+
+
+def _is_faculty_audience_query(normalized_query: str) -> bool:
+    return _contains_any(normalized_query, FACULTY_AUDIENCE_TERMS) or _matches(
+        normalized_query,
+        r"\bfaculty\b",
+        r"\bprofessor\b",
+        r"\binstructor\b",
+        r"\bteaching load\b",
+    )
+
+
+def _is_teaching_load_query(normalized_query: str) -> bool:
+    return _matches(
+        normalized_query,
+        r"\bteaching load\b",
+        r"\bfaculty load\b",
+        r"\bfaculty\b.*\b(?:load|workload|assigned|assignment)\b",
+        r"\b(?:load|workload)\b.*\bfaculty\b",
+        r"\bhow is teaching load\b",
+    )
+
+
+def _is_faculty_grading_query(normalized_query: str) -> bool:
+    if not _matches(normalized_query, r"\bgrad(?:e|es|ing)\b"):
+        return False
+    return _is_faculty_audience_query(normalized_query) or _matches(
+        normalized_query,
+        r"\bgrading sheets?\b",
+        r"\bfaculty grading\b",
+    )
+
+
+def _is_faculty_responsibilities_query(normalized_query: str) -> bool:
+    return _matches(
+        normalized_query,
+        r"\bresponsibilit(?:y|ies) of faculty\b",
+        r"\bfaculty responsibilit",
+        r"\bduties of faculty\b",
+        r"\bfaculty (?:member|members)?\b.*\bresponsibilit",
+        r"\bresponsibilit(?:y|ies)\b.*\bfaculty\b",
+    )
+
+
+def _chunk_looks_like_faculty_manual(normalized_title_path: str) -> bool:
+    return _contains_any(
+        normalized_title_path,
+        ("faculty manual", "lspu faculty", "faculty_manual"),
+    ) or bool(re.search(r"\bfaculty manual\b", normalized_title_path))
+
+
+def _chunk_looks_like_student_handbook(normalized_title_path: str) -> bool:
+    if _chunk_looks_like_faculty_manual(normalized_title_path):
+        return False
+    return _contains_any(
+        normalized_title_path,
+        ("student handbook", "lspu student handbook", "handbook"),
+    )
+
+
+def _faculty_audience_rerank_delta(
+    *,
+    profile: dict[str, bool],
+    normalized_title_path: str,
+    normalized_content: str,
+    reasons: list[str],
+) -> float:
+    """Boost Faculty Manual / faculty policy chunks; demote student-homonym collisions."""
+    if not (
+        profile.get("faculty")
+        or profile.get("teaching_load")
+        or profile.get("faculty_grading")
+        or profile.get("faculty_responsibilities")
+    ):
+        return 0.0
+
+    delta = 0.0
+    if _chunk_looks_like_faculty_manual(normalized_title_path):
+        delta += 0.38
+        reasons.append("boost_faculty_manual_for_faculty_query")
+    elif _chunk_looks_like_student_handbook(normalized_title_path):
+        delta -= 0.32
+        reasons.append("penalty_student_handbook_for_faculty_query")
+
+    if profile.get("teaching_load"):
+        if _contains_any(normalized_title_path, TEACHING_LOAD_TERMS) or _contains_any(
+            normalized_content, ("time allotment for teaching", "teaching load assignment")
+        ):
+            delta += 0.42
+            reasons.append("boost_teaching_load_section")
+        if _contains_any(normalized_title_path, STUDENT_COURSE_LOAD_TERMS) and not _contains_any(
+            normalized_title_path, TEACHING_LOAD_TERMS
+        ):
+            delta -= 0.55
+            reasons.append("penalty_student_course_load_for_teaching_load_query")
+
+    if profile.get("faculty_grading"):
+        if _contains_any(normalized_title_path, FACULTY_GRADING_TERMS) or "grading sheets" in normalized_content:
+            delta += 0.4
+            reasons.append("boost_faculty_grading_section")
+        if _contains_any(normalized_title_path, STUDENT_GRADE_CHANGE_TERMS):
+            delta -= 0.45
+            reasons.append("penalty_student_grade_rectification_for_faculty_grading")
+
+    if profile.get("faculty_responsibilities"):
+        if _contains_any(normalized_title_path, FACULTY_RESPONSIBILITY_TERMS) or _contains_any(
+            normalized_content, ("commitment of oneself", "code of ethics")
+        ):
+            delta += 0.4
+            reasons.append("boost_faculty_responsibility_section")
+        if _contains_any(normalized_title_path, NARROW_FACULTY_ROLE_TERMS):
+            delta -= 0.48
+            reasons.append("penalty_narrow_faculty_role_for_broad_responsibilities")
+
+    return delta
 
 
 def _is_academic_dismissal_query(normalized_query: str) -> bool:

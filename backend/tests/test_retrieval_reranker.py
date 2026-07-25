@@ -554,3 +554,264 @@ def test_citation_ready_chunk_preferred_when_scores_similar(tmp_path, monkeypatc
     )
     assert ranked[0].document_id == ready_id
     assert any("boost_level2_citation_ready" in reason for reason in (ranked[0].rerank_reasons or []))
+
+
+def test_enrollment_office_question_ranks_enrollment_above_assessment_of_fees():
+    results = titles_for(
+        "which office is responsible for enrollment process?",
+        [
+            chunk(
+                "Assessment of Fees",
+                "Assessment of Fees verifies enrolment stub and registration form with Accounting.",
+                0.92,
+                metadata={
+                    "section": "Assessment of Fees",
+                    "title": "Assessment of Fees",
+                    "source_section": "Assessment of Fees",
+                    "document_type": "citizen_charter",
+                    "article_type": "service_procedure",
+                    "office": "Accounting",
+                },
+            ),
+            chunk(
+                "Enrollment",
+                "Enrollment is handled by the Office of the Registrar for all eligible students.",
+                0.78,
+                metadata={
+                    "section": "Enrollment",
+                    "title": "Enrollment",
+                    "source_section": "Enrollment",
+                    "document_type": "citizen_charter",
+                    "article_type": "service_procedure",
+                    "office": "Office of the Registrar",
+                },
+            ),
+            chunk(
+                "IP Registration Process",
+                "IP Registration Process is handled by Registrar staff for online registration.",
+                0.9,
+                metadata={
+                    "section": "IP Registration Process",
+                    "title": "IP Registration Process",
+                    "source_section": "IP Registration Process",
+                    "document_type": "citizen_charter",
+                    "article_type": "service_procedure",
+                    "office": "Registrar",
+                },
+            ),
+        ],
+    )
+
+    assert results[0] == "Enrollment"
+
+
+def test_which_office_question_does_not_use_service_step_fallback():
+    from app.services.qa.conversational_fallback import detect_fallback_intent, format_conversational_fallback
+
+    chunk = RetrievedChunk(
+        document_id="ip",
+        title="IP Registration Process",
+        source_filename="charter.pdf",
+        chunk_index=0,
+        text="Office / Division\nRegistrar\n\nSteps\n1. Client Step: Register online.",
+        relevance_score=0.9,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "title": "IP Registration Process",
+            "source_section": "IP Registration Process",
+            "office": "Registrar",
+        },
+    )
+    enrollment = RetrievedChunk(
+        document_id="enroll",
+        title="Enrollment",
+        source_filename="charter.pdf",
+        chunk_index=1,
+        text="Office / Division\nOffice of the Registrar\n\nWho May Avail\nAll eligible students",
+        relevance_score=0.8,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "title": "Enrollment",
+            "source_section": "Enrollment",
+            "office": "Office of the Registrar",
+        },
+    )
+    question = "Which office is responsible for the enrollment process?"
+    assert detect_fallback_intent(question, [chunk, enrollment]) == "policy"
+    answer = format_conversational_fallback(question, [chunk, enrollment])
+    assert "To complete" not in answer
+    assert "Office of the Registrar" in answer or "Registrar" in answer
+    assert "Enrollment" in answer
+
+
+def test_prefer_service_chunks_puts_enrollment_before_fee_assessment():
+    from app.services.qa.service_answer_formatter import prefer_service_chunks
+
+    fee = RetrievedChunk(
+        document_id="fee",
+        title="Assessment of Fees",
+        source_filename="charter.pdf",
+        chunk_index=0,
+        text="Assessment of Fees steps...",
+        relevance_score=0.95,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "title": "Assessment of Fees",
+            "source_section": "Assessment of Fees",
+            "office": "Accounting",
+            "extracted_steps": '[{"client_step":"Submit stub"}]',
+        },
+    )
+    enrollment = RetrievedChunk(
+        document_id="enroll",
+        title="Enrollment",
+        source_filename="charter.pdf",
+        chunk_index=1,
+        text="Enrollment Office / Division Office of the Registrar",
+        relevance_score=0.8,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "title": "Enrollment",
+            "source_section": "Enrollment",
+            "office": "Office of the Registrar",
+            "extracted_steps": '[{"client_step":"Submit enrollment slip"}]',
+        },
+    )
+    ordered = prefer_service_chunks([fee, enrollment], question="which office is responsible for enrollment process?")
+    assert ordered[0].title == "Enrollment"
+
+
+def test_prefer_service_chunks_keeps_vision_above_charter_services():
+    from app.services.qa.service_answer_formatter import prefer_service_chunks
+
+    vision = RetrievedChunk(
+        document_id="hb",
+        title="VISION",
+        source_filename="handbook.pdf",
+        chunk_index=0,
+        text="VISION LSPU as a center of technology...",
+        relevance_score=0.92,
+        reranked_score=0.92,
+        metadata={
+            "document_type": "student_handbook",
+            "source_section": "VISION",
+            "section": "VISION",
+        },
+    )
+    service = RetrievedChunk(
+        document_id="cc",
+        title="LSPU Entrance Examination",
+        source_filename="charter.pdf",
+        chunk_index=1,
+        text="Entrance examination requirements...",
+        relevance_score=0.7,
+        reranked_score=0.7,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "LSPU Entrance Examination",
+            "office": "Admissions",
+            "extracted_steps": '[{"client_step":"Apply online"}]',
+        },
+    )
+    ordered = prefer_service_chunks(
+        [vision, service],
+        question="What is LSPU's vision?",
+    )
+    assert ordered[0].title == "VISION"
+
+
+def test_teaching_load_ranks_faculty_manual_above_student_course_load():
+    ranked = titles_for(
+        "How is teaching load assigned at LSPU?",
+        [
+            chunk(
+                "Course Load",
+                "Course Load Graduate Studies Article 5 Course Load and Requirements.",
+                0.9,
+                metadata={
+                    "section": "Course Load",
+                    "source_filename": "LSPU Student Handbook.pdf",
+                    "source_section": "Sec. 1 > Course Load",
+                },
+            ),
+            chunk(
+                "Teaching Load Assignment",
+                "The Dean assigns teaching loads aligned with faculty specialization. Time allotment for teaching loads shall be observed.",
+                0.72,
+                metadata={
+                    "section": "Teaching Load Assignment",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                    "source_section": "D. Teaching Load Assignment",
+                },
+            ),
+        ],
+    )
+    assert ranked[0] == "Teaching Load Assignment"
+
+
+def test_faculty_grading_ranks_grading_sheets_above_student_rectification():
+    ranked = titles_for(
+        "What are the faculty grading policies?",
+        [
+            chunk(
+                "Change/Rectification of Grades Period",
+                "Students may request change or rectification of grades within the prescribed period.",
+                0.9,
+                metadata={
+                    "section": "Change/Rectification of Grades Period",
+                    "source_filename": "LSPU Student Handbook.pdf",
+                },
+            ),
+            chunk(
+                "Grading Sheets and Other Academic Records",
+                "Faculty shall submit grading sheets and other academic records through proper channels.",
+                0.7,
+                metadata={
+                    "section": "Grading Sheets and Other Academic Records",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                },
+            ),
+        ],
+    )
+    assert ranked[0] == "Grading Sheets and Other Academic Records"
+
+
+def test_faculty_responsibilities_ranks_commitment_above_chairperson_designation():
+    ranked = titles_for(
+        "What are the responsibilities of faculty members?",
+        [
+            chunk(
+                "Regular Faculty Designated as Chairperson",
+                "Regular Faculty Designated as Chairperson B. Faculty Attendance and Absences > 1.2 > Regular Faculty Designated as Chairperson Research = 10 hrs",
+                0.88,
+                metadata={
+                    "section": "Regular Faculty Designated as Chairperson",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                    "source_section": "1.2 > Regular Faculty Designated as Chairperson",
+                },
+            ),
+            chunk(
+                "Commitment of the LSPU Faculty",
+                "Teaching is a personal commitment of oneself to others. The Code of Ethics guides faculty responsibilities.",
+                0.7,
+                metadata={
+                    "section": "Commitment of the LSPU Faculty",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                    "source_section": "III. Commitment of the LSPU Faculty",
+                },
+            ),
+        ],
+    )
+    assert ranked[0] == "Commitment of the LSPU Faculty"
+
+
+def test_faculty_teaching_load_query_expands_toward_faculty_manual():
+    prepared = prepare_retrieval_query("How is teaching load assigned at LSPU?")
+    expanded = prepared.expanded_query.casefold()
+    assert "teaching load" in expanded
+    assert "faculty manual" in expanded

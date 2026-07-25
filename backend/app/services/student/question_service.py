@@ -1,7 +1,7 @@
 """
 Student question flow.
 
-Question → ChromaDB search → AI answer
+Question → ChromaDB search → audience/FAQ filters → AI answer
 
 No OCR. No document upload. Knowledge must already be indexed by admin.
 """
@@ -26,7 +26,12 @@ class EmptyKnowledgeBaseError(ValueError):
     pass
 
 
-def answer_student_question(question: str) -> QuestionAnswerResult:
+def answer_student_question(
+    question: str,
+    *,
+    user_role: str | None = "student",
+) -> QuestionAnswerResult:
+    """Answer a student/faculty question with the same safety filters as ``/qa/ask``."""
     store = get_knowledge_base_store()
 
     if store.chunk_count == 0:
@@ -34,7 +39,14 @@ def answer_student_question(question: str) -> QuestionAnswerResult:
             "Knowledge base is empty. An administrator must ingest documents first."
         )
 
+    from app.services.article_rag_indexer import (
+        filter_chunks_for_audience,
+        filter_unpublished_faq_chunks,
+    )
+
     contexts = store.search(question.strip(), top_k=settings.rag_top_k)
+    contexts = filter_unpublished_faq_chunks(contexts)
+    contexts = filter_chunks_for_audience(contexts, user_role)
     answer = generate_answer(question, contexts)
 
     return QuestionAnswerResult(

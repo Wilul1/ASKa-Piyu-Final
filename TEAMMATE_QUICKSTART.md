@@ -90,7 +90,7 @@ flutter run -d chrome --dart-define=ASKA_API_BASE_URL=http://localhost:8000
 | Flutter: “Could not load Knowledge Base…” | Backend never started | Fix DB, then start Uvicorn; click Retry |
 | Chatbot weak / generation error | Missing `ASKA_GROQ_API_KEY` in **their** `backend/.env` | Add key, restart backend |
 | No published articles | Fresh empty database | Admin must ingest + publish on that PC, or restore a dump |
-| Wrong password in `.env` | Copied someone else’s Postgres password | Use `aska1234` with Docker, or your local Postgres password |
+| Wrong password in `.env` | Copied someone else’s Postgres password | Match `POSTGRES_PASSWORD` in repo-root `.env` (local script default: `aska1234`) |
 
 ---
 

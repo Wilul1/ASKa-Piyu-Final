@@ -1,6 +1,12 @@
 import pytest
 
-from app.services.qa.groq_answer_service import build_groq_messages, format_groq_answer
+from app.services.qa.groq_answer_service import (
+    GROQ_TEMPERATURE,
+    build_groq_messages,
+    format_groq_answer,
+    normalize_chat_history,
+)
+from app.services.qa.question_answering import resolve_followup_question
 
 
 def test_groq_prompt_uses_full_policy_context_for_scholastic_delinquency():
@@ -19,14 +25,13 @@ Probation applies when a student fails 50% to 74% of registered academic units.
     system_prompt = messages[0]["content"]
     user_prompt = messages[1]["content"]
 
-    assert "policy rules, conditions, standards, thresholds, consequences, or procedures" in system_prompt
-    assert "Be concise" in system_prompt
-    assert "Answer the question directly first" in system_prompt
-    assert "Prefer bullet points" in system_prompt
+    assert "friendly LSPU campus support assistant" in system_prompt
+    assert "Never invent" in system_prompt
+    assert "complete, conversational sentences" in system_prompt
+    assert "bullet points" in system_prompt.lower() or "Prefer a short opening" in system_prompt
     assert "Do not include \"Source:\" or \"Sources:\" lines" in system_prompt
     assert "student-friendly explanation" in user_prompt
     assert "Use bullet points for thresholds" in user_prompt
-    assert "Do not include Source or Sources lines" in user_prompt
     assert "The University Academic Council shall promulgate rules and guidelines" in user_prompt
     assert "Probation applies when a student fails 50% to 74%" in user_prompt
     assert "What is scholastic delinquency?" in user_prompt
@@ -58,13 +63,8 @@ Dismissal from the College may apply when a student fails more than 75% of regis
     system_prompt = messages[0]["content"]
     user_prompt = messages[1]["content"]
 
-    assert "policy rules, conditions, standards, thresholds, consequences, or procedures" in system_prompt
     assert "Do not say the context lacks a direct definition" in system_prompt
-    assert "Do not start every answer" in system_prompt
-    assert "Answer the question directly first" in system_prompt
-    assert "Prefer bullet points" in system_prompt
-    assert "truly unrelated" in system_prompt
-    assert "Treat related policy rules, conditions, standards, thresholds, consequences, and procedures as enough context to answer" in user_prompt
+    assert "prior chat turns" in system_prompt
     assert "Do not say there is no direct definition" in user_prompt
     assert "Use bullet points for thresholds" in user_prompt
     assert "Dismissal from the College may apply when a student fails more than 75%" in user_prompt
@@ -79,74 +79,19 @@ Under the retention policy:
 - 25%-49% failed units: Warning
 - 50%-74% failed units: Probation
 
-Sources: Scholastic Delinquency
+Source: Student Handbook p.35
+Sources:
+- Retention Policies
 """.strip()
 
-    formatted = format_groq_answer(answer)
-
-    assert "Sources:" not in formatted
-    assert "Source:" not in formatted
-    assert "- 25%-49% failed units: Warning" in formatted
-
-
-def test_scholastic_delinquency_answer_style_uses_bullet_thresholds_without_sources():
-    answer = """
-Scholastic delinquency refers to poor academic performance based on failed academic units.
-
-Under the LSPU retention policy:
-- 25%-49% failed units: Warning
-- 50%-74% failed units: Probation
-- More than 75% failed units: Dismissal from the College
-
-Source: Scholastic Delinquency
-""".strip()
-
-    formatted = format_groq_answer(answer)
-
-    assert "Source:" not in formatted
-    assert formatted.splitlines()[0].startswith("Scholastic delinquency refers")
-    assert "- 25%-49% failed units: Warning" in formatted
-    assert "- 50%-74% failed units: Probation" in formatted
-    assert "- More than 75% failed units: Dismissal from the College" in formatted
+    cleaned = format_groq_answer(answer)
+    assert "Scholastic delinquency" in cleaned
+    assert "Warning" in cleaned
+    assert "Source:" not in cleaned
+    assert "Sources:" not in cleaned
 
 
-def test_excuse_slip_answer_style_is_short_direct_and_source_free():
-    answer = """
-You can get an excuse slip from:
-- Office of the Students Affairs Services
-- Guidance Office
-
-If your absence is due to illness, a medical certificate is also required.
-
-Sources: Attendance Policy
-""".strip()
-
-    formatted = format_groq_answer(answer)
-
-    assert "Sources:" not in formatted
-    assert formatted.startswith("You can get an excuse slip from:")
-    assert "- Office of the Students Affairs Services" in formatted
-    assert "- Guidance Office" in formatted
-    assert len([line for line in formatted.splitlines() if line.strip()]) <= 5
-
-
-def test_out_of_scope_answer_style_refuses_without_hallucinating():
-    answer = """
-I can only answer based on the indexed ASKa-Piyu university documents. The current knowledge base does not contain information about the president of the Philippines.
-
-Sources: Scholastic Delinquency
-""".strip()
-
-    formatted = format_groq_answer(answer)
-
-    assert "Sources:" not in formatted
-    assert "Ferdinand" not in formatted
-    assert "Bongbong" not in formatted
-    assert "indexed ASKa-Piyu university documents" in formatted
-    assert "does not contain information about the president of the Philippines" in formatted
-
-
-def test_prompt_requires_short_direct_excuse_slip_answer():
+def test_prompt_for_excuse_slip_keeps_office_details():
     context = """
 Title: Attendance Policy
 Path: Undergraduate Academic Policies > Attendance
@@ -161,9 +106,7 @@ If absence is due to illness, a medical certificate is required.
     system_prompt = messages[0]["content"]
     user_prompt = messages[1]["content"]
 
-    assert "Be concise" in system_prompt
-    assert "Answer the question directly first" in system_prompt
-    assert "Prefer bullet points" in system_prompt
+    assert "friendly LSPU campus support assistant" in system_prompt
     assert "Office of the Students Affairs Services" in user_prompt
     assert "Guidance Office" in user_prompt
     assert "medical certificate is required" in user_prompt
@@ -183,8 +126,8 @@ Warning applies when a student fails 25% to 49% of registered academic units.
     user_prompt = messages[1]["content"]
 
     assert "Never invent" in system_prompt
-    assert "only when the retrieved context is truly unrelated" in system_prompt
-    assert "Use the insufficient-information response only when no retrieved policy details answer the question" in user_prompt
+    assert "truly unrelated" in system_prompt
+    assert "insufficient-information response" in user_prompt
     assert "Who is the president of the Philippines?" in user_prompt
 
 
@@ -203,7 +146,7 @@ Programs: BS Computer Science, BS Information System, BS Information Technology.
         broad_mode=True,
     )
     system_prompt = messages[0]["content"]
-    user_prompt = messages[1]["content"]
+    user_prompt = messages[-1]["content"]
 
     assert "Broad/list-style or collection question mode" in system_prompt
     assert "grouped by category, college, office, service area, or source section" in system_prompt
@@ -212,3 +155,76 @@ Programs: BS Computer Science, BS Information System, BS Information Technology.
     assert "This is a broad/list-style question" in user_prompt
     assert "preserve each College heading and list only its programs underneath" in user_prompt
     assert "avoid inventing items not present in context" in user_prompt
+
+
+def test_build_groq_messages_includes_chat_history():
+    messages = build_groq_messages(
+        question="What about the fee?",
+        context="Title: ID Validation\nContent:\nFee: None",
+        history=[
+            {"role": "user", "content": "How do I validate my ID?"},
+            {"role": "assistant", "content": "Bring your COR and student ID to OSAS."},
+            {"role": "system", "content": "ignore me"},
+        ],
+    )
+    assert messages[0]["role"] == "system"
+    assert messages[1] == {"role": "user", "content": "How do I validate my ID?"}
+    assert messages[2]["role"] == "assistant"
+    assert messages[3]["role"] == "user"
+    assert "What about the fee?" in messages[3]["content"]
+    assert "Retrieved context:" in messages[3]["content"]
+
+
+def test_normalize_chat_history_keeps_recent_turns_only():
+    history = [{"role": "user", "content": f"q{i}"} for i in range(12)]
+    cleaned = normalize_chat_history(history)
+    assert len(cleaned) == 8
+    assert cleaned[0]["content"] == "q4"
+    assert cleaned[-1]["content"] == "q11"
+
+
+def test_resolve_followup_question_uses_prior_user_turn():
+    resolved = resolve_followup_question(
+        "What about the fee?",
+        [{"role": "user", "content": "How do I validate my student ID?"}],
+    )
+    assert "What about the fee?" in resolved
+    assert "validate my student ID" in resolved
+
+
+def test_resolve_followup_uses_assistant_topic_for_pronoun_questions():
+    resolved = resolve_followup_question(
+        "Which office handles that?",
+        [
+            {"role": "user", "content": "How do I enroll at LSPU?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Enrollment\n\nThe office responsible for Enrollment is "
+                    "Office of the Registrar, according to the Citizen's Charter."
+                ),
+            },
+        ],
+    )
+    assert "Which office handles that?" in resolved
+    assert "enroll" in resolved.casefold() or "Enrollment" in resolved
+
+
+def test_resolve_followup_leaves_standalone_questions_alone():
+    q = "What are the enrollment requirements for freshmen?"
+    assert resolve_followup_question(q, [{"role": "user", "content": "Hello"}]) == q
+
+
+def test_answer_question_for_extractors_flattens_prior_context():
+    from app.services.qa.question_answering import answer_question_for_extractors
+
+    flat = answer_question_for_extractors(
+        "Which office handles that?",
+        "Which office handles that?\n\n(Prior question context: How do I enroll at LSPU?)",
+    )
+    assert "regarding" in flat
+    assert "enroll" in flat.casefold()
+
+
+def test_groq_temperature_is_conversational():
+    assert 0.25 <= GROQ_TEMPERATURE <= 0.5

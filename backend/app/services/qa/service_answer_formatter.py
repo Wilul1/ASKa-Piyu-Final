@@ -23,17 +23,250 @@ def is_form_or_requirement_query(question: str) -> bool:
     )
 
 
+def is_factual_service_detail_query(question: str) -> bool:
+    """True for office/fee/time/document FAQs that must not use step dumps."""
+    normalized = _normalize(question)
+    return bool(
+        re.search(
+            r"\b(?:how much|how long|how many|which office|what office|who may|who can|"
+            r"who handles|responsible|in charge|"
+            r"what (?:are|is) the (?:fee|fees|requirement|requirements|document|documents|"
+            r"edition|year|total)|"
+            r"what documents|what additional|what must|"
+            r"documents? (?:are )?required|requirements? (?:for|from|needed)|"
+            r"fee for|cost of|processing time)\b",
+            normalized,
+        )
+    )
+
+
+def format_requirements_detail_answer(
+    question: str,
+    chunk: RetrievedChunk,
+    sources: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Build a requirements/documents answer from one charter/service chunk."""
+    if not _chunk_fits_requirements_question(question, chunk):
+        return None
+    fields = extract_service_fields(chunk)
+    metadata = chunk.metadata or {}
+    title = (
+        _clean_value(metadata.get("source_section"))
+        or _clean_value(metadata.get("canonical_topic"))
+        or _clean_value(metadata.get("procedure_title"))
+        or fields["title"]
+    )
+    if "enroll" in _normalize(question) and re.search(r"\benrol(?:l)?ment\b", _normalize(title)):
+        title = "Enrollment"
+
+    requirements = _requirements_for_audience(question, chunk, fields["requirements"])
+    requirements = [_clean_document_requirement(item) for item in requirements]
+    requirements = [item for item in requirements if item and _looks_like_document_requirement(item)]
+    # De-dupe while preserving order.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in requirements:
+        key = _normalize(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    requirements = deduped
+    if not requirements:
+        return None
+
+    source_label = _format_source_line(chunk, sources)
+    audience = _audience_hint(question)
+    preface = (
+        f"For {audience} under {title}, the required documents are:"
+        if audience
+        else f"The required documents for {title} are:"
+    )
+    lines = [preface, ""]
+    lines.extend(f"- {item}" for item in requirements)
+    if fields["office"]:
+        lines.extend(["", f"Office: {fields['office']}"])
+    lines.extend(["", f"Source: {source_label}"])
+    return "\n".join(lines).strip()
+
+
+def _chunk_fits_requirements_question(question: str, chunk: RetrievedChunk) -> bool:
+    """Avoid handbook process sections when asking enrollment document FAQs."""
+    normalized_q = _normalize(question)
+    metadata = chunk.metadata or {}
+    title = _normalize(
+        " ".join(
+            str(value or "")
+            for value in (
+                metadata.get("source_section"),
+                metadata.get("title"),
+                metadata.get("section"),
+                chunk.title,
+            )
+        )
+    )
+    doc_type = _normalize(
+        str(
+            metadata.get("document_type")
+            or metadata.get("parser_document_type")
+            or metadata.get("article_type")
+            or ""
+        )
+    )
+    text_norm = _normalize(chunk.text or "")
+    if "enroll" not in normalized_q:
+        return True
+    if "visitation" in title or "article 3" in title:
+        return False
+    if "registration" in title and "enrollment" not in title and "enrolment" not in title:
+        if "citizen" not in doc_type and "service_procedure" not in doc_type:
+            return False
+    if re.search(r"\benrol(?:l)?ment\b", title) or "citizen" in doc_type or "service_procedure" in doc_type:
+        return True
+    return "for old students" in text_norm or "for new" in text_norm
+
+
+def _audience_hint(question: str) -> str | None:
+    normalized = _normalize(question)
+    if re.search(r"\b(?:old|continuing|returnee|returnees)\b", normalized):
+        return "old / continuing students"
+    if re.search(r"\b(?:new|freshmen|incoming)\b", normalized):
+        return "new students"
+    if re.search(r"\b(?:transferee|transferees|transfer)\b", normalized):
+        return "transferees"
+    return None
+
+
+def _requirements_for_audience(
+    question: str,
+    chunk: RetrievedChunk,
+    fallback_requirements: list[str],
+) -> list[str]:
+    normalized = _normalize(question)
+    text = chunk.text or ""
+
+    audience_headers = ()
+    if re.search(r"\b(?:old|continuing|returnee|returnees)\b", normalized):
+        audience_headers = (
+            "For Old Students",
+            "Old Students",
+            "For Continuing Students",
+            "Continuing Students",
+        )
+    elif re.search(r"\b(?:new|freshmen|incoming)\b", normalized):
+        audience_headers = (
+            "For New College Students",
+            "For New Students",
+            "New College Students",
+            "New Students",
+        )
+    elif re.search(r"\b(?:transferee|transferees|transfer)\b", normalized):
+        audience_headers = ("For Transferees", "Transferees", "For Transfer Students")
+
+    for header in audience_headers:
+        section = _extract_audience_section(text, header)
+        if section:
+            items = _requirements_from_text(section)
+            if not items:
+                inline = re.search(rf"(?im)^{re.escape(header)}\s*[:\-]\s*(.+)$", text)
+                if inline:
+                    items = _split_requirement_items(inline.group(1))
+            items = [
+                _clean_document_requirement(item)
+                for item in items
+                if _looks_like_document_requirement(_clean_document_requirement(item))
+            ]
+            if items:
+                return items
+
+    docs = [
+        _clean_document_requirement(item)
+        for item in (fallback_requirements or [])
+        if _looks_like_document_requirement(_clean_document_requirement(item))
+    ]
+    if audience_headers:
+        # If audience was requested, only return generic docs when section parsing failed
+        # and docs still look like document names (not process sentences).
+        return docs
+    return docs
+
+
+def _extract_audience_section(text: str, header: str) -> str:
+    """Return text under an audience header until the next audience/major section."""
+    pattern = re.compile(
+        rf"(?is)(?:^|\n)\s*{re.escape(header)}\s*:?\s*\n(.*?)(?="
+        r"\n\s*For (?:Old|New|Continuing|Transfer)|"
+        r"\n\s*(?:Old|New|Continuing)\s+Students\b|"
+        r"\n\s*Transferees?\b|"
+        r"\n\s*(?:Who May Avail|Office\s*/\s*Division|Steps|Fees|Total Processing Time|Client Step)\b|"
+        r"\Z)",
+    )
+    match = pattern.search(text or "")
+    return (match.group(1) or "").strip() if match else ""
+
+
+def _looks_like_document_requirement(value: str) -> bool:
+    normalized = _normalize(value)
+    if not normalized or len(normalized) < 3:
+        return False
+    if re.search(
+        r"\b(?:onsite|online registration|registration is|may also be available|"
+        r"follow the|submit to|go to|proceed to|approval of the dean|"
+        r"faculty-in-charge|through the university portal|initials of)\b",
+        normalized,
+    ):
+        return False
+    if len(normalized.split()) > 18 and not re.search(
+        r"\b(?:certificate|clearance|id|form|card|tor|transcript|diploma|receipt|envelope|picture|photo)\b",
+        normalized,
+    ):
+        return False
+    return True
+
+
+def _clean_document_requirement(value: str) -> str:
+    cleaned = _clean_value(value)
+    cleaned = re.sub(r"(?i)^(?:for\s+)?(?:old|new|continuing)\s+students?\s*[:\-]\s*", "", cleaned).strip()
+    cleaned = re.sub(r"(?i)^requirement:\s*", "", cleaned).strip()
+    cleaned = re.sub(r"(?i)\s*where to secure:.*$", "", cleaned).strip()
+    # Drop OCR numbering leftovers like "1. Clearance 1."
+    cleaned = re.sub(r"^\d+\.\s*", "", cleaned).strip()
+    cleaned = re.sub(r"\s+\d+\.$", "", cleaned).strip()
+    return cleaned
+
+
+def _split_requirement_items(raw: str) -> list[str]:
+    cleaned = re.sub(r"\s+", " ", raw or "").strip()
+    if not cleaned:
+        return []
+    parts = re.split(r"\s*(?:,|;|\band\b)\s*", cleaned, flags=re.I)
+    output: list[str] = []
+    for part in parts:
+        value = _clean_document_requirement(part)
+        if value and not _PLACEHOLDER.match(value) and len(value) > 2 and _looks_like_document_requirement(value):
+            output.append(value)
+    if len(output) >= 2:
+        return output
+    value = _clean_document_requirement(cleaned)
+    return [value] if value and _looks_like_document_requirement(value) else []
+
+
 def is_service_howto_query(question: str) -> bool:
+    """True only for process / how-to intents, not factual charter FAQs."""
     if is_form_or_requirement_query(question):
+        return False
+    if is_factual_service_detail_query(question):
         return False
     normalized = _normalize(question)
     return bool(
         re.search(
-            r"\b(?:how (?:do|can|to)|where (?:do|can|to)|steps?|procedure|process|"
-            r"validate|validation|avail|apply|request|secure|claim|reclaim)\b",
+            r"\b(?:how (?:do|can|to) i|how (?:do|can|to)|where (?:do|can|to) i|"
+            r"where (?:do|can|to)|steps to|step by step|procedure for|process for|"
+            r"how to (?:validate|apply|request|secure|claim|reclaim|avail|enroll|drop)|"
+            r"can i (?:apply|request|validate|enroll))\b",
             normalized,
         )
-    ) or " id" in f" {normalized} "
+    )
 
 
 def is_service_procedure_chunk(chunk: RetrievedChunk) -> bool:
@@ -107,7 +340,12 @@ def prefer_service_chunks(
     *,
     question: str,
 ) -> list[RetrievedChunk]:
-    """Keep semantic hits, but demote/filter form artifacts for service questions."""
+    """Keep semantic hits, but demote/filter form artifacts for service questions.
+
+    Service-procedure boosting applies only for how-to / office / charter-detail
+    questions. Institutional identity questions (vision, mission, quality policy)
+    must keep handbook ranking — otherwise random charter services jump to #1.
+    """
     if not chunks:
         return chunks
     if is_form_or_requirement_query(question):
@@ -122,14 +360,137 @@ def prefer_service_chunks(
         preferred.append(chunk)
     if not preferred:
         return chunks
-    # Prefer complete charter service procedures first among preferred.
+
+    normalized_question = _normalize(question)
+    service_oriented = (
+        is_service_howto_query(question)
+        or is_factual_service_detail_query(question)
+        or ("office" in normalized_question and "responsible" in normalized_question)
+        or ("office" in normalized_question and "handles" in normalized_question)
+        or ("which office" in normalized_question)
+        or ("what office" in normalized_question)
+    )
+
+    # For non-service questions (definitions, policies, identity, etc.), keep semantic
+    # ranking but demote unrelated charter service procedures so they do not leap to #1.
+    if not service_oriented:
+        preferred.sort(
+            key=lambda chunk: (
+                0 if _chunk_overlaps_question_topic(chunk, normalized_question) else 1,
+                1
+                if is_service_procedure_chunk(chunk)
+                and not _chunk_overlaps_question_topic(chunk, normalized_question)
+                else 0,
+                -(
+                    chunk.reranked_score
+                    if chunk.reranked_score is not None
+                    else chunk.relevance_score or 0.0
+                ),
+            )
+        )
+        return preferred + demoted
+
+    # Prefer complete charter service procedures, then title match to the asked service.
     preferred.sort(
         key=lambda chunk: (
             0 if is_service_procedure_chunk(chunk) and _has_usable_service_fields(chunk) else 1,
             0 if is_service_procedure_chunk(chunk) else 1,
+            _service_title_mismatch_rank(chunk, normalized_question),
+            0 if _chunk_office_present(chunk) else 1,
         )
     )
     return preferred + demoted
+
+
+def _chunk_overlaps_question_topic(chunk: RetrievedChunk, normalized_question: str) -> bool:
+    """True when chunk title/section/text shares contentful tokens with the question."""
+    stop = {
+        "what", "which", "who", "how", "when", "where", "why", "the", "a", "an",
+        "is", "are", "was", "were", "do", "does", "did", "can", "for", "of", "to",
+        "in", "on", "at", "by", "with", "from", "about", "that", "this", "it",
+        "lspu", "university", "please", "tell", "me", "regarding", "prior",
+        "question", "context",
+    }
+    q_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized_question)
+        if token not in stop and len(token) >= 3
+    }
+    if not q_tokens:
+        return True
+    blob = _normalize(
+        " ".join(
+            str(value or "")
+            for value in (
+                (chunk.metadata or {}).get("source_section"),
+                (chunk.metadata or {}).get("section"),
+                (chunk.metadata or {}).get("canonical_topic"),
+                (chunk.metadata or {}).get("title"),
+                chunk.title,
+                (chunk.text or "")[:320],
+            )
+        )
+    )
+    return any(token in blob for token in q_tokens)
+
+
+def _service_title_mismatch_rank(chunk: RetrievedChunk, normalized_question: str) -> int:
+    """Lower is better: title should match the named service in the question."""
+    title = _normalize(
+        " ".join(
+            str(value or "")
+            for value in (
+                (chunk.metadata or {}).get("source_section"),
+                (chunk.metadata or {}).get("canonical_topic"),
+                (chunk.metadata or {}).get("title"),
+                chunk.title,
+            )
+        )
+    )
+    if "enroll" in normalized_question or "enrol" in normalized_question:
+        if "assessment of fee" in title or "ip registration" in title:
+            return 3
+        if re.search(r"\benrol(?:l)?ment\b", title) and "assessment" not in title and "ip registration" not in title:
+            return 0
+        if "registration" in title and "enrollment" not in title and "enrolment" not in title:
+            return 3
+        return 2
+    # Token overlap for other named services.
+    stop = {
+        "which",
+        "what",
+        "office",
+        "is",
+        "are",
+        "the",
+        "for",
+        "of",
+        "a",
+        "an",
+        "to",
+        "in",
+        "responsible",
+        "process",
+        "service",
+        "who",
+        "handles",
+        "how",
+        "do",
+        "i",
+        "can",
+        "long",
+        "much",
+    }
+    q_tokens = {token for token in re.findall(r"[a-z0-9]+", normalized_question) if token not in stop and len(token) >= 4}
+    t_tokens = set(re.findall(r"[a-z0-9]+", title))
+    if q_tokens & t_tokens:
+        return 0
+    return 1
+
+
+def _chunk_office_present(chunk: RetrievedChunk) -> bool:
+    office = str((chunk.metadata or {}).get("office") or (chunk.metadata or {}).get("responsible_office") or "").strip()
+    return bool(office) and office.lower() not in {"none", "not specified", "[needs review]", "n/a"}
 
 
 def format_service_procedure_answer(

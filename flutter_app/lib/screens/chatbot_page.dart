@@ -1,13 +1,13 @@
-import 'dart:convert';
-import 'dart:html' as html;
-
 import 'package:flutter/material.dart';
 
 import '../auth/auth_navigation.dart';
+import '../auth/auth_state.dart';
 import '../app_config.dart';
 import '../design_tokens.dart';
+import '../services/api_client.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
+import 'login_page.dart';
 import 'my_tickets_page.dart';
 
 class ChatbotPage extends StatefulWidget {
@@ -37,6 +37,21 @@ class _ChatbotPageState extends State<ChatbotPage> {
       return;
     }
 
+    final auth = AuthScope.of(context);
+    if (!auth.isAuthenticated || (auth.accessToken ?? '').trim().isEmpty) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => LoginPage(
+            message: 'Please log in to ask ASKa-Piyu.',
+            returnTo: (_) => const ChatbotPage(),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final history = _chatHistoryPayload();
+
     setState(() {
       _turns.add(_ChatTurn.user(question));
       _controller.clear();
@@ -46,31 +61,42 @@ class _ChatbotPageState extends State<ChatbotPage> {
     _scrollToBottom();
 
     try {
-      final request = html.HttpRequest();
-      request.open('POST', '${AppConfig.resolvedApiBase}/qa/ask');
-      request.setRequestHeader('Content-Type', 'application/json');
-      request.send(jsonEncode({'question': question}));
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/qa/ask',
+        headers: {...auth.ticketHeaders()},
+        jsonBody: {
+          'question': question,
+          if (history.isNotEmpty) 'history': history,
+        },
+      );
 
-      await request.onLoadEnd.first;
-
-      final responseText = request.responseText ?? '';
-      final decoded = responseText.isNotEmpty
-          ? jsonDecode(responseText)
-          : <String, dynamic>{};
+      final decoded = result.json;
       final data = decoded is Map<String, dynamic>
           ? decoded
           : <String, dynamic>{'response': decoded};
 
-      if (request.status == 200) {
+      if (result.statusCode == 200) {
+        if (!mounted) return;
         setState(() {
           _turns.add(_ChatTurn.answer(_QaAnswer.fromJson(data, question)));
         });
+      } else if (result.statusCode == 401) {
+        // ApiClient + SessionExpiry already cleared the JWT and opened Login.
+        if (!mounted) return;
+        setState(() => _error = 'Your session expired. Please log in again.');
+      } else if (result.statusCode == 429) {
+        if (!mounted) return;
+        setState(() => _error =
+            'Too many questions right now. Please wait a moment and try again.');
       } else {
         final detail =
             data['detail'] ?? 'ASKa-Piyu could not answer right now.';
+        if (!mounted) return;
         setState(() => _error = detail.toString());
       }
     } catch (error) {
+      if (!mounted) return;
       setState(() => _error =
           'Could not reach the QA API. Check your configured backend URL.');
     } finally {
@@ -79,6 +105,25 @@ class _ChatbotPageState extends State<ChatbotPage> {
         _scrollToBottom();
       }
     }
+  }
+
+  /// Prior turns for multi-turn QA (oldest first). Caps at 8 messages.
+  List<Map<String, String>> _chatHistoryPayload() {
+    final history = <Map<String, String>>[];
+    for (final turn in _turns) {
+      final question = turn.question?.trim();
+      if (question != null && question.isNotEmpty) {
+        history.add({'role': 'user', 'content': question});
+      }
+      final answer = turn.answer?.text.trim();
+      if (answer != null && answer.isNotEmpty) {
+        history.add({'role': 'assistant', 'content': answer});
+      }
+    }
+    if (history.length > 8) {
+      return history.sublist(history.length - 8);
+    }
+    return history;
   }
 
   void _scrollToBottom() {
@@ -682,12 +727,15 @@ class _QaAnswer {
   final String text;
   final String confidence;
   final List<_QaSource> sources;
+  final bool degraded;
 
-  const _QaAnswer(
-      {required this.question,
-      required this.text,
-      required this.confidence,
-      required this.sources});
+  const _QaAnswer({
+    required this.question,
+    required this.text,
+    required this.confidence,
+    required this.sources,
+    this.degraded = false,
+  });
 
   factory _QaAnswer.fromJson(Map<String, dynamic> json, String question) {
     final sourceItems =
@@ -719,6 +767,7 @@ class _QaAnswer {
       question: question,
       confidence: (json['confidence'] ?? 'low').toString(),
       sources: merged,
+      degraded: json['degraded'] == true,
     );
   }
 }

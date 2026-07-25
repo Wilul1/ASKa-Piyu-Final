@@ -1,13 +1,18 @@
 import 'dart:convert';
-import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_config.dart';
+import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
+import '../services/api_client.dart';
+import '../services/download_file.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
+import 'admin_generate_articles_page.dart';
+import 'admin_scaffold.dart';
 import 'login_page.dart';
 
 class AdminDashboardPage extends StatefulWidget {
@@ -64,8 +69,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _AdminMetricData('Closed', stats?.closedText ?? '-',
           Icons.check_circle_rounded,
           statusFilter: 'Closed'),
-      const _AdminMetricData(
-          'High Priority', '-', Icons.priority_high_rounded),
+      _AdminMetricData(
+          'High Priority', stats?.highPriorityText ?? '-', Icons.priority_high_rounded),
       _AdminMetricData(
           'Offices', stats?.officeCountText ?? '-', Icons.apartment_rounded),
     ];
@@ -114,7 +119,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           const _AdminNotice(
             icon: Icons.admin_panel_settings_rounded,
             message:
-                'Full administrative workflows are being prepared. Use the existing knowledge-base Admin Panel for document ingest and retrieval testing.',
+                'Use All Tickets, Knowledge Base, Generate Articles, Announcements, Users & Roles, Offices, and Reports from the sidebar.',
           ),
         ],
       ),
@@ -172,13 +177,13 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
       _error = null;
     });
     try {
-      final request = html.HttpRequest();
-      request.open('GET', '${AppConfig.resolvedApiBase}/tickets');
-      AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-      request.send();
-      await request.onLoadEnd.first;
-      final data = _decodeObject(request.responseText);
-      final statusCode = request.status ?? 0;
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
       if (statusCode < 200 || statusCode >= 300) {
         throw StateError(_extractError(data, 'Could not load tickets.'));
       }
@@ -202,14 +207,14 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
     _AdminTicketEntry ticket,
     Map<String, dynamic> payload,
   ) async {
-    final request = html.HttpRequest();
-    request.open('PATCH', '${AppConfig.resolvedApiBase}/tickets/${ticket.id}');
-    AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-    request.setRequestHeader('Content-Type', 'application/json');
-    request.send(jsonEncode(payload));
-    await request.onLoadEnd.first;
-    final data = _decodeObject(request.responseText);
-    final statusCode = request.status ?? 0;
+    final result = await ApiClient.send(
+      method: 'PATCH',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+      jsonBody: payload,
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
     if (statusCode < 200 || statusCode >= 300) {
       throw StateError(_extractError(data, 'Could not update ticket.'));
     }
@@ -222,15 +227,14 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
     _AdminTicketEntry ticket,
     String message,
   ) async {
-    final request = html.HttpRequest();
-    request.open(
-        'POST', '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies');
-    AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-    request.setRequestHeader('Content-Type', 'application/json');
-    request.send(jsonEncode({'message': message}));
-    await request.onLoadEnd.first;
-    final data = _decodeObject(request.responseText);
-    final statusCode = request.status ?? 0;
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+      jsonBody: {'message': message},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
     if (statusCode < 200 || statusCode >= 300) {
       throw StateError(_extractError(data, 'Could not send reply.'));
     }
@@ -609,14 +613,14 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
     _AdminTicketEntry ticket,
     Map<String, dynamic> payload,
   ) async {
-    final request = html.HttpRequest();
-    request.open('PATCH', '${AppConfig.resolvedApiBase}/tickets/${ticket.id}');
-    AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-    request.setRequestHeader('Content-Type', 'application/json');
-    request.send(jsonEncode(payload));
-    await request.onLoadEnd.first;
-    final data = _decodeObject(request.responseText);
-    final statusCode = request.status ?? 0;
+    final result = await ApiClient.send(
+      method: 'PATCH',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+      jsonBody: payload,
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
     if (statusCode < 200 || statusCode >= 300) {
       throw StateError(_extractError(data, 'Could not update ticket.'));
     }
@@ -629,15 +633,14 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
     _AdminTicketEntry ticket,
     String message,
   ) async {
-    final request = html.HttpRequest();
-    request.open(
-        'POST', '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies');
-    AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-    request.setRequestHeader('Content-Type', 'application/json');
-    request.send(jsonEncode({'message': message}));
-    await request.onLoadEnd.first;
-    final data = _decodeObject(request.responseText);
-    final statusCode = request.status ?? 0;
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+      jsonBody: {'message': message},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
     if (statusCode < 200 || statusCode >= 300) {
       throw StateError(_extractError(data, 'Could not send reply.'));
     }
@@ -740,10 +743,17 @@ class AdminUsersRolesPage extends StatefulWidget {
 class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
   final List<_AdminUserEntry> _users = [];
   final List<_AdminOfficeEntry> _offices = [];
+  final TextEditingController _searchCtrl = TextEditingController();
   bool _loading = false;
   String? _error;
   String _roleFilter = 'All';
   bool _requestedInitialLoad = false;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -795,18 +805,40 @@ class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
     );
   }
 
+  Future<void> _createFacultyAccount() async {
+    final created = await showDialog<_AdminUserEntry>(
+      context: context,
+      builder: (_) => const _CreateFacultyAccountDialog(),
+    );
+    if (created == null) return;
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Faculty account created for ${created.email}')),
+    );
+  }
+
   List<_AdminUserEntry> get _filtered {
-    if (_roleFilter == 'All') return _users;
-    return _users
-        .where((user) =>
-            user.role.toLowerCase() == _roleFilter.toLowerCase())
-        .toList();
+    final query = _searchCtrl.text.trim().toLowerCase();
+    return _users.where((user) {
+      if (_roleFilter != 'All' &&
+          user.role.toLowerCase() != _roleFilter.toLowerCase()) {
+        return false;
+      }
+      if (query.isEmpty) return true;
+      return user.fullName.toLowerCase().contains(query) ||
+          user.email.toLowerCase().contains(query) ||
+          (user.officeName ?? '').toLowerCase().contains(query) ||
+          user.role.toLowerCase().contains(query);
+    }).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     final students =
         _users.where((user) => user.role == 'student').length;
+    final faculty =
+        _users.where((user) => user.role == 'faculty').length;
     final offices =
         _users.where((user) => user.role == 'office').length;
     final admins = _users.where((user) => user.role == 'admin').length;
@@ -816,7 +848,7 @@ class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
       current: StudentNavItem.adminUsersRoles,
       title: 'Users & Roles',
       description:
-          'View students, office staff, and admins. Create office logins linked to a campus office.',
+          'Search accounts, filter by role, and create office or faculty logins.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -826,7 +858,7 @@ class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
           LayoutBuilder(
             builder: (context, constraints) {
               final columns = constraints.maxWidth >= 900
-                  ? 3
+                  ? 4
                   : constraints.maxWidth >= 560
                       ? 2
                       : 1;
@@ -837,6 +869,10 @@ class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
                   _AdminMetricCard(
                     data: _AdminMetricData(
                         'Students', '$students', Icons.school_rounded),
+                  ),
+                  _AdminMetricCard(
+                    data: _AdminMetricData(
+                        'Faculty', '$faculty', Icons.menu_book_rounded),
                   ),
                   _AdminMetricCard(
                     data: _AdminMetricData(
@@ -860,7 +896,8 @@ class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
                     const Expanded(
                       child: StudentSectionTitle(
                         title: 'Accounts',
-                        subtitle: 'Filter by role or create an office staff login.',
+                        subtitle:
+                            'Filter by role, search by name/email, or create staff logins.',
                       ),
                     ),
                     OutlinedButton.icon(
@@ -868,7 +905,13 @@ class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
                       icon: const Icon(Icons.refresh_rounded, size: 18),
                       label: const Text('Refresh'),
                     ),
-                    const SizedBox(width: 8),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
                     ElevatedButton.icon(
                       onPressed: _loading || _offices.isEmpty
                           ? null
@@ -880,12 +923,39 @@ class _AdminUsersRolesPageState extends State<AdminUsersRolesPage> {
                         foregroundColor: Colors.white,
                       ),
                     ),
+                    OutlinedButton.icon(
+                      onPressed: _loading ? null : _createFacultyAccount,
+                      icon: const Icon(Icons.school_outlined, size: 18),
+                      label: const Text('Create faculty account'),
+                    ),
                   ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _searchCtrl,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Search name, email, office, or role',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _searchCtrl.text.isEmpty
+                        ? null
+                        : IconButton(
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              setState(() {});
+                            },
+                            icon: const Icon(Icons.clear_rounded),
+                          ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
-                  children: ['All', 'student', 'office', 'admin'].map((role) {
+                  children:
+                      ['All', 'student', 'faculty', 'office', 'admin'].map((role) {
                     final selected = _roleFilter == role;
                     final label = role == 'All'
                         ? 'All'
@@ -929,9 +999,17 @@ class AdminOfficesPage extends StatefulWidget {
 class _AdminOfficesPageState extends State<AdminOfficesPage> {
   final List<_AdminOfficeEntry> _offices = [];
   final List<_AdminUserEntry> _officeUsers = [];
+  final TextEditingController _searchCtrl = TextEditingController();
+  _TicketStats? _stats;
   bool _loading = false;
   String? _error;
   bool _requestedInitialLoad = false;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -953,6 +1031,12 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
     try {
       final offices = await _loadAdminOffices(context);
       final users = await _loadAdminUsers(context, role: 'office');
+      _TicketStats? stats;
+      try {
+        stats = await _loadTicketStats(context);
+      } catch (_) {
+        stats = null;
+      }
       if (!mounted) return;
       setState(() {
         _offices
@@ -961,6 +1045,7 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
         _officeUsers
           ..clear()
           ..addAll(users);
+        _stats = stats;
       });
     } catch (error) {
       if (!mounted) return;
@@ -968,6 +1053,19 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _createOffice() async {
+    final created = await showDialog<_AdminOfficeEntry>(
+      context: context,
+      builder: (_) => const _CreateOfficeDialog(),
+    );
+    if (created == null) return;
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Office created: ${created.name}')),
+    );
   }
 
   Future<void> _createOfficeAccount(_AdminOfficeEntry office) async {
@@ -990,13 +1088,29 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
     return _officeUsers.where((user) => user.officeId == office.id).length;
   }
 
+  int _ticketCount(_AdminOfficeEntry office) {
+    final stats = _stats;
+    if (stats == null) return 0;
+    return stats.byOffice[office.name] ?? 0;
+  }
+
+  List<_AdminOfficeEntry> get _filteredOffices {
+    final query = _searchCtrl.text.trim().toLowerCase();
+    if (query.isEmpty) return _offices;
+    return _offices.where((office) {
+      return office.name.toLowerCase().contains(query) ||
+          (office.serviceCategory ?? '').toLowerCase().contains(query);
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final filtered = _filteredOffices;
     return AdminScaffold(
       current: StudentNavItem.adminOffices,
       title: 'Offices',
       description:
-          'Routing offices used for ticket assignment and office staff logins.',
+          'Create routing offices, assign staff logins, and review ticket load.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1021,22 +1135,54 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
                       icon: const Icon(Icons.refresh_rounded, size: 18),
                       label: const Text('Refresh'),
                     ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: _loading ? null : _createOffice,
+                      icon: const Icon(Icons.add_business_rounded, size: 18),
+                      label: const Text('Add office'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: DesignTokens.maroon,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
                   ],
                 ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _searchCtrl,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Search offices by name or category',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _searchCtrl.text.isEmpty
+                        ? null
+                        : IconButton(
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              setState(() {});
+                            },
+                            icon: const Icon(Icons.clear_rounded),
+                          ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 14),
-                if (!_loading && _offices.isEmpty)
+                if (!_loading && filtered.isEmpty)
                   const Text(
-                    'No offices found. Seed office accounts or add offices in the database.',
+                    'No offices found. Add an office or seed accounts.',
                     style: TextStyle(color: DesignTokens.muted),
                   )
                 else
-                  ..._offices.map((office) {
+                  ...filtered.map((office) {
                     final staff = _officeUsers
                         .where((user) => user.officeId == office.id)
                         .toList();
                     return _AdminOfficeTile(
                       office: office,
                       staffCount: _staffCount(office),
+                      ticketCount: _ticketCount(office),
                       staff: staff,
                       onCreateAccount: () => _createOfficeAccount(office),
                     );
@@ -1061,12 +1207,14 @@ class _AdminReportsPageState extends State<AdminReportsPage> {
   _TicketStats? _stats;
   bool _loading = false;
   String? _error;
+  bool _requestedInitialLoad = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final auth = AuthScope.of(context);
-    if (auth.role == 'admin' && !_loading && _stats == null && _error == null) {
+    if (auth.role == 'admin' && !_requestedInitialLoad) {
+      _requestedInitialLoad = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadStats();
       });
@@ -1089,6 +1237,22 @@ class _AdminReportsPageState extends State<AdminReportsPage> {
     }
   }
 
+  Future<void> _exportSummary() async {
+    final stats = _stats;
+    if (stats == null) return;
+    final text = stats.toReportText();
+    await Clipboard.setData(ClipboardData(text: text));
+    await downloadTextFile(
+      filename:
+          'aska_ticket_report_${DateTime.now().toIso8601String().split('T').first}.txt',
+      text: text,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report copied and downloaded.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final stats = _stats;
@@ -1096,23 +1260,273 @@ class _AdminReportsPageState extends State<AdminReportsPage> {
       current: StudentNavItem.adminReports,
       title: 'Reports / Statistics',
       description:
-          'Track ticket volume and office workload for administrative review.',
+          'Track ticket volume, priority mix, and office workload for administrative review.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_loading) const LinearProgressIndicator(minHeight: 3),
-          _AdminPlaceholderPanel(
-            icon: Icons.query_stats_rounded,
-            title: stats == null ? 'Reports coming soon' : 'Ticket statistics',
-            description: stats == null
-                ? 'This page will use GET /tickets/statistics for admin reporting once the dashboard data is available.'
-                : 'Total: ${stats.totalText} | Open: ${stats.openText} | In progress: ${stats.inProgressText} | Closed: ${stats.closedText}',
-          ),
           if (_error != null)
-            _AdminNotice(
-              icon: Icons.info_outline_rounded,
-              message: _error!,
+            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: _loading ? null : _loadStats,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Refresh'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: stats == null || _loading ? null : _exportSummary,
+                icon: const Icon(Icons.download_rounded, size: 18),
+                label: const Text('Export summary'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: DesignTokens.maroon,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (stats == null && !_loading)
+            const _AdminPlaceholderPanel(
+              icon: Icons.query_stats_rounded,
+              title: 'No report data yet',
+              description:
+                  'Ticket statistics will appear here after tickets are created.',
+            )
+          else if (stats != null) ...[
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = constraints.maxWidth >= 900
+                    ? 3
+                    : constraints.maxWidth >= 560
+                        ? 2
+                        : 1;
+                return StudentResponsiveWrap(
+                  columns: columns,
+                  spacing: 14,
+                  children: [
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                          'Total', stats.totalText, Icons.confirmation_number_rounded),
+                    ),
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                          'Open', stats.openText, Icons.mark_email_unread_rounded),
+                    ),
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                          'In Progress', stats.inProgressText, Icons.timelapse_rounded),
+                    ),
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                          'Resolved', stats.resolvedText, Icons.task_alt_rounded),
+                    ),
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                          'Closed', stats.closedText, Icons.check_circle_rounded),
+                    ),
+                    _AdminMetricCard(
+                      data: _AdminMetricData('High / Urgent open',
+                          stats.highPriorityText, Icons.priority_high_rounded),
+                    ),
+                  ],
+                );
+              },
             ),
+            const SizedBox(height: 16),
+            StudentPanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const StudentSectionTitle(
+                    title: 'Status mix',
+                    subtitle: 'Share of tickets by workflow status.',
+                  ),
+                  const SizedBox(height: 12),
+                  ..._statusBars(stats),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 900;
+                final officePanel = StudentPanel(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const StudentSectionTitle(
+                        title: 'By office',
+                        subtitle: 'Assigned ticket volume per campus office.',
+                      ),
+                      const SizedBox(height: 12),
+                      if (stats.byOffice.isEmpty)
+                        const Text('No office assignments yet.',
+                            style: TextStyle(color: DesignTokens.muted))
+                      else
+                        ...stats.sortedOfficeEntries.map(
+                          (entry) => _ReportCountRow(
+                            label: entry.key,
+                            count: entry.value,
+                            total: stats.total,
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+                final priorityPanel = StudentPanel(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const StudentSectionTitle(
+                        title: 'By priority',
+                        subtitle: 'Urgent and High need faster office response.',
+                      ),
+                      const SizedBox(height: 12),
+                      if (stats.byPriority.isEmpty)
+                        const Text('No priority data yet.',
+                            style: TextStyle(color: DesignTokens.muted))
+                      else
+                        ...stats.sortedPriorityEntries.map(
+                          (entry) => _ReportCountRow(
+                            label: entry.key,
+                            count: entry.value,
+                            total: stats.total,
+                          ),
+                        ),
+                      const SizedBox(height: 18),
+                      const StudentSectionTitle(
+                        title: 'Top categories',
+                        subtitle: 'Most common ticket categories.',
+                      ),
+                      const SizedBox(height: 12),
+                      if (stats.byCategory.isEmpty)
+                        const Text('No category data yet.',
+                            style: TextStyle(color: DesignTokens.muted))
+                      else
+                        ...stats.sortedCategoryEntries.take(8).map(
+                              (entry) => _ReportCountRow(
+                                label: entry.key,
+                                count: entry.value,
+                                total: stats.total,
+                              ),
+                            ),
+                    ],
+                  ),
+                );
+                if (!wide) {
+                  return Column(
+                    children: [
+                      officePanel,
+                      const SizedBox(height: 16),
+                      priorityPanel,
+                    ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: officePanel),
+                    const SizedBox(width: 16),
+                    Expanded(child: priorityPanel),
+                  ],
+                );
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _statusBars(_TicketStats stats) {
+    final rows = <Map<String, Object>>[
+      {
+        'label': 'Open',
+        'count': stats.open,
+        'color': const Color(0xFFB45309),
+      },
+      {
+        'label': 'In Progress',
+        'count': stats.inProgress,
+        'color': DesignTokens.maroon,
+      },
+      {
+        'label': 'Resolved',
+        'count': stats.resolved,
+        'color': const Color(0xFF047857),
+      },
+      {
+        'label': 'Closed',
+        'count': stats.closed,
+        'color': const Color(0xFF475569),
+      },
+    ];
+    return rows
+        .map(
+          (row) => _ReportCountRow(
+            label: row['label'] as String,
+            count: row['count'] as int,
+            total: stats.total,
+            color: row['color'] as Color,
+          ),
+        )
+        .toList();
+  }
+}
+
+class _ReportCountRow extends StatelessWidget {
+  final String label;
+  final int count;
+  final int total;
+  final Color color;
+
+  const _ReportCountRow({
+    required this.label,
+    required this.count,
+    required this.total,
+    this.color = DesignTokens.maroon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = total <= 0 ? 0.0 : (count / total).clamp(0.0, 1.0);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: DesignTokens.ink,
+                  ),
+                ),
+              ),
+              Text(
+                '$count',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: ratio,
+              minHeight: 8,
+              backgroundColor: const Color(0xFFE2E8F0),
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -1170,7 +1584,9 @@ class _AdminUserTile extends StatelessWidget {
                 ? Icons.admin_panel_settings_rounded
                 : user.role == 'office'
                     ? Icons.badge_rounded
-                    : Icons.school_rounded,
+                    : user.role == 'faculty'
+                        ? Icons.menu_book_rounded
+                        : Icons.school_rounded,
             color: DesignTokens.maroon,
             size: 40,
           ),
@@ -1229,12 +1645,14 @@ class _AdminUserTile extends StatelessWidget {
 class _AdminOfficeTile extends StatelessWidget {
   final _AdminOfficeEntry office;
   final int staffCount;
+  final int ticketCount;
   final List<_AdminUserEntry> staff;
   final VoidCallback onCreateAccount;
 
   const _AdminOfficeTile({
     required this.office,
     required this.staffCount,
+    required this.ticketCount,
     required this.staff,
     required this.onCreateAccount,
   });
@@ -1278,6 +1696,7 @@ class _AdminOfficeTile extends StatelessWidget {
                         if ((office.serviceCategory ?? '').trim().isNotEmpty)
                           office.serviceCategory!.trim(),
                         '$staffCount staff login${staffCount == 1 ? '' : 's'}',
+                        '$ticketCount ticket${ticketCount == 1 ? '' : 's'}',
                       ].join(' · '),
                       style: const TextStyle(
                         color: DesignTokens.muted,
@@ -1482,116 +1901,246 @@ class _CreateOfficeAccountDialogState extends State<_CreateOfficeAccountDialog> 
   }
 }
 
-class AdminScaffold extends StatelessWidget {
-  final StudentNavItem current;
-  final String title;
-  final String description;
-  final Widget child;
+class _CreateFacultyAccountDialog extends StatefulWidget {
+  const _CreateFacultyAccountDialog();
 
-  const AdminScaffold({
-    super.key,
-    required this.current,
-    required this.title,
-    required this.description,
-    required this.child,
-  });
+  @override
+  State<_CreateFacultyAccountDialog> createState() =>
+      _CreateFacultyAccountDialogState();
+}
+
+class _CreateFacultyAccountDialogState
+    extends State<_CreateFacultyAccountDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final user = await _createFacultyAccountRequest(
+        context,
+        fullName: _nameCtrl.text.trim(),
+        email: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(user);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final auth = AuthScope.of(context);
-    if (auth.role != 'admin') {
-      return Scaffold(
-        backgroundColor: DesignTokens.bgGrey,
-        appBar: AppBar(title: Text(title)),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: StudentPanel(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const StudentIconBox(
-                    icon: Icons.admin_panel_settings_rounded,
-                    color: DesignTokens.maroon,
-                    size: 52,
-                  ),
-                  const SizedBox(height: 14),
-                  const StudentSectionTitle(
-                    title: 'Admin access required',
-                    subtitle:
-                        'Please log in with an admin account to open this page.',
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => LoginPage(
-                          returnTo: (_) => this,
-                          message:
-                              'Please log in with an admin account to open admin tools.',
-                        ),
-                      ),
-                    ),
-                    child: const Text('Login'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 900;
-        final content = StudentPage(
+    return AlertDialog(
+      title: const Text('Create faculty account'),
+      content: SizedBox(
+        width: 420,
+        child: Form(
+          key: _formKey,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              StudentPanel(
-                child: Row(
-                  children: [
-                    const StudentIconBox(
-                      icon: Icons.admin_panel_settings_rounded,
-                      color: DesignTokens.maroon,
-                      size: 52,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: StudentSectionTitle(
-                        title: title,
-                        subtitle: description,
-                      ),
-                    ),
-                  ],
-                ),
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(labelText: 'Full name'),
+                validator: (value) => (value == null || value.trim().isEmpty)
+                    ? 'Enter a name.'
+                    : null,
               ),
-              const SizedBox(height: 18),
-              child,
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _emailCtrl,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) return 'Enter an email.';
+                  if (!text.contains('@')) return 'Enter a valid email.';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _passwordCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Temporary password',
+                  helperText: 'At least 10 characters with a letter and number.',
+                ),
+                validator: (value) {
+                  final text = value ?? '';
+                  if (text.length < 10) return 'Use at least 10 characters.';
+                  if (!RegExp(r'[A-Za-z]').hasMatch(text) ||
+                      !RegExp(r'\d').hasMatch(text)) {
+                    return 'Include a letter and a number.';
+                  }
+                  return null;
+                },
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: Color(0xFFB91C1C))),
+              ],
             ],
           ),
-        );
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _loading ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: DesignTokens.maroon,
+            foregroundColor: Colors.white,
+          ),
+          child: _loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Create'),
+        ),
+      ],
+    );
+  }
+}
 
-        if (isWide) {
-          return Scaffold(
-            backgroundColor: DesignTokens.bgGrey,
-            body: Row(
-              children: [
-                SizedBox(width: 220, child: AppSidebar(current: current)),
-                Expanded(child: content),
+class _CreateOfficeDialog extends StatefulWidget {
+  const _CreateOfficeDialog();
+
+  @override
+  State<_CreateOfficeDialog> createState() => _CreateOfficeDialogState();
+}
+
+class _CreateOfficeDialogState extends State<_CreateOfficeDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
+  final _categoryCtrl = TextEditingController();
+  final _descriptionCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _categoryCtrl.dispose();
+    _descriptionCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final office = await _createOfficeRequest(
+        context,
+        name: _nameCtrl.text.trim(),
+        serviceCategory: _categoryCtrl.text.trim(),
+        description: _descriptionCtrl.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(office);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add campus office'),
+      content: SizedBox(
+        width: 420,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(labelText: 'Office name'),
+                validator: (value) => (value == null || value.trim().length < 2)
+                    ? 'Enter an office name.'
+                    : null,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _categoryCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Service category (optional)',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _descriptionCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optional)',
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: Color(0xFFB91C1C))),
               ],
-            ),
-          );
-        }
-
-        return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
-          drawer: Drawer(child: AppSidebar(current: current)),
-          appBar: AppBar(title: Text(title)),
-          body: content,
-        );
-      },
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _loading ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: DesignTokens.maroon,
+            foregroundColor: Colors.white,
+          ),
+          child: _loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Create'),
+        ),
+      ],
     );
   }
 }
@@ -2372,10 +2921,91 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       children: [
                         _AdminStatusChip(status: _ticket.status),
                         _AdminPriorityChip(priority: _ticket.priority),
+                        if (_ticket.kbConversionStatus == 'draft')
+                          const _AdminKbBadge(
+                            label: 'KB Draft',
+                            color: Color(0xFFCA8A04),
+                          ),
+                        if (_ticket.kbConversionStatus == 'published')
+                          const _AdminKbBadge(
+                            label: 'KB Published',
+                            color: Color(0xFF16A34A),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 18),
                     _AdminDetailGrid(ticket: _ticket),
+                    if (_ticket.status == 'Resolved' ||
+                        _ticket.status == 'Closed') ...[
+                      const SizedBox(height: 20),
+                      _AdminSectionTitle('Knowledge Base'),
+                      const SizedBox(height: 10),
+                      StudentPanel(
+                        shadow: false,
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _ticket.kbConversionStatus == 'published'
+                                  ? 'This ticket already has a published knowledge article. Admins can unpublish it from the Article Library if it needs revision.'
+                                  : _ticket.kbConversionStatus == 'draft'
+                                      ? 'A draft FAQ already exists for this ticket. You can update it from the approved resolution.'
+                                      : 'Convert the approved office answer into a draft FAQ so future users can get this answer from ASKa-Piyu.',
+                              style: const TextStyle(
+                                color: DesignTokens.muted,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                alignment: WrapAlignment.end,
+                                children: [
+                                  if (AuthScope.of(context).role == 'admin' &&
+                                      (_ticket.kbArticleId ?? '').isNotEmpty)
+                                    OutlinedButton.icon(
+                                      onPressed: () {
+                                        openAdminPage(
+                                          context,
+                                          builder: (_) =>
+                                              AdminGenerateArticlesPage(
+                                            focusArticleId: _ticket.kbArticleId,
+                                          ),
+                                        );
+                                      },
+                                      icon: const Icon(
+                                        Icons.open_in_new_rounded,
+                                        size: 18,
+                                      ),
+                                      label: const Text('Open in Article Library'),
+                                    ),
+                                  if (_ticket.kbConversionStatus != 'published')
+                                    ElevatedButton.icon(
+                                      onPressed:
+                                          _saving ? null : _convertToKnowledge,
+                                      icon: const Icon(Icons.menu_book_outlined,
+                                          size: 18),
+                                      label: Text(
+                                        _ticket.kbConversionStatus == 'none'
+                                            ? 'Convert to Knowledge Base'
+                                            : 'Update KB Draft',
+                                      ),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: DesignTokens.maroon,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     _AdminSectionTitle(widget.controlsTitle),
                     const SizedBox(height: 10),
@@ -2564,6 +3194,198 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<void> _convertToKnowledge() async {
+    final latestStaff = _ticket.messages.reversed
+        .where((m) =>
+            m.senderRole == 'office' || m.senderRole == 'admin')
+        .map((m) => m.message.trim())
+        .firstWhere((m) => m.isNotEmpty, orElse: () => '');
+    final titleCtrl = TextEditingController(text: _ticket.subject);
+    final contentCtrl = TextEditingController(
+      text: latestStaff.isEmpty
+          ? '## Question\n\n${_ticket.subject}\n\n## Answer\n\n'
+          : '## Question\n\n${_ticket.subject}\n\n## Answer\n\n$latestStaff',
+    );
+    var audience = 'auto';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Convert to Knowledge Base'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: titleCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'FAQ title',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: audience,
+                        decoration: const InputDecoration(
+                          labelText: 'Audience',
+                          helperText:
+                              'Auto infers student/faculty from the question and answer.',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                              value: 'auto',
+                              child: Text('Auto (infer from content)')),
+                          DropdownMenuItem(
+                              value: 'student', child: Text('Student')),
+                          DropdownMenuItem(
+                              value: 'faculty', child: Text('Faculty')),
+                          DropdownMenuItem(
+                              value: 'both', child: Text('Both')),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() => audience = value);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: contentCtrl,
+                        minLines: 8,
+                        maxLines: 14,
+                        decoration: const InputDecoration(
+                          labelText: 'Approved answer / FAQ body',
+                          border: OutlineInputBorder(),
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Save draft'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (confirmed != true) {
+      titleCtrl.dispose();
+      contentCtrl.dispose();
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final body = <String, dynamic>{
+        'title': titleCtrl.text.trim(),
+        'content': contentCtrl.text.trim(),
+      };
+      if (audience != 'auto') {
+        body['audience'] = audience;
+      }
+      final result = await ApiClient.send(
+        method: 'POST',
+        url:
+            '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}/convert-to-article',
+        headers: {...AuthScope.of(context).ticketHeaders()},
+        jsonBody: body,
+      );
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
+      if (statusCode < 200 || statusCode >= 300) {
+        throw StateError(_extractError(data, 'Could not convert ticket.'));
+      }
+      final articleId = (data['article_id'] ?? '').toString();
+      final status =
+          (data['kb_conversion_status'] ?? 'draft').toString().toLowerCase();
+      setState(() {
+        _ticket = _AdminTicketEntry(
+          id: _ticket.id,
+          userId: _ticket.userId,
+          userName: _ticket.userName,
+          userEmail: _ticket.userEmail,
+          subject: _ticket.subject,
+          status: _ticket.status,
+          createdAt: _ticket.createdAt,
+          updatedAt: _ticket.updatedAt,
+          resolvedAt: _ticket.resolvedAt,
+          closedAt: _ticket.closedAt,
+          category: _ticket.category,
+          assignedOffice: _ticket.assignedOffice,
+          priority: _ticket.priority,
+          description: _ticket.description,
+          confidenceScore: _ticket.confidenceScore,
+          sourceFromChatbot: _ticket.sourceFromChatbot,
+          messages: _ticket.messages,
+          kbArticleId: articleId.isEmpty ? _ticket.kbArticleId : articleId,
+          kbConversionStatus: status,
+        );
+      });
+      if (mounted) {
+        final isAdmin = AuthScope.of(context).role == 'admin';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isAdmin
+                  ? 'Draft FAQ saved. Open it in Article Library to review and publish.'
+                  : 'Draft FAQ saved. An admin must publish it for the chatbot and public KB.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      titleCtrl.dispose();
+      contentCtrl.dispose();
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class _AdminKbBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _AdminKbBadge({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
   }
 }
 
@@ -3000,6 +3822,8 @@ class _AdminTicketEntry {
   final double? confidenceScore;
   final bool sourceFromChatbot;
   final List<_AdminTicketMessage> messages;
+  final String? kbArticleId;
+  final String kbConversionStatus;
 
   const _AdminTicketEntry({
     required this.id,
@@ -3019,6 +3843,8 @@ class _AdminTicketEntry {
     required this.confidenceScore,
     required this.sourceFromChatbot,
     required this.messages,
+    this.kbArticleId,
+    this.kbConversionStatus = 'none',
   });
 
   factory _AdminTicketEntry.fromJson(Map<String, dynamic> json) {
@@ -3047,6 +3873,9 @@ class _AdminTicketEntry {
           .map((item) =>
               _AdminTicketMessage.fromJson(Map<String, dynamic>.from(item)))
           .toList(),
+      kbArticleId: _nullableAdminString(json['kb_article_id']),
+      kbConversionStatus:
+          (json['kb_conversion_status'] ?? 'none').toString().toLowerCase(),
     );
   }
 
@@ -3079,44 +3908,120 @@ class _TicketStats {
   final int total;
   final int open;
   final int inProgress;
+  final int resolved;
   final int closed;
-  final Map<String, dynamic> byOffice;
+  final int highPriority;
+  final Map<String, int> byOffice;
+  final Map<String, int> byPriority;
+  final Map<String, int> byCategory;
 
   const _TicketStats({
     required this.total,
     required this.open,
     required this.inProgress,
+    required this.resolved,
     required this.closed,
+    required this.highPriority,
     required this.byOffice,
+    required this.byPriority,
+    required this.byCategory,
   });
 
   String get totalText => total.toString();
   String get openText => open.toString();
   String get inProgressText => inProgress.toString();
+  String get resolvedText => resolved.toString();
   String get closedText => closed.toString();
+  String get highPriorityText => highPriority.toString();
   String get officeCountText => byOffice.length.toString();
 
+  List<MapEntry<String, int>> get sortedOfficeEntries =>
+      byOffice.entries.toList()
+        ..sort((a, b) => b.value != a.value
+            ? b.value.compareTo(a.value)
+            : a.key.compareTo(b.key));
+
+  List<MapEntry<String, int>> get sortedPriorityEntries {
+    const order = ['Urgent', 'High', 'Medium', 'Low'];
+    final entries = byPriority.entries.toList();
+    entries.sort((a, b) {
+      final ai = order.indexOf(a.key);
+      final bi = order.indexOf(b.key);
+      final av = ai < 0 ? 99 : ai;
+      final bv = bi < 0 ? 99 : bi;
+      if (av != bv) return av.compareTo(bv);
+      return b.value.compareTo(a.value);
+    });
+    return entries;
+  }
+
+  List<MapEntry<String, int>> get sortedCategoryEntries =>
+      byCategory.entries.toList()
+        ..sort((a, b) => b.value != a.value
+            ? b.value.compareTo(a.value)
+            : a.key.compareTo(b.key));
+
+  String toReportText() {
+    final buffer = StringBuffer()
+      ..writeln('ASKa-Piyu Ticket Report')
+      ..writeln('Generated: ${DateTime.now().toIso8601String()}')
+      ..writeln()
+      ..writeln('Totals')
+      ..writeln('- Total: $total')
+      ..writeln('- Open: $open')
+      ..writeln('- In Progress: $inProgress')
+      ..writeln('- Resolved: $resolved')
+      ..writeln('- Closed: $closed')
+      ..writeln('- High/Urgent open: $highPriority')
+      ..writeln()
+      ..writeln('By office');
+    for (final entry in sortedOfficeEntries) {
+      buffer.writeln('- ${entry.key}: ${entry.value}');
+    }
+    buffer.writeln();
+    buffer.writeln('By priority');
+    for (final entry in sortedPriorityEntries) {
+      buffer.writeln('- ${entry.key}: ${entry.value}');
+    }
+    buffer.writeln();
+    buffer.writeln('By category');
+    for (final entry in sortedCategoryEntries) {
+      buffer.writeln('- ${entry.key}: ${entry.value}');
+    }
+    return buffer.toString();
+  }
+
   factory _TicketStats.fromJson(Map<String, dynamic> json) {
+    Map<String, int> readMap(Object? raw) {
+      if (raw is! Map) return {};
+      return {
+        for (final entry in raw.entries)
+          entry.key.toString(): _readInt(entry.value),
+      };
+    }
+
     return _TicketStats(
       total: _readInt(json['total']),
       open: _readInt(json['open']),
       inProgress: _readInt(json['in_progress']),
+      resolved: _readInt(json['resolved']),
       closed: _readInt(json['closed']),
-      byOffice: json['by_office'] is Map
-          ? Map<String, dynamic>.from(json['by_office'] as Map)
-          : const {},
+      highPriority: _readInt(json['high_priority']),
+      byOffice: readMap(json['by_office']),
+      byPriority: readMap(json['by_priority']),
+      byCategory: readMap(json['by_category']),
     );
   }
 }
 
 Future<_TicketStats> _loadTicketStats(BuildContext context) async {
-  final request = html.HttpRequest();
-  request.open('GET', '${AppConfig.resolvedApiBase}/tickets/statistics');
-  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-  request.send();
-  await request.onLoadEnd.first;
-  final data = _decodeObject(request.responseText);
-  final statusCode = request.status ?? 0;
+  final result = await ApiClient.send(
+    method: 'GET',
+    url: '${AppConfig.resolvedApiBase}/tickets/statistics',
+    headers: AuthScope.of(context).ticketHeaders(),
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
   if (statusCode < 200 || statusCode >= 300) {
     throw StateError(_extractError(data, 'Could not load ticket statistics.'));
   }
@@ -3131,13 +4036,13 @@ Future<List<_AdminUserEntry>> _loadAdminUsers(
     if (role != null && role.trim().isNotEmpty) 'role': role.trim().toLowerCase(),
   };
   final query = params.isEmpty ? '' : '?${Uri(queryParameters: params).query}';
-  final request = html.HttpRequest();
-  request.open('GET', '${AppConfig.resolvedApiBase}/auth/users$query');
-  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-  request.send();
-  await request.onLoadEnd.first;
-  final data = _decodeObject(request.responseText);
-  final statusCode = request.status ?? 0;
+  final result = await ApiClient.send(
+    method: 'GET',
+    url: '${AppConfig.resolvedApiBase}/auth/users$query',
+    headers: AuthScope.of(context).ticketHeaders(),
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
   if (statusCode < 200 || statusCode >= 300) {
     throw StateError(_extractError(data, 'Could not load users.'));
   }
@@ -3149,13 +4054,13 @@ Future<List<_AdminUserEntry>> _loadAdminUsers(
 }
 
 Future<List<_AdminOfficeEntry>> _loadAdminOffices(BuildContext context) async {
-  final request = html.HttpRequest();
-  request.open('GET', '${AppConfig.resolvedApiBase}/tickets/offices');
-  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-  request.send();
-  await request.onLoadEnd.first;
-  final data = _decodeObject(request.responseText);
-  final statusCode = request.status ?? 0;
+  final result = await ApiClient.send(
+    method: 'GET',
+    url: '${AppConfig.resolvedApiBase}/tickets/offices',
+    headers: AuthScope.of(context).ticketHeaders(),
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
   if (statusCode < 200 || statusCode >= 300) {
     throw StateError(_extractError(data, 'Could not load offices.'));
   }
@@ -3173,23 +4078,72 @@ Future<_AdminUserEntry> _createOfficeAccountRequest(
   required String password,
   required String officeId,
 }) async {
-  final request = html.HttpRequest();
-  request.open('POST', '${AppConfig.resolvedApiBase}/auth/office-accounts');
-  request.setRequestHeader('Content-Type', 'application/json');
-  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-  request.send(jsonEncode({
-    'full_name': fullName,
-    'email': email,
-    'password': password,
-    'office_id': officeId,
-  }));
-  await request.onLoadEnd.first;
-  final data = _decodeObject(request.responseText);
-  final statusCode = request.status ?? 0;
+  final result = await ApiClient.send(
+    method: 'POST',
+    url: '${AppConfig.resolvedApiBase}/auth/office-accounts',
+    headers: {...AuthScope.of(context).ticketHeaders()},
+    jsonBody: {
+      'full_name': fullName,
+      'email': email,
+      'password': password,
+      'office_id': officeId,
+    },
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
   if (statusCode < 200 || statusCode >= 300) {
     throw StateError(_extractError(data, 'Could not create office account.'));
   }
   return _AdminUserEntry.fromJson(data);
+}
+
+Future<_AdminUserEntry> _createFacultyAccountRequest(
+  BuildContext context, {
+  required String fullName,
+  required String email,
+  required String password,
+}) async {
+  final result = await ApiClient.send(
+    method: 'POST',
+    url: '${AppConfig.resolvedApiBase}/auth/faculty-accounts',
+    headers: {...AuthScope.of(context).ticketHeaders()},
+    jsonBody: {
+      'full_name': fullName,
+      'email': email,
+      'password': password,
+    },
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not create faculty account.'));
+  }
+  return _AdminUserEntry.fromJson(data);
+}
+
+Future<_AdminOfficeEntry> _createOfficeRequest(
+  BuildContext context, {
+  required String name,
+  String serviceCategory = '',
+  String description = '',
+}) async {
+  final result = await ApiClient.send(
+    method: 'POST',
+    url: '${AppConfig.resolvedApiBase}/tickets/offices',
+    headers: {...AuthScope.of(context).ticketHeaders()},
+    jsonBody: {
+      'name': name,
+      if (serviceCategory.trim().isNotEmpty)
+        'service_category': serviceCategory.trim(),
+      if (description.trim().isNotEmpty) 'description': description.trim(),
+    },
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not create office.'));
+  }
+  return _AdminOfficeEntry.fromJson(data);
 }
 
 class _AdminUserEntry {
@@ -3259,13 +4213,13 @@ String? _officeAssignmentError(BuildContext context) {
 Future<List<_AdminTicketEntry>> _loadOfficeTickets(BuildContext context) async {
   final officeName =
       AuthScope.of(context).currentUser?.officeName?.trim() ?? '';
-  final request = html.HttpRequest();
-  request.open('GET', '${AppConfig.resolvedApiBase}/tickets');
-  AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-  request.send();
-  await request.onLoadEnd.first;
-  final data = _decodeObject(request.responseText);
-  final statusCode = request.status ?? 0;
+  final result = await ApiClient.send(
+    method: 'GET',
+    url: '${AppConfig.resolvedApiBase}/tickets',
+    headers: AuthScope.of(context).ticketHeaders(),
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
   if (statusCode < 200 || statusCode >= 300) {
     throw StateError(_extractError(data, 'Could not load assigned tickets.'));
   }

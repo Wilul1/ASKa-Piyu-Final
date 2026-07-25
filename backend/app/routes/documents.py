@@ -1,14 +1,17 @@
-"""Public document source endpoints for citation-grounded PDF viewing."""
+"""Authenticated document source endpoints for citation-grounded PDF viewing."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import fitz
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
+from app.models.db_models import SourceDocument, User
 from app.models.schemas import DocumentSourceMetaSchema
+from app.services.article_rag_indexer import infer_rag_audience_from_document
+from app.services.auth import get_current_user
 from app.services.document_storage import (
     get_source_document,
     resolve_stored_path,
@@ -16,6 +19,40 @@ from app.services.document_storage import (
 )
 
 router = APIRouter(prefix="/documents", tags=["Source Documents"])
+
+
+def _assert_can_view_source(user: User, row: SourceDocument) -> None:
+    """Faculty-only PDFs: admin + faculty only (office/student blocked)."""
+    role = (user.role or "").strip().lower()
+    if role == "admin":
+        return
+    audience = infer_rag_audience_from_document(
+        filename=row.original_filename,
+        title=row.source_label,
+        document_type=row.document_type,
+    )
+    if audience == "faculty" and role != "faculty":
+        raise HTTPException(
+            status_code=403,
+            detail="This source document is restricted to faculty accounts.",
+        )
+
+
+def _load_source_row(document_id: str, user: User) -> tuple[SourceDocument, Path]:
+    row = get_source_document(document_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Source document not found")
+    _assert_can_view_source(user, row)
+    try:
+        path = resolve_stored_path(row.stored_file_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Source document not found") from exc
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Stored source file is missing on disk. Re-ingest the document.",
+        )
+    return row, path
 
 
 @router.get(
@@ -30,17 +67,9 @@ def get_document_source(
         default=False,
         description="When true, return JSON viewer metadata instead of the PDF bytes",
     ),
+    current_user: User = Depends(get_current_user),
 ):
-    row = get_source_document(document_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Source document not found")
-
-    path = resolve_stored_path(row.stored_file_path)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail="Stored source file is missing on disk. Re-ingest the document.",
-        )
+    row, path = _load_source_row(document_id, current_user)
 
     payload = source_document_payload(row, page_number=page)
     if meta:
@@ -73,20 +102,15 @@ def get_document_source(
     summary="Return only the cited page as a single-page PDF",
     response_model=None,
 )
-def get_document_source_page(document_id: str, page_number: int):
+def get_document_source_page(
+    document_id: str,
+    page_number: int,
+    current_user: User = Depends(get_current_user),
+):
     if page_number < 1:
         raise HTTPException(status_code=400, detail="page_number must be >= 1")
 
-    row = get_source_document(document_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Source document not found")
-
-    path = resolve_stored_path(row.stored_file_path)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail="Stored source file is missing on disk. Re-ingest the document.",
-        )
+    row, path = _load_source_row(document_id, current_user)
 
     try:
         page_bytes = _extract_single_page_pdf(path, page_number)
@@ -124,16 +148,9 @@ def get_document_source_page(document_id: str, page_number: int):
 def get_document_source_meta(
     document_id: str,
     page: int | None = Query(default=None, ge=1),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentSourceMetaSchema:
-    row = get_source_document(document_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Source document not found")
-    path = resolve_stored_path(row.stored_file_path)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail="Stored source file is missing on disk. Re-ingest the document.",
-        )
+    row, _path = _load_source_row(document_id, current_user)
     return DocumentSourceMetaSchema(**source_document_payload(row, page_number=page))
 
 

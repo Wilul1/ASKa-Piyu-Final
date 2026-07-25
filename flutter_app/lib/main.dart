@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'app_config.dart';
 import 'auth/auth_state.dart';
+import 'auth/session_expiry.dart';
 import 'screens/student_home.dart';
 import 'design_tokens.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppConfig.init();
   runApp(const MyApp());
 }
 
@@ -16,15 +20,21 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   final AuthController _authController = AuthController();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
     super.initState();
+    SessionExpiry.bind(
+      auth: _authController,
+      navigatorKey: _navigatorKey,
+    );
     _authController.loadCurrentUser();
   }
 
   @override
   void dispose() {
+    SessionExpiry.unbind();
     _authController.dispose();
     super.dispose();
   }
@@ -34,6 +44,7 @@ class _MyAppState extends State<MyApp> {
     return AuthScope(
       controller: _authController,
       child: MaterialApp(
+        navigatorKey: _navigatorKey,
         title: 'ASKa-Piyu',
         theme: ThemeData(
           primaryColor: DesignTokens.maroon,

@@ -1,5 +1,3 @@
-import 'dart:html' as html;
-
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
@@ -56,10 +54,12 @@ class AdminKbArticleLibrarySection extends StatefulWidget {
     super.key,
     required this.setAdminHeader,
     this.refreshToken = 0,
+    this.focusArticleId,
   });
 
-  final void Function(html.HttpRequest request) setAdminHeader;
+  final void Function(Map<String, String> headers) setAdminHeader;
   final int refreshToken;
+  final String? focusArticleId;
 
   @override
   State<AdminKbArticleLibrarySection> createState() =>
@@ -87,12 +87,47 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
   String? _categoryFilter;
   String? _documentTypeFilter;
   bool _needsReviewOnly = false;
+  bool _ragStaleOnly = false;
   final Set<String> _selectedIds = {};
+  String? _focusedArticleId;
+
+  void _applyFocus(String focusId) {
+    _expanded = true;
+    _focusedArticleId = focusId;
+    _selectedIds
+      ..clear()
+      ..add(focusId);
+    _statusFilter = _StatusFilter.all;
+    _sourceFilter = null;
+    _categoryFilter = null;
+    _documentTypeFilter = null;
+    _needsReviewOnly = false;
+    _ragStaleOnly = false;
+    _searchController.clear();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final focusId = (widget.focusArticleId ?? '').trim();
+    if (focusId.isNotEmpty) {
+      _applyFocus(focusId);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadArticles();
+      });
+    }
+  }
 
   @override
   void didUpdateWidget(covariant AdminKbArticleLibrarySection oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.refreshToken != oldWidget.refreshToken && _expanded) {
+      _loadArticles();
+    }
+    final focusId = (widget.focusArticleId ?? '').trim();
+    final oldFocusId = (oldWidget.focusArticleId ?? '').trim();
+    if (focusId.isNotEmpty && focusId != oldFocusId) {
+      setState(() => _applyFocus(focusId));
       _loadArticles();
     }
   }
@@ -158,7 +193,8 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
 
   List<AdminArticle> get _filteredArticles {
     final query = _searchController.text.trim().toLowerCase();
-    return _articles.where((article) {
+    final focusId = (_focusedArticleId ?? '').trim();
+    final filtered = _articles.where((article) {
       if (_statusFilter == _StatusFilter.published && !article.published) {
         return false;
       }
@@ -166,6 +202,9 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
         return false;
       }
       if (_needsReviewOnly && !article.needsReview && article.reviewReasons.isEmpty) {
+        return false;
+      }
+      if (_ragStaleOnly && !article.ragStale) {
         return false;
       }
       if (_sourceFilter != null &&
@@ -190,6 +229,13 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
       ].join(' ').toLowerCase();
       return haystack.contains(query);
     }).toList();
+    if (focusId.isEmpty) return filtered;
+    filtered.sort((a, b) {
+      if (a.id == focusId) return -1;
+      if (b.id == focusId) return 1;
+      return 0;
+    });
+    return filtered;
   }
 
   Future<void> _publish(AdminArticle article) async {
@@ -213,6 +259,43 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
     } catch (error) {
       if (!mounted) return;
       showKbSnackBar(context, error.toString());
+    }
+  }
+
+  Future<void> _reindex(AdminArticle article) async {
+    try {
+      await _service.reindexArticle(article.id);
+      if (!mounted) return;
+      showKbSnackBar(context, 'Re-indexed "${article.title}" for the chatbot.');
+      await _loadArticles();
+    } catch (error) {
+      if (!mounted) return;
+      showKbSnackBar(context, error.toString());
+    }
+  }
+
+  Future<void> _reindexAllStale() async {
+    final staleCount = _articles.where((a) => a.ragStale).length;
+    if (staleCount == 0) {
+      showKbSnackBar(context, 'No RAG-stale articles to reindex.');
+      return;
+    }
+    setState(() => _bulkBusy = true);
+    try {
+      final result = await _service.reindexStaleArticles();
+      if (!mounted) return;
+      final ok = result['faq_reindexed'] ?? 0;
+      final failed = result['faq_reindex_failed'] ?? 0;
+      showKbSnackBar(
+        context,
+        'Reindexed stale FAQs: $ok ok, $failed failed.',
+      );
+      await _loadArticles();
+    } catch (error) {
+      if (!mounted) return;
+      showKbSnackBar(context, error.toString());
+    } finally {
+      if (mounted) setState(() => _bulkBusy = false);
     }
   }
 
@@ -484,6 +567,23 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
                   onSelected: (value) => setState(() => _needsReviewOnly = value),
                   selectedColor: const Color(0xFFFFF7ED),
                 ),
+                FilterChip(
+                  label: Text(
+                    'RAG stale (${_articles.where((a) => a.ragStale).length})',
+                  ),
+                  selected: _ragStaleOnly,
+                  onSelected: (value) => setState(() => _ragStaleOnly = value),
+                  selectedColor: const Color(0xFFFEE2E2),
+                ),
+                if (_articles.any((a) => a.ragStale))
+                  ElevatedButton(
+                    onPressed: _bulkBusy ? null : _reindexAllStale,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFB91C1C),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Reindex all stale'),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -630,6 +730,7 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
                     onEdit: () => _edit(article),
                     onPublish: () => _publish(article),
                     onUnpublish: () => _unpublish(article),
+                    onReindex: article.ragStale ? () => _reindex(article) : null,
                     onDelete: () => _delete(article),
                   ),
                 ),

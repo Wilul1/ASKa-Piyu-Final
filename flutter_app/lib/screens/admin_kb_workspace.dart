@@ -1,10 +1,10 @@
-import 'dart:html' as html;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../design_tokens.dart';
+import '../services/download_file.dart';
 import '../widgets/admin_action_buttons.dart';
 import 'admin_generate_articles_page.dart';
 import 'admin_kb_outline.dart';
@@ -16,12 +16,11 @@ void _downloadExtractionTxt(String text, String? fileName) {
       ? 'extraction-result'
       : fileName.trim().replaceAll(RegExp(r'\.[^.]+$'), '');
   final safeStem = stem.replaceAll(RegExp(r'[^\w\-]+'), '_');
-  final blob = html.Blob([text], 'text/plain');
-  final url = html.Url.createObjectUrlFromBlob(blob);
-  html.AnchorElement(href: url)
-    ..setAttribute('download', '$safeStem-extraction.txt')
-    ..click();
-  html.Url.revokeObjectUrl(url);
+  downloadTextFile(
+    filename: '$safeStem-extraction.txt',
+    text: text,
+    mimeType: 'text/plain',
+  );
 }
 
 /// Extraction-focused Knowledge Base Admin workspace.

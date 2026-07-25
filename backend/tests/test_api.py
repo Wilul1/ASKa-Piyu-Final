@@ -64,7 +64,7 @@ def _admin_bearer_token(session_factory, *, role: str = "admin") -> str:
     try:
         user = User(
             email=f"{role}@example.edu",
-            password_hash=hash_password("correct horse battery staple"),
+            password_hash=hash_password("correct horse battery staple1"),
             full_name=f"{role.title()} User",
             role=role,
         )
@@ -77,17 +77,17 @@ def _admin_bearer_token(session_factory, *, role: str = "admin") -> str:
 
 
 def test_health():
-    with patch("app.services.chroma_store.get_knowledge_base_store") as mock_get:
-        mock_get.return_value.chunk_count = 3
-        response = client.get("/health")
+    response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert "admin" in data["flows"]
-    assert "student" in data["flows"]
+    assert data["service"] == "aska-piyu"
+    assert "flows" not in data
+    assert "knowledge_base_chunks" not in data
 
 
 @patch("app.main.get_database_health")
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
 def test_database_health(mock_database_health):
     mock_database_health.return_value = {
         "status": "ok",
@@ -95,7 +95,10 @@ def test_database_health(mock_database_health):
         "database_url": "postgresql+psycopg://postgres:***@localhost:5432/aska_piyu",
     }
 
-    response = client.get("/health/database")
+    denied = client.get("/health/database")
+    assert denied.status_code == 401
+
+    response = client.get("/health/database", headers={"x-admin-key": "test-admin-key"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -128,13 +131,14 @@ def test_startup_warns_when_admin_key_missing(caplog):
     with (
         patch("app.main.settings.admin_api_key", ""),
         patch("app.main.settings.groq_model", ""),
+        patch("app.main.settings.env", "development"),
+        patch("app.main.settings.allow_admin_api_key", True),
     ):
         asyncio.run(validate_startup_configuration())
 
     assert "ASKA_ADMIN_API_KEY is missing" in caplog.text
-    assert "Admin endpoints are disabled" in caplog.text
     assert "Configured admin key: False" in caplog.text
-    assert "Admin key length: 0" in caplog.text
+    assert "Admin API key auth enabled:" in caplog.text
     assert str(DOTENV_PATH) in caplog.text
 
 
@@ -143,47 +147,60 @@ def test_startup_logs_admin_key_configured_without_secret(caplog):
     with (
         patch("app.main.settings.admin_api_key", "my-secret-admin-key"),
         patch("app.main.settings.groq_model", ""),
+        patch("app.main.settings.env", "development"),
+        patch("app.main.settings.allow_admin_api_key", True),
     ):
         asyncio.run(validate_startup_configuration())
 
     assert "Configured admin key: True" in caplog.text
-    assert "Admin key length: 19" in caplog.text
-    expected_prefix = hashlib.sha256("my-secret-admin-key".encode("utf-8")).hexdigest()[:8]
-    assert f"Admin key sha256 prefix: {expected_prefix}" in caplog.text
+    assert "Admin API key auth enabled: True" in caplog.text
     assert "my-secret-admin-key" not in caplog.text
 
 
 @patch("app.config.settings.admin_api_key", "my-secret-admin-key")
-def test_admin_debug_config_returns_safe_diagnostics_without_auth():
-    response = client.get("/admin/debug/config")
+@patch("app.config.settings.allow_admin_api_key", True)
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "my-secret-admin-key")
+@patch("app.routes.admin.knowledge_base.settings.allow_admin_api_key", True)
+def test_admin_debug_config_requires_admin_auth():
+    denied = client.get("/admin/debug/config")
+    assert denied.status_code == 401
 
+    response = client.get(
+        "/admin/debug/config",
+        headers={"x-admin-key": "my-secret-admin-key"},
+    )
     assert response.status_code == 200
     data = response.json()
     assert set(data) == {
-        "cwd",
-        "dotenv_path",
+        "env",
         "admin_key_loaded",
-        "admin_key_length",
-        "admin_key_sha256_prefix",
+        "admin_key_configured_length",
+        "admin_api_key_auth_enabled",
+        "openapi_enabled",
+        "cors_origin_count",
         "header_name",
     }
     assert data["admin_key_loaded"] is True
-    assert data["admin_key_length"] == 19
-    assert data["admin_key_sha256_prefix"] == hashlib.sha256(
-        "my-secret-admin-key".encode("utf-8")
-    ).hexdigest()[:8]
+    assert data["admin_key_configured_length"] == 19
+    assert data["admin_api_key_auth_enabled"] is True
     assert data["header_name"] == "x-admin-key"
-    assert data["dotenv_path"] == str(DOTENV_PATH)
     assert "my-secret-admin-key" not in response.text
+    assert "cwd" not in data
+    assert "admin_key_sha256_prefix" not in data
 
 
 @patch("app.routes.qa.settings.groq_api_key", "test-groq-key")
 @patch("app.routes.qa.settings.groq_model", "llama-3.3-70b-versatile")
 @patch("app.routes.qa.get_knowledge_base_store")
-def test_qa_health(mock_store):
+def test_qa_health_requires_admin(mock_store, admin_auth_client):
     mock_store.return_value.chunk_count = 485
+    auth_client, session_factory = admin_auth_client
 
-    response = client.get("/qa/health")
+    denied = auth_client.get("/qa/health")
+    assert denied.status_code == 401
+
+    token = _admin_bearer_token(session_factory, role="admin")
+    response = auth_client.get("/qa/health", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -441,44 +458,87 @@ def test_admin_openapi_documents_x_admin_key_header():
     assert header["description"] == "Administrator API key. Must match ASKA_ADMIN_API_KEY."
 
 
-@patch("app.routes.student.chat.answer_student_question")
+@patch("app.routes.student.chat.answer_qa_question")
 def test_student_ask(mock_answer):
-    mock_answer.return_value = QuestionAnswerResult(
-        question="How do I enroll?",
+    from types import SimpleNamespace
+
+    from app.main import app as fastapi_app
+    from app.services.auth import get_current_user
+    from app.services.qa.question_answering import QAResult
+
+    mock_answer.return_value = QAResult(
         answer="Based on official documents, enrollment requires...",
         sources=[
-            RetrievedChunk(
-                document_id="doc-1",
-                title="Handbook",
-                source_filename="handbook.pdf",
-                chunk_index=0,
-                text="Enrollment steps...",
-                relevance_score=0.91,
-            )
+            {
+                "document_id": "doc-1",
+                "title": "Handbook",
+                "source_filename": "handbook.pdf",
+                "chunk_index": 0,
+                "snippet": "Enrollment steps...",
+                "relevance_score": 0.91,
+            }
         ],
+        confidence="high",
+        retrieved_chunks=[],
     )
-    response = client.post(
-        "/student/ask",
-        json={"question": "How do I enroll?"},
+    fastapi_app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        role="student", id="u1"
     )
+    try:
+        response = client.post(
+            "/student/ask",
+            json={"question": "How do I enroll?"},
+        )
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user, None)
     assert response.status_code == 200
     data = response.json()
     assert data["flow"] == "student_question"
     assert data["answer"]
     assert len(data["sources"]) == 1
+    mock_answer.assert_called_once()
+    assert mock_answer.call_args.kwargs.get("user_role") == "student"
 
 
-@patch("app.routes.student.chat.answer_student_question")
+def test_student_ask_requires_auth():
+    response = client.post("/student/ask", json={"question": "Hello?"})
+    assert response.status_code == 401
+
+
+@patch("app.routes.student.chat.answer_qa_question")
 def test_student_ask_empty_kb(mock_answer):
+    from types import SimpleNamespace
+
+    from app.main import app as fastapi_app
+    from app.services.auth import get_current_user
     from app.services.student.question_service import EmptyKnowledgeBaseError
 
     mock_answer.side_effect = EmptyKnowledgeBaseError("Knowledge base is empty.")
-    response = client.post("/student/ask", json={"question": "Hello?"})
+    fastapi_app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        role="student", id="u1"
+    )
+    try:
+        response = client.post("/student/ask", json={"question": "Hello?"})
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user, None)
     assert response.status_code == 503
+
+
+def _override_qa_user(*, role: str = "student", user_id: str = "u1"):
+    from types import SimpleNamespace
+
+    from app.main import app as fastapi_app
+    from app.services.auth import get_current_user
+
+    fastapi_app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        role=role, id=user_id
+    )
+    return fastapi_app
 
 
 @patch("app.routes.qa.answer_qa_question")
 def test_qa_ask_endpoint_defaults_to_student_response(mock_answer):
+    from app.services.auth import get_current_user
     from app.services.qa.question_answering import QAResult
 
     mock_answer.return_value = QAResult(
@@ -519,19 +579,69 @@ def test_qa_ask_endpoint_defaults_to_student_response(mock_answer):
         out_of_scope_detected=False,
     )
 
-    response = client.post("/qa/ask", json={"question": "I was absent due to illness. What should I do?"})
+    fastapi_app = _override_qa_user(role="student")
+    try:
+        response = client.post("/qa/ask", json={"question": "I was absent due to illness. What should I do?"})
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200
     data = response.json()
     assert data["answer"]
     assert data["confidence"] == "high"
     assert data["sources"][0]["title"] == "Attendance Policy"
-    assert set(data) == {"answer", "sources", "confidence"}
+    assert {"answer", "sources", "confidence"}.issubset(set(data))
+    assert "retrieved_chunks" not in data
+
+
+def test_qa_ask_requires_auth():
+    response = client.post(
+        "/qa/ask",
+        json={"question": "I was absent due to illness. What should I do?"},
+    )
+    assert response.status_code == 401
 
 
 @patch("app.routes.qa.answer_qa_question")
-def test_qa_ask_endpoint_returns_debug_chunks_when_body_debug_enabled(mock_answer):
+def test_qa_ask_strips_debug_for_non_admin_callers(mock_answer):
+    from app.services.auth import get_current_user
     from app.services.qa.question_answering import QAResult
+
+    mock_answer.return_value = QAResult(
+        answer="Students should submit an excuse slip and medical certificate.",
+        sources=[{"title": "Attendance Policy", "path": "Academic Policies > Attendance", "page": 46}],
+        confidence="high",
+        retrieved_chunks=[
+            {
+                "rank": 1,
+                "title": "Attendance Policy",
+                "content_preview": "Students should submit an excuse slip.",
+            }
+        ],
+        normalized_query="absent illness",
+    )
+
+    fastapi_app = _override_qa_user(role="student")
+    try:
+        response = client.post(
+            "/qa/ask?debug=true",
+            json={"question": "I was absent due to illness. What should I do?", "debug": True},
+        )
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "retrieved_chunks" not in data
+    assert "normalized_query" not in data
+
+
+@patch("app.routes.qa.answer_qa_question")
+def test_qa_ask_endpoint_returns_debug_chunks_when_body_debug_enabled(mock_answer, admin_auth_client):
+    from app.services.qa.question_answering import QAResult
+
+    auth_client, session_factory = admin_auth_client
+    token = _admin_bearer_token(session_factory, role="admin")
 
     mock_answer.return_value = QAResult(
         answer="Students should submit an excuse slip and medical certificate.",
@@ -571,8 +681,9 @@ def test_qa_ask_endpoint_returns_debug_chunks_when_body_debug_enabled(mock_answe
         out_of_scope_detected=False,
     )
 
-    response = client.post(
+    response = auth_client.post(
         "/qa/ask",
+        headers={"Authorization": f"Bearer {token}"},
         json={"question": "I was absent due to illness. What should I do?", "debug": True},
     )
 
@@ -594,8 +705,11 @@ def test_qa_ask_endpoint_returns_debug_chunks_when_body_debug_enabled(mock_answe
 
 
 @patch("app.routes.qa.answer_qa_question")
-def test_qa_ask_endpoint_returns_debug_chunks_when_query_debug_enabled(mock_answer):
+def test_qa_ask_endpoint_returns_debug_chunks_when_query_debug_enabled(mock_answer, admin_auth_client):
     from app.services.qa.question_answering import QAResult
+
+    auth_client, session_factory = admin_auth_client
+    token = _admin_bearer_token(session_factory, role="admin")
 
     mock_answer.return_value = QAResult(
         answer="Students should submit an excuse slip and medical certificate.",
@@ -620,8 +734,9 @@ def test_qa_ask_endpoint_returns_debug_chunks_when_query_debug_enabled(mock_answ
         ],
     )
 
-    response = client.post(
+    response = auth_client.post(
         "/qa/ask?debug=true",
+        headers={"Authorization": f"Bearer {token}"},
         json={"question": "I was absent due to illness. What should I do?"},
     )
 
@@ -630,8 +745,11 @@ def test_qa_ask_endpoint_returns_debug_chunks_when_query_debug_enabled(mock_answ
 
 
 @patch("app.routes.qa.answer_qa_question")
-def test_qa_ask_endpoint_returns_program_scope_debug_when_enabled(mock_answer):
+def test_qa_ask_endpoint_returns_program_scope_debug_when_enabled(mock_answer, admin_auth_client):
     from app.services.qa.question_answering import QAResult
+
+    auth_client, session_factory = admin_auth_client
+    token = _admin_bearer_token(session_factory, role="admin")
 
     mock_answer.return_value = QAResult(
         answer="Engineering programs are listed by college.",
@@ -650,8 +768,9 @@ def test_qa_ask_endpoint_returns_program_scope_debug_when_enabled(mock_answer):
         },
     )
 
-    response = client.post(
+    response = auth_client.post(
         "/qa/ask?debug=true",
+        headers={"Authorization": f"Bearer {token}"},
         json={"question": "What programs does the College of Engineering offer?"},
     )
 
@@ -669,6 +788,7 @@ def test_qa_ask_endpoint_returns_program_scope_debug_when_enabled(mock_answer):
 def test_qa_ask_validate_id_does_not_crash_on_citation_fallback_label(mock_store, mock_groq):
     """POST /qa/ask must not 500 when typed procedure answers use source-label fallback."""
     from app.services.chroma_store import RetrievedChunk
+    from app.services.qa.groq_answer_service import GroqAnswerError
 
     chunk = RetrievedChunk(
         document_id="charter-doc",
@@ -698,6 +818,7 @@ def test_qa_ask_validate_id_does_not_crash_on_citation_fallback_label(mock_store
             "source_document": "Citizens_Charter_2026.pdf",
             "page_number": 18,
             "office": "Office of the Student Affairs and Services",
+            "audience": "both",
         },
     )
 
@@ -708,7 +829,15 @@ def test_qa_ask_validate_id_does_not_crash_on_citation_fallback_label(mock_store
             return [chunk]
 
     mock_store.return_value = _Store()
-    response = client.post("/qa/ask", json={"question": "How do I validate my ID?"})
+    # How-tos prefer Groq first; when unavailable, typed procedure card is used.
+    mock_groq.side_effect = GroqAnswerError("Groq API key is not configured.")
+    from app.services.auth import get_current_user
+
+    fastapi_app = _override_qa_user(role="student")
+    try:
+        response = client.post("/qa/ask", json={"question": "How do I validate my ID?"})
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -718,7 +847,8 @@ def test_qa_ask_validate_id_does_not_crash_on_citation_fallback_label(mock_store
     assert data["sources"]
     assert data["sources"][0]["source_section"] == "ID Validation"
     assert data["sources"][0].get("page_number") == 18 or data["sources"][0].get("page") == 18
-    mock_groq.assert_not_called()
+    assert data.get("degraded") is True
+    mock_groq.assert_called_once()
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")

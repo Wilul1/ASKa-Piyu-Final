@@ -1,13 +1,16 @@
 import 'dart:convert';
-import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../screens/login_page.dart';
+import '../services/api_client.dart';
+import '../services/download_file.dart';
+import '../services/file_pick.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
 
@@ -198,13 +201,13 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       _error = null;
     });
     try {
-      final request = html.HttpRequest();
-      request.open('GET', '${AppConfig.resolvedApiBase}/tickets');
-      AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-      request.send();
-      await request.onLoadEnd.first;
-      final data = _decodeObject(request.responseText);
-      final statusCode = request.status ?? 0;
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
       if (statusCode < 200 || statusCode >= 300) {
         throw StateError(_extractError(data, 'Could not load tickets.'));
       }
@@ -229,13 +232,13 @@ class _MyTicketsPageState extends State<MyTicketsPage>
 
   Future<void> _loadNotifications() async {
     try {
-      final request = html.HttpRequest();
-      request.open('GET', '${AppConfig.resolvedApiBase}/tickets/notifications');
-      AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-      request.send();
-      await request.onLoadEnd.first;
-      final data = _decodeObject(request.responseText);
-      final statusCode = request.status ?? 0;
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/notifications',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
       if (statusCode < 200 || statusCode >= 300) return;
       final items = data['items'] is List ? data['items'] as List : const [];
       if (!mounted) return;
@@ -256,12 +259,11 @@ class _MyTicketsPageState extends State<MyTicketsPage>
 
   Future<void> _markAllNotificationsRead() async {
     try {
-      final request = html.HttpRequest();
-      request.open(
-          'POST', '${AppConfig.resolvedApiBase}/tickets/notifications/read-all');
-      AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-      request.send();
-      await request.onLoadEnd.first;
+      await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/tickets/notifications/read-all',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
       await _loadNotifications();
     } catch (_) {}
   }
@@ -1056,17 +1058,14 @@ class _TicketDetailsDialogState extends State<TicketDetailsDialog> {
       _replyError = null;
     });
     try {
-      final request = html.HttpRequest();
-      request.open(
-        'POST',
-        '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}/replies',
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}/replies',
+        headers: {...AuthScope.of(context).ticketHeaders()},
+        jsonBody: {'message': message},
       );
-      AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-      request.setRequestHeader('Content-Type', 'application/json');
-      request.send(jsonEncode({'message': message}));
-      await request.onLoadEnd.first;
-      final data = _decodeObject(request.responseText);
-      final statusCode = request.status ?? 0;
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
       if (statusCode < 200 || statusCode >= 300) {
         throw StateError(_extractError(data, 'Could not send your reply.'));
       }
@@ -1197,30 +1196,21 @@ class _TicketDetailsDialogState extends State<TicketDetailsDialog> {
                           child: InkWell(
                             onTap: () async {
                               try {
-                                final request = html.HttpRequest();
-                                request.open(
-                                  'GET',
-                                  '${AppConfig.resolvedApiBase}${file.downloadUrl}',
+                                final result = await ApiClient.send(
+                                  method: 'GET',
+                                  url:
+                                      '${AppConfig.resolvedApiBase}${file.downloadUrl}',
+                                  headers:
+                                      AuthScope.of(context).ticketHeaders(),
+                                  asBytes: true,
                                 );
-                                request.responseType = 'blob';
-                                AuthScope.of(context)
-                                    .ticketHeaders()
-                                    .forEach(request.setRequestHeader);
-                                request.send();
-                                await request.onLoadEnd.first;
-                                if ((request.status ?? 0) < 200 ||
-                                    (request.status ?? 0) >= 300) {
+                                if (!result.ok) {
                                   throw StateError('Could not download file.');
                                 }
-                                final blob = request.response as html.Blob;
-                                final url = html.Url.createObjectUrlFromBlob(blob);
-                                final anchor = html.AnchorElement(href: url)
-                                  ..download = file.originalFilename
-                                  ..style.display = 'none';
-                                html.document.body?.append(anchor);
-                                anchor.click();
-                                anchor.remove();
-                                html.Url.revokeObjectUrl(url);
+                                await downloadBytesFile(
+                                  filename: file.originalFilename,
+                                  bytes: result.bytes,
+                                );
                               } catch (error) {
                                 if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -2060,7 +2050,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
   bool _officeTouchedByUser = false;
   bool _priorityTouchedByUser = false;
   int _triageSeq = 0;
-  html.File? _attachmentFile;
+  PickedAppFile? _attachmentFile;
   String? _attachmentName;
 
   @override
@@ -2095,13 +2085,13 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
   Future<void> _loadOffices() async {
     setState(() => _loadingOffices = true);
     try {
-      final request = html.HttpRequest();
-      request.open('GET', '${AppConfig.resolvedApiBase}/tickets/offices');
-      AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-      request.send();
-      await request.onLoadEnd.first;
-      final data = _decodeObject(request.responseText);
-      final statusCode = request.status ?? 0;
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/offices',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
       if (statusCode < 200 || statusCode >= 300) {
         throw StateError(_extractError(data, 'Could not load offices.'));
       }
@@ -2124,16 +2114,17 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
     if (question.length < 3) return;
     setState(() => _triaging = true);
     try {
-      final request = html.HttpRequest();
-      request.open('POST', '${AppConfig.resolvedApiBase}/tickets/triage');
-      request.setRequestHeader('Content-Type', 'application/json');
-      request.send(jsonEncode({
-        'original_question': question,
-        'description': _descCtrl.text.trim(),
-      }));
-      await request.onLoadEnd.first;
-      final data = _decodeObject(request.responseText);
-      final statusCode = request.status ?? 0;
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/tickets/triage',
+        headers: {...AuthScope.of(context).ticketHeaders()},
+        jsonBody: {
+          'original_question': question,
+          'description': _descCtrl.text.trim(),
+        },
+      );
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
       if (statusCode < 200 || statusCode >= 300 || !mounted) return;
       final suggestedOffice =
           (data['assigned_office'] ?? data['assigned_office_name'] ?? '')
@@ -2169,14 +2160,23 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
   }
 
   Future<void> _pickAttachment() async {
-    final input = html.FileUploadInputElement()
-      ..accept = 'image/*,.pdf,application/pdf';
-    input.click();
-    await input.onChange.first;
-    final files = input.files;
-    if (files == null || files.isEmpty) return;
-    final file = files.first;
-    if (file.size > 10 * 1024 * 1024) {
+    final picked = await pickAppFile(
+      allowedExtensions: const [
+        'pdf',
+        'png',
+        'jpg',
+        'jpeg',
+        'webp',
+        'gif',
+        'bmp',
+        'heic',
+        'tif',
+        'tiff',
+      ],
+      dialogTitle: 'Select an attachment',
+    );
+    if (picked == null) return;
+    if (picked.bytes.length > 10 * 1024 * 1024) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2188,25 +2188,29 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       return;
     }
     setState(() {
-      _attachmentFile = file;
-      _attachmentName = file.name;
+      _attachmentFile = picked;
+      _attachmentName = picked.name;
     });
   }
 
   Future<void> _uploadAttachment(String ticketId) async {
     final file = _attachmentFile;
     if (file == null) return;
-    final form = html.FormData();
-    form.appendBlob('file', file, file.name);
-    final request = html.HttpRequest();
-    request.open(
-        'POST', '${AppConfig.resolvedApiBase}/tickets/$ticketId/attachments');
-    AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
-    request.send(form);
-    await request.onLoadEnd.first;
-    final statusCode = request.status ?? 0;
+    final result = await ApiClient.multipart(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/$ticketId/attachments',
+      headers: AuthScope.of(context).ticketHeaders(),
+      files: [
+        http.MultipartFile.fromBytes(
+          'file',
+          file.bytes,
+          filename: file.name,
+        ),
+      ],
+    );
+    final statusCode = result.statusCode;
     if (statusCode < 200 || statusCode >= 300) {
-      final data = _decodeObject(request.responseText);
+      final data = _decodeObject(result.body);
       throw StateError(_extractError(data, 'Attachment upload failed.'));
     }
   }
@@ -2216,10 +2220,6 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
 
     setState(() => _submitting = true);
     try {
-      final request = html.HttpRequest();
-      request.open('POST', '${AppConfig.resolvedApiBase}/tickets');
-      request.setRequestHeader('Content-Type', 'application/json');
-      AuthScope.of(context).ticketHeaders().forEach(request.setRequestHeader);
       final body = <String, dynamic>{
         'original_question': _subjectCtrl.text.trim(),
         'description': _descCtrl.text.trim(),
@@ -2229,23 +2229,27 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       if (_selectedOfficeId != null && _selectedOfficeId!.isNotEmpty) {
         body['preferred_office_id'] = _selectedOfficeId;
       }
-      request.send(jsonEncode(body));
-      await request.onLoadEnd.first;
-      final data = _decodeObject(request.responseText);
-      final statusCode = request.status ?? 0;
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/tickets',
+        headers: {...AuthScope.of(context).ticketHeaders()},
+        jsonBody: body,
+      );
+      final data = _decodeObject(result.body);
+      final statusCode = result.statusCode;
       if (statusCode < 200 || statusCode >= 300) {
         throw StateError(_extractError(data, 'Ticket submission failed.'));
       }
       var ticket = TicketEntry.fromJson(data);
       if (_attachmentFile != null) {
         await _uploadAttachment(ticket.id);
-        final refresh = html.HttpRequest();
-        refresh.open('GET', '${AppConfig.resolvedApiBase}/tickets/${ticket.id}');
-        AuthScope.of(context).ticketHeaders().forEach(refresh.setRequestHeader);
-        refresh.send();
-        await refresh.onLoadEnd.first;
-        final refreshed = _decodeObject(refresh.responseText);
-        if ((refresh.status ?? 0) >= 200 && (refresh.status ?? 0) < 300) {
+        final refresh = await ApiClient.send(
+          method: 'GET',
+          url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}',
+          headers: AuthScope.of(context).ticketHeaders(),
+        );
+        final refreshed = _decodeObject(refresh.body);
+        if (refresh.statusCode >= 200 && refresh.statusCode < 300) {
           ticket = TicketEntry.fromJson(refreshed);
         }
       }

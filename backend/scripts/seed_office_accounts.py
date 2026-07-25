@@ -3,21 +3,24 @@
 Run from the backend directory:
     python scripts/seed_office_accounts.py
 
-Default password for all seeded office accounts: office123
+Password for newly created office accounts:
+  - ASKA_SEED_OFFICE_PASSWORD env var if set
+  - otherwise a local-dev default (never use that default in production)
 """
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 
+from app.config import settings
 from app.db.session import get_session_factory, initialize_database
 from app.models.db_models import Office, User
 from app.services.passwords import hash_password
 
 
-DEFAULT_PASSWORD = "office123"
-
-# Preferred emails for well-known offices (easy to remember for demos).
+_LOCAL_DEV_DEFAULT_PASSWORD = "office123"
 PREFERRED_EMAILS = {
     "ICT Office": "ict@aska.local",
     "Registrar": "registrar@aska.local",
@@ -32,6 +35,25 @@ PREFERRED_EMAILS = {
 }
 
 
+def _seed_password() -> str:
+    configured = (os.getenv("ASKA_SEED_OFFICE_PASSWORD") or "").strip()
+    if configured:
+        return configured
+    if settings.env == "production":
+        print(
+            "ERROR: Refusing to seed office accounts in production with the local-dev "
+            "default password. Set ASKA_SEED_OFFICE_PASSWORD to a strong unique value.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    print(
+        "WARNING: Using local-dev default office password. "
+        "Set ASKA_SEED_OFFICE_PASSWORD before any shared/campus deploy.",
+        file=sys.stderr,
+    )
+    return _LOCAL_DEV_DEFAULT_PASSWORD
+
+
 def _slug_email(office_name: str) -> str:
     preferred = PREFERRED_EMAILS.get(office_name)
     if preferred:
@@ -41,14 +63,21 @@ def _slug_email(office_name: str) -> str:
     return f"{slug}@aska.local"
 
 
-def _ensure_office_user(session, office: Office, *, email: str, full_name: str | None = None) -> tuple[User, bool]:
+def _ensure_office_user(
+    session,
+    office: Office,
+    *,
+    email: str,
+    password: str,
+    full_name: str | None = None,
+) -> tuple[User, bool]:
     """Create or update an office staff user. Returns (user, created)."""
     user = session.query(User).filter(User.email == email).first()
     display_name = full_name or f"{office.name} Staff"
     if user is None:
         user = User(
             email=email,
-            password_hash=hash_password(DEFAULT_PASSWORD),
+            password_hash=hash_password(password),
             full_name=display_name,
             role="office",
             office_id=office.id,
@@ -64,6 +93,7 @@ def _ensure_office_user(session, office: Office, *, email: str, full_name: str |
 
 
 def main() -> None:
+    password = _seed_password()
     initialize_database()
     session_factory = get_session_factory()
     session = session_factory()
@@ -89,7 +119,9 @@ def main() -> None:
                 email = f"{re.sub(r'[^a-z0-9]+', '-', office.name.lower()).strip('-')[:40]}@aska.local"
             used_emails.add(email)
 
-            user, was_created = _ensure_office_user(session, office, email=email)
+            user, was_created = _ensure_office_user(
+                session, office, email=email, password=password
+            )
             label = f"{user.email} -> {office.name}"
             if was_created:
                 created.append(label)
@@ -100,7 +132,7 @@ def main() -> None:
     finally:
         session.close()
 
-    print(f"Default password for new office accounts: {DEFAULT_PASSWORD}")
+    print("Default password for new office accounts: (hidden — set via ASKA_SEED_OFFICE_PASSWORD)")
     if created:
         print(f"Created ({len(created)}):")
         for item in created:

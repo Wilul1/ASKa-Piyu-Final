@@ -1,85 +1,117 @@
 import 'dart:convert';
-import 'dart:html' as html;
+
+import 'package:flutter/foundation.dart';
 
 import 'services/extraction_preview_store.dart';
+import 'services/local_store.dart';
 
 class AppConfig {
   static const String apiBase =
       String.fromEnvironment('ASKA_API_BASE_URL', defaultValue: '');
 
+  static const String _extractionKey = kExtractionPreviewStorageKey;
+
   static String get resolvedApiBase {
     final configured = apiBase.trim();
-    if (configured.endsWith('/')) {
-      return configured.substring(0, configured.length - 1);
+    if (configured.isEmpty) {
+      if (kReleaseMode) {
+        throw StateError(
+          'ASKA_API_BASE_URL is required for release builds. '
+          'Pass --dart-define=ASKA_API_BASE_URL=https://your-api.example',
+        );
+      }
+      assert(() {
+        // ignore: avoid_print
+        print(
+          'WARNING: ASKA_API_BASE_URL is empty. '
+          'API calls use relative paths and will fail on mobile.',
+        );
+        return true;
+      }());
+      return '';
     }
-    return configured;
+    final normalized = configured.endsWith('/')
+        ? configured.substring(0, configured.length - 1)
+        : configured;
+    if (kReleaseMode &&
+        !normalized.toLowerCase().startsWith('https://')) {
+      throw StateError(
+        'ASKA_API_BASE_URL must use https:// in release builds '
+        '(got "$normalized").',
+      );
+    }
+    return normalized;
   }
 
-  static Map<String, String> studentHeaders() {
-    return {
-      'x-user-id': 'student-001',
-      'x-user-role': 'student',
-      'x-user-name': 'Student',
-      'x-user-email': 'student@test.local',
-    };
+  /// In-memory only — never persist the shared admin API key.
+  static String? _sessionAdminKey;
+
+  /// Cached extraction handoff loaded from SharedPreferences.
+  static Map<String, dynamic>? _extractionCache;
+
+  static Future<void> init() async {
+    await LocalStore.init();
+    // Drop legacy persisted admin key if present from older builds.
+    await LocalStore.remove('aska_admin_key');
+    _loadExtractionCache();
   }
 
   static String? get savedAdminKey {
-    final value = html.window.localStorage['aska_admin_key']?.trim();
+    final value = _sessionAdminKey?.trim();
     return value == null || value.isEmpty ? null : value;
   }
 
   static set savedAdminKey(String? value) {
     final cleaned = value?.trim() ?? '';
-    if (cleaned.isEmpty) {
-      html.window.localStorage.remove('aska_admin_key');
-      return;
-    }
-    html.window.localStorage['aska_admin_key'] = cleaned;
+    _sessionAdminKey = cleaned.isEmpty ? null : cleaned;
   }
 
   /// Latest Documents → Generate Articles extraction handoff package.
-  ///
-  /// Shape: `{ preview: {...}, source_filename, document_profile, ... }`.
-  static Map<String, dynamic>? get lastExtractionPreview {
-    final raw = html.window.localStorage[kExtractionPreviewStorageKey];
-    if (raw == null || raw.trim().isEmpty) return null;
+  static Map<String, dynamic>? get lastExtractionPreview => _extractionCache;
+
+  static void _loadExtractionCache() {
+    final raw = LocalStore.getString(_extractionKey);
+    if (raw == null) {
+      _extractionCache = null;
+      return;
+    }
     try {
       final decoded = jsonDecode(raw);
-      return decodeExtractionHandoff(decoded);
+      _extractionCache = decodeExtractionHandoff(decoded);
     } catch (_) {
-      // Ignore malformed cache.
+      _extractionCache = null;
     }
-    return null;
   }
 
   /// Persist a compact extraction handoff. Empty/invalid payloads never
   /// overwrite a valid cached extraction. Returns whether storage succeeded.
-  static bool saveLastExtractionPreview(Map<String, dynamic>? value) {
+  static Future<bool> saveLastExtractionPreview(
+    Map<String, dynamic>? value,
+  ) async {
     if (value == null) {
-      html.window.localStorage.remove(kExtractionPreviewStorageKey);
+      _extractionCache = null;
+      await LocalStore.remove(_extractionKey);
       return true;
     }
 
     final existing = lastExtractionPreview;
     if (!shouldReplaceExtractionHandoff(existing: existing, incoming: value)) {
-      // Keep the previous valid extraction when the new package is empty/invalid.
       return isValidExtractionHandoff(existing);
     }
 
     final encoded = jsonEncode(value);
     try {
-      html.window.localStorage[kExtractionPreviewStorageKey] = encoded;
+      await LocalStore.setString(_extractionKey, encoded);
+      _loadExtractionCache();
       return lastExtractionPreview != null;
     } catch (_) {
-      // QuotaExceeded or serialization failure — try a more aggressive compact.
       try {
         final compact = _aggressivelyCompactHandoff(value);
         if (!isValidExtractionHandoff(compact)) {
           return false;
         }
-        html.window.localStorage[kExtractionPreviewStorageKey] =
-            jsonEncode(compact);
+        await LocalStore.setString(_extractionKey, jsonEncode(compact));
+        _loadExtractionCache();
         return lastExtractionPreview != null;
       } catch (_) {
         return false;
@@ -87,8 +119,10 @@ class AppConfig {
     }
   }
 
-  /// Back-compat setter used by older call sites. Prefer [saveLastExtractionPreview].
+  /// Back-compat setter used by older call sites.
   static set lastExtractionPreview(Map<String, dynamic>? value) {
+    // Fire-and-forget; callers that need confirmation should await
+    // [saveLastExtractionPreview].
     saveLastExtractionPreview(value);
   }
 
@@ -100,7 +134,6 @@ class AppConfig {
     final previewMap = preview == null
         ? <String, dynamic>{}
         : Map<String, dynamic>.from(preview['preview'] as Map? ?? {});
-    // Drop the largest text fields if quota is still too tight.
     previewMap.remove('cleaned_text');
     previewMap['review_text'] = _hardClip(previewMap['review_text'], 40000);
     previewMap['extracted_text'] = previewMap['review_text'];

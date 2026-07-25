@@ -7,10 +7,19 @@ import '../widgets/auth_split_shell.dart';
 import 'signup_page.dart';
 
 class LoginPage extends StatefulWidget {
+  static const routeName = '/login';
+
   final WidgetBuilder? returnTo;
   final String? message;
+  /// When set, [returnTo] is honored only if the logged-in role matches.
+  final String? gateRole;
 
-  const LoginPage({super.key, this.returnTo, this.message});
+  const LoginPage({
+    super.key,
+    this.returnTo,
+    this.message,
+    this.gateRole,
+  });
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -39,12 +48,20 @@ class _LoginPageState extends State<LoginPage> {
       _error = null;
     });
     try {
-      final user = await AuthScope.of(context).login(LoginRequest(
-        email: _emailCtrl.text,
-        password: _passwordCtrl.text,
-      ));
+      final user = await AuthScope.of(context).login(
+        LoginRequest(
+          email: _emailCtrl.text,
+          password: _passwordCtrl.text,
+        ),
+        rememberMe: _rememberMe,
+      );
       if (!mounted) return;
-      redirectAfterAuth(context, user.role, widget.returnTo);
+      redirectAfterAuth(
+        context,
+        user.role,
+        widget.returnTo,
+        gateRole: widget.gateRole,
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = _friendlyError(error));
@@ -57,7 +74,11 @@ class _LoginPageState extends State<LoginPage> {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) =>
-            SignupPage(returnTo: widget.returnTo, message: widget.message),
+            SignupPage(
+              returnTo: widget.returnTo,
+              message: widget.message,
+              gateRole: widget.gateRole,
+            ),
       ),
     );
   }

@@ -17,6 +17,8 @@ class AdminArticle {
     this.publishedAt,
     this.createdAt,
     this.updatedAt,
+    this.audience = 'both',
+    this.ragIndexed = false,
     this.metadata = const {},
     this.displayContent = '',
   });
@@ -34,8 +36,13 @@ class AdminArticle {
   final String? publishedAt;
   final String? createdAt;
   final String? updatedAt;
+  final String audience;
+  final bool ragIndexed;
   final Map<String, dynamic> metadata;
   final String displayContent;
+
+  /// Published in Postgres but missing Chroma vectors (chatbot will miss it).
+  bool get ragStale => published && !ragIndexed;
 
   String? get documentType => metadata['document_type']?.toString();
   String? get sourceSection => metadata['source_section']?.toString();
@@ -97,6 +104,8 @@ class AdminArticle {
       publishedAt: json['published_at']?.toString(),
       createdAt: json['created_at']?.toString(),
       updatedAt: json['updated_at']?.toString(),
+      audience: _normalizeAudience(json['audience']),
+      ragIndexed: json['rag_indexed'] == true,
       metadata: parsed.metadata,
       displayContent: parsed.displayContent,
     );
@@ -119,6 +128,8 @@ class AdminArticle {
       publishedAt: json['published_at']?.toString(),
       createdAt: json['created_at']?.toString(),
       updatedAt: json['updated_at']?.toString(),
+      audience: _normalizeAudience(json['audience']),
+      ragIndexed: json['rag_indexed'] == true,
       metadata: _parseMetadataOnly(rawContent),
       displayContent: '',
     );
@@ -170,6 +181,7 @@ class AdminArticle {
     String? content,
     String? office,
     String? sourceFilename,
+    String? audience,
   }) {
     final payload = <String, dynamic>{};
     if (title != null) payload['title'] = title;
@@ -178,8 +190,17 @@ class AdminArticle {
     if (content != null) payload['content'] = content;
     if (office != null) payload['office'] = office;
     if (sourceFilename != null) payload['source_document'] = sourceFilename;
+    if (audience != null) payload['audience'] = _normalizeAudience(audience);
     return payload;
   }
+}
+
+String _normalizeAudience(Object? raw) {
+  final value = (raw ?? 'both').toString().trim().toLowerCase();
+  if (value == 'student' || value == 'faculty' || value == 'both') {
+    return value;
+  }
+  return 'both';
 }
 
 /// Promote a Low Quality candidate into a manual review draft (never auto-recommended).
@@ -225,6 +246,8 @@ AdminArticle stampManualReviewFromLowQuality(AdminArticle article) {
     publishedAt: article.publishedAt,
     createdAt: article.createdAt,
     updatedAt: article.updatedAt,
+    audience: article.audience,
+    ragIndexed: false,
     metadata: meta,
     displayContent: cleanArticleContentForDisplay(body),
   );

@@ -40,6 +40,7 @@ def chunk(
             "article": article,
             "section": section,
             "page_start": page,
+            "audience": "both",
         },
     )
 
@@ -96,8 +97,8 @@ def test_qa_absence_due_to_illness_uses_attendance_context():
         ],
     )
 
-    assert store.calls[0]["top_k"] == 5
-    assert store.calls[0]["raw_k"] == 10
+    assert store.calls[0]["top_k"] == 7
+    assert store.calls[0]["raw_k"] == 18
     assert "Title: Attendance Policy" in mock_generate.call_args.kwargs["context"]
     assert result.sources[0]["title"] == "Attendance Policy"
     assert result.confidence in {"high", "medium"}
@@ -139,6 +140,7 @@ def test_qa_validate_id_typed_procedure_answer_does_not_crash_on_source_label_fa
             "source_filename": "Citizens_Charter_2026.pdf",
             "office": "Office of the Student Affairs and Services",
             "page_number": 18,
+            "audience": "both",
         },
     )
     noise = RetrievedChunk(
@@ -156,11 +158,21 @@ def test_qa_validate_id_typed_procedure_answer_does_not_crash_on_source_label_fa
             "article_type": "requirement_form",
             "title": "Requirement: Clearance, Request Form Accounting",
             "extraction_status": "rag_only",
+            "audience": "both",
         },
     )
-    result, _, mock_generate = run_question("How do I validate my ID?", [noise, procedure_chunk])
+    store = FakeStore([noise, procedure_chunk])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=GroqAnswerError("Groq answer generation timed out."),
+        ),
+    ):
+        result = answer_qa_question("How do I validate my ID?")
 
-    assert mock_generate.call_count == 0
+    # How-tos prefer Groq; on failure, typed procedure formatter is used.
+    assert result.fallback_used is True
     assert "ID Validation" in result.answer or "validate" in result.answer.lower()
     assert "Certificate of Registration" in result.answer
     assert "Student ID" in result.answer
@@ -476,7 +488,7 @@ def test_scholastic_delinquency_question_sends_policy_context_and_returns_answer
         ]
     )
 
-    def generate_from_context(*, question: str, context: str) -> str:
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
         assert question == "What is scholastic delinquency?"
         assert "Content:\n" in context
         assert "The University Academic Council shall promulgate rules and guidelines" in context
@@ -528,7 +540,7 @@ def test_academic_policy_questions_generate_helpful_grounded_answers(question: s
         ]
     )
 
-    def generate_from_context(*, question: str, context: str) -> str:
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
         assert "Warning applies when a student fails 25% to 49%" in context
         assert "Probation applies when a student fails 50% to 74%" in context
         assert "Dismissal from the College may apply when a student fails more than 75%" in context
@@ -836,9 +848,9 @@ def test_specific_program_questions_use_normal_qa_retrieval():
         ],
     )
 
-    assert store.calls[0]["top_k"] == 5
-    assert store.calls[0]["raw_k"] == 10
-    assert "broad_mode" not in mock_generate.call_args.kwargs
+    assert store.calls[0]["top_k"] == 7
+    assert store.calls[0]["raw_k"] == 18
+    assert mock_generate.call_args.kwargs.get("broad_mode") is False
     assert result.collection_mode is False
 
 
@@ -1024,9 +1036,9 @@ def test_specific_queries_do_not_trigger_broad_mode(question: str):
         ],
     )
 
-    assert store.calls[0]["top_k"] == 5
-    assert store.calls[0]["raw_k"] == 10
-    assert "broad_mode" not in mock_generate.call_args.kwargs
+    assert store.calls[0]["top_k"] == 7
+    assert store.calls[0]["raw_k"] == 18
+    assert mock_generate.call_args.kwargs.get("broad_mode") is False
     assert result.broad_query is False
 
 
@@ -1111,7 +1123,7 @@ def test_out_of_scope_presidential_question_returns_low_confidence():
         ]
     )
 
-    def generate_from_context(*, question: str, context: str) -> str:
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
         assert question == "Who is the president of the Philippines?"
         return (
             "The retrieved context does not contain information about the president of the Philippines. "
@@ -1228,3 +1240,181 @@ def test_qa_context_format_includes_title_path_page_and_content():
     assert "Path: Undergraduate Academic Policies > Attendance > Attendance Policy" in context
     assert "Page: 46" in context
     assert "Content:\nStudents must submit an excuse slip." in context
+
+
+def test_factual_charter_fee_question_uses_groq_not_typed_dump():
+    """Fees / who-may-avail style FAQs must reach Groq instead of step templates."""
+    from app.services.qa.question_answering import NORMAL_QA, detect_collection_intent
+    from app.services.qa.service_answer_formatter import is_service_howto_query
+
+    enrollment = RetrievedChunk(
+        document_id="charter-enrollment",
+        title="Enrollment",
+        source_filename="Citizens_Charter_2026.pdf",
+        chunk_index=0,
+        text=(
+            "Office / Division\nOffice of the Registrar\n\n"
+            "Who May Avail\nAll eligible clients/students\n\n"
+            "Requirements\n"
+            "- Enrollment slip\n"
+            "- Original good moral certificate\n\n"
+            "Fees\nNone\n\n"
+            "Total Processing Time\n20 minutes\n"
+        ),
+        relevance_score=0.94,
+        original_score=0.9,
+        reranked_score=0.94,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "title": "Enrollment",
+            "office": "Office of the Registrar",
+            "who_may_avail": "All eligible clients/students",
+            "total_processing_time": "20 minutes",
+            "page_number": 12,
+            "audience": "both",
+        },
+    )
+
+    assert is_service_howto_query("How long is the total enrollment processing time?") is False
+    assert detect_collection_intent("Which office is responsible for the enrollment process?") == NORMAL_QA
+    assert (
+        detect_collection_intent("What are the enrollment requirements for a new college student?")
+        == NORMAL_QA
+    )
+
+    result, _, mock_generate = run_question(
+        "How long is the total enrollment processing time stated in the Citizen’s Charter?",
+        [enrollment],
+    )
+
+    assert mock_generate.call_count == 1
+    context = mock_generate.call_args.kwargs["context"]
+    assert "20 minutes" in context
+    assert "Office: Office of the Registrar" in context or "Office of the Registrar" in context
+    assert "To complete Enrollment, follow the steps below." not in result.answer
+
+
+def test_which_office_question_is_not_office_collection():
+    from app.services.qa.question_answering import NORMAL_QA, detect_collection_intent
+
+    assert detect_collection_intent("Which office is responsible for the enrollment process?") == NORMAL_QA
+    assert detect_collection_intent("What offices are there?") == "OFFICE_COLLECTION"
+
+
+def test_faculty_policy_questions_use_normal_qa_not_policy_collection():
+    from app.services.qa.question_answering import NORMAL_QA, POLICY_COLLECTION, detect_collection_intent
+
+    assert detect_collection_intent("What are the faculty grading policies?") == NORMAL_QA
+    assert detect_collection_intent("What are the responsibilities of faculty members?") == NORMAL_QA
+    assert detect_collection_intent("What are the student policies?") == POLICY_COLLECTION
+
+
+def test_who_may_avail_enrollment_recovers_from_charter_metadata():
+    from app.services.qa.groq_answer_service import GroqAnswerError
+
+    enrollment = RetrievedChunk(
+        document_id="enroll",
+        title="Enrollment",
+        source_filename="Citizens_Charter_2026.pdf",
+        chunk_index=0,
+        text=(
+            "Office / Division\nOffice of the Registrar\n\n"
+            "Who May Avail\nAll eligible clients/students\n\n"
+            "Requirements\n- Enrollment slip\n"
+        ),
+        relevance_score=0.91,
+        original_score=0.85,
+        reranked_score=0.91,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "title": "Enrollment",
+            "source_section": "Enrollment",
+            "office": "Office of the Registrar",
+            "who_may_avail": "All eligible clients/students",
+            "page_number": 12,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([enrollment])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=GroqAnswerError("Groq answer generation timed out."),
+        ),
+    ):
+        result = answer_qa_question("Who may avail of the enrollment")
+
+    assert "do not contain enough information" not in result.answer.lower()
+    assert "All eligible clients/students" in result.answer
+    assert "Enrollment" in result.answer
+    assert result.confidence in {"medium", "high"}
+
+
+def test_old_student_enrollment_documents_recovers_requirements():
+    from app.services.qa.groq_answer_service import GroqAnswerError
+
+    visitation = RetrievedChunk(
+        document_id="handbook",
+        title="Registrar Visitation",
+        source_filename="LSPU Student Handbook.pdf",
+        chunk_index=0,
+        text="8.1.3 Registrar Visitation procedures for campus visits.",
+        relevance_score=0.93,
+        original_score=0.9,
+        reranked_score=0.93,
+        metadata={
+            "section": "8.1.3 > Registrar Visitation",
+            "title": "Registrar Visitation",
+            "office": "Registrar",
+            "page_number": 37,
+            "audience": "both",
+        },
+    )
+    enrollment = RetrievedChunk(
+        document_id="enroll",
+        title="Enrollment",
+        source_filename="Citizens_Charter_2026.pdf",
+        chunk_index=1,
+        text=(
+            "Office / Division\nOffice of the Registrar\n\n"
+            "Requirements\n"
+            "- For new college students: Enrollment slip, good moral certificate\n"
+            "- For old students: Clearance, student ID, and evaluation of grades\n"
+            "- For transferees: TOR and Certificate of Transfer\n"
+        ),
+        relevance_score=0.8,
+        original_score=0.75,
+        reranked_score=0.8,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "title": "Enrollment",
+            "source_section": "Enrollment",
+            "office": "Office of the Registrar",
+            "extracted_requirements": (
+                '["Enrollment slip", "Clearance", "student ID", "evaluation of grades"]'
+            ),
+            "page_number": 10,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([visitation, enrollment])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=GroqAnswerError("Groq answer generation timed out."),
+        ),
+    ):
+        result = answer_qa_question(
+            "What documents are required from old students during enrollment?"
+        )
+
+    assert "responsible office" not in result.answer.lower()
+    assert "Registrar Visitation" not in result.answer
+    assert "Clearance" in result.answer or "student ID" in result.answer
+    assert "Enrollment" in result.answer
+

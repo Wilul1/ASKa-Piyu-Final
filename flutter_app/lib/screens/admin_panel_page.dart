@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import '../auth/auth_state.dart';
@@ -11,7 +13,9 @@ import '../screens/student_home.dart';
 import 'admin_generate_articles_page.dart';
 import 'admin_kb_workspace.dart';
 import '../services/admin_article_service.dart';
+import '../services/api_client.dart';
 import '../services/extraction_preview_store.dart';
+import '../services/file_pick.dart';
 import '../widgets/sidebar.dart';
 
 class _PipelineStage {
@@ -33,7 +37,7 @@ class AdminPanelPage extends StatefulWidget {
 class _AdminPanelPageState extends State<AdminPanelPage> {
   static const String _adminKeyHeader = 'x-admin-key';
 
-  html.File? _selectedFile;
+  PickedAppFile? _selectedFile;
   String? _selectedFileName;
   final TextEditingController _adminKeyController = TextEditingController();
   final TextEditingController _reviewController = TextEditingController();
@@ -112,13 +116,15 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
   Future<void> _loadKbStatistics() async {
     try {
-      final request = html.HttpRequest();
-      request.open('GET', '${AppConfig.resolvedApiBase}/admin/kb/statistics');
-      _setAdminHeader(request);
-      request.send();
-      await request.onLoadEnd.first;
-      if (request.status != 200 || !mounted) return;
-      final decoded = jsonDecode(request.responseText ?? '');
+      final headers = <String, String>{};
+      _setAdminHeader(headers);
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/admin/kb/statistics',
+        headers: headers,
+      );
+      if (result.statusCode != 200 || !mounted) return;
+      final decoded = result.json;
       if (decoded is Map) {
         setState(() {
           _kbStatistics = Map<String, dynamic>.from(decoded);
@@ -167,41 +173,65 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
 
   Future<void> _pickFile() async {
-    final input = html.FileUploadInputElement()
-      ..accept = '.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff'
-      ..click();
+    final picked = await pickAppFile(
+      allowedExtensions: const [
+        'pdf',
+        'png',
+        'jpg',
+        'jpeg',
+        'webp',
+        'bmp',
+        'tif',
+        'tiff',
+      ],
+      dialogTitle: 'Select a document',
+    );
+    if (picked == null) {
+      return;
+    }
 
-    input.onChange.first.then((_) {
-      final files = input.files;
-      if (files == null || files.isEmpty) {
-        return;
-      }
-
-      setState(() {
-        _selectedFile = files.first;
-        _selectedFileName = files.first.name;
-        _status = 'Ready to extract ${files.first.name}.';
-        _pipelineStages = _defaultPipelineStages();
-        _validationReport = null;
-        _kbStatistics = null;
-        _knowledgeUnits = [];
-        _chunkPreview = [];
-        _retrievalResults = [];
-        _rawOcrText = null;
-        _reviewController.clear();
-        _extractionPreview = null;
-        _extractedDocumentType = null;
-        _classificationReason = null;
-      });
+    setState(() {
+      _selectedFile = picked;
+      _selectedFileName = picked.name;
+      _status = 'Ready to extract ${picked.name}.';
+      _pipelineStages = _defaultPipelineStages();
+      _validationReport = null;
+      _kbStatistics = null;
+      _knowledgeUnits = [];
+      _chunkPreview = [];
+      _retrievalResults = [];
+      _rawOcrText = null;
+      _reviewController.clear();
+      _extractionPreview = null;
+      _extractedDocumentType = null;
+      _classificationReason = null;
     });
   }
 
   Future<void> _extractPreview() async {
     await _sendDocument(
       path: '/admin/knowledge-base/extract',
-      onSuccess: (data) {
+      onSuccess: (data) async {
         final extracted = data['review_text'] ?? data['extracted_text'];
         final rawText = data['raw_text'];
+        final documentType = formatDocumentTypeLabel(
+          data['detected_document_type'] ?? data['document_type'],
+        );
+        final classificationReason = formatClassificationReason(
+          data['detected_document_type'] ?? data['classification_reason'],
+        );
+        final knowledgeUnits = _readMapList(data['knowledge_units']);
+        final handoff = buildExtractionHandoffPackage(
+          extractResponse: data,
+          sourceFilename: _selectedFileName ??
+              data['source_filename']?.toString() ??
+              '',
+          status: 'Extraction preview is ready.',
+          classificationReason: classificationReason,
+        );
+        final preview = Map<String, dynamic>.from(handoff['preview'] as Map);
+        final saved = await AppConfig.saveLastExtractionPreview(handoff);
+        if (!mounted) return;
         setState(() {
           _reviewController.text = extracted is String
               ? _cleanPreviewText(extracted)
@@ -211,30 +241,14 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
           _pipelineStages = _readPipelineStages(data['pipeline_stages']);
           _validationReport = _readMap(data['validation_report']);
           _kbStatistics = _readMap(data['kb_statistics']);
-          _knowledgeUnits = _readMapList(data['knowledge_units']);
+          _knowledgeUnits = knowledgeUnits;
           _chunkPreview = _readMapList(data['chunk_preview']);
-          _extractionPreview = _buildExtractionPreview(data);
-          _extractedDocumentType = formatDocumentTypeLabel(
-            data['detected_document_type'] ?? data['document_type'],
-          );
-          _classificationReason = formatClassificationReason(
-            data['detected_document_type'] ?? data['classification_reason'],
-          );
+          _extractionPreview = preview;
+          _extractedDocumentType = documentType;
+          _classificationReason = classificationReason;
           _selectedOutlineIndex = 0;
           _candidateHintCount =
-              _knowledgeUnits.isEmpty ? null : _knowledgeUnits.length;
-          final handoff = buildExtractionHandoffPackage(
-            extractResponse: data,
-            sourceFilename: _selectedFileName ??
-                data['source_filename']?.toString() ??
-                '',
-            status: 'Extraction preview is ready.',
-            classificationReason: _classificationReason,
-          );
-          // Always keep in-memory preview for this Documents session.
-          _extractionPreview =
-              Map<String, dynamic>.from(handoff['preview'] as Map);
-          final saved = AppConfig.saveLastExtractionPreview(handoff);
+              knowledgeUnits.isEmpty ? null : knowledgeUnits.length;
           _status = saved
               ? 'Extraction preview is ready. Generate Articles can load this document.'
               : 'Extraction preview is ready, but saving for Generate Articles failed (browser storage full). Try Reload after clearing site data, or re-extract a smaller document.';
@@ -278,24 +292,23 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     });
 
     try {
-      final request = html.HttpRequest();
-      request.open(
-          'POST', '${AppConfig.resolvedApiBase}/admin/kb/retrieval-test');
-      _setAdminHeader(request);
-      request.setRequestHeader('Content-Type', 'application/json');
-      request.send(jsonEncode({'question': question, 'top_k': 5}));
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      _setAdminHeader(headers);
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/admin/kb/retrieval-test',
+        headers: headers,
+        jsonBody: {'question': question, 'top_k': 5},
+      );
 
-      await request.onLoadEnd.first;
-
-      final responseText = request.responseText ?? '';
-      final decoded = responseText.isNotEmpty
-          ? jsonDecode(responseText)
-          : <String, dynamic>{};
+      final decoded = result.json;
       final data = decoded is Map<String, dynamic>
           ? decoded
           : <String, dynamic>{'response': decoded};
 
-      if (request.status == 200) {
+      if (result.statusCode == 200) {
         setState(() {
           _retrievalResults = _readMapList(data['results']);
           _kbStatistics = _readMap(data['kb_statistics']) ?? _kbStatistics;
@@ -303,8 +316,8 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
               'Retrieval test returned ${_retrievalResults.length} chunks.';
         });
       } else {
-        setState(
-            () => _status = _adminRequestError(request.status, data['detail']));
+        setState(() =>
+            _status = _adminRequestError(result.statusCode, data['detail']));
       }
     } on StateError catch (error) {
       setState(() => _status = _adminAuthError(error.message));
@@ -319,7 +332,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
   Future<void> _sendDocument({
     required String path,
-    required void Function(Map<String, dynamic> data) onSuccess,
+    required FutureOr<void> Function(Map<String, dynamic> data) onSuccess,
     bool includeTitle = false,
   }) async {
     final file = _selectedFile;
@@ -336,11 +349,10 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     });
 
     try {
-      final formData = html.FormData();
-      formData.appendBlob('file', file, file.name);
+      final fields = <String, String>{};
       if (includeTitle) {
-        formData.append('title', file.name);
-        formData.append('reviewed_text', _reviewController.text.trim());
+        fields['title'] = file.name;
+        fields['reviewed_text'] = _reviewController.text.trim();
         // Force Citizen's Charter PDFs into the service_procedure ingest path.
         final lowerName = file.name.toLowerCase();
         final detected = (_extractedDocumentType ?? '').trim().toLowerCase();
@@ -354,29 +366,36 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
             detected.contains('charter') ||
             detected.contains('procedure') ||
             detected.contains('service')) {
-          formData.append('document_type', 'citizen_charter');
+          fields['document_type'] = 'citizen_charter';
         }
       }
 
-      final request = html.HttpRequest();
-      request.open('POST', '${AppConfig.resolvedApiBase}$path');
-      _setAdminHeader(request);
-      request.send(formData);
+      final headers = <String, String>{};
+      _setAdminHeader(headers);
+      final result = await ApiClient.multipart(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}$path',
+        headers: headers,
+        fields: fields.isEmpty ? null : fields,
+        files: [
+          http.MultipartFile.fromBytes(
+            'file',
+            file.bytes,
+            filename: file.name,
+          ),
+        ],
+      );
 
-      await request.onLoadEnd.first;
-
-      final responseText = request.responseText ?? '';
-      final decoded = responseText.isNotEmpty
-          ? jsonDecode(responseText)
-          : <String, dynamic>{};
+      final responseText = result.body;
+      final decoded = result.json;
       final data = decoded is Map<String, dynamic>
           ? decoded
           : <String, dynamic>{'response': decoded};
 
-      if (request.status == 200) {
-        onSuccess(data);
+      if (result.statusCode == 200) {
+        await onSuccess(data);
       } else {
-        final detail = _adminRequestError(request.status, data['detail']);
+        final detail = _adminRequestError(result.statusCode, data['detail']);
         setState(() {
           _status = detail;
           _reviewController.text = responseText;
@@ -399,17 +418,18 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     }
   }
 
-  void _setAdminHeader(html.HttpRequest request) {
+  void _setAdminHeader(Map<String, String> headers) {
     final auth = AuthScope.of(context);
     final token = auth.accessToken;
-    if (!_useLegacyAdminKey) {
+    // Release builds never accept the shared X-Admin-Key path.
+    if (!_useLegacyAdminKey || kReleaseMode) {
       if (auth.role != 'admin') {
         throw StateError('not_admin');
       }
       if (token == null || token.trim().isEmpty) {
         throw StateError('missing_admin_token');
       }
-      request.setRequestHeader('Authorization', 'Bearer $token');
+      headers['Authorization'] = 'Bearer $token';
       return;
     }
 
@@ -418,7 +438,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       throw StateError('missing_legacy_admin_key');
     }
     AppConfig.savedAdminKey = key;
-    request.setRequestHeader(_adminKeyHeader, key);
+    headers[_adminKeyHeader] = key;
   }
 
   String _adminAuthError(String message) {
@@ -516,7 +536,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     return [
       AdminKbWorkspace(
         fileName: _selectedFileName,
-        fileSizeBytes: _selectedFile?.size,
+        fileSizeBytes: _selectedFile?.bytes.length,
         isBusy: _isBusy,
         status: _status,
         pipelineStages: _pipelineStages
@@ -866,41 +886,43 @@ class _AdminAdvancedOptionsPanel extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: DesignTokens.muted),
           ),
           children: [
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Use legacy API key'),
-              subtitle: const Text(
-                'For scripts and local development without admin login.',
+            if (!kReleaseMode) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Use legacy API key'),
+                subtitle: const Text(
+                  'For scripts and local development without admin login.',
+                ),
+                value: useLegacyAdminKey,
+                onChanged: onToggleLegacy,
               ),
-              value: useLegacyAdminKey,
-              onChanged: onToggleLegacy,
-            ),
-            if (useLegacyAdminKey) ...[
-              const SizedBox(height: 8),
-              TextField(
-                controller: controller,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: 'Admin API key',
-                  hintText: 'Enter the backend admin key for this session',
-                  prefixIcon: const Icon(Icons.key_rounded),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: DesignTokens.border),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: DesignTokens.border),
+              if (useLegacyAdminKey) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  obscureText: true,
+                  onChanged: (value) => AppConfig.savedAdminKey = value,
+                  decoration: InputDecoration(
+                    labelText: 'Admin API key',
+                    hintText: 'Enter the backend admin key for this session',
+                    prefixIcon: const Icon(Icons.key_rounded),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: DesignTokens.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: DesignTokens.border),
+                    ),
                   ),
                 ),
-                onChanged: (value) => AppConfig.savedAdminKey = value,
-              ),
+              ],
+              const SizedBox(height: 12),
+              const Divider(),
+              const SizedBox(height: 8),
             ],
-            const SizedBox(height: 12),
-            const Divider(),
-            const SizedBox(height: 8),
             _RetrievalTestPanel(
               controller: retrievalController,
               isBusy: isRetrieving,

@@ -342,6 +342,38 @@ class KnowledgeBaseStore:
         if existing["ids"]:
             self._collection.delete(ids=existing["ids"])
 
+    def export_document(self, document_id: str) -> dict[str, Any] | None:
+        """Snapshot chunks for a document so re-index can restore on failure."""
+        existing = self._collection.get(
+            where={"document_id": document_id},
+            include=["documents", "metadatas"],
+        )
+        ids = list(existing.get("ids") or [])
+        if not ids:
+            return None
+        documents = list(existing.get("documents") or [])
+        metadatas = [dict(meta or {}) for meta in (existing.get("metadatas") or [])]
+        return {
+            "document_id": document_id,
+            "ids": ids,
+            "documents": documents,
+            "metadatas": metadatas,
+        }
+
+    def restore_document_export(self, export: dict[str, Any]) -> None:
+        """Restore a snapshot produced by ``export_document``."""
+        ids = list(export.get("ids") or [])
+        if not ids:
+            return
+        documents = list(export.get("documents") or [])
+        metadatas = [dict(meta or {}) for meta in (export.get("metadatas") or [])]
+        if len(documents) != len(ids) or len(metadatas) != len(ids):
+            raise ValueError("Invalid document export: ids/documents/metadatas length mismatch.")
+        document_id = str(export.get("document_id") or "").strip()
+        if document_id:
+            self.delete_document(document_id)
+        self._collection.add(ids=ids, documents=documents, metadatas=metadatas)
+
     def delete_by_source_filename(self, source_filename: str) -> int:
         """Remove all chunks previously indexed for the same source PDF/filename.
 

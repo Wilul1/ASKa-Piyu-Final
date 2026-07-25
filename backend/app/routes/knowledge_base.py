@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, unquote
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
-from app.models.db_models import PublishedArticle
+from app.models.db_models import PublishedArticle, User
 from app.services.article_content_formatter import strip_embedded_article_metadata
+from app.services.auth import get_current_user, get_optional_user
 
 from app.services.chroma_store import RetrievedChunk, get_knowledge_base_store
 from app.services.knowledge_taxonomy import (
@@ -19,6 +20,7 @@ from app.services.knowledge_taxonomy import (
     decode_keywords,
     knowledge_base_taxonomy,
 )
+from app.services.qa_rate_limit import check_qa_rate_limit
 from app.services.retrieval_reranker import prepare_retrieval_query
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ async def list_articles(
     offset: int = Query(default=0, ge=0),
     debug: bool = Query(default=False),
     session: Session = Depends(get_db_session),
+    current_user: User | None = Depends(get_optional_user),
 ) -> dict[str, Any]:
     """Public Knowledge Base lists PostgreSQL published_articles only.
 
@@ -73,10 +76,14 @@ async def list_articles(
         logger.warning("PublishedArticle query failed: %s", e)
         rows = []
 
+    role = current_user.role if current_user is not None else None
+    rows = [art for art in rows if _article_visible_for_role(art, role)]
     articles = [_published_article_summary(art) for art in rows]
     filtered = _filter_published_articles(articles, q=q, category=category)
     displayed = list(filtered)
-    if not debug:
+    # Identity debug fields are admin-only.
+    debug_enabled = bool(debug) and current_user is not None and current_user.role == "admin"
+    if not debug_enabled:
         displayed = [_without_identity_debug(item) for item in displayed]
     return {
         "items": displayed[offset : offset + limit],
@@ -88,13 +95,33 @@ async def list_articles(
 
 
 @router.get("/articles/{article_id:path}", summary="Read one published Knowledge Base article")
-async def get_article(article_id: str, session: Session = Depends(get_db_session)) -> dict[str, Any]:
+async def get_article(
+    article_id: str,
+    session: Session = Depends(get_db_session),
+    current_user: User | None = Depends(get_optional_user),
+) -> dict[str, Any]:
     """Public article detail serves published PostgreSQL articles only."""
     pub_id = article_id[4:] if article_id.startswith("pub:") else article_id
     article = session.get(PublishedArticle, pub_id)
     if article is None or not bool(article.published):
         raise HTTPException(status_code=404, detail="Article not found")
+    role = current_user.role if current_user is not None else None
+    if not _article_visible_for_role(article, role):
+        raise HTTPException(status_code=404, detail="Article not found")
     return _published_article_detail(article)
+
+
+def _article_visible_for_role(article: PublishedArticle, role: str | None) -> bool:
+    audience = str(getattr(article, "audience", None) or "student").strip().lower()
+    normalized_role = (role or "student").strip().lower()
+    if normalized_role in {"office", "admin"}:
+        return True
+    if audience in {"", "both"}:
+        return True
+    if normalized_role == "faculty":
+        # Faculty can browse student-facing campus FAQs as well as faculty-only.
+        return audience in {"student", "faculty", "both"}
+    return audience in {"student", "both"}
 
 
 def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
@@ -257,7 +284,10 @@ def _filter_published_articles(
 
 
 @router.get("/categories", summary="List categories for published Knowledge Base articles")
-async def list_categories(session: Session = Depends(get_db_session)) -> dict[str, Any]:
+async def list_categories(
+    session: Session = Depends(get_db_session),
+    current_user: User | None = Depends(get_optional_user),
+) -> dict[str, Any]:
     """Category cards are derived from published PostgreSQL articles only."""
     try:
         rows = (
@@ -268,6 +298,9 @@ async def list_categories(session: Session = Depends(get_db_session)) -> dict[st
     except Exception as e:
         logger.warning("PublishedArticle category query failed: %s", e)
         rows = []
+
+    role = current_user.role if current_user is not None else None
+    rows = [art for art in rows if _article_visible_for_role(art, role)]
 
     by_category: dict[str, list[PublishedArticle]] = {}
     for art in rows:
@@ -315,7 +348,17 @@ async def list_categories(session: Session = Depends(get_db_session)) -> dict[st
 
 
 @router.get("/classify", summary="Classify a question for support routing")
-async def classify_for_routing(q: str = Query(..., min_length=3)) -> dict[str, Any]:
+async def classify_for_routing(
+    request: Request,
+    q: str = Query(..., min_length=3),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    rate_key = f"classify:user:{current_user.id}"
+    if not check_qa_rate_limit(rate_key, authenticated=True, limit=30):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many classify requests. Please wait a moment and try again.",
+        )
     result = classify_question(q)
     return {
         "category": result.category,
@@ -329,7 +372,10 @@ async def classify_for_routing(q: str = Query(..., min_length=3)) -> dict[str, A
 
 
 @router.get("/popular", summary="List common published Knowledge Base topics")
-async def popular_articles(session: Session = Depends(get_db_session)) -> dict[str, Any]:
+async def popular_articles(
+    session: Session = Depends(get_db_session),
+    current_user: User | None = Depends(get_optional_user),
+) -> dict[str, Any]:
     try:
         rows = (
             session.query(PublishedArticle)
@@ -339,6 +385,8 @@ async def popular_articles(session: Session = Depends(get_db_session)) -> dict[s
     except Exception as e:
         logger.warning("PublishedArticle popular query failed: %s", e)
         rows = []
+    role = current_user.role if current_user is not None else None
+    rows = [art for art in rows if _article_visible_for_role(art, role)]
     articles = [_published_article_summary(art) for art in rows]
     for article in articles:
         article.pop("_search_blob", None)

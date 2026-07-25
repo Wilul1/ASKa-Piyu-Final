@@ -224,8 +224,24 @@ class RetrievalTestResponse(BaseModel):
 # --- Student: question answering (ChromaDB search only) ---
 
 
+class QAChatMessage(BaseModel):
+    """One prior chat turn for multi-turn QA (user or assistant)."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str) -> str:
+        cleaned = " ".join(str(value or "").split())
+        if not cleaned:
+            raise ValueError("Message content cannot be empty.")
+        return cleaned[:4000]
+
+
 class AskQuestionRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=2000)
+    history: list[QAChatMessage] = Field(default_factory=list, max_length=12)
 
 
 class SourceChunk(BaseModel):
@@ -243,6 +259,8 @@ class AskQuestionResponse(BaseModel):
     question: str
     answer: str
     sources: list[SourceChunk]
+    confidence: str | None = None
+    degraded: bool | None = None
 
 
 # --- Production QA chatbot ---
@@ -251,6 +269,8 @@ class AskQuestionResponse(BaseModel):
 class QAAskRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=2000)
     debug: bool = False
+    # Recent turns only — oldest first. Backend keeps at most ~8 messages.
+    history: list[QAChatMessage] = Field(default_factory=list, max_length=12)
 
 
 class QASourceSchema(BaseModel):
@@ -331,6 +351,8 @@ class QAAskResponse(BaseModel):
     program_scope: dict | None = None
     query_expansions_used: list[str] | None = None
     rerank_reasons: list[dict] | None = None
+    # Public soft signal when answering without the LLM (extractive/templates).
+    degraded: bool | None = None
     fallback_used: bool | None = None
     fallback_reason: str | None = None
     out_of_scope_detected: bool | None = None
@@ -362,7 +384,10 @@ class DocumentSourceMetaSchema(BaseModel):
 
 TicketStatus = Literal["Open", "In Progress", "Resolved", "Closed"]
 TicketPriority = Literal["Urgent", "High", "Medium", "Low"]
-TicketSenderRole = Literal["student", "office", "admin"]
+TicketSenderRole = Literal["student", "faculty", "office", "admin"]
+KbAudience = Literal["student", "faculty", "both"]
+KbConversionStatus = Literal["none", "draft", "published"]
+KbOrigin = Literal["document", "ticket_resolution"]
 
 
 class TicketTriageSchema(BaseModel):
@@ -466,6 +491,35 @@ class TicketSchema(BaseModel):
     replies_count: int = 0
     messages: list[TicketMessageSchema] = Field(default_factory=list)
     attachments: list[TicketAttachmentSchema] = Field(default_factory=list)
+    kb_article_id: str | None = None
+    kb_conversion_status: KbConversionStatus = "none"
+
+
+class ConvertTicketToArticleRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=3, max_length=240)
+    content: str | None = Field(default=None, min_length=20, max_length=20000)
+    summary: str | None = Field(default=None, max_length=2000)
+    audience: KbAudience | None = None
+
+
+class TicketKbArticleSchema(BaseModel):
+    article_id: str
+    title: str
+    slug: str | None = None
+    category: str
+    office: str | None = None
+    audience: KbAudience = "both"
+    kb_origin: KbOrigin = "ticket_resolution"
+    summary: str | None = None
+    content: str | None = None
+    resolution_summary: str | None = None
+    published: bool = False
+    rag_indexed: bool = False
+    source_ticket_id: str | None = None
+    kb_conversion_status: KbConversionStatus = "draft"
+    created_at: str | None = None
+    updated_at: str | None = None
+    published_at: str | None = None
 
 
 class CreateTicketRequest(BaseModel):
@@ -476,6 +530,16 @@ class CreateTicketRequest(BaseModel):
     preferred_office_id: str | None = Field(default=None, min_length=2, max_length=36)
     preferred_office: str | None = Field(default=None, min_length=2, max_length=120)
     preferred_priority: TicketPriority | None = None
+    # Office/admin: open ticket owned by this student/faculty email.
+    on_behalf_of_email: str | None = Field(default=None, max_length=255)
+
+    @field_validator("on_behalf_of_email")
+    @classmethod
+    def normalize_on_behalf_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        email = value.strip().lower()
+        return email or None
 
 
 class UpdateTicketRequest(BaseModel):
@@ -501,13 +565,38 @@ class TicketStatisticsResponse(BaseModel):
     in_progress: int
     resolved: int
     closed: int
+    high_priority: int = 0
     by_office: dict[str, int] = Field(default_factory=dict)
+    by_priority: dict[str, int] = Field(default_factory=dict)
+    by_category: dict[str, int] = Field(default_factory=dict)
+
+
+class CreateOfficeRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=120)
+    service_category: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if len(cleaned) < 2:
+            raise ValueError("Office name is required.")
+        return cleaned
+
+    @field_validator("service_category", "description")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        return cleaned or None
 
 
 # --- Authentication ---
 
 
-UserRole = Literal["student", "office", "admin"]
+UserRole = Literal["student", "faculty", "office", "admin"]
 
 
 class UserSchema(BaseModel):
@@ -518,13 +607,25 @@ class UserSchema(BaseModel):
     office_id: str | None = None
     office_name: str | None = None
     student_id: str | None = None
+    is_active: bool = True
     created_at: str
     updated_at: str
 
 
+def _validate_strong_password(value: str) -> str:
+    password = value or ""
+    if len(password) < 10:
+        raise ValueError("Password must be at least 10 characters.")
+    if not any(ch.isalpha() for ch in password):
+        raise ValueError("Password must include at least one letter.")
+    if not any(ch.isdigit() for ch in password):
+        raise ValueError("Password must include at least one number.")
+    return password
+
+
 class SignupRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
-    password: str = Field(..., min_length=8, max_length=256)
+    password: str = Field(..., min_length=10, max_length=256)
     full_name: str = Field(..., min_length=1, max_length=255)
     role: UserRole = "student"
     student_id: str | None = Field(default=None, max_length=80)
@@ -550,10 +651,46 @@ class SignupRequest(BaseModel):
         student_id = value.strip()
         return student_id or None
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_strong_password(value)
+
+    @field_validator("role")
+    @classmethod
+    def validate_public_role(cls, value: UserRole) -> UserRole:
+        if value != "student":
+            raise ValueError("Public signup supports student accounts only.")
+        return value
+
+
+class CreateFacultyAccountRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=10, max_length=256)
+    full_name: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+            raise ValueError("Enter a valid email address.")
+        return email
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_full_name(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_strong_password(value)
+
 
 class CreateOfficeAccountRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
-    password: str = Field(..., min_length=8, max_length=256)
+    password: str = Field(..., min_length=10, max_length=256)
     full_name: str = Field(..., min_length=1, max_length=255)
     office_id: str | None = Field(default=None, min_length=2, max_length=36)
     office_name: str | None = Field(default=None, min_length=2, max_length=120)
@@ -571,6 +708,11 @@ class CreateOfficeAccountRequest(BaseModel):
     def normalize_full_name(cls, value: str) -> str:
         return " ".join(value.split())
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_strong_password(value)
+
 
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
@@ -580,6 +722,29 @@ class LoginRequest(BaseModel):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         return value.strip().lower()
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=256)
+    new_password: str = Field(..., min_length=10, max_length=256)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_strong_password(value)
+
+
+class AdminSetUserActiveRequest(BaseModel):
+    is_active: bool
+
+
+class AdminResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=10, max_length=256)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_strong_password(value)
 
 
 class AuthResponse(BaseModel):
@@ -617,6 +782,8 @@ class AdminPublishedArticleCreate(BaseModel):
     preview_file_path: str | None = None
     update_existing_id: str | None = None
     force_create: bool = False
+    audience: KbAudience | None = None
+    source_ticket_id: str | None = None
 
 
 class AdminPublishedArticleUpdate(BaseModel):
@@ -637,6 +804,7 @@ class AdminPublishedArticleUpdate(BaseModel):
     needs_review: bool | None = None
     category_confidence: float | None = None
     preview_file_path: str | None = None
+    audience: KbAudience | None = None
 
 
 class AdminPublishedArticleSchema(BaseModel):
@@ -660,6 +828,13 @@ class AdminPublishedArticleSchema(BaseModel):
     source_section: str | None = None
     article_type: str | None = None
     document_type: str | None = None
+    audience: KbAudience = "both"
+    kb_origin: KbOrigin = "document"
+    source_ticket_id: str | None = None
+    resolution_summary: str | None = None
+    published_by_user_id: str | None = None
+    rag_indexed: bool = False
+    rag_document_id: str | None = None
 
 
 class AdminBulkArticleItem(BaseModel):
@@ -675,6 +850,7 @@ class AdminBulkArticleItem(BaseModel):
     office: str | None = None
     summary: str | None = None
     content: str | None = None
+    audience: str | None = None
     publish_status: bool = False
     needs_review: bool = False
     planner_bucket: str | None = None

@@ -11,10 +11,34 @@ from tests.db_helpers import cleanup_all_published_articles
 client = TestClient(app)
 ADMIN_HEADERS = {"x-admin-key": "test-admin-key"}
 
+_INDEXED: list[str] = []
+_DELETED: list[str] = []
+
+
+class _FakeStore:
+    def export_document(self, document_id: str):
+        return None
+
+    def restore_document_export(self, export):
+        return None
+
+    def delete_document(self, document_id: str) -> None:
+        _DELETED.append(document_id)
+
+    def add_document_chunks(self, **kwargs):
+        _INDEXED.append(kwargs["document_id"])
+        return len(kwargs.get("chunks") or [])
+
 
 @pytest.fixture(autouse=True)
 def _admin_key(monkeypatch):
     monkeypatch.setattr("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
+    _INDEXED.clear()
+    _DELETED.clear()
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.get_knowledge_base_store",
+        lambda: _FakeStore(),
+    )
 
 
 def _cleanup_all():
@@ -86,6 +110,102 @@ def test_bulk_publish_recommended_and_block_unsafe_buckets():
         assert len(rows) == 1
         assert rows[0].published is True
         assert rows[0].title == "Retention Requirement"
+        assert rows[0].rag_indexed is True
+        assert rows[0].rag_document_id
+    finally:
+        session.close()
+    assert any(doc_id.startswith("faq:") for doc_id in _INDEXED)
+
+
+def test_bulk_save_draft_sets_audience_from_field_or_filename():
+    _cleanup_all()
+    response = client.post(
+        "/admin/kb/articles/bulk-save-draft",
+        headers=ADMIN_HEADERS,
+        json={
+            "articles": [
+                {
+                    "preview_id": "aud-1",
+                    "title": "Faculty load policy",
+                    "category": "Faculty Affairs",
+                    "summary": "Summary",
+                    "content": "Faculty teaching load rules for full-time instructors.",
+                    "source_document": "LSPU Faculty Manual 2020.pdf",
+                    "document_type": "faculty_manual",
+                    "planner_bucket": "recommended",
+                    "force_create": True,
+                },
+                {
+                    "preview_id": "aud-2",
+                    "title": "Student ID validation",
+                    "category": "Student Services",
+                    "summary": "Summary",
+                    "content": "Students must present a valid school ID.",
+                    "audience": "student",
+                    "planner_bucket": "recommended",
+                    "force_create": True,
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["success_count"] == 2
+    session = get_session_factory()()
+    try:
+        by_title = {
+            row.title: row.audience
+            for row in session.query(PublishedArticle).all()
+        }
+        assert by_title["Faculty load policy"] == "faculty"
+        assert by_title["Student ID validation"] == "student"
+    finally:
+        session.close()
+
+
+def test_bulk_save_draft_uses_unique_slugs_for_same_title():
+    _cleanup_all()
+    response = client.post(
+        "/admin/kb/articles/bulk-save-draft",
+        headers=ADMIN_HEADERS,
+        json={
+            "articles": [
+                {
+                    "preview_id": "slug-1",
+                    "title": "Same Title FAQ",
+                    "category": "Student Services",
+                    "summary": "Summary 1",
+                    "content": "Body 1",
+                    "planner_bucket": "recommended",
+                    "force_create": True,
+                },
+                {
+                    "preview_id": "slug-2",
+                    "title": "Same Title FAQ",
+                    "category": "Student Services",
+                    "summary": "Summary 2",
+                    "content": "Body 2",
+                    "planner_bucket": "recommended",
+                    "force_create": True,
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success_count"] == 2
+
+    session = get_session_factory()()
+    try:
+        rows = (
+            session.query(PublishedArticle)
+            .filter(PublishedArticle.title == "Same Title FAQ")
+            .order_by(PublishedArticle.created_at.asc())
+            .all()
+        )
+        assert len(rows) == 2
+        slugs = {row.slug for row in rows}
+        assert "same-title-faq" in slugs
+        assert "same-title-faq-2" in slugs
     finally:
         session.close()
 
@@ -147,6 +267,114 @@ def test_bulk_save_draft_allows_needs_review_blocks_low_quality():
     titles = {item.get("title") for item in articles if isinstance(item, dict)}
     assert "Draft Recommended" not in titles
     assert "Draft Needs Review" not in titles
+
+
+def test_bulk_publish_fail_closes_when_rag_index_fails(monkeypatch):
+    """Bulk publish must not leave published=true if Chroma indexing fails."""
+    _cleanup_all()
+
+    class _FailStore(_FakeStore):
+        def add_document_chunks(self, **kwargs):
+            raise RuntimeError("chroma write failed")
+
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.get_knowledge_base_store",
+        lambda: _FailStore(),
+    )
+
+    response = client.post(
+        "/admin/kb/articles/bulk-publish",
+        headers=ADMIN_HEADERS,
+        json={
+            "articles": [
+                {
+                    "preview_id": "rag-fail",
+                    "title": "Ghost Article Prevention",
+                    "category": "Academic Policies",
+                    "summary": "Must stay draft when RAG fails.",
+                    "content": (
+                        "Overview\nGhost Article Prevention\n\n"
+                        "Students follow the published handbook procedure for this request."
+                    ),
+                    "source_document": "handbook.pdf",
+                    "planner_bucket": "recommended",
+                    "needs_review": False,
+                    "force_create": True,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["failure_count"] == 1
+    item = body["results"][0]
+    assert item["success"] is False
+    assert item["code"] == "rag_index_failed"
+    assert item["published"] is False
+    assert "reverted to unpublished" in item["error"]
+    article_id = item["id"]
+    assert article_id
+
+    session = get_session_factory()()
+    try:
+        art = session.get(PublishedArticle, article_id)
+        assert art is not None
+        assert art.published is False
+        assert art.rag_indexed is False
+    finally:
+        session.close()
+
+    public = client.get("/kb/articles")
+    assert public.status_code == 200
+    payload = public.json()
+    articles = payload if isinstance(payload, list) else payload.get("items", payload.get("articles", []))
+    titles = {row.get("title") for row in articles if isinstance(row, dict)}
+    assert "Ghost Article Prevention" not in titles
+
+
+def test_create_publish_fail_closes_when_rag_index_fails(monkeypatch):
+    _cleanup_all()
+
+    class _FailStore(_FakeStore):
+        def add_document_chunks(self, **kwargs):
+            raise RuntimeError("chroma write failed")
+
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.get_knowledge_base_store",
+        lambda: _FailStore(),
+    )
+
+    response = client.post(
+        "/admin/kb/articles",
+        headers=ADMIN_HEADERS,
+        json={
+            "title": "Create Ghost Prevention",
+            "category": "Student Services",
+            "summary": "Validate ID.",
+            "content": (
+                "Overview\nCreate Ghost Prevention\n\n"
+                "Bring a valid school ID to the Registrar for validation."
+            ),
+            "source_document": "charter.pdf",
+            "publish_status": True,
+            "force_create": True,
+        },
+    )
+    assert response.status_code == 502, response.text
+    assert "reverted to unpublished" in response.text
+
+    session = get_session_factory()()
+    try:
+        arts = (
+            session.query(PublishedArticle)
+            .filter(PublishedArticle.title == "Create Ghost Prevention")
+            .all()
+        )
+        assert len(arts) == 1
+        assert arts[0].published is False
+        assert arts[0].rag_indexed is False
+    finally:
+        session.close()
 
 
 def test_bulk_publish_reports_duplicate_without_failing_batch():
@@ -256,8 +484,10 @@ def test_bulk_unpublish_keeps_rows_as_drafts_and_hides_from_public_kb():
         rows = session.query(PublishedArticle).order_by(PublishedArticle.title).all()
         assert len(rows) == 2
         assert all(row.published is False for row in rows)
+        assert all(row.rag_indexed is False for row in rows)
     finally:
         session.close()
+    assert len(_DELETED) >= 2
 
     public_after = client.get("/kb/articles")
     assert public_after.status_code == 200

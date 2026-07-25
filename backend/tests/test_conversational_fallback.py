@@ -51,6 +51,7 @@ def _chunk(
             "article_type": article_type,
             "page_number": page,
             "source_filename": "LSPU_Student_Handbook.pdf",
+            "audience": "both",
         },
     )
 
@@ -194,3 +195,191 @@ def test_llm_failure_service_question_uses_service_formatter():
         18,
         "18",
     }
+
+
+def test_faculty_policy_fallback_prefers_faculty_manual_and_clean_label():
+    student = RetrievedChunk(
+        document_id="sh",
+        title="Student Handbook",
+        source_filename="LSPU Student Handbook.pdf",
+        chunk_index=0,
+        text="Course Load Graduate Studies > Article 5 > Course Load and Requirements.",
+        relevance_score=0.9,
+        metadata={
+            "section": "Course Load",
+            "source_section": "Sec. 1 > Course Load",
+            "source_filename": "LSPU Student Handbook.pdf",
+            "page_number": 56,
+        },
+    )
+    faculty = RetrievedChunk(
+        document_id="fm",
+        title="Faculty Manual",
+        source_filename="LSPU Faculty Manual 2020.pdf",
+        chunk_index=1,
+        text=(
+            "Teaching Load Assignment. The Dean / Associate Dean of the College are "
+            "responsible in the preparation and assignment of teaching loads."
+        ),
+        relevance_score=0.75,
+        metadata={
+            "section": "Teaching Load Assignment",
+            "source_section": "D. Teaching Load Assignment",
+            "source_filename": "LSPU Faculty Manual 2020.pdf",
+            "page_number": 22,
+        },
+    )
+    answer = format_conversational_fallback(
+        "How is teaching load assigned at LSPU?",
+        [student, faculty],
+    )
+    assert "Dean" in answer or "teaching loads" in answer.casefold()
+    assert "I found information under" not in answer
+    assert "Open the cited source" not in answer
+    assert "Based on" not in answer
+    assert "See the cited source" not in answer
+
+
+def test_faculty_responsibilities_fallback_skips_breadcrumb_heading_noise():
+    noisy = RetrievedChunk(
+        document_id="noise",
+        title="Faculty Manual",
+        source_filename="LSPU Faculty Manual 2020.pdf",
+        chunk_index=0,
+        text=(
+            "Regular Faculty Designated as Chairperson B. Faculty Attendance and Absences "
+            "> 1.2 > Regular Faculty Designated as Chairperson"
+        ),
+        relevance_score=0.9,
+        metadata={
+            "section": "Regular Faculty Designated as Chairperson",
+            "source_section": "1.2 > Regular Faculty Designated as Chairperson",
+            "source_filename": "LSPU Faculty Manual 2020.pdf",
+        },
+    )
+    commitment = RetrievedChunk(
+        document_id="commit",
+        title="Faculty Manual",
+        source_filename="LSPU Faculty Manual 2020.pdf",
+        chunk_index=1,
+        text=(
+            "Teaching is a personal commitment of oneself to others with the intention "
+            "to fulfill these obligations to satisfaction."
+        ),
+        relevance_score=0.8,
+        metadata={
+            "section": "Commitment of the LSPU Faculty",
+            "source_section": "III. Commitment of the LSPU Faculty",
+            "source_filename": "LSPU Faculty Manual 2020.pdf",
+        },
+    )
+    answer = format_conversational_fallback(
+        "What are the responsibilities of faculty members?",
+        [noisy, commitment],
+    )
+    assert "personal commitment" in answer.casefold()
+    assert "I found information under" not in answer
+    assert "Open the cited source" not in answer
+    assert " > " not in answer
+
+
+def test_policy_fallback_answers_directly_without_pointer_phrasing():
+    chunk = RetrievedChunk(
+        document_id="ret",
+        title="Retention",
+        source_filename="LSPU Student Handbook.pdf",
+        chunk_index=0,
+        text=(
+            "A student who fails 75% of the total number of academic units enrolled "
+            "in a semester shall be dismissed from the university."
+        ),
+        relevance_score=0.9,
+        metadata={"section": "Dismissal", "source_filename": "LSPU Student Handbook.pdf"},
+    )
+    answer = format_conversational_fallback("What is the dismissal policy?", [chunk])
+    assert "dismissed" in answer.casefold()
+    assert "I found information under" not in answer
+    assert "Open the cited source" not in answer
+    assert "See the cited source" not in answer
+    assert not answer.casefold().startswith("based on")
+
+
+def test_policy_fallback_skips_unrelated_charter_overview_for_any_definition():
+    """Offline answers must not dump charter Overview boilerplate for handbook FAQs."""
+    overview = RetrievedChunk(
+        document_id="cc",
+        title="Research Program/Project Implementation of LSPU Funded",
+        source_filename="charter.pdf",
+        chunk_index=0,
+        text=(
+            "Overview\n"
+            "This service provides assistance for Research Program/Project Implementation of LSPU Funded.\n"
+            "Office / Division Not specified\n"
+            "Who May Avail Not specified"
+        ),
+        relevance_score=0.95,
+        metadata={
+            "article_type": "service_procedure",
+            "document_type": "citizen_charter",
+            "source_section": "Research Program/Project Implementation of LSPU Funded",
+        },
+    )
+    vision = RetrievedChunk(
+        document_id="hb",
+        title="VISION",
+        source_filename="LSPU Student Handbook.pdf",
+        chunk_index=1,
+        text=(
+            "VISION\n"
+            "LSPU as a center of technology-mediated instruction and innovation "
+            "in agriculture and other disciplines."
+        ),
+        relevance_score=0.8,
+        metadata={
+            "section": "VISION",
+            "source_section": "VISION",
+            "document_type": "student_handbook",
+        },
+    )
+    answer = format_conversational_fallback(
+        "What is LSPU's vision?",
+        [overview, vision],
+    )
+    assert "center of technology" in answer.casefold() or "vision" in answer.casefold()
+    assert "this service provides assistance" not in answer.casefold()
+    assert "research program" not in answer.casefold()
+
+
+def test_office_fallback_ranks_by_topic_overlap_not_hardcoded_service():
+    board = RetrievedChunk(
+        document_id="a",
+        title="III. OFFICE OF THE UNIVERSITY BOARD SECRETARY",
+        source_filename="charter.pdf",
+        chunk_index=0,
+        text="Office / Division: Office of the University Board Secretary",
+        relevance_score=0.9,
+        metadata={
+            "article_type": "service_procedure",
+            "source_section": "III. OFFICE OF THE UNIVERSITY BOARD SECRETARY",
+            "office": "Office of the University Board Secretary",
+        },
+    )
+    enrollment = RetrievedChunk(
+        document_id="b",
+        title="Enrollment",
+        source_filename="charter.pdf",
+        chunk_index=1,
+        text="Office / Division: Office of the Registrar",
+        relevance_score=0.7,
+        metadata={
+            "article_type": "service_procedure",
+            "source_section": "Enrollment",
+            "office": "Office of the Registrar",
+        },
+    )
+    answer = format_conversational_fallback(
+        "Which office handles that regarding How do I enroll at LSPU?",
+        [board, enrollment],
+    )
+    assert "registrar" in answer.casefold()
+    assert "board secretary" not in answer.casefold()

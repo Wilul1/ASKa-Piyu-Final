@@ -5,9 +5,11 @@ import '../design_tokens.dart';
 import '../screens/admin_management_pages.dart';
 import '../screens/admin_panel_page.dart';
 import '../screens/admin_generate_articles_page.dart';
+import '../screens/announcements_page.dart';
 import '../screens/chatbot_page.dart';
 import '../screens/knowledge_base_page.dart';
 import '../screens/login_page.dart';
+import '../screens/settings_page.dart';
 import '../screens/student_home.dart';
 import '../screens/my_tickets_page.dart';
 
@@ -40,7 +42,7 @@ class AppSidebar extends StatelessWidget {
     final auth = AuthScope.of(context);
     final user = auth.currentUser;
     final role = user?.role.trim().toLowerCase();
-    final isStudent = role == 'student';
+    final isStudent = role == 'student' || role == 'faculty';
     final isOffice = role == 'office';
     final isAdmin = role == 'admin';
 
@@ -62,10 +64,14 @@ class AppSidebar extends StatelessWidget {
             StudentNavItem.adminKnowledgeBase),
         _SidebarData('Generate Articles', Icons.auto_awesome_rounded,
             StudentNavItem.adminGenerateArticles),
+        _SidebarData('Announcements', Icons.campaign_rounded,
+            StudentNavItem.announcements),
         _SidebarData('Users & Roles', Icons.manage_accounts_rounded,
             StudentNavItem.adminUsersRoles),
         _SidebarData(
             'Offices', Icons.apartment_rounded, StudentNavItem.adminOffices),
+        _SidebarData(
+            'Reports', Icons.insights_rounded, StudentNavItem.adminReports),
       ]);
     } else {
       // Guest + student: public/student support shell.
@@ -82,6 +88,10 @@ class AppSidebar extends StatelessWidget {
               'My Tickets', Icons.fact_check_rounded, StudentNavItem.myTickets),
           _SidebarData('Submit Ticket', Icons.add_task_rounded,
               StudentNavItem.submitTicket),
+          _SidebarData('Announcements', Icons.campaign_rounded,
+              StudentNavItem.announcements),
+          _SidebarData(
+              'Settings', Icons.settings_rounded, StudentNavItem.settings),
         ]);
       }
     }
@@ -183,7 +193,7 @@ class AppSidebar extends StatelessWidget {
                       icon: Icons.logout_rounded,
                       selected: false,
                       onTap: () {
-                        auth.logout();
+                        auth.logout(); // ignore: unawaited_futures
                         Navigator.of(context).pushAndRemoveUntil(
                           MaterialPageRoute(
                               builder: (_) => const StudentHomePage()),
@@ -311,6 +321,21 @@ class AppSidebar extends StatelessWidget {
       openAdminPage(
         context,
         builder: (_) => const AdminReportsPage(),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.announcements) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AnnouncementsPage()),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.settings) {
+      openProtectedPage(
+        context,
+        builder: (_) => const SettingsPage(),
       );
       return;
     }

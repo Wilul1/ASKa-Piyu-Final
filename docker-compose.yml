@@ -5,10 +5,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: aska1234
+      # No default password — set POSTGRES_PASSWORD in repo-root .env (see .env.example).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env — do not use a blank or default password}
       POSTGRES_DB: aska_piyu
-    ports:
-      - "5432:5432"
+    # Intentionally no host ports: Postgres stays on the Docker network only.
+    # Publishing 5432 on a VPS would expose the DB to the internet.
+    # For local host apps (uvicorn on Windows), use docker-compose.dev.yml.
     volumes:
       - aska_pgdata:/var/lib/postgresql/data
       - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
@@ -18,5 +20,50 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    profiles: ["full"]
+    build:
+      context: ./backend
+    container_name: aska-piyu-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      ASKA_ENV: ${ASKA_ENV:-production}
+      ASKA_DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@postgres:5432/aska_piyu
+      ASKA_DATABASE_INIT_ON_STARTUP: "false"
+      ASKA_ALLOW_ADMIN_API_KEY: "false"
+      # Honor X-Forwarded-For from the Compose nginx service for per-client rate limits.
+      ASKA_TRUST_PROXY: "true"
+      ASKA_CHROMA_PERSIST_DIR: /data/chroma
+      ASKA_DOCUMENTS_PERSIST_DIR: /data/documents
+      ASKA_TICKET_ATTACHMENTS_DIR: /data/ticket_attachments
+    expose:
+      - "8000"
+    volumes:
+      - aska_chroma:/data/chroma
+      - aska_documents:/data/documents
+      - aska_attachments:/data/ticket_attachments
+
+  nginx:
+    profiles: ["full"]
+    image: nginx:1.27-alpine
+    container_name: aska-piyu-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      # Lab/HTTP only. For campus production TLS use docker-compose.https.yml.
+      - "${PROXY_PORT:-8080}:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx-proxy-locations.inc:/etc/nginx/aska/nginx-proxy-locations.inc:ro
+
 volumes:
   aska_pgdata:
+  aska_chroma:
+  aska_documents:
+  aska_attachments:

@@ -34,3 +34,49 @@ def test_answer_requires_indexed_kb(mock_get_store):
         assert False, "expected EmptyKnowledgeBaseError"
     except EmptyKnowledgeBaseError:
         pass
+
+
+@patch("app.services.student.question_service.generate_answer", return_value="ok")
+@patch("app.services.student.question_service.get_knowledge_base_store")
+def test_answer_student_question_filters_unpublished_and_audience(
+    mock_get_store, _mock_answer
+):
+    store = mock_get_store.return_value
+    store.chunk_count = 3
+    store.search.return_value = [
+        RetrievedChunk(
+            document_id="faq:draft",
+            title="Draft FAQ",
+            source_filename="t",
+            chunk_index=0,
+            text="draft",
+            relevance_score=0.9,
+            metadata={"article_id": "missing", "article_type": "faq", "audience": "both"},
+        ),
+        RetrievedChunk(
+            document_id="handbook",
+            title="Handbook",
+            source_filename="h.pdf",
+            chunk_index=0,
+            text="Students enroll online.",
+            relevance_score=0.8,
+            metadata={"audience": "student"},
+        ),
+        RetrievedChunk(
+            document_id="faculty-only",
+            title="Faculty Manual",
+            source_filename="f.pdf",
+            chunk_index=0,
+            text="Faculty load rules.",
+            relevance_score=0.7,
+            metadata={"audience": "faculty"},
+        ),
+    ]
+
+    with patch(
+        "app.services.article_rag_indexer.filter_unpublished_faq_chunks",
+        side_effect=lambda chunks: [c for c in chunks if not str(c.document_id).startswith("faq:")],
+    ):
+        result = answer_student_question("enroll?", user_role="student")
+
+    assert [c.document_id for c in result.sources] == ["handbook"]

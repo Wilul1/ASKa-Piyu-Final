@@ -1,10 +1,12 @@
-import 'dart:html' as html;
-import 'dart:ui_web' as ui_web;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
+import '../auth/auth_state.dart';
 import '../design_tokens.dart';
+import '../services/api_client.dart';
+import 'source_pdf_embed.dart';
 
 /// Build an absolute API URL for a relative source_view_url, with optional page fragment.
 String resolveSourcePdfUrl(String? viewUrl, {int? page}) {
@@ -15,7 +17,6 @@ String resolveSourcePdfUrl(String? viewUrl, {int? page}) {
       ? raw
       : (base.isEmpty ? raw : '$base$raw');
 
-  // Ensure both query and fragment markers so PDF viewers open on the cited page.
   if (page != null && page > 0) {
     final withoutHash = url.split('#').first;
     var next = withoutHash;
@@ -59,16 +60,37 @@ Future<void> showSourcePdfViewer(
     return;
   }
 
-  // Preflight: avoid embedding JSON 404 bodies in the PDF modal.
-  try {
-    final response = await html.HttpRequest.request(
-      embedUrl.split('#').first,
-      method: 'GET',
-      responseType: 'arraybuffer',
+  final auth = AuthScope.of(context);
+  final token = auth.accessToken;
+  if (token == null || token.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Log in to view source PDFs.')),
     );
-    final status = response.status ?? 0;
-    final contentType = (response.getResponseHeader('content-type') ?? '')
-        .toLowerCase();
+    return;
+  }
+
+  late final Uint8List bytes;
+  try {
+    final result = await ApiClient.send(
+      method: 'GET',
+      url: embedUrl.split('#').first,
+      headers: {'Authorization': 'Bearer $token'},
+      asBytes: true,
+    );
+    final status = result.statusCode;
+    final contentType = (result.header('content-type') ?? '').toLowerCase();
+    if (status == 401 || status == 403) {
+      if (!context.mounted) return;
+      // 401: ApiClient + SessionExpiry already cleared the JWT and opened Login.
+      if (status == 403) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This source PDF is restricted for your account.'),
+          ),
+        );
+      }
+      return;
+    }
     if (status < 200 || status >= 300 || !contentType.contains('pdf')) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -80,6 +102,10 @@ Future<void> showSourcePdfViewer(
       );
       return;
     }
+    if (result.bytes.isEmpty) {
+      throw StateError('Empty PDF response');
+    }
+    bytes = result.bytes;
   } catch (_) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -92,17 +118,7 @@ Future<void> showSourcePdfViewer(
     return;
   }
 
-  final viewType =
-      'aska-source-pdf-${DateTime.now().microsecondsSinceEpoch}';
-  ui_web.platformViewRegistry.registerViewFactory(viewType, (int viewId) {
-    final element = html.IFrameElement()
-      ..src = embedUrl
-      ..style.border = 'none'
-      ..style.width = '100%'
-      ..style.height = '100%'
-      ..allowFullscreen = true;
-    return element;
-  });
+  if (!context.mounted) return;
 
   final sourceName = (sourceLabel ?? '').trim().isNotEmpty
       ? sourceLabel!.trim()
@@ -160,11 +176,10 @@ Future<void> showSourcePdfViewer(
                         ],
                       ),
                     ),
-                    if (fullUrl.isNotEmpty)
-                      TextButton(
-                        onPressed: () => html.window.open(fullUrl, '_blank'),
-                        child: const Text('Open full PDF'),
-                      ),
+                    TextButton(
+                      onPressed: () => openPdfExternally(bytes),
+                      child: const Text('Open PDF'),
+                    ),
                     IconButton(
                       tooltip: 'Close',
                       onPressed: () => Navigator.of(dialogContext).pop(),
@@ -180,7 +195,7 @@ Future<void> showSourcePdfViewer(
                     bottomLeft: Radius.circular(18),
                     bottomRight: Radius.circular(18),
                   ),
-                  child: HtmlElementView(viewType: viewType),
+                  child: SourcePdfEmbed(bytes: bytes),
                 ),
               ),
             ],

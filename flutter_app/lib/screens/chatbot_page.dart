@@ -7,7 +7,6 @@ import '../design_tokens.dart';
 import '../services/api_client.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
-import 'login_page.dart';
 import 'my_tickets_page.dart';
 
 class ChatbotPage extends StatefulWidget {
@@ -37,19 +36,8 @@ class _ChatbotPageState extends State<ChatbotPage> {
       return;
     }
 
+    // Guests and signed-in students may ask; login is only required for tickets.
     final auth = AuthScope.of(context);
-    if (!auth.isAuthenticated || (auth.accessToken ?? '').trim().isEmpty) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => LoginPage(
-            message: 'Please log in to ask ASKa-Piyu.',
-            returnTo: (_) => const ChatbotPage(),
-          ),
-        ),
-      );
-      return;
-    }
-
     final history = _chatHistoryPayload();
 
     setState(() {
@@ -82,9 +70,10 @@ class _ChatbotPageState extends State<ChatbotPage> {
           _turns.add(_ChatTurn.answer(_QaAnswer.fromJson(data, question)));
         });
       } else if (result.statusCode == 401) {
-        // ApiClient + SessionExpiry already cleared the JWT and opened Login.
+        // Unexpected for guest ask — show a soft message (do not force login).
         if (!mounted) return;
-        setState(() => _error = 'Your session expired. Please log in again.');
+        setState(() => _error =
+            'Could not complete that question. Please try again.');
       } else if (result.statusCode == 429) {
         if (!mounted) return;
         setState(() => _error =

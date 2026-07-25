@@ -4,8 +4,8 @@ import '../app_config.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../services/api_client.dart';
-import '../widgets/public_site_header.dart';
 import '../widgets/sidebar.dart';
+import 'admin_scaffold.dart';
 
 class AnnouncementsPage extends StatefulWidget {
   const AnnouncementsPage({super.key});
@@ -26,6 +26,7 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -143,104 +144,117 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
     await _load();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final isAdmin = AuthScope.of(context).role == 'admin';
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Row(
-        children: [
-          const AppSidebar(current: StudentNavItem.announcements),
-          Expanded(
+  List<Widget> _contentChildren({required bool showNewButton}) {
+    if (_loading) {
+      return const [
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: 40),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ];
+    }
+    if (_error != null) {
+      return [
+        Text(_error!, style: const TextStyle(color: Colors.red)),
+        const SizedBox(height: 12),
+        OutlinedButton(onPressed: _load, child: const Text('Retry')),
+      ];
+    }
+    if (_items.isEmpty) {
+      return [
+        const Text(
+          'No announcements yet.',
+          style: TextStyle(color: DesignTokens.muted),
+        ),
+        if (showNewButton) ...[
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _createAnnouncement,
+              icon: const Icon(Icons.add),
+              label: const Text('New announcement'),
+            ),
+          ),
+        ],
+      ];
+    }
+    return [
+      for (final item in _items)
+        Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const PublicSiteHeader(),
-                Expanded(
-                  child: RefreshIndicator(
-                    onRefresh: _load,
-                    child: ListView(
-                      padding: const EdgeInsets.all(24),
-                      children: [
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'Announcements',
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w800,
-                                  color: DesignTokens.maroon,
-                                ),
-                              ),
-                            ),
-                            if (isAdmin)
-                              FilledButton.icon(
-                                onPressed: _createAnnouncement,
-                                icon: const Icon(Icons.add),
-                                label: const Text('New'),
-                              ),
-                          ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        item.title,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
                         ),
-                        const SizedBox(height: 16),
-                        if (_loading)
-                          const Center(child: CircularProgressIndicator())
-                        else if (_error != null)
-                          Text(_error!, style: const TextStyle(color: Colors.red))
-                        else if (_items.isEmpty)
-                          const Text(
-                            'No announcements yet.',
-                            style: TextStyle(color: DesignTokens.muted),
-                          )
-                        else
-                          ..._items.map(
-                            (item) => Card(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            item.title,
-                                            style: const TextStyle(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ),
-                                        if (!item.published)
-                                          const Chip(label: Text('Draft')),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      item.body,
-                                      style: const TextStyle(height: 1.45),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      item.createdAt,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: DesignTokens.muted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
+                      ),
                     ),
+                    if (!item.published) const Chip(label: Text('Draft')),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(item.body, style: const TextStyle(height: 1.45)),
+                const SizedBox(height: 8),
+                Text(
+                  item.createdAt,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: DesignTokens.muted,
                   ),
                 ),
               ],
             ),
           ),
-        ],
+        ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isAdmin = AuthScope.of(context).role == 'admin';
+    if (isAdmin) {
+      return AdminScaffold(
+        current: StudentNavItem.announcements,
+        title: 'Announcements',
+        description:
+            'Publish campus notices visible to students and guests on the public site.',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!_loading && _error == null && _items.isNotEmpty)
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: _createAnnouncement,
+                  icon: const Icon(Icons.add),
+                  label: const Text('New'),
+                ),
+              ),
+            if (!_loading && _error == null && _items.isNotEmpty)
+              const SizedBox(height: 12),
+            ..._contentChildren(showNewButton: true),
+          ],
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: DesignTokens.bgGrey,
+      appBar: AppBar(title: const Text('Announcements')),
+      body: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        children: _contentChildren(showNewButton: false),
       ),
     );
   }

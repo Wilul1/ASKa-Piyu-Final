@@ -51,15 +51,22 @@ def check_qa_rate_limit(
         return True
 
 
-def enforce_qa_rate_limit(request: Request, user: User) -> None:
-    """Per-user and per-IP limits so Ask stays bounded without nginx."""
+def enforce_qa_rate_limit(request: Request, user: User | None) -> None:
+    """Per-user (when signed in) and per-IP limits so Ask stays bounded."""
     ip = client_ip(request)
-    if not check_qa_rate_limit(f"user:{user.id}", authenticated=True):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many questions. Please wait a moment and try again.",
-        )
-    if not check_qa_rate_limit(f"ip:{ip}", authenticated=True):
+    if user is not None:
+        if not check_qa_rate_limit(f"user:{user.id}", authenticated=True):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many questions. Please wait a moment and try again.",
+            )
+        if not check_qa_rate_limit(f"ip:{ip}", authenticated=True):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many questions from this network. Please wait a moment and try again.",
+            )
+        return
+    if not check_qa_rate_limit(f"ip:{ip}", authenticated=False):
         raise HTTPException(
             status_code=429,
             detail="Too many questions from this network. Please wait a moment and try again.",

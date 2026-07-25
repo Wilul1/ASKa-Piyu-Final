@@ -463,7 +463,7 @@ def test_student_ask(mock_answer):
     from types import SimpleNamespace
 
     from app.main import app as fastapi_app
-    from app.services.auth import get_current_user
+    from app.services.auth import get_optional_user
     from app.services.qa.question_answering import QAResult
 
     mock_answer.return_value = QAResult(
@@ -481,7 +481,7 @@ def test_student_ask(mock_answer):
         confidence="high",
         retrieved_chunks=[],
     )
-    fastapi_app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+    fastapi_app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(
         role="student", id="u1"
     )
     try:
@@ -490,7 +490,7 @@ def test_student_ask(mock_answer):
             json={"question": "How do I enroll?"},
         )
     finally:
-        fastapi_app.dependency_overrides.pop(get_current_user, None)
+        fastapi_app.dependency_overrides.pop(get_optional_user, None)
     assert response.status_code == 200
     data = response.json()
     assert data["flow"] == "student_question"
@@ -500,9 +500,20 @@ def test_student_ask(mock_answer):
     assert mock_answer.call_args.kwargs.get("user_role") == "student"
 
 
-def test_student_ask_requires_auth():
+@patch("app.routes.student.chat.answer_qa_question")
+def test_student_ask_allows_guest(mock_answer):
+    from app.services.qa.question_answering import QAResult
+
+    mock_answer.return_value = QAResult(
+        answer="Hello guest.",
+        sources=[],
+        confidence="medium",
+        retrieved_chunks=[],
+    )
     response = client.post("/student/ask", json={"question": "Hello?"})
-    assert response.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Hello guest."
+    assert mock_answer.call_args.kwargs.get("user_role") == "student"
 
 
 @patch("app.routes.student.chat.answer_qa_question")
@@ -510,17 +521,17 @@ def test_student_ask_empty_kb(mock_answer):
     from types import SimpleNamespace
 
     from app.main import app as fastapi_app
-    from app.services.auth import get_current_user
+    from app.services.auth import get_optional_user
     from app.services.student.question_service import EmptyKnowledgeBaseError
 
     mock_answer.side_effect = EmptyKnowledgeBaseError("Knowledge base is empty.")
-    fastapi_app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+    fastapi_app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(
         role="student", id="u1"
     )
     try:
         response = client.post("/student/ask", json={"question": "Hello?"})
     finally:
-        fastapi_app.dependency_overrides.pop(get_current_user, None)
+        fastapi_app.dependency_overrides.pop(get_optional_user, None)
     assert response.status_code == 503
 
 
@@ -528,9 +539,9 @@ def _override_qa_user(*, role: str = "student", user_id: str = "u1"):
     from types import SimpleNamespace
 
     from app.main import app as fastapi_app
-    from app.services.auth import get_current_user
+    from app.services.auth import get_optional_user
 
-    fastapi_app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+    fastapi_app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(
         role=role, id=user_id
     )
     return fastapi_app
@@ -538,7 +549,7 @@ def _override_qa_user(*, role: str = "student", user_id: str = "u1"):
 
 @patch("app.routes.qa.answer_qa_question")
 def test_qa_ask_endpoint_defaults_to_student_response(mock_answer):
-    from app.services.auth import get_current_user
+    from app.services.auth import get_optional_user
     from app.services.qa.question_answering import QAResult
 
     mock_answer.return_value = QAResult(
@@ -583,7 +594,7 @@ def test_qa_ask_endpoint_defaults_to_student_response(mock_answer):
     try:
         response = client.post("/qa/ask", json={"question": "I was absent due to illness. What should I do?"})
     finally:
-        fastapi_app.dependency_overrides.pop(get_current_user, None)
+        fastapi_app.dependency_overrides.pop(get_optional_user, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -604,7 +615,7 @@ def test_qa_ask_requires_auth():
 
 @patch("app.routes.qa.answer_qa_question")
 def test_qa_ask_strips_debug_for_non_admin_callers(mock_answer):
-    from app.services.auth import get_current_user
+    from app.services.auth import get_optional_user
     from app.services.qa.question_answering import QAResult
 
     mock_answer.return_value = QAResult(
@@ -628,7 +639,7 @@ def test_qa_ask_strips_debug_for_non_admin_callers(mock_answer):
             json={"question": "I was absent due to illness. What should I do?", "debug": True},
         )
     finally:
-        fastapi_app.dependency_overrides.pop(get_current_user, None)
+        fastapi_app.dependency_overrides.pop(get_optional_user, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -831,13 +842,13 @@ def test_qa_ask_validate_id_does_not_crash_on_citation_fallback_label(mock_store
     mock_store.return_value = _Store()
     # How-tos prefer Groq first; when unavailable, typed procedure card is used.
     mock_groq.side_effect = GroqAnswerError("Groq API key is not configured.")
-    from app.services.auth import get_current_user
+    from app.services.auth import get_optional_user
 
     fastapi_app = _override_qa_user(role="student")
     try:
         response = client.post("/qa/ask", json={"question": "How do I validate my ID?"})
     finally:
-        fastapi_app.dependency_overrides.pop(get_current_user, None)
+        fastapi_app.dependency_overrides.pop(get_optional_user, None)
 
     assert response.status_code == 200
     data = response.json()

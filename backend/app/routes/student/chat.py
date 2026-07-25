@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.models.db_models import User
 from app.models.schemas import AskQuestionRequest, AskQuestionResponse, ErrorResponse, SourceChunk
-from app.services.auth import get_current_user
+from app.services.auth import get_optional_user
 from app.services.qa.question_answering import answer_qa_question
 from app.services.qa_rate_limit import enforce_qa_rate_limit
 from app.services.student.question_service import EmptyKnowledgeBaseError
@@ -34,20 +34,20 @@ def _source_chunk_index(item: dict) -> int:
     "/ask",
     response_model=AskQuestionResponse,
     responses={
-        401: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
         429: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
-    summary="[Student] Ask a question (RAG over existing knowledge base)",
+    summary="Ask a question (guests and signed-in users; RAG over KB)",
 )
 async def student_ask_question(
     body: AskQuestionRequest,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
 ) -> AskQuestionResponse:
-    """Authenticated ask path — same pipeline and safety filters as ``POST /qa/ask``."""
+    """Public ask path — same pipeline as ``POST /qa/ask``. Guests use student audience."""
     enforce_qa_rate_limit(request, current_user)
+    user_role = (current_user.role if current_user is not None else "student") or "student"
 
     try:
         history = [
@@ -56,7 +56,7 @@ async def student_ask_question(
         ]
         result = answer_qa_question(
             body.question,
-            user_role=current_user.role,
+            user_role=user_role,
             history=history,
         )
     except EmptyKnowledgeBaseError as exc:

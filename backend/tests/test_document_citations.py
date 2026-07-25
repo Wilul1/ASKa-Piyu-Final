@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.db.session import get_session_factory, initialize_database
 from app.main import app
 from app.models.db_models import PublishedArticle, SourceDocument
-from app.services.auth import get_current_user
+from app.services.auth import get_optional_user
 from app.services.chroma_store import RetrievedChunk, _enrich_chunk_citation_metadata
 from app.services.document_storage import (
     persist_uploaded_document,
@@ -29,17 +29,17 @@ client = TestClient(app)
 @pytest.fixture
 def auth_student():
     user = SimpleNamespace(id="u-student", role="student", email="student@test.edu")
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_optional_user] = lambda: user
     yield user
-    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_optional_user, None)
 
 
 @pytest.fixture
 def auth_faculty():
     user = SimpleNamespace(id="u-faculty", role="faculty", email="faculty@test.edu")
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_optional_user] = lambda: user
     yield user
-    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_optional_user, None)
 
 
 def test_source_view_url_includes_page():
@@ -81,10 +81,11 @@ def test_persist_uploaded_document_writes_file_and_db_row(tmp_path, monkeypatch,
     finally:
         session.close()
 
-    app.dependency_overrides.pop(get_current_user, None)
-    denied = client.get(f"/documents/{doc_id}/source")
-    assert denied.status_code == 401
-    app.dependency_overrides[get_current_user] = lambda: auth_student
+    # Guests may open student-audience source PDFs (charter/handbook).
+    app.dependency_overrides.pop(get_optional_user, None)
+    guest_ok = client.get(f"/documents/{doc_id}/source")
+    assert guest_ok.status_code == 200
+    app.dependency_overrides[get_optional_user] = lambda: auth_student
 
     meta = client.get(f"/documents/{doc_id}/source", params={"meta": "true", "page": 12})
     assert meta.status_code == 200
@@ -334,7 +335,9 @@ def test_level2_citizen_charter_source_endpoint_opens_successfully(
     assert open_response.content.startswith(b"%PDF")
 
 
-def test_source_endpoint_requires_auth_and_opens_for_student(tmp_path, monkeypatch, auth_student):
+def test_source_endpoint_allows_guest_and_student_for_public_docs(
+    tmp_path, monkeypatch, auth_student
+):
     monkeypatch.setattr(
         "app.services.document_storage.settings.documents_persist_dir",
         str(tmp_path / "docs"),
@@ -349,9 +352,9 @@ def test_source_endpoint_requires_auth_and_opens_for_student(tmp_path, monkeypat
         document_type="citizen_charter",
         title="Citizen’s Charter 2026",
     )
-    app.dependency_overrides.pop(get_current_user, None)
-    assert client.get(f"/documents/{doc_id}/source").status_code == 401
-    app.dependency_overrides[get_current_user] = lambda: auth_student
+    app.dependency_overrides.pop(get_optional_user, None)
+    assert client.get(f"/documents/{doc_id}/source").status_code == 200
+    app.dependency_overrides[get_optional_user] = lambda: auth_student
     assert client.get(f"/documents/{doc_id}/source").status_code == 200
 
 

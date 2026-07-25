@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.config import settings
 from app.models.db_models import User
 from app.models.schemas import QAAskRequest, QAAskResponse
-from app.services.auth import get_current_user, require_admin_user
+from app.services.auth import get_optional_user, require_admin_user
 from app.services.chroma_store import get_knowledge_base_store
 from app.services.qa.question_answering import answer_qa_question, _citations_from_sources
 from app.services.qa_rate_limit import enforce_qa_rate_limit
@@ -32,15 +32,17 @@ async def qa_health(_: User = Depends(require_admin_user)) -> dict:
     "/ask",
     response_model=QAAskResponse,
     response_model_exclude_none=True,
-    summary="Ask ASKa-Piyu",
+    summary="Ask ASKa-Piyu (guests and signed-in users)",
 )
 async def qa_ask(
     payload: QAAskRequest,
     request: Request,
     debug: bool | None = Query(default=None),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
 ) -> QAAskResponse:
+    # Guests use the student audience; login is not required for Ask.
     enforce_qa_rate_limit(request, current_user)
+    user_role = (current_user.role if current_user is not None else "student") or "student"
 
     try:
         history = [
@@ -49,7 +51,7 @@ async def qa_ask(
         ]
         result = answer_qa_question(
             payload.question,
-            user_role=current_user.role,
+            user_role=user_role,
             history=history,
         )
     except EmptyKnowledgeBaseError as exc:
@@ -61,9 +63,13 @@ async def qa_ask(
             detail="QA request failed. Please try again later.",
         ) from exc
 
-    # Retrieval internals only for admins — never for students/faculty/office.
+    # Retrieval internals only for admins — never for students/faculty/office/guests.
     wants_debug = bool(payload.debug if debug is None else debug)
-    debug_enabled = wants_debug and current_user.role == "admin"
+    debug_enabled = (
+        wants_debug
+        and current_user is not None
+        and (current_user.role or "").strip().lower() == "admin"
+    )
     sources = result.sources or []
     citations = _citations_from_sources(sources)
     return QAAskResponse(

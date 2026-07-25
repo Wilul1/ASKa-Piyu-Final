@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 ADDITIVE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS credentials_version INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE office_aliases ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+
     "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS source_document_id VARCHAR(36)",
     "CREATE INDEX IF NOT EXISTS ix_published_articles_source_document_id "
     "ON published_articles (source_document_id)",

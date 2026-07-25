@@ -1,5 +1,17 @@
 # ASKa-Piyu production deploy
 
+## 0. One-shot laptop / lab bootstrap (optional)
+
+On a Windows machine with Postgres already running and a Groq key in `backend/.env`:
+
+```bat
+python scripts\bootstrap_campus_deploy.py
+```
+
+This writes root `.env`, `backend/.env.production`, self-signed TLS for `aska.local`, Flutter `api_base.url`, Android keystore, runs `check_production_env` + Alembic + seeds, and stores passwords in `deploy/BOOTSTRAP_CREDENTIALS.txt` (gitignored). Daily-dev `backend/.env` is left unchanged unless you pass `--apply-production-env`.
+
+For a real campus VPS, still follow §1–§3 with Let's Encrypt and your real hostname.
+
 ## 1. Environment
 
 Copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set:

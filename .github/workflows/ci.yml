@@ -48,7 +48,7 @@ jobs:
           alembic upgrade head
           alembic upgrade head
           alembic current | tee /tmp/alembic-current.txt
-          grep -q "20260725_0003" /tmp/alembic-current.txt
+          grep -q "20260725_0004" /tmp/alembic-current.txt
       - name: Pytest
         run: python -m pytest -q --tb=line
 
@@ -87,7 +87,7 @@ EOF
       - name: Confirm Alembic head inside API container
         run: |
           docker compose --profile full exec -T api alembic current | tee /tmp/alembic-docker.txt
-          grep -q "20260725_0003" /tmp/alembic-docker.txt
+          grep -q "20260725_0004" /tmp/alembic-docker.txt
       - name: Tear down
         if: always()
         run: docker compose --profile full down -v

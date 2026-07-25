@@ -77,7 +77,7 @@ def main() -> None:
     print(f"  env={settings.env}")
     print(f"  cors_origins={len(origins)}")
     print(f"  admin_api_key_auth={admin_api_key_auth_enabled()}")
-    print("  Next: alembic upgrade head → seed_admin → seed_office_accounts → seed_office_aliases")
+    print("  Next: alembic upgrade head -> seed_admin -> seed_office_accounts -> seed_office_aliases")
 
 
 if __name__ == "__main__":

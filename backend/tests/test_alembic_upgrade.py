@@ -54,15 +54,15 @@ def test_additive_schema_revision_wires_shared_upgrades() -> None:
         Path(__file__).resolve().parents[1]
         / "alembic"
         / "versions"
-        / "20260725_0003_additive_schema_columns.py"
+        / "20260725_0004_office_alias_is_active.py"
     )
-    spec = importlib.util.spec_from_file_location("alembic_rev_0003", rev_path)
+    spec = importlib.util.spec_from_file_location("alembic_rev_0004", rev_path)
     assert spec is not None and spec.loader is not None
     rev = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(rev)
 
-    assert rev.revision == "20260725_0003"
-    assert rev.down_revision == "20260725_0002"
+    assert rev.revision == "20260725_0004"
+    assert rev.down_revision == "20260725_0003"
     # Critical columns that old campus DBs may lack when INIT_ON_STARTUP=false.
     joined = "\n".join(ADDITIVE_SCHEMA_STATEMENTS)
     for needle in (
@@ -75,6 +75,8 @@ def test_additive_schema_revision_wires_shared_upgrades() -> None:
         "kb_origin",
         "rag_indexed",
         "credentials_version",
+        "office_aliases",
+        "is_active",
     ):
         assert needle in joined
 

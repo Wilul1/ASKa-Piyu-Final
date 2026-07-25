@@ -49,6 +49,30 @@ jobs:
           alembic upgrade head
           alembic current | tee /tmp/alembic-current.txt
           grep -q "20260725_0004" /tmp/alembic-current.txt
+      - name: Production env preflight
+        env:
+          ASKA_ENV: production
+          ASKA_DATABASE_URL: postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu_test
+          ASKA_DATABASE_INIT_ON_STARTUP: "false"
+          ASKA_AUTH_SECRET_KEY: ci-production-auth-secret-key-xyz
+          ASKA_ALLOW_ADMIN_API_KEY: "false"
+          ASKA_CORS_ORIGINS: '["https://aska.example.edu"]'
+          ASKA_GROQ_API_KEY: ci-not-a-real-groq-key
+          ASKA_KB_REBUILD_DOCUMENT_PATHS: /data/documents/handbook.pdf
+          ASKA_SEED_OFFICE_PASSWORD: CiOfficePass1!
+        run: |
+          cat > .env <<'EOF'
+ASKA_ENV=production
+ASKA_DATABASE_URL=postgresql+psycopg://postgres:aska1234@localhost:5432/aska_piyu_test
+ASKA_DATABASE_INIT_ON_STARTUP=false
+ASKA_AUTH_SECRET_KEY=ci-production-auth-secret-key-xyz
+ASKA_ALLOW_ADMIN_API_KEY=false
+ASKA_CORS_ORIGINS=["https://aska.example.edu"]
+ASKA_GROQ_API_KEY=ci-not-a-real-groq-key
+ASKA_KB_REBUILD_DOCUMENT_PATHS=/data/documents/handbook.pdf
+ASKA_SEED_OFFICE_PASSWORD=CiOfficePass1!
+EOF
+          python scripts/check_production_env.py
       - name: Pytest
         run: python -m pytest -q --tb=line
 
@@ -65,9 +89,11 @@ ASKA_AUTH_SECRET_KEY=ci-docker-auth-secret-key-not-placeholder
 ASKA_CORS_ORIGINS=["https://aska.example.edu"]
 ASKA_DATABASE_INIT_ON_STARTUP=false
 ASKA_ALLOW_ADMIN_API_KEY=false
-ASKA_GROQ_API_KEY=
+ASKA_GROQ_API_KEY=ci-not-a-real-groq-key
+ASKA_KB_REBUILD_DOCUMENT_PATHS=/data/documents/handbook.pdf
+ASKA_SEED_OFFICE_PASSWORD=CiOfficePass1!
 EOF
-      - name: Build and start Postgres + API + nginx
+      - name: Build and start Postgres + API + nginx (HTTP lab)
         run: docker compose --profile full up -d --build
       - name: Wait for API health through nginx
         run: |
@@ -88,9 +114,64 @@ EOF
         run: |
           docker compose --profile full exec -T api alembic current | tee /tmp/alembic-docker.txt
           grep -q "20260725_0004" /tmp/alembic-docker.txt
-      - name: Tear down
+      - name: Tear down HTTP stack
         if: always()
         run: docker compose --profile full down -v
+
+  docker-https:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose env + self-signed TLS
+        run: |
+          printf '%s\n' 'POSTGRES_PASSWORD=ci-docker-postgres-secret' > .env
+          cat > backend/.env <<'EOF'
+ASKA_ENV=production
+ASKA_AUTH_SECRET_KEY=ci-docker-auth-secret-key-not-placeholder
+ASKA_CORS_ORIGINS=["https://aska.example.edu"]
+ASKA_DATABASE_INIT_ON_STARTUP=false
+ASKA_ALLOW_ADMIN_API_KEY=false
+ASKA_GROQ_API_KEY=ci-not-a-real-groq-key
+ASKA_KB_REBUILD_DOCUMENT_PATHS=/data/documents/handbook.pdf
+ASKA_SEED_OFFICE_PASSWORD=CiOfficePass1!
+EOF
+          mkdir -p deploy/certs
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout deploy/certs/privkey.pem \
+            -out deploy/certs/fullchain.pem \
+            -days 1 \
+            -subj "/CN=localhost"
+      - name: Start HTTPS overlay
+        run: |
+          docker compose --profile full \
+            -f docker-compose.yml -f docker-compose.https.yml \
+            up -d --build
+      - name: Wait for HTTPS health
+        run: |
+          set -e
+          for i in $(seq 1 60); do
+            if curl -fsSk "https://127.0.0.1/health" | tee /tmp/health-https.json; then
+              # Lab :8080 must not remain published beside TLS (ports: !override).
+              if curl -fsS --max-time 2 "http://127.0.0.1:8080/health"; then
+                echo "ERROR: cleartext :8080 still listening under HTTPS overlay"
+                exit 1
+              fi
+              exit 0
+            fi
+            echo "waiting for https health ($i)..."
+            docker compose --profile full -f docker-compose.yml -f docker-compose.https.yml ps
+            docker compose --profile full -f docker-compose.yml -f docker-compose.https.yml logs --no-color api 2>&1 | tail -n 40 || true
+            sleep 5
+          done
+          echo "HTTPS API did not become healthy"
+          docker compose --profile full -f docker-compose.yml -f docker-compose.https.yml logs --no-color
+          exit 1
+      - name: Tear down HTTPS stack
+        if: always()
+        run: |
+          docker compose --profile full \
+            -f docker-compose.yml -f docker-compose.https.yml \
+            down -v
 
   flutter:
     runs-on: ubuntu-latest

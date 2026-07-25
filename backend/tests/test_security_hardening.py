@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app.config import admin_api_key_auth_enabled, is_placeholder_secret, openapi_enabled
 from app.services.document_storage import documents_root, persist_uploaded_document, resolve_stored_path
-from app.services.ticket_attachments import detect_content_type
+from app.services.ticket_attachments import detect_content_type, resolve_attachment_path
 
 
 def test_resolve_stored_path_rejects_escape(tmp_path, monkeypatch):
@@ -32,6 +32,32 @@ def test_resolve_stored_path_rejects_escape(tmp_path, monkeypatch):
     outside.write_text("nope", encoding="utf-8")
     with pytest.raises(ValueError, match="escapes"):
         resolve_stored_path(str(outside.resolve()))
+
+
+def test_resolve_attachment_path_rejects_escape(tmp_path, monkeypatch):
+    root = tmp_path / "attachments"
+    root.mkdir()
+    monkeypatch.setattr(
+        "app.services.ticket_attachments.settings.ticket_attachments_dir",
+        str(root),
+    )
+    ticket_id = "ticket-safe"
+    (root / ticket_id).mkdir()
+    safe_name = "att1_file.pdf"
+    (root / ticket_id / safe_name).write_bytes(b"%PDF-1.4")
+
+    resolved = resolve_attachment_path(ticket_id, safe_name)
+    assert resolved.is_file()
+    assert resolved.is_relative_to(root.resolve())
+
+    with pytest.raises(ValueError, match="escapes"):
+        resolve_attachment_path(ticket_id, "../secrets.txt")
+    with pytest.raises(ValueError, match="escapes"):
+        resolve_attachment_path(ticket_id, "..\\secrets.txt")
+    with pytest.raises(ValueError, match="escapes"):
+        resolve_attachment_path("../other", safe_name)
+    with pytest.raises(ValueError, match="escapes"):
+        resolve_attachment_path(ticket_id, "sub/dir/file.pdf")
 
 
 def test_detect_content_type_magic_bytes():

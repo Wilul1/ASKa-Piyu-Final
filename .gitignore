@@ -21,6 +21,9 @@ flutter_app/android/*.keystore
 deploy/certs/*
 !deploy/certs/README.md
 
+# Local / host backup dumps
+deploy/backups/
+
 # Python
 **/__pycache__/
 **/*.py[cod]

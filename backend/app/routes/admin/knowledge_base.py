@@ -182,11 +182,22 @@ def _revert_article_to_draft_after_rag_failure(session, article_id: str, exc: Ba
     session.commit()
 
 
-def _rag_publish_failure_detail(exc: BaseException) -> str:
+def _rag_publish_failure_detail(_exc: BaseException | None = None) -> str:
+    """Public admin message — never embed exception text (paths/DB/Chroma internals)."""
     return (
         "RAG indexing failed; article was reverted to unpublished "
-        f"(rag_indexed=false): {exc}"
+        "(rag_indexed=false). Check server logs for details."
     )
+
+
+def _admin_internal_error(public_detail: str, exc: BaseException) -> HTTPException:
+    logger.error("%s", public_detail, exc_info=exc)
+    return HTTPException(status_code=500, detail=public_detail)
+
+
+def _admin_bad_gateway(public_detail: str, exc: BaseException) -> HTTPException:
+    logger.error("%s", public_detail, exc_info=exc)
+    return HTTPException(status_code=502, detail=public_detail)
 
 
 def require_admin_key(
@@ -328,7 +339,7 @@ async def admin_extract_document(
     except (UnsupportedDocumentError, EmptyDocumentError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _admin_internal_error("Document extraction failed.", exc) from exc
 
     return ExtractDocumentResponse(
         status="success",
@@ -414,7 +425,7 @@ async def admin_ingest_document(
     except (UnsupportedDocumentError, EmptyDocumentError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
+        raise _admin_internal_error("Ingest failed.", exc) from exc
 
     return IngestKnowledgeBaseResponse(
         status="success",
@@ -452,7 +463,7 @@ async def admin_retrieval_test(
     try:
         result = retrieval_test(payload.question, top_k=payload.top_k)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Retrieval test failed: {exc}") from exc
+        raise _admin_internal_error("Retrieval test failed.", exc) from exc
 
     return RetrievalTestResponse(
         status="success",
@@ -618,11 +629,12 @@ async def admin_reset_chroma(
     try:
         source_paths = _configured_rebuild_document_paths()
     except Exception as exc:
+        logger.exception("Invalid ASKA_KB_REBUILD_DOCUMENT_PATHS: %s", exc)
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Invalid ASKA_KB_REBUILD_DOCUMENT_PATHS ({exc}). "
-                "Fix the paths before resetting Chroma."
+                "Invalid ASKA_KB_REBUILD_DOCUMENT_PATHS. "
+                "Fix the paths before resetting Chroma (see server logs)."
             ),
         ) from exc
     if not source_paths and not allow_skip_documents:
@@ -638,7 +650,7 @@ async def admin_reset_chroma(
     try:
         result = get_knowledge_base_store().reset_collection()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Chroma reset failed: {exc}") from exc
+        raise _admin_internal_error("Chroma reset failed.", exc) from exc
 
     # Clear stale FAQ flags, re-ingest configured PDF/manual corpora, then re-index FAQs.
     articles_rag_flags_cleared = 0
@@ -1130,18 +1142,18 @@ def admin_update_article(
                 index_published_article(session, art)
                 session.commit()
             except Exception as exc:
-                logger.exception("Failed to re-index article %s into Chroma", article_id)
                 if becoming_published:
                     _revert_article_to_draft_after_rag_failure(session, article_id, exc)
-                    raise HTTPException(
-                        status_code=502,
-                        detail=_rag_publish_failure_detail(exc),
+                    raise _admin_bad_gateway(
+                        _rag_publish_failure_detail(exc),
+                        exc,
                     ) from exc
                 session.rollback()
                 cleanup_failed_faq_index(exc, article_id)
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Article was not saved because RAG indexing failed: {exc}",
+                raise _admin_bad_gateway(
+                    "Article was not saved because RAG indexing failed. "
+                    "Check server logs for details.",
+                    exc,
                 ) from exc
         else:
             session.commit()
@@ -1186,12 +1198,8 @@ def admin_publish_article(
             session.commit()
             session.refresh(art)
         except Exception as exc:
-            logger.exception("Failed to index article %s into Chroma after publish", article_id)
             _revert_article_to_draft_after_rag_failure(session, article_id, exc)
-            raise HTTPException(
-                status_code=502,
-                detail=_rag_publish_failure_detail(exc),
-            ) from exc
+            raise _admin_bad_gateway(_rag_publish_failure_detail(exc), exc) from exc
         schema = _admin_article_schema(art)
         return {
             "success": True,
@@ -1241,10 +1249,9 @@ def admin_reindex_article(
         except Exception as exc:
             session.rollback()
             cleanup_failed_faq_index(exc, article_id)
-            logger.exception("Failed to re-index article %s", article_id)
-            raise HTTPException(
-                status_code=502,
-                detail=f"Re-index failed: {exc}",
+            raise _admin_bad_gateway(
+                "Re-index failed. Check server logs for details.",
+                exc,
             ) from exc
         return {
             "success": True,
@@ -1803,10 +1810,7 @@ def _generate_article_candidates_from_preview_payload(
             save_mode=save_mode,
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Article candidate generation failed: {exc}",
-        ) from exc
+        raise _admin_internal_error("Article candidate generation failed.", exc) from exc
 
     return _article_candidate_generation_payload(result)
 
@@ -1842,7 +1846,7 @@ async def admin_generate_article_candidates(
             save_mode=save_mode,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Article candidate generation failed: {exc}") from exc
+        raise _admin_internal_error("Article candidate generation failed.", exc) from exc
 
     return _article_candidate_generation_payload(result)
 

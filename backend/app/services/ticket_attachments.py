@@ -29,12 +29,36 @@ def _attachments_root() -> Path:
     if not root.is_absolute():
         root = Path(__file__).resolve().parents[2] / root
     root.mkdir(parents=True, exist_ok=True)
-    return root
+    return root.resolve()
 
 
 def _safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^\w.\- ]+", "_", (name or "attachment").strip())[:120]
     return cleaned or "attachment"
+
+
+def resolve_attachment_path(ticket_id: str, stored_filename: str) -> Path:
+    """Resolve an attachment path confined under ``_attachments_root()``.
+
+    Rejects absolute paths, directory separators, and ``..`` escapes so a
+    tampered DB ``stored_filename`` cannot read files outside the attachments dir.
+    """
+    root = _attachments_root()
+    tid = (ticket_id or "").strip()
+    name = (stored_filename or "").strip()
+    if not tid or not name:
+        raise ValueError("Attachment path is empty.")
+    if Path(tid).name != tid or "/" in tid or "\\" in tid or ".." in tid:
+        raise ValueError("Attachment path escapes the attachments root.")
+    # stored_filename must be a single basename (no directories).
+    if Path(name).name != name or "/" in name or "\\" in name or ".." in name:
+        raise ValueError("Attachment path escapes the attachments root.")
+    resolved = (root / tid / name).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Attachment path escapes the attachments root.") from exc
+    return resolved
 
 
 def detect_content_type(content: bytes) -> str | None:
@@ -119,7 +143,10 @@ def attachment_file_path(session: Session, ticket_id: str, attachment_id: str, a
     )
     if row is None:
         raise TicketNotFoundError("Attachment not found.")
-    path = _attachments_root() / ticket.id / row.stored_filename
+    try:
+        path = resolve_attachment_path(ticket.id, row.stored_filename)
+    except ValueError as exc:
+        raise TicketNotFoundError("Attachment file is missing on disk.") from exc
     if not path.is_file():
         raise TicketNotFoundError("Attachment file is missing on disk.")
     return path, row

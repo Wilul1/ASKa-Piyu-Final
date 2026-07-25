@@ -150,3 +150,11 @@ Or `set ASKA_API_BASE_URL=https://api.your.edu` before the build scripts. Releas
 - `GET /health`
 - Log in as the seeded admin; confirm OpenAPI/`/docs` is off.
 - Log in as a seeded office account; confirm Assigned Tickets opens (proves offices were seeded).
+
+## 9. Backups
+
+Back up Postgres **and** Chroma/documents together — see [`deploy/BACKUP.md`](deploy/BACKUP.md) and `scripts\backup_aska.bat`.
+
+## 10. TLS renewal
+
+After Let's Encrypt is in place, schedule [`scripts/renew_letsencrypt_certs.sh`](scripts/renew_letsencrypt_certs.sh) (see [`deploy/certs/README.md`](deploy/certs/README.md)).

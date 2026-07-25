@@ -47,6 +47,19 @@ services:
       - aska_chroma:/data/chroma
       - aska_documents:/data/documents
       - aska_attachments:/data/ticket_attachments
+    # Alembic runs before uvicorn; give startup room before failing health.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
 
   nginx:
     profiles: ["full"]
@@ -54,7 +67,8 @@ services:
     container_name: aska-piyu-nginx
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       # Lab/HTTP only. For campus production TLS use docker-compose.https.yml.
       - "${PROXY_PORT:-8080}:80"

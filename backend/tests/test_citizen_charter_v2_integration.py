@@ -107,6 +107,19 @@ def test_extraction_preview_stores_charter_v2_services_when_pdf_pages_exist(
     assert diagnostics["preview_charter_v2_services_count"] == 1
     assert diagnostics["fallback_reason"] is None
 
+    # P1: preview knowledge units must be one-per-V2-service, not 900-char
+    # information slices of the rendered extraction text.
+    units = result["knowledge_units"]
+    assert len(units) == 1
+    assert units[0]["title"] == "ID Validation"
+    assert (units[0].get("metadata") or {}).get("document_type") == "citizen_charter"
+    assert (units[0].get("metadata") or {}).get("article_type") == "service_procedure"
+    assert (units[0].get("metadata") or {}).get("parser_document_type") == "citizen_charter"
+    assert units[0].get("hierarchy_path")
+    content = str(units[0].get("content") or "")
+    assert "Office / Division" in content or "Office of the Student Affairs" in content
+    assert "Overview" not in units[0]["title"]
+
 
 @patch("app.services.admin.knowledge_base_pipeline.knowledge_base_statistics")
 @patch("app.services.admin.knowledge_base_pipeline.ingest_document")

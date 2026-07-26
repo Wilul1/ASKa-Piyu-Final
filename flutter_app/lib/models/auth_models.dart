@@ -79,6 +79,7 @@ class SignupRequest {
   final String? studentId;
   final String password;
   final String role;
+  final String? inviteCode;
 
   const SignupRequest({
     required this.fullName,
@@ -86,15 +87,18 @@ class SignupRequest {
     required this.studentId,
     required this.password,
     this.role = 'student',
+    this.inviteCode,
   });
 
   Map<String, dynamic> toJson() {
+    final code = inviteCode?.trim();
     return {
       'full_name': fullName.trim(),
       'email': email.trim(),
       'student_id': role == 'student' ? studentId?.trim() : null,
       'password': password,
       'role': role,
+      if (code != null && code.isNotEmpty) 'invite_code': code,
     };
   }
 }

@@ -452,3 +452,48 @@ def test_requirement_answer_does_not_show_raw_extraction_metadata():
 
 def test_missing_document_type_defaults_to_information():
     assert _kb_document_type({}) == "information"
+
+
+def test_procedure_chunks_do_not_fall_back_to_information_for_v2_render(monkeypatch):
+    """P2: charter-shaped text with zero parsed services must not become 900-char slices."""
+    from app.services import knowledge_document_types as kdt
+
+    monkeypatch.setattr(
+        kdt,
+        "parse_structured_document",
+        lambda text: {
+            "document_type": "citizen_charter",
+            "services": [],
+            "charter_dropped_noise": 0,
+            "charter_merged_splits": 0,
+            "charter_detected_blocks": 0,
+        },
+    )
+    text = (
+        "Service: ID Validation\nOffice: OSAS\nWho May Avail: Students\n"
+        + ("Client Step: Present ID. Agency Action: Validate. " * 80)
+    )
+    chunks = kdt._procedure_chunks(text, title="Citizen Charter", source_document="cc.pdf")
+    assert chunks == []
+
+
+def test_enrich_keeps_extracted_charter_office():
+    from app.services.chunking import DocumentChunk
+    from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
+
+    chunks = [
+        DocumentChunk(
+            text="Enrollment for new college students and transferees.",
+            chunk_index=0,
+            char_start=0,
+            metadata={
+                "document_type": "citizen_charter",
+                "article_type": "service_procedure",
+                "office": "Registrar",
+                "title": "Enrollment",
+            },
+        )
+    ]
+    enriched = enrich_chunks_with_category_metadata(chunks, title="CC")
+    assert enriched[0].metadata["office"] == "Registrar"
+    assert enriched[0].metadata["responsible_office"] == "Registrar"

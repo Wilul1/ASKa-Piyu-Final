@@ -35,6 +35,22 @@ class AuthService {
     await LocalStore.clearAccessToken();
   }
 
+  /// Revokes the bearer token server-side (bumps credentials_version).
+  /// Best-effort: network failures are ignored so local logout still works.
+  Future<void> logoutRemote(String accessToken) async {
+    final token = accessToken.trim();
+    if (token.isEmpty) return;
+    try {
+      await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/auth/logout',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // Offline / blip — local clear still proceeds.
+    }
+  }
+
   Future<AuthResponse> signup(SignupRequest payload) async {
     final data = await _sendJson(
       'POST',

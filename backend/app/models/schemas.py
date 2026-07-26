@@ -629,6 +629,7 @@ class SignupRequest(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=255)
     role: UserRole = "student"
     student_id: str | None = Field(default=None, max_length=80)
+    invite_code: str | None = Field(default=None, max_length=128)
 
     @field_validator("email")
     @classmethod

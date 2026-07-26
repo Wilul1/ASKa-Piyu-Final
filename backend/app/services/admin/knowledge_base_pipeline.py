@@ -332,7 +332,22 @@ def _hierarchy_path(metadata: dict | None) -> str:
         for key in ("chapter", "article", "section", "appendix")
         if metadata.get(key)
     ]
-    return " > ".join(parts)
+    if parts:
+        return " > ".join(parts)
+    # Citizen's Charter / service_procedure chunks use office + service title.
+    charter_parts = [
+        str(metadata.get(key)).strip()
+        for key in ("office", "source_section", "section_heading", "procedure_title")
+        if str(metadata.get(key) or "").strip()
+    ]
+    # Prefer office > service; avoid duplicating the same label twice.
+    deduped: list[str] = []
+    for part in charter_parts:
+        if not deduped or deduped[-1].casefold() != part.casefold():
+            deduped.append(part)
+        if len(deduped) >= 2:
+            break
+    return " > ".join(deduped)
 
 
 def _title_from_chunk(chunk: DocumentChunk) -> str:
@@ -346,8 +361,25 @@ def _title_from_chunk(chunk: DocumentChunk) -> str:
 
 def _title_from_metadata(metadata: dict | None) -> str:
     metadata = metadata or {}
-    for key in ("section", "article", "chapter"):
+    for key in (
+        "procedure_title",
+        "section_heading",
+        "source_section",
+        "section",
+        "article",
+        "chapter",
+    ):
         value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.split(">", 1)[-1].strip()
+    # Information chunks stash the PDF filename in metadata.title — do not use that.
+    doc_type = str(metadata.get("document_type") or metadata.get("parser_document_type") or "").lower()
+    article_type = str(metadata.get("article_type") or "").lower()
+    if (
+        doc_type in {"citizen_charter", "procedure", "service_process"}
+        or article_type == "service_procedure"
+    ):
+        value = metadata.get("title")
         if isinstance(value, str) and value.strip():
             return value.split(">", 1)[-1].strip()
     return ""
@@ -488,7 +520,7 @@ def _unit_status(unit: dict) -> tuple[str, list[str]]:
         reasons.append("toc_like")
     if title.endswith(",") and words < 35 and not re.search(r"\b(shall|must|required|procedure|requirements?|submit|comply)\b", text, flags=re.I):
         reasons.append("toc_like")
-    if not metadata.get("source_title"):
+    if not metadata.get("source_title") and not metadata.get("source_document"):
         reasons.append("missing_source_metadata")
     if not hierarchy:
         reasons.append("missing_hierarchy_metadata")
@@ -773,6 +805,37 @@ def _quality_payload(
     return chunks, units, previews, validation
 
 
+def _quality_payload_from_charter_v2_services(
+    extraction,
+    services: list[dict],
+    *,
+    title: str = "Untitled document",
+    source_document: str = "unknown",
+) -> tuple[list[DocumentChunk], list[dict], list[dict], dict]:
+    """Build preview/index units from V2 services (one unit per service).
+
+    Matches ingest: do not re-parse rendered V2 text through procedure/information
+    chunking, and do not overwrite charter office metadata via taxonomy enrichment.
+    """
+    chunks = build_chunks_from_charter_v2_services(
+        services,
+        title=title,
+        source_document=source_document,
+    )
+    units = _knowledge_units_for_extraction(
+        extraction,
+        chunks,
+        kb_document_type=KnowledgeDocumentType.PROCEDURE,
+    )
+    previews = _chunk_preview(chunks)
+    validation = _validation_report(
+        document_type="citizen_charter",
+        units=units,
+        chunks=chunks,
+    )
+    return chunks, units, previews, validation
+
+
 def knowledge_base_statistics() -> dict:
     try:
         return get_knowledge_base_store().collection_statistics()
@@ -1043,30 +1106,48 @@ def extract_document_preview(
 
     charter_v2_payload = _charter_v2_preview_payload(result, tentative_profile)
     structured_v2_text = str(charter_v2_payload.get("structured_extraction_text") or "").strip()
+    charter_v2_services = list(charter_v2_payload.get("charter_v2_services") or [])
     used_v2_structure = bool(structured_v2_text)
+    used_v2_service_chunks = False
     if used_v2_structure:
         # Full Extraction Result / TXT come from V2 structured services.
         preview_text = structured_v2_text
 
-    chunks, units, previews, validation = _quality_payload(
-        result,
-        preview_text,
-        kb_document_type=(
-            KnowledgeDocumentType.PROCEDURE
-            if used_v2_structure or tentative_profile in {"citizen_charter", "service_process"}
-            else detection.document_type
-        ),
-        title=display_title,
-        source_document=filename or display_title,
-        preview_file_path=preview_file_path,
-    )
+    source_document = filename or display_title
+    if charter_v2_services:
+        chunks, units, previews, validation = _quality_payload_from_charter_v2_services(
+            result,
+            charter_v2_services,
+            title=display_title,
+            source_document=source_document,
+        )
+        used_v2_service_chunks = bool(chunks)
+
+    if not used_v2_service_chunks:
+        chunks, units, previews, validation = _quality_payload(
+            result,
+            preview_text,
+            kb_document_type=(
+                KnowledgeDocumentType.PROCEDURE
+                if used_v2_structure or tentative_profile in {"citizen_charter", "service_process"}
+                else detection.document_type
+            ),
+            title=display_title,
+            source_document=source_document,
+            preview_file_path=preview_file_path,
+        )
     has_charter_units = any(
         str((unit.get("metadata") or {}).get("parser_document_type") or "").lower()
         == "citizen_charter"
         or str(unit.get("parser_document_type") or "").lower() == "citizen_charter"
         for unit in units
     )
-    if used_v2_structure or parsed_kind == "citizen_charter" or has_charter_units:
+    if (
+        used_v2_structure
+        or used_v2_service_chunks
+        or parsed_kind == "citizen_charter"
+        or has_charter_units
+    ):
         document_profile = "citizen_charter"
     elif detection.document_type == KnowledgeDocumentType.PROCEDURE:
         document_profile = "service_process"
@@ -1081,15 +1162,25 @@ def extract_document_preview(
     ):
         charter_v2_payload = _charter_v2_preview_payload(result, document_profile)
         structured_v2_text = str(charter_v2_payload.get("structured_extraction_text") or "").strip()
+        charter_v2_services = list(charter_v2_payload.get("charter_v2_services") or [])
         if structured_v2_text:
             preview_text = structured_v2_text
             used_v2_structure = True
+        if charter_v2_services:
+            chunks, units, previews, validation = _quality_payload_from_charter_v2_services(
+                result,
+                charter_v2_services,
+                title=display_title,
+                source_document=source_document,
+            )
+            used_v2_service_chunks = bool(chunks)
+        if not used_v2_service_chunks:
             chunks, units, previews, validation = _quality_payload(
                 result,
                 preview_text,
                 kb_document_type=KnowledgeDocumentType.PROCEDURE,
                 title=display_title,
-                source_document=filename or display_title,
+                source_document=source_document,
                 preview_file_path=preview_file_path,
             )
 
@@ -1194,24 +1285,13 @@ def ingest_document_into_knowledge_base(
         if structured_v2_text:
             structuring_method = "citizen_charter_extractor_v2"
         if charter_v2_services:
-            chunks = build_chunks_from_charter_v2_services(
+            chunks, units, previews, validation = _quality_payload_from_charter_v2_services(
+                extraction,
                 charter_v2_services,
                 title=display_title,
                 source_document=source_document,
             )
             used_v2_chunks = bool(chunks)
-            if used_v2_chunks:
-                units = _knowledge_units_for_extraction(
-                    extraction,
-                    chunks,
-                    kb_document_type=KnowledgeDocumentType.PROCEDURE,
-                )
-                previews = _chunk_preview(chunks)
-                validation = _validation_report(
-                    document_type="citizen_charter",
-                    units=units,
-                    chunks=chunks,
-                )
 
         index_text = _charter_index_text(
             reviewed_text=reviewed_text,
@@ -1252,24 +1332,13 @@ def ingest_document_into_knowledge_base(
                 index_text = structured_v2_text
                 structuring_method = "citizen_charter_extractor_v2"
             if charter_v2_services:
-                chunks = build_chunks_from_charter_v2_services(
+                chunks, units, previews, validation = _quality_payload_from_charter_v2_services(
+                    extraction,
                     charter_v2_services,
                     title=display_title,
                     source_document=source_document,
                 )
                 used_v2_chunks = bool(chunks)
-                if used_v2_chunks:
-                    units = _knowledge_units_for_extraction(
-                        extraction,
-                        chunks,
-                        kb_document_type=KnowledgeDocumentType.PROCEDURE,
-                    )
-                    previews = _chunk_preview(chunks)
-                    validation = _validation_report(
-                        document_type="citizen_charter",
-                        units=units,
-                        chunks=chunks,
-                    )
 
     response_document_type = _compat_response_document_type(extraction, detection.document_type)
 

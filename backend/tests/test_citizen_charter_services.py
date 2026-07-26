@@ -85,6 +85,25 @@ def test_detects_citizen_charter_document_type():
     assert normalize_knowledge_document_type("citizen_charter") == KnowledgeDocumentType.PROCEDURE
 
 
+def test_classify_document_type_recognizes_v2_render_labels():
+    v2_render = """
+Service: ID Validation
+Office: Office of the Student Affairs and Services
+Classification: Simple
+Who May Avail: Students
+Steps:
+  1. Client Step: Present Certificate of Registration
+     Agency Action: Check Certificate of Registration
+     Fees: None
+     Responsible Personnel: OSAS Staff
+"""
+    assert classify_document_type(v2_render) == "citizen_charter"
+    with_form_mentions = (
+        v2_render + "\nRequirement: Request Form LSPU-REG-SF-011\nSignature of applicant"
+    )
+    assert classify_document_type(with_form_mentions) == "citizen_charter"
+
+
 def test_parses_one_article_per_service_and_merges_parts():
     parsed = parse_structured_document(_SAMPLE_CHARTER)
     assert parsed["document_type"] == "citizen_charter"
@@ -117,6 +136,10 @@ def test_noise_and_merge_helpers():
     assert is_noise_service_title("Board of Regents > Classification")
     assert is_noise_service_title("Page 12")
     assert is_noise_service_title("Table continued")
+    assert is_noise_service_title("TOTAL: None 2 minutes")
+    assert is_noise_service_title("None 2 minutes")
+    assert is_noise_service_title("N/A 1 day")
+    assert not is_noise_service_title("ID Validation")
     assert strip_service_part_suffix("ID Validation - Part 1") == "ID Validation"
     assert (
         strip_service_part_suffix(

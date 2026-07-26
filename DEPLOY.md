@@ -93,7 +93,17 @@ Postgres is **not** published to the host (API reaches it as `postgres:5432` on 
 
 ## 4. Reverse proxy rate limits
 
-Compose nginx already applies auth/QA rate limits. The API also enforces in-process limits on `/auth/login`, `/auth/signup`, and Ask endpoints as a safety net when uvicorn is exposed without nginx (still prefer the `full` profile or an edge proxy for multi-worker deploys). Set `ASKA_TRUST_PROXY=true` only behind a trusted proxy so limits use `X-Forwarded-For`. For an external proxy, also see [`deploy/nginx-rate-limits.conf`](deploy/nginx-rate-limits.conf) or [`deploy/Caddyfile.rate-limits.example`](deploy/Caddyfile.rate-limits.example).
+Compose nginx already applies auth/QA rate limits. The API also enforces in-process limits on `/auth/login`, `/auth/signup`, and Ask endpoints as a safety net when uvicorn is exposed without nginx (still prefer the `full` profile or an edge proxy for multi-worker deploys). Set `ASKA_TRUST_PROXY=true` only behind a trusted proxy so limits use `X-Real-IP` (not client-spoofable left-most `X-Forwarded-For`). For an external proxy, also see [`deploy/nginx-rate-limits.conf`](deploy/nginx-rate-limits.conf) or [`deploy/Caddyfile.rate-limits.example`](deploy/Caddyfile.rate-limits.example).
+
+**Lab harden (no domain required)** — signup policy, rotate admin/office passwords, backup passphrase:
+
+```bat
+python scripts\harden_lab_ops.py --apply-db
+```
+
+Reads/writes `backend/.env.production` + `deploy/BOOTSTRAP_CREDENTIALS.txt` (gitignored). Signup defaults to campus domains `lspu.edu.ph,aska.local` plus a generated invite code. Encrypted backups use `deploy/BACKUP_PASSPHRASE.txt` (see [`deploy/BACKUP.md`](deploy/BACKUP.md)).
+
+**Lab rule:** HTTP Compose on `:8080` is for this PC only — never publish it to campus or the public internet. Campus go-live still needs a host + domain + HTTPS overlay.
 
 ## 5. Restore public KB articles (after RAG fail-close)
 

@@ -29,6 +29,7 @@ class _SignupPageState extends State<SignupPage> {
   final _studentIdCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
+  final _inviteCtrl = TextEditingController();
   bool _loading = false;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
@@ -41,6 +42,7 @@ class _SignupPageState extends State<SignupPage> {
     _studentIdCtrl.dispose();
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
+    _inviteCtrl.dispose();
     super.dispose();
   }
 
@@ -57,6 +59,7 @@ class _SignupPageState extends State<SignupPage> {
         studentId: _studentIdCtrl.text,
         password: _passwordCtrl.text,
         role: 'student',
+        inviteCode: _inviteCtrl.text,
       ));
       if (!mounted) return;
       redirectAfterAuth(
@@ -137,6 +140,14 @@ class _SignupPageState extends State<SignupPage> {
                   ? 'Enter your student ID.'
                   : null,
               decoration: authFieldDecoration('Student ID'),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _inviteCtrl,
+              textInputAction: TextInputAction.next,
+              decoration: authFieldDecoration(
+                'Invite code (if required by campus)',
+              ),
             ),
             const SizedBox(height: 12),
             TextFormField(

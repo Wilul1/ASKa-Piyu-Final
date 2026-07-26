@@ -6,16 +6,18 @@ location = /auth/login {
     proxy_pass http://aska_api;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # Use $remote_addr only — do not forward client-supplied XFF (spoofable).
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 
 location = /auth/signup {
-    limit_req zone=aska_auth burst=5 nodelay;
+    limit_req zone=aska_auth burst=3 nodelay;
     proxy_pass http://aska_api;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # Use $remote_addr only — do not forward client-supplied XFF (spoofable).
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 
@@ -24,7 +26,8 @@ location = /qa/ask {
     proxy_pass http://aska_api;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # Use $remote_addr only — do not forward client-supplied XFF (spoofable).
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 
@@ -33,7 +36,8 @@ location = /student/ask {
     proxy_pass http://aska_api;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # Use $remote_addr only — do not forward client-supplied XFF (spoofable).
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 
@@ -41,6 +45,7 @@ location / {
     proxy_pass http://aska_api;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # Use $remote_addr only — do not forward client-supplied XFF (spoofable).
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 }

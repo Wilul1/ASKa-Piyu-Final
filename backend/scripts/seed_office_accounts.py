@@ -2,6 +2,7 @@
 
 Run from the backend directory:
     python scripts/seed_office_accounts.py
+    python scripts/seed_office_accounts.py --force-reset-password
 
 Password for newly created office accounts:
   - ASKA_SEED_OFFICE_PASSWORD env var if set
@@ -10,6 +11,7 @@ Password for newly created office accounts:
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import sys
@@ -70,8 +72,9 @@ def _ensure_office_user(
     email: str,
     password: str,
     full_name: str | None = None,
-) -> tuple[User, bool]:
-    """Create or update an office staff user. Returns (user, created)."""
+    force_reset_password: bool = False,
+) -> tuple[User, str]:
+    """Create or update an office staff user. Returns (user, action)."""
     user = session.query(User).filter(User.email == email).first()
     display_name = full_name or f"{office.name} Staff"
     if user is None:
@@ -83,22 +86,38 @@ def _ensure_office_user(
             office_id=office.id,
         )
         session.add(user)
-        return user, True
+        return user, "created"
 
     user.full_name = display_name
     user.role = "office"
     user.office_id = office.id
+    if force_reset_password:
+        user.password_hash = hash_password(password)
+        if hasattr(user, "is_active"):
+            user.is_active = True
+        if hasattr(user, "credentials_version"):
+            user.credentials_version = int(user.credentials_version or 0) + 1
+        return user, "password_reset"
     # Keep existing password — do not reset on every seed run.
-    return user, False
+    return user, "present"
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Seed office staff accounts.")
+    parser.add_argument(
+        "--force-reset-password",
+        action="store_true",
+        help="Reset password for existing office accounts to ASKA_SEED_OFFICE_PASSWORD.",
+    )
+    args = parser.parse_args()
+
     password = _seed_password()
     initialize_database()
     session_factory = get_session_factory()
     session = session_factory()
     created: list[str] = []
-    updated: list[str] = []
+    reset: list[str] = []
+    present: list[str] = []
     try:
         # Ensure core offices exist even on a fresh DB.
         for office_name in (
@@ -119,14 +138,20 @@ def main() -> None:
                 email = f"{re.sub(r'[^a-z0-9]+', '-', office.name.lower()).strip('-')[:40]}@aska.local"
             used_emails.add(email)
 
-            user, was_created = _ensure_office_user(
-                session, office, email=email, password=password
+            user, action = _ensure_office_user(
+                session,
+                office,
+                email=email,
+                password=password,
+                force_reset_password=args.force_reset_password,
             )
             label = f"{user.email} -> {office.name}"
-            if was_created:
+            if action == "created":
                 created.append(label)
+            elif action == "password_reset":
+                reset.append(label)
             else:
-                updated.append(label)
+                present.append(label)
 
         session.commit()
     finally:
@@ -137,11 +162,15 @@ def main() -> None:
         print(f"Created ({len(created)}):")
         for item in created:
             print(f"  + {item}")
-    if updated:
-        print(f"Updated / already present ({len(updated)}):")
-        for item in updated:
+    if reset:
+        print(f"Password reset ({len(reset)}):")
+        for item in reset:
+            print(f"  * {item}")
+    if present:
+        print(f"Updated / already present ({len(present)}):")
+        for item in present:
             print(f"  ~ {item}")
-    if not created and not updated:
+    if not created and not reset and not present:
         print("No offices found. Seed offices first (e.g. seed_office_aliases.py).")
 
 

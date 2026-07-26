@@ -82,7 +82,71 @@ def test_duplicate_email_rejected(auth_client):
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Email is already registered."
+    assert response.json()["detail"] == "Unable to create an account with that email."
+
+
+def test_signup_respects_email_domain_allowlist(auth_client, monkeypatch):
+    monkeypatch.setattr(
+        "app.routes.auth.settings.signup_allowed_email_domains",
+        "lspu.edu.ph",
+    )
+    denied = auth_client.post(
+        "/auth/signup",
+        json={
+            "email": "student@gmail.com",
+            "password": "correct horse battery staple1",
+            "full_name": "Outside Student",
+        },
+    )
+    assert denied.status_code == 403
+    allowed = signup_student(auth_client, email="student@lspu.edu.ph")
+    assert allowed["user"]["email"] == "student@lspu.edu.ph"
+
+
+def test_signup_requires_invite_code_when_configured(auth_client, monkeypatch):
+    monkeypatch.setattr("app.routes.auth.settings.signup_invite_code", "campus-invite")
+    missing = auth_client.post(
+        "/auth/signup",
+        json={
+            "email": "a@example.edu",
+            "password": "correct horse battery staple1",
+            "full_name": "No Invite",
+        },
+    )
+    assert missing.status_code == 403
+    wrong = auth_client.post(
+        "/auth/signup",
+        json={
+            "email": "b@example.edu",
+            "password": "correct horse battery staple1",
+            "full_name": "Bad Invite",
+            "invite_code": "wrong",
+        },
+    )
+    assert wrong.status_code == 403
+    ok = auth_client.post(
+        "/auth/signup",
+        json={
+            "email": "c@example.edu",
+            "password": "correct horse battery staple1",
+            "full_name": "Good Invite",
+            "invite_code": "campus-invite",
+        },
+    )
+    assert ok.status_code == 200
+
+
+def test_signup_can_be_disabled(auth_client, monkeypatch):
+    monkeypatch.setattr("app.routes.auth.settings.allow_public_signup", False)
+    response = auth_client.post(
+        "/auth/signup",
+        json={
+            "email": "blocked@example.edu",
+            "password": "correct horse battery staple1",
+            "full_name": "Blocked",
+        },
+    )
+    assert response.status_code == 403
 
 
 def test_public_signup_cannot_create_admin(auth_client):
@@ -247,6 +311,21 @@ def test_auth_me_includes_office_name(auth_client):
     assert data["office_name"] == "ICT Office"
 
 
+def test_logout_revokes_bearer_token(auth_client):
+    signup_data = signup_student(auth_client)
+    token = signup_data["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    assert auth_client.get("/auth/me", headers=headers).status_code == 200
+
+    logout = auth_client.post("/auth/logout", headers=headers)
+    assert logout.status_code == 204
+
+    revoked = auth_client.get("/auth/me", headers=headers)
+    assert revoked.status_code == 401
+    assert revoked.json()["detail"] == "Authentication token has been revoked."
+
+
 def test_auth_me_rejects_missing_token(auth_client):
     response = auth_client.get("/auth/me")
 
@@ -366,8 +445,15 @@ def test_create_office_account(auth_client):
     assert data["office_name"] == "ICT Office"
 
 
-def test_hard_delete_user_succeeds_when_user_owns_tickets(auth_client):
-    """Ticket FKs must not block admin hard-delete."""
+def test_hard_delete_user_succeeds_when_user_owns_tickets(auth_client, tmp_path, monkeypatch):
+    """Ticket FKs must not block admin hard-delete; attachment files are removed."""
+    from app.models.db_models import TicketAttachment
+    from app.services.ticket_attachments import resolve_attachment_path
+
+    monkeypatch.setattr(
+        "app.services.ticket_attachments.settings.ticket_attachments_dir",
+        str(tmp_path / "attachments"),
+    )
     session_generator = app.dependency_overrides[get_db_session]()
     session = next(session_generator)
     try:
@@ -401,9 +487,25 @@ def test_hard_delete_user_succeeds_when_user_owns_tickets(auth_client):
                 message="Following up",
             )
         )
+        stored_name = "att1_proof.pdf"
+        path = resolve_attachment_path(ticket.id, stored_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.4 doomed-attachment")
+        session.add(
+            TicketAttachment(
+                id="att-del-001",
+                ticket_id=ticket.id,
+                uploaded_by_id=student.id,
+                original_filename="proof.pdf",
+                content_type="application/pdf",
+                size_bytes=path.stat().st_size,
+                stored_filename=stored_name,
+            )
+        )
         session.commit()
         student_id = student.id
         token = create_access_token(admin)
+        assert path.is_file()
     finally:
         try:
             next(session_generator)
@@ -416,6 +518,7 @@ def test_hard_delete_user_succeeds_when_user_owns_tickets(auth_client):
     )
     assert response.status_code == 200, response.text
     assert response.json()["deleted_user_id"] == student_id
+    assert not path.is_file()
 
     session_generator = app.dependency_overrides[get_db_session]()
     session = next(session_generator)

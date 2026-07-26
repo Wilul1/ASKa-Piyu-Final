@@ -71,9 +71,17 @@ class Settings(BaseSettings):
     allow_admin_api_key: bool | None = None
     # None = auto (enabled unless env=production). Set true/false to override.
     expose_openapi: bool | None = None
-    # When true, rate limits use X-Forwarded-For / X-Real-IP (only enable behind
-    # a trusted reverse proxy such as the Compose nginx service).
+    # When true, rate limits use X-Real-IP (preferred) or the right-most
+    # X-Forwarded-For hop. Only enable behind a trusted reverse proxy
+    # (Compose nginx). Never trust the left-most XFF (client-spoofable).
     trust_proxy: bool = False
+    # Public /auth/signup. Set false to force admin-created student accounts.
+    allow_public_signup: bool = True
+    # Comma-separated email domains allowed for public signup (e.g. "lspu.edu.ph").
+    # Empty/None = any domain.
+    signup_allowed_email_domains: str | None = None
+    # When set, public signup requires a matching invite_code in the request body.
+    signup_invite_code: str | None = None
 
 
 settings = Settings()

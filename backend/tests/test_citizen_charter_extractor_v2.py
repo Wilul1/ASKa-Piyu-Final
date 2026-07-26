@@ -1260,3 +1260,210 @@ def test_id_validation_contaminated_header_crumbs_clean_to_three_steps():
     assert "[NEEDS REVIEW]" not in service.steps[0].fees
     assert "TIME" not in service.steps[0].person_responsible
     assert "RESPONSIBLE" not in service.steps[0].person_responsible
+
+
+def test_wrapped_heading_empty_stub_merges_into_structured_sibling():
+    """Empty 'Issuance of …/Transfer' stub + Credentials body → one service."""
+    from app.services.citizen_charter_extractor_v2 import (
+        _compose_wrapped_service_title,
+        _titles_look_like_wrapped_heading,
+        extract_citizen_charter_services_v2,
+    )
+    from app.utils.pdf.pymupdf_extractor import PageExtraction
+
+    assert _titles_look_like_wrapped_heading(
+        "Issuance of Transcript of Records/Transfer",
+        "Credentials/Certifications/CAV/Authenticated Documents",
+    )
+    assert not _titles_look_like_wrapped_heading(
+        "1. Enrollment",
+        "2. Assessment of Fees",
+    )
+    composed = _compose_wrapped_service_title(
+        "Issuance of Transcript of Records/Transfer",
+        "Credentials/Certifications/CAV/Authenticated Documents",
+    )
+    assert "Transcript" in composed
+    assert "Credentials" in composed
+
+    text = "\n".join(
+        [
+            "2. Issuance of Transcript of Records/Transfer",
+            "Credentials/Certifications/CAV/Authenticated Documents",
+            "This process provides description and series of steps for assisting the public.",
+            "Office or Division: Registrar",
+            "Classification: Simple",
+            "Type of Transaction: G2C – Government to Citizen",
+            "Who may avail: All (Walk-In students & Graduates)",
+            "Checklist of Requirements | Where to Secure",
+            "Clearance, Request form | Accounting Office/Office of the Registrar",
+            "Client Steps | Agency Action | Fees | Processing Time | Person Responsible",
+            (
+                "Pay required fees. Proceed to the Cashier's office. | "
+                "Receives payment and issues official receipt - students P75.00/page "
+                "- students P150/page Certifications P30.00/page "
+                "2nd Diploma P100.00 | "
+                "Transcript Undergrad Graduate of Transfer to 5 copy of | "
+                "2 minutes | Cashier's Staff"
+            ),
+            "TOTAL: Depends on the document Active Files: 59 minutes",
+        ]
+    )
+    page = PageExtraction(page_number=12, text=text, method="digital", words=None, geometry_scale=1.0)
+    services = extract_citizen_charter_services_v2([page])
+    assert len(services) == 1
+    service = services[0]
+    assert "Transcript" in service.service_title
+    assert service.office_division == "Registrar"
+    assert not any(s.extraction_quality == "rag_only" for s in services)
+    fee_blob = " ".join(step.fees for step in service.steps)
+    assert "75" in fee_blob
+    assert "150" in fee_blob
+    assert "P75" in fee_blob or "75.00" in fee_blob
+
+
+def test_recover_fees_spilled_into_agency_action_generic():
+    from app.services.citizen_charter_extractor_v2 import _recover_fees_spilled_into_agency
+
+    agency = (
+        "Receives payment and issues official receipt - students P75.00/page "
+        "- students P150/page Certifications P30.00/page 2nd Diploma P100.00"
+    )
+    fees = "Transcript Undergrad Graduate of Transfer to 5 copy of"
+    new_agency, new_fees = _recover_fees_spilled_into_agency(agency, fees)
+    assert "P75.00/page" in new_fees
+    assert "P150" in new_fees
+    assert "30.00" in new_fees or "P30" in new_fees
+    assert "Transcript Undergrad Graduate" not in new_fees
+    assert "Receives payment" in new_agency
+    assert "P75.00/page" not in new_agency
+    # Ambient labels must not paint every amount.
+    assert new_fees.lower().count("second copy of diploma") <= 1
+    assert not new_fees.lower().startswith("second copy of diploma: p75")
+    assert new_fees.lower().count("certifications:") <= 1
+    # Immediate labels still work.
+    assert "Certifications:" in new_fees or "P30" in new_fees
+    assert "Second copy of diploma:" in new_fees or "Diploma:" in new_fees or "P100" in new_fees
+
+    labeled_agency = (
+        "Receives payment undergraduate students P75.00/page "
+        "graduate students P150/page Certifications P30.00/page"
+    )
+    _, labeled_fees = _recover_fees_spilled_into_agency(labeled_agency, fees)
+    assert "Undergraduate" in labeled_fees
+    assert "Graduate" in labeled_fees
+
+
+def test_fee_cell_rejects_total_line_crumbs_for_all_services():
+    from app.services.citizen_charter_extractor_v2 import (
+        StepV2,
+        _enrich_fee_labels,
+        _fee_cell_looks_unusable,
+        _recover_total_fees_from_steps,
+        _split_total_line,
+    )
+
+    for crumb in ("the", "on the", "Php", "Depends on the document", "Active Files"):
+        assert _fee_cell_looks_unusable(crumb), crumb
+
+    assert not _fee_cell_looks_unusable("None")
+    assert not _fee_cell_looks_unusable("P75.00/page")
+    assert not _fee_cell_looks_unusable("Undergraduate: P75.00/page; Graduate: P150/page")
+
+    fee, processing = _split_total_line("Depends on the document Active Files: 59 minutes")
+    assert processing == "59 minutes"
+    assert fee in {"[NEEDS REVIEW]", "NEEDS REVIEW"} or "depends" not in fee.casefold()
+
+    steps = [
+        StepV2(
+            client_step="A. For undergraduate students fill request slip",
+            agency_action="Issue request slip",
+            fees="None",
+            processing_time="5 minutes",
+            person_responsible="Registrar Staff",
+        ),
+        StepV2(
+            client_step="B. For graduates fill request slip",
+            agency_action="Assess fees",
+            fees="None",
+            processing_time="5 minutes",
+            person_responsible="Registrar Staff",
+        ),
+        StepV2(
+            client_step="Pay required fees at Cashier",
+            agency_action="Receives payment",
+            fees="P75.00/page; P150/page; P30.00/page; Diploma: P100.00",
+            processing_time="2 minutes",
+            person_responsible="Cashier Staff",
+        ),
+    ]
+    recovered = _recover_total_fees_from_steps(steps, "on the")
+    assert "P75" in recovered
+    assert "P150" in recovered
+    assert "Undergraduate" in recovered
+    assert "Graduate" in recovered
+    assert "on the" not in recovered.casefold()
+
+    # Generic library / clinic style amounts also promote over crumbs.
+    library_steps = [
+        StepV2(
+            client_step="Pay overdue fine",
+            agency_action="Receive payment",
+            fees="P5.00/day",
+            processing_time="2 minutes",
+            person_responsible="Librarian",
+        )
+    ]
+    assert "P5.00/day" in _recover_total_fees_from_steps(library_steps, "Php")
+
+    labeled = _enrich_fee_labels(
+        "P75.00/page; P150/page; P100.00",
+        "undergraduate students and graduate students second copy diploma",
+    )
+    assert "Undergraduate:" in labeled
+    assert "Graduate:" in labeled
+    # Ambient "diploma" in context must NOT relabel TOR page fees.
+    assert labeled.count("Second copy of diploma") == 0
+    assert "Undergraduate: P75.00/page" in labeled
+    assert "Graduate: P150/page" in labeled
+
+    diploma_only = _enrich_fee_labels(
+        "P75.00/page; P150/page; Diploma: P100.00",
+        "A. For undergraduate students B. For graduates Pay fees 2nd Diploma",
+    )
+    assert "Undergraduate: P75.00/page" in diploma_only
+    assert "Graduate: P150/page" in diploma_only
+    assert "Diploma: P100.00" in diploma_only
+    assert diploma_only.count("Second copy of diploma") == 0
+
+    # Repair over-broad labels from a previous bad pass.
+    repaired = _enrich_fee_labels(
+        "Second copy of diploma: P75.00/page; Second copy of diploma: P150/page; Diploma: P100.00",
+        "undergraduate students graduate students",
+    )
+    assert "Undergraduate: P75.00/page" in repaired
+    assert "Graduate: P150/page" in repaired
+    assert "Diploma: P100.00" in repaired
+
+
+def test_office_plain_colon_counts_as_service_header_cue():
+    from app.services.citizen_charter_extractor_v2 import _has_service_header_cues
+
+    flat = [
+        {"text": "Issuance of Diploma", "page": 1},
+        {"text": "Office: Registrar", "page": 1},
+        {"text": "Classification: Simple", "page": 1},
+        {"text": "Type of Transaction: G2C", "page": 1},
+        {"text": "Who May Avail: Graduates", "page": 1},
+        {"text": "Checklist of Requirements | Where to Secure", "page": 1},
+        {"text": "Client Steps | Agency Action | Fees | Processing Time | Person Responsible", "page": 1},
+    ]
+    assert _has_service_header_cues(0, flat) is True
+
+
+def test_total_residue_never_becomes_service_title():
+    from app.services.citizen_charter_extractor_v2 import _looks_like_field_or_fragment_line
+
+    assert _looks_like_field_or_fragment_line("TOTAL: None 2 minutes")
+    assert _looks_like_field_or_fragment_line("None 2 minutes")
+    assert not _looks_like_field_or_fragment_line("Issuance of Diploma")

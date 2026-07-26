@@ -237,11 +237,19 @@ def _should_merge_client_continuation(current: str, previous: str) -> bool:
 def finalize_charter_v2_services_for_extraction(
     services: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    return [
-        finalize_charter_v2_service_for_extraction(item)
-        for item in (services or [])
-        if isinstance(item, dict)
-    ]
+    from app.services.citizen_charter_services import is_noise_service_title
+
+    finalized: list[dict[str, Any]] = []
+    for item in services or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(
+            item.get("service_title") or item.get("service") or item.get("title") or ""
+        ).strip()
+        if is_noise_service_title(title):
+            continue
+        finalized.append(finalize_charter_v2_service_for_extraction(item))
+    return finalized
 
 
 def _complete_step_count(steps: list[dict[str, Any]]) -> int:

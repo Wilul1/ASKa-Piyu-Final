@@ -39,6 +39,8 @@ _NOISE_TITLE_PATTERNS = (
     r"^continuation\b",
     r"^pledge\b",
     r"^total\b",
+    r"^(?:none|n/?a|not\s+applicable)(?:\s+\d|\s+\d+(?:\.\d+)?\s*(?:minutes?|mins?|hours?|hrs?|days?|seconds?))",
+    r"^\d+(?:\.\d+)?\s*(?:minutes?|mins?|hours?|hrs?|days?|seconds?)$",
     r"^fees?\s*(?:to\s+be\s+paid)?\s*:",
     r"^fees?\s+to\s+be\s+paid\b",
     r"^where\s+to\s+secure\b",
@@ -1957,10 +1959,23 @@ def _normalize_fee_display(value: Any, *, missing_as: str) -> str:
 
 def _summarize_charter_fees(service: dict[str, Any], steps: list[dict[str, Any]]) -> str:
     """Summarize the total/main fee for the Fees section."""
+    from app.services.citizen_charter_extractor_v2 import (
+        _enrich_fee_labels,
+        _fee_cell_looks_unusable,
+        _fee_value_has_amount,
+    )
+
+    context = " ".join(
+        f"{step.get('client_step') or ''} {step.get('agency_action') or ''}"
+        for step in steps
+        if isinstance(step, dict)
+    )
+    context = f"{service.get('service') or service.get('service_title') or ''} {context}"
+
     for key in ("total_fees", "fees", "fee", "main_fee"):
         total = _normalize_fee_display(service.get(key), missing_as="")
-        if total:
-            return total
+        if total and not _fee_cell_looks_unusable(total):
+            return _enrich_fee_labels(total, context)
 
     step_fees: list[str] = []
     for step in steps:
@@ -1968,7 +1983,7 @@ def _summarize_charter_fees(service: dict[str, Any], steps: list[dict[str, Any]]
             step.get("fees") or step.get("fee"),
             missing_as="",
         )
-        if fee:
+        if fee and not _fee_cell_looks_unusable(fee):
             step_fees.append(fee)
 
     if not step_fees:
@@ -1977,7 +1992,10 @@ def _summarize_charter_fees(service: dict[str, Any], steps: list[dict[str, Any]]
     if all(value == "None" for value in unique):
         return "None"
     paid = [value for value in unique if value != "None"]
-    return ", ".join(paid) if paid else "None"
+    summary = "; ".join(paid) if paid else "None"
+    if summary != "None" and _fee_value_has_amount(summary):
+        return _enrich_fee_labels(summary, context)
+    return summary
 
 
 def _document_label_for_source(source_document: str, service: dict[str, Any]) -> str:

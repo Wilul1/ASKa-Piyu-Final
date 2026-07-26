@@ -90,24 +90,77 @@ String buildFullExtractionText({
 }) {
   final cleaned = reviewText.trim();
   if (cleaned.isNotEmpty) return cleaned;
+  return buildKnowledgeUnitsExtractionTxt(knowledgeUnits: knowledgeUnits);
+}
+
+/// One downloadable .txt with every knowledge unit (not one file per unit).
+String buildKnowledgeUnitsExtractionTxt({
+  required List<Map<String, dynamic>> knowledgeUnits,
+  String? sourceFilename,
+}) {
   if (knowledgeUnits.isEmpty) return '';
   final buffer = StringBuffer();
+  final source = (sourceFilename ?? '').trim();
+  buffer.writeln('ASKa-Piyu extraction units');
+  if (source.isNotEmpty) buffer.writeln('Source: $source');
+  buffer.writeln('Total units: ${knowledgeUnits.length}');
+  buffer.writeln('=' * 64);
+
   for (var i = 0; i < knowledgeUnits.length; i++) {
     final unit = knowledgeUnits[i];
+    final index = unit['unit_index'] ?? i;
     final title = (unit['title'] ?? 'Untitled').toString().trim();
-    final path = (unit['hierarchy_path'] ?? '').toString().trim();
+    final path = (unit['hierarchy_path'] ?? unit['source_section'] ?? '')
+        .toString()
+        .trim();
+    final contentType = (unit['content_type'] ?? '').toString().trim();
+    final status = (unit['status'] ?? '').toString().trim();
+    final pageStart = unit['page_start'] ?? unit['page'];
+    final pageEnd = unit['page_end'];
     final content = (unit['content'] ?? unit['text'] ?? '').toString().trim();
-    if (i > 0) {
-      buffer.writeln();
-      buffer.writeln('=' * 48);
-      buffer.writeln();
-    }
-    buffer.writeln(title);
-    if (path.isNotEmpty) buffer.writeln(path);
+    final metadata = unit['metadata'];
+    final meta = metadata is Map ? Map<String, dynamic>.from(metadata) : const {};
+
     buffer.writeln();
-    buffer.write(content);
+    buffer.writeln('UNIT ${i + 1} / ${knowledgeUnits.length}');
+    buffer.writeln('-' * 64);
+    buffer.writeln('unit_index: $index');
+    buffer.writeln(title.isEmpty ? 'title: Untitled' : 'title: $title');
+    if (path.isNotEmpty) buffer.writeln('hierarchy_path: $path');
+    if (contentType.isNotEmpty) buffer.writeln('content_type: $contentType');
+    if (status.isNotEmpty) buffer.writeln('status: $status');
+    if (pageStart != null) {
+      if (pageEnd != null && pageEnd != pageStart) {
+        buffer.writeln('pages: $pageStart-$pageEnd');
+      } else {
+        buffer.writeln('page: $pageStart');
+      }
+    }
+    for (final key in const [
+      'office',
+      'responsible_office',
+      'total_fees',
+      'fees',
+      'total_processing_time',
+      'who_may_avail',
+      'classification',
+      'parser_document_type',
+      'document_type',
+    ]) {
+      final value = (unit[key] ?? meta[key] ?? '').toString().trim();
+      if (value.isNotEmpty) buffer.writeln('$key: $value');
+    }
+    final reasons = unit['suspicious_reasons'];
+    if (reasons is List && reasons.isNotEmpty) {
+      buffer.writeln('suspicious_reasons: ${reasons.join('; ')}');
+    }
+    buffer.writeln();
+    buffer.writeln(content.isEmpty ? '(empty content)' : content);
+    buffer.writeln();
+    buffer.writeln('=' * 64);
   }
-  return buffer.toString().trim();
+
+  return buffer.toString().trimRight();
 }
 
 String _outlineKey(Map<String, dynamic> unit) {

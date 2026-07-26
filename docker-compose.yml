@@ -36,7 +36,7 @@ services:
       ASKA_DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@postgres:5432/aska_piyu
       ASKA_DATABASE_INIT_ON_STARTUP: "false"
       ASKA_ALLOW_ADMIN_API_KEY: "false"
-      # Honor X-Forwarded-For from the Compose nginx service for per-client rate limits.
+      # Honor X-Real-IP from Compose nginx for per-client rate limits (not spoofable XFF).
       ASKA_TRUST_PROXY: "true"
       ASKA_CHROMA_PERSIST_DIR: /data/chroma
       ASKA_DOCUMENTS_PERSIST_DIR: /data/documents

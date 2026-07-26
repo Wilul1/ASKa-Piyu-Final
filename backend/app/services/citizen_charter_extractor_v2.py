@@ -281,6 +281,17 @@ def _looks_like_field_or_fragment_line(text: str) -> bool:
 
     if _FIELD_LABEL_RE.match(lower):
         return True
+    # TOTAL fee/time lines (with remainder) must never become service titles.
+    if re.match(r"(?i)^total\b", cleaned):
+        return True
+    # TOTAL residue after the label is stripped: "None 2 minutes", "N/A 1 day".
+    if re.fullmatch(
+        r"(?i)(?:none|n/?a|not\s+applicable|not\s+specified)"
+        r"(?:\s+\d+(?:\.\d+)?(?:\s*[-–—]\s*\d+(?:\.\d+)?)?\s*"
+        r"(?:minutes?|mins?|hours?|hrs?|days?|seconds?))?",
+        cleaned,
+    ):
+        return True
     if _looks_like_generic_description_title(cleaned):
         return True
     if lower.startswith("secure:") or lower.startswith("secure :"):
@@ -345,7 +356,10 @@ def _has_service_header_cues(idx: int, flat: list[dict]) -> bool:
     window = " ".join(pieces)
     if not window:
         return False
-    has_office = bool(re.search(r"office\s*(?:/|or)?\s*division\s*:", window, flags=re.I))
+    has_office = bool(
+        re.search(r"office\s*(?:/|or)?\s*division\s*:", window, flags=re.I)
+        or re.search(r"(?i)\boffice\s*:", window)
+    )
     has_class = bool(re.search(r"classification\s*:", window, flags=re.I))
     has_txn = bool(
         re.search(r"(?:transaction\s+type|type\s+of\s+transaction)\s*:", window, flags=re.I)
@@ -474,6 +488,433 @@ def _service_has_structured_body(service: CharterServiceV2) -> bool:
     )
 
 
+# When a long Citizen's Charter heading wraps, the detector often emits an empty
+# title stub ("Issuance of Transcript…/Transfer") then a structured sibling
+# whose title is the wrap continuation ("Credentials/Certifications/CAV…").
+_SERVICE_TITLE_START_RE = re.compile(
+    r"^(?:\d{1,3}[\.\)]\s+)?(?:"
+    r"issuance|processing|request|application|approval|collection|provision|"
+    r"receiving|releasing|assessment|validation|enrollment|enrolment|"
+    r"deployment|dropping|crediting|maintenance|funding"
+    r")\b",
+    re.I,
+)
+_WRAP_CONTINUATION_TITLE_RE = re.compile(
+    r"^(?:"
+    r"credentials?|certifications?|cav\b|authenticated|documents?|"
+    r"diplomas?|clearance|grades?|records?|transfer|validation|"
+    r"application|request|processing|issuance|of\s+\w+"
+    r")\b",
+    re.I,
+)
+_SECTION_BOUNDARY_TITLE_RE = re.compile(
+    r"^(?:office\s+of\s+the|list\s+of\s+services|frontline\s+services|"
+    r"non-?frontline|chapter\s+\d+|article\s+\d+)\b",
+    re.I,
+)
+
+
+def _strip_heading_number(title: str) -> str:
+    return _normalize_space(re.sub(r"^\d{1,3}[\.\)]\s+", "", title or ""))
+
+
+def _heading_number(title: str) -> int | None:
+    match = re.match(r"^(\d{1,3})[\.\)]\s+", _normalize_space(title))
+    return int(match.group(1)) if match else None
+
+
+def _titles_look_like_wrapped_heading(left: str, right: str) -> bool:
+    """True when *right* is likely a line-wrap continuation of *left*'s title."""
+    a = _strip_heading_number(left)
+    b = _strip_heading_number(right)
+    if not a or not b:
+        return False
+    if _SECTION_BOUNDARY_TITLE_RE.match(b):
+        return False
+    if _looks_like_generic_description_title(a) or _looks_like_generic_description_title(b):
+        return False
+    left_num = _heading_number(left)
+    right_num = _heading_number(right)
+    if left_num is not None and right_num is not None and left_num != right_num:
+        return False
+    # Classic wrap: "…Records/Transfer" + "Credentials/Certifications/…"
+    if a.rstrip().endswith("/") or re.search(r"/\s*\w+$", a):
+        if _WRAP_CONTINUATION_TITLE_RE.match(b) or "/" in b:
+            return True
+    if _SERVICE_TITLE_START_RE.match(a) and _WRAP_CONTINUATION_TITLE_RE.match(b):
+        return True
+    # Shared meaningful tokens (e.g. Issuance + Issuance of ID Card fragments).
+    stop = {
+        "and",
+        "the",
+        "of",
+        "for",
+        "to",
+        "a",
+        "an",
+        "or",
+        "with",
+        "from",
+        "in",
+        "on",
+    }
+    tokens_a = {t for t in re.findall(r"[a-z0-9]{4,}", a.casefold()) if t not in stop}
+    tokens_b = {t for t in re.findall(r"[a-z0-9]{4,}", b.casefold()) if t not in stop}
+    if tokens_a & tokens_b:
+        return True
+    return False
+
+
+def _compose_wrapped_service_title(left: str, right: str) -> str:
+    a = _strip_heading_number(left)
+    b = _strip_heading_number(right)
+    if not a:
+        return b
+    if not b:
+        return a
+    if b.casefold() in a.casefold():
+        return a
+    if a.casefold() in b.casefold():
+        return b
+    return _normalize_space(f"{a} {b}")
+
+
+def _fee_cell_looks_unusable(fees: str) -> bool:
+    """True when the Fees column / total_fees value is empty/mangled and should not be trusted.
+
+    Generic across all Citizen's Charter services — rejects TOTAL-line crumbs like
+    ``the``, ``on the``, bare ``Php``, and prose without an amount.
+    """
+    cleaned = _normalize_space(fees)
+    if not cleaned or cleaned == NEEDS_REVIEW:
+        return True
+    lower = cleaned.casefold()
+    if lower in _NONE_FEE_VALUES:
+        return False
+    # Bare currency token with no amount (common TOTAL OCR leftover).
+    if re.fullmatch(r"(?:php|p|peso|pesos|amount|fee|fees)", lower):
+        return True
+    # Short English crumbs left after TOTAL time is stripped.
+    if re.fullmatch(
+        r"(?:the|on|on the|a|an|of|to|for|and|or|as|per|"
+        r"depends(?:\s+on(?:\s+the(?:\s+document)?)?)?|"
+        r"as\s+assessed|varies|variable|see\s+above|active\s+files?)",
+        lower,
+    ):
+        return True
+    if re.search(r"(?i)\bdepends\s+on\b", cleaned) and not re.search(
+        r"(?i)(?:php|p\s*)?\d", cleaned
+    ):
+        return True
+    has_amount = bool(
+        re.search(
+            r"(?i)(?:php\s*|p\s*)?\d+(?:[.,]\d+)?(?:\s*/\s*(?:page|unit|pc|pcs|copy|set))?",
+            cleaned,
+        )
+    )
+    if has_amount:
+        return False
+    # Document-type words without amounts are spilled table text, not fees.
+    if re.search(
+        r"(?i)\b(?:transcript|undergrad|graduate|transfer|credentials?|diploma|"
+        r"certifications?|authentication)\b",
+        cleaned,
+    ):
+        return True
+    # Any non-none text without a real amount is unusable.
+    return True
+
+
+def _fee_value_has_amount(fees: str) -> bool:
+    cleaned = _normalize_space(fees)
+    if not cleaned:
+        return False
+    return bool(
+        re.search(
+            r"(?i)(?:php\s*|p\s*)?\d+(?:[.,]\d+)?(?:\s*/\s*(?:page|unit|pc|pcs|copy|set))?",
+            cleaned,
+        )
+    )
+
+
+_FEE_PART_SPLIT_RE = re.compile(r"\s*;\s*")
+
+
+def _enrich_fee_labels(fees: str, *contexts: str) -> str:
+    """Attach Undergraduate/Graduate/Diploma labels when context supports it.
+
+    Generic across services. Diploma labels use the fee part itself only — never the
+    whole agency/context string — so a single ``2nd Diploma`` crumb cannot relabel
+    every amount in the row.
+    """
+    cleaned = _normalize_space(fees)
+    if not cleaned or cleaned == NEEDS_REVIEW or cleaned.casefold() in _NONE_FEE_VALUES:
+        return fees
+    if _fee_cell_looks_unusable(cleaned):
+        return fees
+
+    context = _normalize_space(" ".join(str(c or "") for c in contexts))
+    parts = [p.strip() for p in _FEE_PART_SPLIT_RE.split(cleaned) if p.strip()]
+    if not parts:
+        return fees
+
+    def _amount_only(part: str) -> str:
+        return re.sub(r"(?i)^.+:\s*", "", part).strip()
+
+    def _label_prefix(part: str) -> str:
+        match = re.match(r"(?i)^(.+?):\s*", part)
+        return match.group(1).strip() if match else ""
+
+    def _is_page_fee(part: str) -> bool:
+        return bool(re.search(r"(?i)/\s*page\b", _amount_only(part)))
+
+    # Undo over-broad diploma labels from spill/older passes.
+    # Keep "Second copy of diploma: P100" (no /page). Strip only when a /page TOR
+    # amount was wrongly painted with a diploma label.
+    repaired: list[str] = []
+    for part in parts:
+        prefix = _label_prefix(part).casefold()
+        amount = _amount_only(part)
+        if prefix in {"second copy of diploma", "diploma"} and _is_page_fee(part) and not re.search(
+            r"(?i)\bdiploma\b|\b2nd\b|\bsecond\b", amount
+        ):
+            repaired.append(amount)
+        else:
+            repaired.append(part)
+    parts = repaired
+
+    unlabeled_page = [
+        i
+        for i, part in enumerate(parts)
+        if _is_page_fee(part) and not _label_prefix(part)
+    ]
+    has_under = bool(re.search(r"(?i)\bundergrad", context))
+    has_grad = bool(re.search(r"(?i)\bgraduate", context))
+    if len(unlabeled_page) >= 2 and has_under and has_grad:
+        first, second = unlabeled_page[0], unlabeled_page[1]
+        parts[first] = f"Undergraduate: {_amount_only(parts[first])}"
+        parts[second] = f"Graduate: {_amount_only(parts[second])}"
+
+    for i, part in enumerate(parts):
+        amount = _amount_only(part)
+        prefix = _label_prefix(part)
+        # Diploma labeling is part-local only (never ambient context).
+        if re.search(r"(?i)(?:2nd|second)\s+copy(?:\s+of)?\s+diploma|\b2nd\b.*\bdiploma", part):
+            parts[i] = f"Second copy of diploma: {amount}"
+            continue
+        if re.search(r"(?i)\bdiploma\b", part) and _fee_value_has_amount(part):
+            if re.search(r"(?i)2nd|second", part):
+                parts[i] = f"Second copy of diploma: {amount}"
+            else:
+                parts[i] = f"Diploma: {amount}"
+            continue
+        if prefix.casefold() in {"undergraduate", "graduate", "certifications", "tor"}:
+            continue
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for part in parts:
+        key = part.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(part)
+    return "; ".join(unique)
+
+
+def _merge_step_fee_values(steps: list[StepV2]) -> str:
+    collected: list[str] = []
+    for step in steps:
+        fee = _normalize_space(step.fees)
+        if not fee or fee == NEEDS_REVIEW or fee.casefold() in _NONE_FEE_VALUES:
+            continue
+        if _fee_cell_looks_unusable(fee):
+            continue
+        collected.append(fee)
+    if not collected:
+        return ""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for fee in sorted(collected, key=len, reverse=True):
+        for part in _FEE_PART_SPLIT_RE.split(fee):
+            piece = _normalize_space(part)
+            if not piece or _fee_cell_looks_unusable(piece):
+                continue
+            key = piece.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(piece)
+    return "; ".join(merged)
+
+
+_FEE_SPILL_AMOUNT_RE = re.compile(
+    r"(?i)(?:php\s*|p\s*)?(?P<amount>\d+(?:[.,]\d+)?)\s*(?:/\s*(?P<unit>page|unit|pc|pcs|copy|set))?"
+)
+
+# Labels must sit immediately before the amount — never borrow a Diploma/Certification
+# word from elsewhere in the Agency Action cell.
+_FEE_SPILL_LABEL_BEFORE_RE = re.compile(
+    r"(?i)\b("
+    r"undergrad(?:uate)?s?|"
+    r"graduate\s+students?|graduates?|"
+    r"2nd\s+copy(?:\s+of\s+diploma)?|second\s+copy(?:\s+of\s+diploma)?|"
+    r"2nd\s+diploma|second\s+diploma|"
+    r"certifications?|authentication|diploma|"
+    r"transcript(?:\s+of\s+records)?|tor|"
+    r"copy\s+of\s+grades"
+    r")\b\s*[:\-–—]?\s*$"
+)
+
+
+def _spill_fee_label_before(agency: str, amount_start: int) -> str:
+    """Return a fee label only when it immediately precedes this amount."""
+    before = agency[max(0, amount_start - 32) : amount_start]
+    match = _FEE_SPILL_LABEL_BEFORE_RE.search(before)
+    if not match:
+        return ""
+    label = _normalize_space(match.group(1))
+    lower = label.casefold()
+    if lower.startswith("undergrad"):
+        return "Undergraduate"
+    if "graduate" in lower:
+        return "Graduate"
+    if re.search(r"(?i)2nd|second", lower) and re.search(r"(?i)diploma|copy", lower):
+        return "Second copy of diploma"
+    if "certification" in lower:
+        return "Certifications"
+    if "diploma" in lower:
+        return "Diploma"
+    if lower in {"tor", "transcript", "transcript of records"}:
+        return "TOR"
+    if "authentication" in lower:
+        return "Authentication"
+    if "copy of grades" in lower:
+        return "Copy of grades"
+    return ""
+
+
+def _recover_fees_spilled_into_agency(agency: str, fees: str) -> tuple[str, str]:
+    """Move fee amounts that OCR dumped into Agency Action back into Fees.
+
+    Generic across charter services — not TOR-specific. Example agency spill:
+    ``Receives payment ... students P75.00/page - students P150/page Certifications P30.00/page``.
+    """
+    agency_clean = _normalize_space(agency)
+    fees_clean = _normalize_space(fees)
+    if not agency_clean:
+        return agency, fees
+    if not _fee_cell_looks_unusable(fees_clean) and fees_clean.casefold() not in {
+        "",
+        NEEDS_REVIEW.casefold(),
+    }:
+        # Usable fee cell already — only recover if agency has richer /page amounts.
+        if not re.search(r"(?i)\d+[.,]\d+\s*/\s*(?:page|unit)", agency_clean):
+            return agency, fees
+
+    matches = list(_FEE_SPILL_AMOUNT_RE.finditer(agency_clean))
+    recovered: list[str] = []
+    page_fee_slots: list[tuple[int, str]] = []
+    for match in matches:
+        amount = match.group("amount")
+        unit = match.group("unit")
+        raw = match.group(0)
+        if not unit and not re.search(r"(?i)php|p\s*\d", raw) and "." not in amount and "," not in amount:
+            if len(amount) <= 2:
+                continue
+        label = _spill_fee_label_before(agency_clean, match.start())
+        piece = _normalize_space(raw)
+        if not re.match(r"(?i)^(?:php|p)\b", piece):
+            piece = f"P{piece}" if not piece.lower().startswith("p") else piece
+        entry = f"{label}: {piece}" if label else piece
+        recovered.append(entry)
+        if unit and unit.casefold() == "page":
+            page_fee_slots.append((match.start(), entry))
+
+    # If OCR only said "students P75/page … students P150/page" without undergrad/
+    # graduate words, assign the first two /page fees when both levels appear nearby.
+    if (
+        len(page_fee_slots) >= 2
+        and not any(item.lower().startswith("undergraduate:") for item in recovered)
+        and re.search(r"(?i)\bundergrad", agency_clean)
+        and re.search(r"(?i)\bgraduate", agency_clean)
+    ):
+        first_idx = next(
+            (i for i, item in enumerate(recovered) if item == page_fee_slots[0][1]),
+            None,
+        )
+        second_idx = next(
+            (
+                i
+                for i, item in enumerate(recovered)
+                if i != first_idx and item == page_fee_slots[1][1]
+            ),
+            None,
+        )
+        if first_idx is not None and second_idx is not None:
+            first_amt = recovered[first_idx].split(": ")[-1]
+            second_amt = recovered[second_idx].split(": ")[-1]
+            recovered[first_idx] = f"Undergraduate: {first_amt}"
+            recovered[second_idx] = f"Graduate: {second_amt}"
+
+    if not recovered:
+        return agency, fees
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in recovered:
+        key = item.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+
+    new_fees = "; ".join(unique)
+    stripped = agency_clean
+    for match in reversed(matches):
+        start, end = match.start(), match.end()
+        stripped = (stripped[:start] + " " + stripped[end:]).strip()
+    stripped = re.sub(r"\s*[-–—,/|;]+\s*", " ", stripped)
+    stripped = re.sub(
+        r"(?i)\b(?:undergrad(?:uate)?s?|graduate\s+students?|graduates?|"
+        r"certifications?|authentication|transcript|students?|"
+        r"2nd\s+copy|second\s+copy|2nd\s+diploma|diploma)\b",
+        " ",
+        stripped,
+    )
+    stripped = _normalize_space(re.sub(r"\s{2,}", " ", stripped)).strip(" -–—,/|;")
+    if len(stripped) < 8:
+        stripped = "Receives payment and issues official receipt"
+    return stripped, new_fees
+
+
+def _recover_total_fees_from_steps(steps: list[StepV2], total_fees: str) -> str:
+    """Prefer real step Fees over mangled TOTAL-line crumbs for every service."""
+    merged = _merge_step_fee_values(steps)
+    context = " ".join(f"{step.client_step} {step.agency_action}" for step in steps)
+    total_clean = _normalize_space(total_fees)
+    total_unusable = _fee_cell_looks_unusable(total_clean) or total_clean.casefold() in {
+        "",
+        NEEDS_REVIEW.casefold(),
+    }
+    total_is_none = total_clean.casefold() in _NONE_FEE_VALUES
+    merged_has_amount = _fee_value_has_amount(merged)
+    total_has_amount = _fee_value_has_amount(total_clean)
+
+    if merged and (
+        total_unusable
+        or (total_is_none and merged_has_amount)
+        or (merged_has_amount and not total_has_amount)
+        or (merged_has_amount and total_has_amount and len(merged) > len(total_clean) + 8)
+    ):
+        return _enrich_fee_labels(merged, context)
+    if not total_unusable and total_clean:
+        return _enrich_fee_labels(total_clean, context)
+    if merged:
+        return _enrich_fee_labels(merged, context)
+    return total_fees
+
+
 def _rebond_service_title(
     service: CharterServiceV2, title: str, *, merge_flag: str
 ) -> CharterServiceV2:
@@ -552,11 +993,22 @@ def _merge_title_bound_placeholder_services(
                     _looks_like_generic_description_title(nxt.service_title)
                     or _looks_like_field_or_fragment_line(nxt.service_title)
                     or not _filled(nxt.service_title)
+                    or _titles_look_like_wrapped_heading(cur.service_title, nxt.service_title)
                 )
             ):
+                # Prefer composed title when the sibling heading is a wrap continuation
+                # of a real service name (not a generic "This process provides…" line).
+                if _titles_look_like_wrapped_heading(cur.service_title, nxt.service_title):
+                    merged_title = _compose_wrapped_service_title(
+                        cur.service_title, nxt.service_title
+                    )
+                    merge_flag = "wrapped_heading_bound_to_structured_block"
+                else:
+                    merged_title = cur.service_title
+                    merge_flag = "title_bound_to_structured_block"
                 out.append(
                     _rebond_service_title(
-                        nxt, cur.service_title, merge_flag="title_bound_to_structured_block"
+                        nxt, merged_title, merge_flag=merge_flag
                     )
                 )
                 i += 2
@@ -1720,6 +2172,8 @@ def _normalize_fee(value: str) -> str:
         return "None"
     if _looks_like_page_number_fee(cleaned):
         return NEEDS_REVIEW
+    if _fee_cell_looks_unusable(cleaned):
+        return NEEDS_REVIEW
     # Contaminated "BE PAID None" / "FEES TO BE PAID N/A" already stripped — residual None.
     none_token = re.search(r"(?i)\b(none|n\s*/\s*a|n/?a|nil|free)\b", cleaned)
     if none_token and not re.search(r"(?i)\b(?:php|p\s*\d|\d+[.,]\d+)", cleaned):
@@ -1740,6 +2194,10 @@ def _finalize_step_cells(
     client = _strip_step_number_prefix(_normalize_space(client))
     agency = _normalize_space(agency)
     fees = _normalize_fee(fees)
+    agency, fees = _recover_fees_spilled_into_agency(agency, fees)
+    fees = _normalize_fee(fees)
+    if fees != NEEDS_REVIEW:
+        fees = _enrich_fee_labels(fees, client, agency, context)
     ptime = _strip_table_header_crumbs(ptime)
     responsible = _normalize_osas_personnel(
         _strip_personnel_noise(_strip_table_header_crumbs(responsible)),
@@ -1797,7 +2255,13 @@ def _split_total_line(value: str) -> tuple[str, str]:
         fee = _normalize_space(fee_match.group(1))
     elif remainder and not re.search(r"\b(?:minute|hour|day|second|hr)\b", remainder, flags=re.I):
         cleaned = remainder.strip(" |:-")
-        if cleaned:
+        # Only keep remainder as fees when it looks like a real fee (None / amount),
+        # never TOTAL prose crumbs like "Depends on the document Active Files".
+        if cleaned and (
+            cleaned.casefold() in _NONE_FEE_VALUES
+            or _fee_value_has_amount(cleaned)
+            or bool(_FEE_VALUE_RE.fullmatch(cleaned))
+        ):
             fee = cleaned
 
     return fee or NEEDS_REVIEW, processing or NEEDS_REVIEW
@@ -1966,6 +2430,14 @@ def _build_service_from_block(block: _ServiceBlockSpan, flat: list[dict]) -> Cha
             )
         )
     steps = cleaned_steps
+    total_fees = _recover_total_fees_from_steps(steps, total_fees)
+    total_fees = _enrich_fee_labels(
+        total_fees,
+        block.title,
+        office_division,
+        who_may_avail,
+        " ".join(f"{s.client_step} {s.agency_action}" for s in steps),
+    )
 
     if req_header_found and step_header_found:
         table_extraction_method = "requirements_and_steps_tables"

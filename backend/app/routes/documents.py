@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, Response
 from app.models.db_models import SourceDocument, User
 from app.models.schemas import DocumentSourceMetaSchema
 from app.services.article_rag_indexer import infer_rag_audience_from_document
-from app.services.auth import get_optional_user
+from app.services.auth import get_current_user
 from app.services.document_storage import (
     get_source_document,
     resolve_stored_path,
@@ -21,9 +21,9 @@ from app.services.document_storage import (
 router = APIRouter(prefix="/documents", tags=["Source Documents"])
 
 
-def _assert_can_view_source(user: User | None, row: SourceDocument) -> None:
-    """Faculty-only PDFs: admin + faculty only. Guests are treated as students."""
-    role = ((user.role if user is not None else "student") or "student").strip().lower()
+def _assert_can_view_source(user: User, row: SourceDocument) -> None:
+    """Faculty-only PDFs: admin + faculty only."""
+    role = (user.role or "student").strip().lower()
     if role == "admin":
         return
     audience = infer_rag_audience_from_document(
@@ -38,7 +38,7 @@ def _assert_can_view_source(user: User | None, row: SourceDocument) -> None:
         )
 
 
-def _load_source_row(document_id: str, user: User | None) -> tuple[SourceDocument, Path]:
+def _load_source_row(document_id: str, user: User) -> tuple[SourceDocument, Path]:
     row = get_source_document(document_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Source document not found")
@@ -67,7 +67,7 @@ def get_document_source(
         default=False,
         description="When true, return JSON viewer metadata instead of the PDF bytes",
     ),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ):
     row, path = _load_source_row(document_id, current_user)
 
@@ -105,7 +105,7 @@ def get_document_source(
 def get_document_source_page(
     document_id: str,
     page_number: int,
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ):
     if page_number < 1:
         raise HTTPException(status_code=400, detail="page_number must be >= 1")
@@ -148,7 +148,7 @@ def get_document_source_page(
 def get_document_source_meta(
     document_id: str,
     page: int | None = Query(default=None, ge=1),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentSourceMetaSchema:
     row, _path = _load_source_row(document_id, current_user)
     return DocumentSourceMetaSchema(**source_document_payload(row, page_number=page))

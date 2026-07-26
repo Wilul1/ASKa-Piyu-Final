@@ -84,9 +84,48 @@ void main() {
         },
       ],
     );
+    expect(joined, contains('UNIT 1 / 2'));
     expect(joined, contains('Foreword'));
     expect(joined, contains('Welcome to the handbook.'));
     expect(joined, contains('Admission'));
     expect(joined, contains('Admission requirements apply.'));
+  });
+
+  test('buildKnowledgeUnitsExtractionTxt writes all units in one file', () {
+    final txt = buildKnowledgeUnitsExtractionTxt(
+      sourceFilename: 'Citizen-Charter.pdf',
+      knowledgeUnits: [
+        {
+          'unit_index': 0,
+          'title': 'Issuance of TOR',
+          'hierarchy_path': 'Registrar > TOR',
+          'content_type': 'service_procedure',
+          'status': 'OK',
+          'page_start': 12,
+          'page_end': 13,
+          'content': 'Fees: P75.00/page; P150/page',
+          'metadata': {
+            'office': 'Registrar',
+            'total_fees': 'P75.00/page; P150/page',
+          },
+        },
+        {
+          'unit_index': 1,
+          'title': 'Diploma',
+          'content': 'Second copy fee P100.00',
+        },
+      ],
+    );
+
+    expect(txt, contains('Source: Citizen-Charter.pdf'));
+    expect(txt, contains('Total units: 2'));
+    expect(txt, contains('UNIT 1 / 2'));
+    expect(txt, contains('UNIT 2 / 2'));
+    expect(txt, contains('title: Issuance of TOR'));
+    expect(txt, contains('office: Registrar'));
+    expect(txt, contains('total_fees: P75.00/page; P150/page'));
+    expect(txt, contains('Fees: P75.00/page; P150/page'));
+    expect(txt, contains('title: Diploma'));
+    expect(txt, contains('Second copy fee P100.00'));
   });
 }

@@ -81,8 +81,17 @@ def test_client_ip_ignores_forwarded_headers_unless_trust_proxy(monkeypatch):
     monkeypatch.setattr("app.services.client_ip.settings.trust_proxy", False)
     assert client_ip(request) == "10.0.0.5"
 
+    # Prefer X-Real-IP (nginx $remote_addr) over spoofable left-most XFF.
     monkeypatch.setattr("app.services.client_ip.settings.trust_proxy", True)
-    assert client_ip(request) == "203.0.113.9"
+    request.headers = {
+        "x-forwarded-for": "203.0.113.9, 10.0.0.5",
+        "x-real-ip": "10.0.0.5",
+    }
+    assert client_ip(request) == "10.0.0.5"
+
+    # Without X-Real-IP, use right-most XFF hop (proxy-appended), not left-most.
+    request.headers = {"x-forwarded-for": "203.0.113.9, 10.0.0.5"}
+    assert client_ip(request) == "10.0.0.5"
 
 
 def test_placeholder_secret_detection():

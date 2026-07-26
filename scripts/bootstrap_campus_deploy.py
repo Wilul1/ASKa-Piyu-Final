@@ -98,6 +98,8 @@ def main() -> int:
     admin_password = _password(18)
     office_password = _password(18)
     keystore_password = _password(24)
+    signup_invite = "ASKA-" + secrets.token_urlsafe(12)
+    backup_passphrase = secrets.token_urlsafe(32)
     public_origin = args.public_origin.rstrip("/")
     admin_email = args.admin_email.strip().lower()
 
@@ -154,6 +156,12 @@ def main() -> int:
                 "ASKA_SEED_ADMIN_NAME=ASKa Admin",
                 f"ASKA_SEED_OFFICE_PASSWORD={office_password}",
                 "",
+                "# LAB ONLY — do not expose HTTP :8080 on the public internet",
+                "ASKA_ALLOW_PUBLIC_SIGNUP=true",
+                "ASKA_SIGNUP_ALLOWED_EMAIL_DOMAINS=lspu.edu.ph,aska.local",
+                f"ASKA_SIGNUP_INVITE_CODE={signup_invite}",
+                f"ASKA_BACKUP_PASSPHRASE={backup_passphrase}",
+                "",
             ]
         ),
         encoding="utf-8",
@@ -177,13 +185,21 @@ def main() -> int:
                 "Office logins (examples): registrar@aska.local, ict@aska.local, osas@aska.local",
                 f"  password: {office_password}",
                 "",
+                "Student signup policy:",
+                "  domains:     lspu.edu.ph,aska.local",
+                f"  invite code: {signup_invite}",
+                "",
                 "Docker Postgres (root .env):",
                 f"  POSTGRES_PASSWORD={postgres_password}",
+                "",
+                "Backup encryption passphrase:",
+                f"  ASKA_BACKUP_PASSPHRASE={backup_passphrase}",
                 "",
                 "Android keystore (flutter_app/android/upload-keystore.jks):",
                 f"  storePassword / keyPassword: {keystore_password}",
                 "  keyAlias: aska-piyu",
                 "",
+                "WARNING: Lab / laptop only. Do NOT publish docker-compose HTTP :8080 publicly.",
                 "TLS: deploy/certs/fullchain.pem + privkey.pem (self-signed for aska.local)",
                 f"Flutter API: flutter_app/api_base.url -> {public_origin}",
                 "",
@@ -195,6 +211,17 @@ def main() -> int:
         encoding="utf-8",
     )
     print("Wrote deploy/BOOTSTRAP_CREDENTIALS.txt")
+    (ROOT / "deploy" / "BACKUP_PASSPHRASE.txt").write_text(
+        "\n".join(
+            [
+                "# ASKa-Piyu backup encryption passphrase — KEEP PRIVATE",
+                backup_passphrase,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print("Wrote deploy/BACKUP_PASSPHRASE.txt")
 
     if not OPENSSL.is_file():
         print(f"ERROR: OpenSSL not found at {OPENSSL}", file=sys.stderr)

@@ -586,7 +586,23 @@ def _procedure_chunks(text: str, *, title: str, source_document: str) -> list[Do
             )
         )
         char_start += len(content) + 2
-    return chunks or _information_chunks(
+    if chunks:
+        return chunks
+    # Never silently slice charter-shaped text into 900-char information chunks.
+    # Prefer empty so callers can keep V2 service chunks or surface a real miss.
+    from app.services.structured_document_parser import (
+        classify_document_type,
+        _looks_like_v2_charter_render,
+    )
+
+    if (
+        is_charter
+        or classify_document_type(text) == "citizen_charter"
+        or _looks_like_v2_charter_render(text)
+        or re.search(r"(?im)^(?:Service|Office|Who May Avail)\s*:", text or "")
+    ):
+        return []
+    return _information_chunks(
         type("Extraction", (), {"structured": None})(),
         text,
         title=title,

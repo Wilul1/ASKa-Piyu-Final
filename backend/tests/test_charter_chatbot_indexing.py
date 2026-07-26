@@ -94,6 +94,100 @@ def test_build_chunks_from_charter_v2_services_indexes_multiple_services_with_pa
     assert all(chunk.metadata.get("source_excerpt") for chunk in chunks)
 
 
+@patch("app.services.admin.knowledge_base_pipeline.knowledge_base_statistics")
+@patch("app.services.admin.knowledge_base_pipeline._charter_v2_preview_payload")
+@patch("app.services.admin.knowledge_base_pipeline.prepare_review_document")
+@patch("app.services.admin.knowledge_base_pipeline.ingest_document")
+def test_extract_preview_uses_v2_service_chunks_not_rendered_text_slices(
+    mock_ingest,
+    mock_prepare_review,
+    mock_v2_payload,
+    mock_statistics,
+):
+    """P1 regression: preview units come from V2 services, not 900-char re-chunking."""
+    from app.services.admin.knowledge_base_pipeline import extract_document_preview
+
+    extraction = SimpleNamespace(
+        document_type=DocumentType.PDF,
+        extracted_text="Citizen's Charter",
+        cleaned_text="Citizen's Charter",
+        raw_extracted_text="Citizen's Charter",
+        page_count=2,
+        extraction_method="digital",
+        structured=None,
+        pdf_pages=[{"page": 1}],
+    )
+    mock_ingest.return_value = extraction
+    mock_prepare_review.return_value = SimpleNamespace(
+        raw_text="Citizen's Charter",
+        cleaned_text="Citizen's Charter",
+        review_text="Citizen's Charter",
+        structuring_method="deterministic",
+    )
+    services = [
+        _v2_service("ID Validation", 18),
+        _v2_service("Issuance of Transcript of Records", 12),
+        _v2_service("Issuance of Good Moral Certificate", 22),
+    ]
+    # Long rendered text that would produce many 900-char information chunks
+    # if preview incorrectly re-parsed it through _procedure_chunks.
+    rendered = ("Service: Placeholder\nOffice: Registrar\n" + ("step text " * 80) + "\n") * 40
+    mock_v2_payload.return_value = {
+        "charter_v2_services": services,
+        "structured_extraction_text": rendered,
+        "charter_v2_detected_count": 3,
+        "charter_v2_clean_count": 3,
+        "charter_v2_needs_review_count": 0,
+        "charter_v2_low_quality_count": 0,
+        "charter_v2_rag_only_count": 0,
+        "charter_v2_diagnostics": {
+            "v2_attempted": True,
+            "preview_has_charter_v2_services": True,
+            "preview_charter_v2_services_count": 3,
+        },
+        "extraction_priority_diagnostics": [],
+    }
+    mock_statistics.return_value = {
+        "documents_indexed": 0,
+        "total_chunks_indexed": 0,
+        "embedding_model": "ChromaDB default embedding function",
+        "vector_store": "ChromaDB",
+        "last_indexed_document": None,
+    }
+
+    result = extract_document_preview(
+        b"%PDF",
+        filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        content_type="application/pdf",
+    )
+
+    units = result["knowledge_units"]
+    titles = [str(unit.get("title") or "") for unit in units]
+    assert len(units) == 3
+    assert titles == [
+        "ID Validation",
+        "Issuance of Transcript of Records",
+        "Issuance of Good Moral Certificate",
+    ]
+    assert all(
+        (unit.get("metadata") or {}).get("document_type") == "citizen_charter"
+        for unit in units
+    )
+    assert all(
+        (unit.get("metadata") or {}).get("article_type") == "service_procedure"
+        for unit in units
+    )
+    assert all(unit.get("hierarchy_path") for unit in units)
+    # Must not explode into dozens of rendered-text slices.
+    assert len(units) < 10
+    assert all("Overview" != title for title in titles)
+    fees_meta = [
+        (unit.get("metadata") or {}).get("total_fees")
+        for unit in units
+    ]
+    assert all(fee is not None for fee in fees_meta)
+
+
 @patch("app.services.document_storage.persist_uploaded_document")
 @patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store")
 @patch("app.services.admin.knowledge_base_pipeline._charter_v2_preview_payload")
@@ -540,7 +634,9 @@ def test_id_validation_question_retrieves_charter_service(tmp_path, monkeypatch)
         ),
         patch(
             "app.services.qa.question_answering.generate_groq_answer",
-            side_effect=AssertionError("Groq should not be required for typed procedure answers"),
+            side_effect=__import__(
+                "app.services.qa.groq_answer_service", fromlist=["GroqAnswerError"]
+            ).GroqAnswerError("Groq unavailable for typed procedure fallback test"),
         ),
     ):
         result = answer_qa_question("How do I validate my ID?")

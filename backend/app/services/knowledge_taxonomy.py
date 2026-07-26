@@ -88,12 +88,30 @@ def enrich_chunks_with_category_metadata(
         page = _page_number(metadata)
         campus = _campus_value(metadata)
         keywords = _metadata_keywords(metadata, classification)
+        existing_office = _clean_existing_office(metadata.get("office")) or _clean_existing_office(
+            metadata.get("responsible_office")
+        )
+        doc_type = str(
+            metadata.get("document_type") or metadata.get("parser_document_type") or ""
+        ).lower()
+        article_type = str(metadata.get("article_type") or "").lower()
+        is_charter_service = (
+            doc_type in {"citizen_charter", "procedure", "service_process"}
+            or article_type == "service_procedure"
+        )
+        # Never overwrite an extracted Citizen's Charter office with taxonomy guesses.
+        if is_charter_service and existing_office:
+            office = existing_office
+            responsible_office = existing_office
+        else:
+            office = existing_office or classification.office
+            responsible_office = existing_office or classification.office
         metadata.update(
             {
                 "category": classification.category,
                 "subcategory": classification.subcategory,
-                "office": _clean_existing_office(metadata.get("office")) or classification.office,
-                "responsible_office": classification.office,
+                "office": office,
+                "responsible_office": responsible_office,
                 "source_document": source_document or title or str(metadata.get("source_title") or ""),
                 "classification_method": classification.method,
                 "classification_confidence": round(classification.confidence, 3),

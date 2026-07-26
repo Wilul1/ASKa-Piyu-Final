@@ -11,15 +11,32 @@ import 'admin_kb_outline.dart';
 
 export 'admin_kb_outline.dart';
 
-void _downloadExtractionTxt(String text, String? fileName) {
+void _downloadExtractionTxt(String text, String? fileName, {String suffix = 'extraction'}) {
   final stem = (fileName == null || fileName.trim().isEmpty)
       ? 'extraction-result'
       : fileName.trim().replaceAll(RegExp(r'\.[^.]+$'), '');
   final safeStem = stem.replaceAll(RegExp(r'[^\w\-]+'), '_');
+  final safeSuffix = suffix.trim().isEmpty ? 'extraction' : suffix.trim();
   downloadTextFile(
-    filename: '$safeStem-extraction.txt',
+    filename: '$safeStem-$safeSuffix.txt',
     text: text,
     mimeType: 'text/plain',
+  );
+}
+
+String _extractionDownloadText({
+  required String reviewText,
+  required List<Map<String, dynamic>> knowledgeUnits,
+  String? fileName,
+}) {
+  final unitsTxt = buildKnowledgeUnitsExtractionTxt(
+    knowledgeUnits: knowledgeUnits,
+    sourceFilename: fileName,
+  );
+  if (unitsTxt.isNotEmpty) return unitsTxt;
+  return buildFullExtractionText(
+    reviewText: reviewText,
+    knowledgeUnits: knowledgeUnits,
   );
 }
 
@@ -77,6 +94,11 @@ class AdminKbWorkspace extends StatelessWidget {
       reviewText: reviewText,
       knowledgeUnits: knowledgeUnits,
     );
+    final downloadText = _extractionDownloadText(
+      reviewText: reviewText,
+      knowledgeUnits: knowledgeUnits,
+      fileName: fileName,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -101,7 +123,9 @@ class AdminKbWorkspace extends StatelessWidget {
             final wide = constraints.maxWidth >= 980;
             final extraction = _FullExtractionPanel(
               text: extractionText,
+              downloadText: downloadText,
               fileName: fileName,
+              unitCount: knowledgeUnits.length,
             );
             final side = Column(
               children: [
@@ -139,7 +163,10 @@ class AdminKbWorkspace extends StatelessWidget {
           },
         ),
         const SizedBox(height: 14),
-        _KnowledgeUnitsReviewPanel(knowledgeUnits: knowledgeUnits),
+        _KnowledgeUnitsReviewPanel(
+          knowledgeUnits: knowledgeUnits,
+          fileName: fileName,
+        ),
       ],
     );
   }
@@ -496,11 +523,15 @@ class _ProcessingStageCard extends StatelessWidget {
 class _FullExtractionPanel extends StatefulWidget {
   const _FullExtractionPanel({
     required this.text,
+    required this.downloadText,
     required this.fileName,
+    required this.unitCount,
   });
 
   final String text;
+  final String downloadText;
   final String? fileName;
+  final int unitCount;
 
   @override
   State<_FullExtractionPanel> createState() => _FullExtractionPanelState();
@@ -533,11 +564,11 @@ class _FullExtractionPanelState extends State<_FullExtractionPanel> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    const Text(
                       'Full Extraction Result',
                       style: TextStyle(
                         fontSize: 18,
@@ -545,10 +576,12 @@ class _FullExtractionPanelState extends State<_FullExtractionPanel> {
                         color: DesignTokens.maroon,
                       ),
                     ),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 4),
                     Text(
-                      'Cleaned document preview. Scroll inside this panel to review long extractions.',
-                      style: TextStyle(
+                      widget.unitCount > 0
+                          ? 'Cleaned preview on screen. Download .txt exports all ${widget.unitCount} knowledge units in one file.'
+                          : 'Cleaned document preview. Scroll inside this panel to review long extractions.',
+                      style: const TextStyle(
                         fontSize: 13,
                         height: 1.4,
                         color: DesignTokens.muted,
@@ -583,14 +616,24 @@ class _FullExtractionPanelState extends State<_FullExtractionPanel> {
                   AdminSecondaryButton(
                     label: 'Download .txt',
                     minWidth: 128,
-                    onPressed: widget.text.isEmpty
+                    onPressed: widget.downloadText.isEmpty
                         ? null
                         : () {
-                            _downloadExtractionTxt(widget.text, widget.fileName);
+                            _downloadExtractionTxt(
+                              widget.downloadText,
+                              widget.fileName,
+                              suffix: widget.unitCount > 0
+                                  ? 'units'
+                                  : 'extraction',
+                            );
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Extraction downloaded as .txt'),
-                                duration: Duration(seconds: 2),
+                              SnackBar(
+                                content: Text(
+                                  widget.unitCount > 0
+                                      ? 'Downloaded all ${widget.unitCount} units as one .txt'
+                                      : 'Extraction downloaded as .txt',
+                                ),
+                                duration: const Duration(seconds: 2),
                               ),
                             );
                           },
@@ -797,9 +840,13 @@ class _GenerateArticlesShortcut extends StatelessWidget {
 }
 
 class _KnowledgeUnitsReviewPanel extends StatefulWidget {
-  const _KnowledgeUnitsReviewPanel({required this.knowledgeUnits});
+  const _KnowledgeUnitsReviewPanel({
+    required this.knowledgeUnits,
+    required this.fileName,
+  });
 
   final List<Map<String, dynamic>> knowledgeUnits;
+  final String? fileName;
 
   @override
   State<_KnowledgeUnitsReviewPanel> createState() =>
@@ -830,22 +877,60 @@ class _KnowledgeUnitsReviewPanelState extends State<_KnowledgeUnitsReviewPanel> 
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Knowledge Units (${units.length})',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: DesignTokens.maroon,
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Review extracted units used for chatbot indexing.',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.4,
-              color: DesignTokens.muted,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Knowledge Units (${units.length})',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: DesignTokens.maroon,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Review extracted units used for chatbot indexing. Download exports every unit into one .txt.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.4,
+                        color: DesignTokens.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              AdminSecondaryButton(
+                label: 'Download units .txt',
+                minWidth: 148,
+                onPressed: units.isEmpty
+                    ? null
+                    : () {
+                        final text = buildKnowledgeUnitsExtractionTxt(
+                          knowledgeUnits: units,
+                          sourceFilename: widget.fileName,
+                        );
+                        _downloadExtractionTxt(
+                          text,
+                          widget.fileName,
+                          suffix: 'units',
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Downloaded all ${units.length} units as one .txt',
+                            ),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      },
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           SizedBox(

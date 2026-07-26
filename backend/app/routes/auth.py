@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.session import get_db_session
 from app.models.db_models import Office, User
 from app.models.schemas import (
@@ -61,6 +63,32 @@ def _datetime_to_iso(value: datetime) -> str:
     return value.isoformat()
 
 
+def _signup_email_domain_allowed(email: str) -> bool:
+    raw = (getattr(settings, "signup_allowed_email_domains", None) or "").strip()
+    if not raw:
+        return True
+    domain = email.rsplit("@", 1)[-1].strip().lower()
+    allowed = {
+        part.strip().lower().lstrip("@")
+        for part in raw.split(",")
+        if part.strip()
+    }
+    return domain in allowed
+
+
+def _signup_invite_ok(provided: str | None) -> bool:
+    expected = (getattr(settings, "signup_invite_code", None) or "").strip()
+    if not expected:
+        return True
+    got = (provided or "").strip()
+    if not got:
+        return False
+    # compare_digest requires equal length; hash both sides to avoid 500s.
+    expected_digest = hmac.new(b"aska-invite", expected.encode("utf-8"), "sha256").digest()
+    got_digest = hmac.new(b"aska-invite", got.encode("utf-8"), "sha256").digest()
+    return hmac.compare_digest(got_digest, expected_digest)
+
+
 @router.post("/signup", response_model=AuthResponse)
 def signup(
     payload: SignupRequest,
@@ -74,15 +102,37 @@ def signup(
             detail="Too many signup attempts. Please wait a moment and try again.",
         )
 
+    if not bool(getattr(settings, "allow_public_signup", True)):
+        raise HTTPException(
+            status_code=403,
+            detail="Public signup is disabled. Contact your campus administrator.",
+        )
+
     if payload.role != "student":
         raise HTTPException(
             status_code=403,
             detail="Public signup can create student accounts only.",
         )
 
+    if not _signup_invite_ok(payload.invite_code):
+        raise HTTPException(
+            status_code=403,
+            detail="A valid campus invite code is required to sign up.",
+        )
+
+    if not _signup_email_domain_allowed(payload.email):
+        raise HTTPException(
+            status_code=403,
+            detail="Use your campus email address to create an account.",
+        )
+
     existing_user = session.query(User).filter(User.email == payload.email).first()
     if existing_user is not None:
-        raise HTTPException(status_code=409, detail="Email is already registered.")
+        # Same wording as IntegrityError path — avoid precise email enumeration.
+        raise HTTPException(
+            status_code=409,
+            detail="Unable to create an account with that email.",
+        )
 
     user = User(
         email=payload.email,
@@ -96,7 +146,10 @@ def signup(
         session.commit()
     except IntegrityError as exc:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Email is already registered.") from exc
+        raise HTTPException(
+            status_code=409,
+            detail="Unable to create an account with that email.",
+        ) from exc
     session.refresh(user)
 
     return AuthResponse(access_token=create_access_token(user), user=user_to_schema(user))
@@ -132,6 +185,20 @@ def login(
 @router.get("/me", response_model=UserSchema)
 def me(current_user: User = Depends(get_current_user)) -> UserSchema:
     return user_to_schema(current_user)
+
+
+@router.post("/logout", status_code=204)
+def logout(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> None:
+    """Revoke the current bearer token (and any other JWTs for this credentials version)."""
+    user = session.get(User, current_user.id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+    _bump_credentials(user)
+    session.add(user)
+    session.commit()
 
 
 @router.post("/change-password", response_model=AuthResponse)
@@ -302,7 +369,7 @@ def delete_user(
     session: Session = Depends(get_db_session),
 ) -> dict[str, str | bool]:
     """Admin-only hard delete. Prefer disable for normal offboarding."""
-    from app.services.user_lifecycle import hard_delete_user
+    from app.services.user_lifecycle import hard_delete_user, remove_attachment_files
 
     if actor.role != "admin":
         raise HTTPException(status_code=403, detail="Only admins can delete users.")
@@ -323,7 +390,7 @@ def delete_user(
                 detail="Cannot delete the last active admin account.",
             )
     try:
-        hard_delete_user(session, user)
+        attachment_paths = hard_delete_user(session, user)
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -334,4 +401,5 @@ def delete_user(
                 "Disable the account instead, or contact ICT."
             ),
         ) from exc
+    remove_attachment_files(attachment_paths)
     return {"success": True, "deleted_user_id": user_id}

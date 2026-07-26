@@ -4,6 +4,7 @@ backend/.env
 backend/.env.production
 backend/.env.development.bak
 deploy/BOOTSTRAP_CREDENTIALS.txt
+deploy/BACKUP_PASSPHRASE.txt
 aska_piyu_demo.sql
 *.sql.bak
 

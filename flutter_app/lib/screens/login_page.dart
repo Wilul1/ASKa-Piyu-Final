@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../auth/auth_navigation.dart';
@@ -30,7 +31,8 @@ class _LoginPageState extends State<LoginPage> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _loading = false;
-  bool _rememberMe = true;
+  // Web: default off so JWT stays in sessionStorage (smaller XSS window).
+  bool _rememberMe = !kIsWeb;
   bool _obscurePassword = true;
   String? _error;
 

@@ -106,17 +106,26 @@ def classify_document_type(text: str) -> str:
     if not cleaned.strip():
         return "unknown"
 
+    # V2 structured render uses singular Office:/Client Step:/Service: labels.
+    if _looks_like_v2_charter_render(cleaned):
+        return "citizen_charter"
+
     form_score = _form_signal_score(cleaned)
     scores = {
         "citizen_charter": _classification_score(
             cleaned,
             [
-                r"\bOffice\s*(?:or)?\s*Division\b",
-                r"\bClient\s+Steps\b",
-                r"\bAgency\s+Actions\b",
+                r"\bOffice\s*(?:or|/)?\s*Division\b",
+                r"\bOffice\s*:",
+                r"\bClient\s+Steps?\b",
+                r"\bClient\s+Step\s*:",
+                r"\bAgency\s+Actions?\b",
+                r"\bAgency\s+Action\s*:",
                 r"\bProcessing\s+Time\b",
                 r"\bChecklist\s+of\s+Requirements\b",
                 r"\bWho\s+May\s+Avail\b",
+                r"\bService\s*:",
+                r"\bResponsible\s+Personnel\s*:",
             ],
         ),
         "form": _classification_score(
@@ -140,6 +149,10 @@ def classify_document_type(text: str) -> str:
         ),
     }
 
+    # Charter requirement text often mentions Request Form / Signature; do not let
+    # those alone beat a strong charter/V2 signal.
+    if scores["citizen_charter"] >= 3 and scores["citizen_charter"] >= form_score:
+        return "citizen_charter"
     if form_score >= 3 and scores["citizen_charter"] < 4:
         return "form"
     if scores["citizen_charter"] >= 3 and form_score < 3:
@@ -153,6 +166,18 @@ def classify_document_type(text: str) -> str:
 
     kind, score = max(scores.items(), key=lambda item: item[1])
     return kind if score >= 2 else "unknown"
+
+
+def _looks_like_v2_charter_render(text: str) -> bool:
+    """True for citizen_charter_extractor_v2 / renderer output shape."""
+    has_service = bool(re.search(r"(?im)^Service\s*:", text))
+    has_office = bool(re.search(r"(?im)^Office(?:\s*(?:/|or)?\s*Division)?\s*:", text))
+    has_who = bool(re.search(r"(?im)^Who\s+May\s+Avail\s*:", text))
+    has_steps = bool(
+        re.search(r"(?im)^(?:Client\s+Step|Steps?)\s*:", text)
+        or re.search(r"(?im)^\s*\d+\.\s*Client\s+Step\s*:", text)
+    )
+    return has_service and has_office and (has_who or has_steps)
 
 
 def _classification_score(text: str, patterns: list[str]) -> int:

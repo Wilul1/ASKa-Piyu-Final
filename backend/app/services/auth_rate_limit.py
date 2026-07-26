@@ -15,7 +15,8 @@ _LOCK = Lock()
 
 # Match deploy/nginx.conf auth zone (~5/min) so direct uvicorn still resists spray.
 LOGIN_LIMIT = 5
-SIGNUP_LIMIT = 5
+# Tighter than login — signup creates durable accounts.
+SIGNUP_LIMIT = 3
 DEFAULT_WINDOW_SECONDS = 60
 
 

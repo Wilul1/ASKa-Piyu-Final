@@ -455,6 +455,18 @@ def _service_title_mismatch_rank(chunk: RetrievedChunk, normalized_question: str
         if "registration" in title and "enrollment" not in title and "enrolment" not in title:
             return 3
         return 2
+    if re.search(r"\b(?:tor|transcript)\b", normalized_question):
+        if re.search(r"\b(?:transcript of records|issuance of transcript|\btor\b)\b", title):
+            return 0
+        if "annual report" in title or "certificate of completion" in title:
+            return 3
+        return 2
+    if "diploma" in normalized_question:
+        if "diploma" in title:
+            return 0
+        if "examination" in title or "open to all clients" in title:
+            return 3
+        return 2
     # Token overlap for other named services.
     stop = {
         "which",
@@ -562,9 +574,11 @@ def extract_service_fields(chunk: RetrievedChunk) -> dict[str, Any]:
     requirements = _requirements_from_metadata(metadata) or _requirements_from_text(text)
     steps = _steps_from_metadata(metadata) or _steps_from_text(text)
     fee = (
-        _clean_value(metadata.get("fees"))
+        _clean_value(metadata.get("total_fees"))
+        or _clean_value(metadata.get("fees"))
         or _clean_value(metadata.get("fee"))
         or _extract_section_value(text, "Fees")
+        or _extract_section_value(text, "Total Fees")
         or _fee_from_steps_text(text)
         or "None"
     )

@@ -1418,3 +1418,248 @@ def test_old_student_enrollment_documents_recovers_requirements():
     assert "Clearance" in result.answer or "student ID" in result.answer
     assert "Enrollment" in result.answer
 
+
+def test_tor_fee_and_office_prefers_charter_fees_over_handbook_office():
+    annual_report = RetrievedChunk(
+        document_id="annual-report",
+        title="LSPU Student Handbook",
+        source_filename="handbook.pdf",
+        chunk_index=0,
+        text="1.2.3.1 Annual report per school year on the implementation. Office: Registrar",
+        relevance_score=0.95,
+        original_score=0.9,
+        reranked_score=0.95,
+        metadata={
+            "document_type": "student_handbook",
+            "source_section": "1.2.3.1 > Annual report per school year on the implementation",
+            "office": "Registrar",
+            "page_number": 127,
+            "audience": "both",
+        },
+    )
+    tor = RetrievedChunk(
+        document_id="tor-service",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=1,
+        text=(
+            "Issuance of Transcript of Records (TOR)\n"
+            "Office / Division\nOffice of the Registrar\n"
+            "Fees\nUndergraduate: P75.00/page; Graduate: P150/page\n"
+        ),
+        relevance_score=0.7,
+        original_score=0.65,
+        reranked_score=0.7,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Issuance of Transcript of Records (TOR)",
+            "office": "Office of the Registrar",
+            "total_fees": "Undergraduate: P75.00/page; Graduate: P150/page",
+            "page_number": 40,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([annual_report, tor])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value=(
+                "The office responsible for 1.2.3.1 > Annual report per school year "
+                "on the implementation is Registrar, according to the LSPU Student Handbook."
+            ),
+        ),
+    ):
+        result = answer_qa_question(
+            "How much is TOR [Transcript of Records] per page for undergrad vs graduate, and which office?"
+        )
+
+    answer = result.answer.lower()
+    assert "p75" in answer or "75" in answer
+    assert "p150" in answer or "150" in answer
+    assert "registrar" in answer
+    assert "annual report" not in answer
+
+
+def test_diploma_second_copy_fee_ignores_exam_chunks():
+    exam = RetrievedChunk(
+        document_id="exam",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=0,
+        text="Open to all Clients. Regular comprehensive examination schedule.",
+        relevance_score=0.92,
+        original_score=0.9,
+        reranked_score=0.92,
+        metadata={
+            "document_type": "citizen_charter",
+            "source_section": "Open to all Clients",
+            "page_number": 82,
+            "audience": "both",
+        },
+    )
+    diploma = RetrievedChunk(
+        document_id="diploma",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=1,
+        text="Issuance of Diploma\nFees\nSecond copy of diploma: P100.00",
+        relevance_score=0.6,
+        original_score=0.55,
+        reranked_score=0.6,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Issuance of Diploma",
+            "office": "Office of the Registrar",
+            "total_fees": "Second copy of diploma: P100.00",
+            "page_number": 45,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([exam, diploma])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value=(
+                "For Regular comprehensive examination, examinees must follow the posted schedule."
+            ),
+        ),
+    ):
+        result = answer_qa_question(
+            "What is the fee for a second copy of a diploma according to the Citizen's Charter?"
+        )
+
+    answer = result.answer.lower()
+    assert "100" in answer or "p100" in answer
+    assert "diploma" in answer
+    assert "comprehensive examination" not in answer
+
+
+def test_diploma_fee_ignores_assessment_of_fees_card():
+    assessment = RetrievedChunk(
+        document_id="assessment",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=0,
+        text="Assessment of Fees\nFees\nP10931",
+        relevance_score=0.95,
+        original_score=0.9,
+        reranked_score=0.95,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Assessment of Fees",
+            "office": "Office of the Registrar",
+            "total_fees": "P10931",
+            "page_number": 18,
+            "audience": "both",
+        },
+    )
+    tor_with_diploma_fee = RetrievedChunk(
+        document_id="tor",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=1,
+        text=(
+            "Issuance of Transcript of Records (TOR)\n"
+            "Fees\nUndergraduate: P75.00/page; Graduate: P150/page; "
+            "Second copy of diploma: P100.00"
+        ),
+        relevance_score=0.55,
+        original_score=0.5,
+        reranked_score=0.55,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Issuance of Transcript of Records (TOR)",
+            "office": "Office of the Registrar",
+            "total_fees": (
+                "Undergraduate: P75.00/page; Graduate: P150/page; "
+                "Second copy of diploma: P100.00"
+            ),
+            "page_number": 40,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([assessment, tor_with_diploma_fee])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value="The listed fee for Assessment of Fees is P10931 (Citizen Charter).",
+        ),
+    ):
+        result = answer_qa_question(
+            "What is the fee for a second copy of a diploma according to the Citizen's Charter?"
+        )
+
+    answer = result.answer.lower()
+    assert "100" in answer or "p100" in answer
+    assert "assessment of fees" not in answer
+    assert "10931" not in answer
+
+
+def test_diploma_fee_recovery_beats_wrong_groq_answer():
+    tor = RetrievedChunk(
+        document_id="tor",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=0,
+        text="Issuance of Transcript of Records\nFees\nSecond copy of diploma: P100.00",
+        relevance_score=0.9,
+        original_score=0.85,
+        reranked_score=0.9,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Issuance of Transcript of Records/Transfer Credentials",
+            "office": "Office of the Registrar",
+            "total_fees": (
+                "Undergraduate: P75.00/page; Graduate: P150/page; "
+                "Second copy of diploma: P100.00"
+            ),
+            "page_number": 40,
+            "audience": "both",
+        },
+    )
+    ctc = RetrievedChunk(
+        document_id="ctc",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=1,
+        text="Issuance of Certified True Copy\nFees\nNone",
+        relevance_score=0.88,
+        original_score=0.8,
+        reranked_score=0.88,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Issuance of Certified True Copy",
+            "total_fees": "None",
+            "page_number": 74,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([ctc, tor])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value=(
+                "To complete Issuance of Certified True Copy, follow the steps below.\n"
+                "Fees: None\nPage: 74"
+            ),
+        ),
+    ):
+        result = answer_qa_question(
+            "What is the fee for a second copy of a diploma according to the Citizen's Charter?"
+        )
+
+    answer = result.answer.lower()
+    assert "100" in answer or "p100" in answer
+    assert "certified true copy" not in answer
+    assert "fees: none" not in answer
+

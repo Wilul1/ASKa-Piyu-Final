@@ -181,12 +181,11 @@ def _format_office_or_detail_answer(
     ).strip()
     source_label = _handbook_source_label(chunk, sources)
 
-    if re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized):
-        if office:
-            return (
-                f"The office responsible for {title} is {office}, "
-                f"according to the {source_label}."
-            )
+    asks_fee = bool(re.search(r"\b(?:how much|fee|fees|cost)\b", normalized))
+    asks_office = bool(
+        re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized)
+    )
+
     if re.search(r"\b(?:who may|who can avail|who can)\b", normalized):
         who = str(metadata.get("who_may_avail") or "").strip()
         if not who:
@@ -206,14 +205,34 @@ def _format_office_or_detail_answer(
                 time_value = match.group(1).strip()
         if time_value:
             return f"The total processing time for {title} is {time_value} ({source_label})."
-    if re.search(r"\b(?:how much|fee|fees|cost)\b", normalized):
-        fee = str(metadata.get("total_fees") or metadata.get("fees") or "").strip()
-        if not fee:
+
+    fee = ""
+    if asks_fee:
+        raw_fee = str(metadata.get("total_fees") or metadata.get("fees") or "").strip()
+        if not raw_fee:
             match = re.search(r"(?im)^(?:Fees|Fee|Total Fees)\s*[:\-]?\s*(.+)$", chunk.text or "")
             if match:
-                fee = match.group(1).strip()
-        if fee:
-            return f"The listed fee for {title} is {fee} ({source_label})."
+                raw_fee = match.group(1).strip()
+        from app.services.qa.question_answering import _fee_usable_for_question, _fee_answer_title
+
+        fee = _fee_usable_for_question(raw_fee, title, normalized) or ""
+
+    if asks_fee and asks_office and fee:
+        answer_title = _fee_answer_title(title, fee, normalized)
+        if office:
+            return (
+                f"For {answer_title}, the listed fee is {fee}. "
+                f"The responsible office is {office}, according to the {source_label}."
+            )
+        return f"The listed fee for {answer_title} is {fee} ({source_label})."
+    if asks_fee and fee:
+        answer_title = _fee_answer_title(title, fee, normalized)
+        return f"The listed fee for {answer_title} is {fee} ({source_label})."
+    if asks_office and office and not asks_fee:
+        return (
+            f"The office responsible for {title} is {office}, "
+            f"according to the {source_label}."
+        )
     if re.search(
         r"\b(?:what documents|what additional|what must|documents? (?:are )?required|"
         r"requirements? (?:for|from|needed)|what (?:are|is) the (?:requirement|requirements|document|documents))\b",

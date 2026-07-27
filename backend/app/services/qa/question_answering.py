@@ -30,10 +30,10 @@ logger = logging.getLogger(__name__)
 
 
 FINAL_CONTEXT_CHUNKS = 7
-RAW_RETRIEVAL_CANDIDATES = 18
+RAW_RETRIEVAL_CANDIDATES = 40
 DEFAULT_CONTEXT_CHUNKS = 7
 FACTUAL_CONTEXT_CHUNKS = 8
-BROAD_RETRIEVAL_CANDIDATES = 30
+BROAD_RETRIEVAL_CANDIDATES = 40
 BROAD_CONTEXT_CHUNKS = 15
 COLLECTION_CONTEXT_GROUPS = 15
 PREVIEW_CHARS = 700
@@ -311,7 +311,7 @@ def answer_qa_question(
         )
         recovered = _recover_factual_charter_answer(
             extractor_question,
-            selected_context,
+            retrieved or selected_context,
             sources,
         )
         if recovered and (
@@ -319,6 +319,7 @@ def answer_qa_question(
             or fallback_answer == OUT_OF_SCOPE_ANSWER
             or _indicates_missing_information(fallback_answer)
             or _should_prefer_recovered_factual(extractor_question, fallback_answer)
+            or _prefer_structured_fee_recovery(extractor_question, recovered, fallback_answer)
         ):
             fallback_answer = recovered
             fallback_confidence = "medium"
@@ -359,7 +360,7 @@ def answer_qa_question(
     final_answer = _student_facing_answer(answer, confidence)
     recovered = _recover_factual_charter_answer(
         extractor_question,
-        selected_context,
+        retrieved or selected_context,
         sources,
     )
     if recovered and (
@@ -367,6 +368,7 @@ def answer_qa_question(
         or _indicates_missing_information(final_answer)
         or _indicates_missing_information(answer)
         or _should_prefer_recovered_factual(extractor_question, final_answer)
+        or _prefer_structured_fee_recovery(extractor_question, recovered, final_answer)
     ):
         final_answer = recovered
         confidence = "medium" if confidence == "low" else confidence
@@ -1032,8 +1034,14 @@ def _should_prefer_recovered_factual(question: str, answer: str) -> bool:
     asks_fee = bool(re.search(r"\b(?:how much|fee|fees|cost)\b", normalized_q))
     asks_time = bool(re.search(r"\b(?:how long|processing time)\b", normalized_q))
     office_only = bool(
-        re.search(r"\bresponsible office\b", normalized_a)
-        and not re.search(r"\b(?:required|requirement|document|fee|processing time|who may)\b", normalized_a)
+        re.search(
+            r"\b(?:responsible office|office responsible)\b",
+            normalized_a,
+        )
+        and not re.search(
+            r"\b(?:required|requirement|document|fee|fees|listed fee|processing time|who may|p\d)\b",
+            normalized_a,
+        )
     )
     if asks_documents and office_only:
         return True
@@ -1042,6 +1050,42 @@ def _should_prefer_recovered_factual(question: str, answer: str) -> bool:
     if asks_fee and office_only:
         return True
     if asks_time and office_only:
+        return True
+    # Fee questions answered with unrelated exam/handbook schedule text.
+    if asks_fee and re.search(
+        r"\b(?:comprehensive examination|examination schedule|annual report|"
+        r"assessment of fees|certified true copy)\b",
+        normalized_a,
+    ):
+        return True
+    if asks_fee and re.search(r"\b(?:fees?:\s*none|fee:\s*none|not specified)\b", normalized_a):
+        return True
+    return False
+
+
+def _prefer_structured_fee_recovery(question: str, recovered: str, llm_answer: str) -> bool:
+    """Prefer metadata fee recovery when the LLM names the wrong service or omits amounts."""
+    normalized_q = _normalize(question)
+    if not re.search(r"\b(?:how much|fee|fees|cost)\b", normalized_q):
+        return False
+    recovered_n = _normalize(recovered)
+    if "listed fee" not in recovered_n:
+        return False
+    llm_n = _normalize(llm_answer or "")
+    if not llm_n.strip():
+        return True
+    if re.search(r"\b(?:fees?:\s*none|fee:\s*none|not specified)\b", llm_n):
+        return True
+    if re.search(
+        r"\b(?:assessment of fees|certified true copy|comprehensive examination)\b",
+        llm_n,
+    ):
+        return True
+    if "diploma" in normalized_q and "diploma" in recovered_n and "diploma" not in llm_n:
+        return True
+    if re.search(r"(?i)\bp\s*\d|\d+\.\d{2}", recovered) and not re.search(
+        r"(?i)\bp\s*\d|\d+\.\d{2}", llm_answer or ""
+    ):
         return True
     return False
 
@@ -1055,7 +1099,14 @@ def _recover_factual_charter_answer(
     if not chunks or not is_factual_service_detail_query(question):
         return None
     normalized = _normalize(question)
-    ranked = sorted(chunks, key=lambda chunk: _charter_recovery_rank(chunk, normalized))
+    asks_fee = bool(re.search(r"\b(?:how much|fee|fees|cost)\b", normalized))
+    asks_office = bool(
+        re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized)
+    )
+    ranked = sorted(
+        chunks,
+        key=lambda chunk: _charter_recovery_rank(chunk, normalized, prefer_fees=asks_fee),
+    )
     for chunk in ranked:
         metadata = chunk.metadata or {}
         title = (
@@ -1082,15 +1133,6 @@ def _recover_factual_charter_answer(
                     f"{who} may avail of {title}, according to the {source_label}."
                 )
 
-        if re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized):
-            office = (
-                _meta_text(metadata, "office")
-                or _meta_text(metadata, "responsible_office")
-                or _extract_labeled_line(chunk.text or "", ("Office / Division", "Office"))
-            )
-            if office:
-                return f"The office responsible for {title} is {office} ({source_label})."
-
         if re.search(r"\b(?:how long|processing time)\b", normalized):
             time_value = _meta_text(metadata, "total_processing_time") or _extract_labeled_line(
                 chunk.text or "",
@@ -1099,14 +1141,38 @@ def _recover_factual_charter_answer(
             if time_value:
                 return f"The total processing time for {title} is {time_value} ({source_label})."
 
-        if re.search(r"\b(?:how much|fee|fees|cost)\b", normalized):
-            fee = (
+        fee = None
+        office = None
+        if asks_fee:
+            raw_fee = (
                 _meta_text(metadata, "total_fees")
                 or _meta_text(metadata, "fees")
                 or _extract_labeled_line(chunk.text or "", ("Fees", "Fee", "Total Fees"))
             )
-            if fee:
-                return f"The listed fee for {title} is {fee} ({source_label})."
+            fee = _fee_usable_for_question(raw_fee, title, normalized)
+        if asks_office:
+            office = (
+                _meta_text(metadata, "office")
+                or _meta_text(metadata, "responsible_office")
+                or _extract_labeled_line(chunk.text or "", ("Office / Division", "Office"))
+            )
+
+        # Fee+office in one question: never answer office-only first.
+        if asks_fee and asks_office and fee:
+            answer_title = _fee_answer_title(title, fee, normalized)
+            if office:
+                return (
+                    f"For {answer_title}, the listed fee is {fee}. "
+                    f"The responsible office is {office} ({source_label})."
+                )
+            return f"The listed fee for {answer_title} is {fee} ({source_label})."
+
+        if asks_fee and fee:
+            answer_title = _fee_answer_title(title, fee, normalized)
+            return f"The listed fee for {answer_title} is {fee} ({source_label})."
+
+        if asks_office and office and not asks_fee:
+            return f"The office responsible for {title} is {office} ({source_label})."
 
         if re.search(
             r"\b(?:what documents|what additional|what must|documents? (?:are )?required|"
@@ -1119,18 +1185,32 @@ def _recover_factual_charter_answer(
     return None
 
 
-def _charter_recovery_rank(chunk: RetrievedChunk, normalized_question: str) -> tuple[int, float]:
+def _charter_recovery_rank(
+    chunk: RetrievedChunk,
+    normalized_question: str,
+    *,
+    prefer_fees: bool = False,
+) -> tuple[int, float, int]:
+    metadata = chunk.metadata or {}
     title = _normalize(
         " ".join(
             str(value or "")
             for value in (
-                (chunk.metadata or {}).get("source_section"),
-                (chunk.metadata or {}).get("title"),
+                metadata.get("source_section"),
+                metadata.get("canonical_topic"),
+                metadata.get("title"),
                 chunk.title,
             )
         )
     )
     score = -_chunk_score(chunk)
+    has_fees = 0 if (
+        _meta_text(metadata, "total_fees")
+        or _meta_text(metadata, "fees")
+        or _extract_labeled_line(chunk.text or "", ("Fees", "Fee", "Total Fees"))
+    ) else 1
+    fee_priority = has_fees if prefer_fees else 0
+
     if "enroll" in normalized_question:
         if (
             "ip registration" in title
@@ -1138,13 +1218,90 @@ def _charter_recovery_rank(chunk: RetrievedChunk, normalized_question: str) -> t
             or "visitation" in title
             or "article 3" in title
         ):
-            return (3, score)
+            return (3, fee_priority, score)
         if "enrollment" in title or "enrolment" in title:
-            return (0, score)
+            return (0, fee_priority, score)
         if "registration" in title and "enrollment" not in title:
-            return (3, score)
-        return (1, score)
-    return (0, score)
+            return (3, fee_priority, score)
+        return (1, fee_priority, score)
+
+    if re.search(r"\b(?:tor|transcript)\b", normalized_question):
+        if re.search(r"\b(?:transcript of records|issuance of transcript|\btor\b)\b", title):
+            return (0, fee_priority, score)
+        if "annual report" in title or "certificate of completion" in title or "article 3" in title:
+            return (3, fee_priority, score)
+        return (2, fee_priority, score)
+
+    if "diploma" in normalized_question:
+        fee_blob = _normalize(
+            str(metadata.get("total_fees") or metadata.get("fees") or "")
+            + " "
+            + (chunk.text or "")[:500]
+        )
+        if "diploma" in title or "diploma" in fee_blob:
+            return (0, 0 if prefer_fees else fee_priority, score)
+        if (
+            "assessment of fee" in title
+            or "examination" in title
+            or "open to all clients" in title
+            or "faculty clearance" in title
+            or "crediting of subject" in title
+            or "program accreditation" in title
+            or "certified true copy" in title
+        ):
+            return (3, fee_priority, score)
+        return (2, fee_priority, score)
+
+    return (1, fee_priority, score)
+
+
+def _fee_usable_for_question(fee: str | None, title: str, normalized_question: str) -> str | None:
+    """Accept fees only when they belong to the asked service (not Assessment of Fees noise)."""
+    if not fee:
+        return None
+    title_n = _normalize(title)
+    fee_n = _normalize(fee)
+
+    if "assessment of fee" in title_n and not re.search(
+        r"\b(?:assessment of fees?|enrol(?:l)?ment fee)\b",
+        normalized_question,
+    ):
+        return None
+
+    if "diploma" in normalized_question:
+        specialized = _specialize_fee_line(fee, ("second copy of diploma", "diploma"))
+        if specialized:
+            return specialized
+        if "diploma" in title_n:
+            return fee.strip()
+        return None
+
+    if re.search(r"\b(?:tor|transcript)\b", normalized_question):
+        if re.search(r"\b(?:transcript|tor|credential)\b", title_n) or "per page" in fee_n:
+            return fee.strip()
+        if "assessment of fee" in title_n:
+            return None
+
+    return fee.strip()
+
+
+def _specialize_fee_line(fee: str, preferred_labels: tuple[str, ...]) -> str | None:
+    parts = [part.strip() for part in re.split(r"\s*;\s*", fee or "") if part.strip()]
+    for label in preferred_labels:
+        label_n = _normalize(label)
+        for part in parts:
+            part_n = _normalize(part)
+            if label_n in part_n and re.search(r"(?i)\bp\s*\d|\d", part):
+                return part
+    return None
+
+
+def _fee_answer_title(title: str, fee: str, normalized_question: str) -> str:
+    if "diploma" in normalized_question and "diploma" in _normalize(fee):
+        if "second copy" in _normalize(fee):
+            return "a second copy of a diploma"
+        return "diploma"
+    return title
 
 
 def _extract_labeled_line(text: str, labels: tuple[str, ...]) -> str:

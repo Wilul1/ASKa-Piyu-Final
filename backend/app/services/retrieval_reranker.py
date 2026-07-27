@@ -258,7 +258,7 @@ QUERY_EXPANSION_RULES = (
     ),
     QueryExpansionRule(
         name="citizens_charter_edition_vision",
-        trigger_terms=("citizen", "charter", "edition", "vision", "asean polytechnic"),
+        trigger_terms=("edition", "vision", "asean polytechnic", "1st edition", "2026 edition"),
         expansion_terms=(
             "citizen's charter",
             "2026",
@@ -266,6 +266,8 @@ QUERY_EXPANSION_RULES = (
             "vision",
             "ASEAN Polytechnic University by 2030",
         ),
+        required_any_terms=("citizen", "charter", "lspu", "vision", "edition"),
+        blocked_terms=("how much", "fee", "fees", "cost", "diploma", "tor", "transcript", "which office"),
     ),
     QueryExpansionRule(
         name="good_moral_certificate",
@@ -290,6 +292,20 @@ QUERY_EXPANSION_RULES = (
             "certification",
             "citizen charter",
         ),
+    ),
+    QueryExpansionRule(
+        name="diploma_second_copy_fees",
+        trigger_terms=("diploma", "second copy of diploma", "duplicate diploma"),
+        expansion_terms=(
+            "second copy of diploma",
+            "issuance of diploma",
+            "transcript of records",
+            "registrar",
+            "citizen charter",
+            "fees",
+            "P100",
+        ),
+        blocked_terms=("comprehensive examination", "examination schedule"),
     ),
     QueryExpansionRule(
         name="faculty_teaching_load",
@@ -547,6 +563,12 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if profile["records"] and _contains_any(normalized_content, RECORD_TERMS):
             score += 0.28
             reasons.append("student_records_match")
+        score += _fee_service_boost(
+            normalized_query=normalized_query,
+            normalized_title_path=normalized_title_path,
+            metadata=metadata,
+            reasons=reasons,
+        )
         if profile["counseling"] and _contains_any(normalized_content, COUNSELING_TERMS):
             score += 0.26
             reasons.append("office_service_match")
@@ -655,7 +677,15 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
     records = _matches(normalized_query, r"\btor\b", r"\btranscript\b", r"\bcopy of grades\b", r"\bgood moral\b", r"\bcertificate of registration\b")
     counseling = _matches(normalized_query, r"\bcounsel(?:ing|ling)\b", r"\bguidance\b", r"\bwho handles counseling\b")
     requirements = _matches(normalized_query, r"\brequirements?\b", r"\bdocuments?\b", r"\bwhat do i need\b")
-    graduation = _matches(normalized_query, r"\bgraduat(?:e|es|ed|ing|ion)\b", r"\bclearance\b", r"\bdiploma\b", r"\bcommencement\b")
+    graduation = _matches(
+        normalized_query,
+        r"\bgraduat(?:e|es|ed|ing|ion)\b",
+        r"\bclearance\b",
+        r"\bcommencement\b",
+    ) or (
+        "diploma" in normalized_query
+        and not re.search(r"\b(?:fee|fees|cost|how much|second copy)\b", normalized_query)
+    )
     curricular = _matches(
         normalized_query,
         r"\bcurricular\b",
@@ -1066,6 +1096,79 @@ def _service_vs_form_boost(
     ):
         boost -= 0.45
         reasons.append("penalty_artifact_like_title")
+    return boost
+
+
+def _fee_service_boost(
+    *,
+    normalized_query: str,
+    normalized_title_path: str,
+    metadata: dict,
+    reasons: list[str],
+) -> float:
+    """Prefer Citizen Charter fee cards for TOR / diploma / how-much questions."""
+    asks_fee = bool(
+        re.search(r"\b(?:how much|fee|fees|cost|per page)\b", normalized_query)
+    )
+    asks_tor = bool(re.search(r"\b(?:tor|transcript)\b", normalized_query))
+    asks_diploma = "diploma" in normalized_query
+    if not (asks_fee or asks_tor or asks_diploma):
+        return 0.0
+
+    boost = 0.0
+    total_fees = str(metadata.get("total_fees") or metadata.get("fees") or "").strip()
+    doc_type = _normalize(
+        str(metadata.get("document_type") or metadata.get("parser_document_type") or "")
+    )
+    source_type = _normalize(str(metadata.get("source_type") or ""))
+    is_charter = doc_type in {"citizen_charter", "procedure"} or "citizen" in source_type
+
+    if asks_tor:
+        if re.search(r"\b(?:transcript of records|issuance of transcript|\btor\b)\b", normalized_title_path):
+            boost += 0.55
+            reasons.append("boost_tor_service_title")
+        elif _contains_any(
+            normalized_title_path,
+            ("annual report", "certificate of completion", "article 3 > registration"),
+        ):
+            boost -= 0.45
+            reasons.append("penalty_non_tor_handbook_for_tor_query")
+
+    if asks_diploma:
+        fee_blob = _normalize(total_fees)
+        if "diploma" in normalized_title_path or "diploma" in fee_blob:
+            boost += 0.6
+            reasons.append("boost_diploma_service_title")
+        elif _contains_any(
+            normalized_title_path,
+            (
+                "assessment of fees",
+                "assessment of fee",
+                "comprehensive examination",
+                "examination fee",
+                "open to all clients",
+                "photocopy of examination",
+                "faculty clearance",
+                "crediting of subjects",
+                "program accreditation",
+                "certified true copy",
+                "issuance of certified true copy",
+            ),
+        ):
+            boost -= 0.65
+            reasons.append("penalty_non_diploma_chunk_for_diploma_query")
+        # Don't let any random fee card win diploma questions.
+        if asks_fee and total_fees and "diploma" not in fee_blob and "diploma" not in normalized_title_path:
+            return boost
+
+    if asks_fee and total_fees and not (asks_diploma and "diploma" not in _normalize(total_fees) and "diploma" not in normalized_title_path):
+        boost += 0.35
+        reasons.append("boost_chunk_with_total_fees")
+    if asks_fee and is_charter and total_fees and not (
+        asks_diploma and "diploma" not in _normalize(total_fees) and "diploma" not in normalized_title_path
+    ):
+        boost += 0.2
+        reasons.append("boost_charter_fee_metadata")
     return boost
 
 

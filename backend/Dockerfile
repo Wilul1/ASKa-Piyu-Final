@@ -13,11 +13,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# Install CPU-only torch first: the default PyPI wheel pulls several GB of
-# NVIDIA CUDA libraries that this API image never uses (no GPU at runtime),
-# which can exhaust disk on small VPS hosts. sentence-transformers/easyocr
-# below then reuse this already-satisfied torch instead of a GPU build.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# Install CPU-only torch/torchvision first (must come from the same index so
+# their ABIs match, otherwise torchvision's compiled ops fail to load): the
+# default PyPI wheel pulls several GB of NVIDIA CUDA libraries that this API
+# image never uses (no GPU at runtime), which can exhaust disk on small VPS
+# hosts. sentence-transformers/easyocr below then reuse these already-
+# satisfied packages instead of pulling mismatched GPU builds.
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .

@@ -1663,3 +1663,152 @@ def test_diploma_fee_recovery_beats_wrong_groq_answer():
     assert "certified true copy" not in answer
     assert "fees: none" not in answer
 
+
+# --- Phase 5: the structured fee/office recovery override must not fire when
+# the LLM answer is already correct, just phrased differently (stylistic
+# difference), only when it is genuinely missing/wrong. ---
+
+
+def test_prefer_structured_fee_recovery_does_not_override_correct_differently_worded_answer():
+    from app.services.qa.question_answering import _prefer_structured_fee_recovery
+
+    recovered = "The listed fee for the second copy of a diploma is P100.00 (Citizen's Charter)."
+    correct_llm_answer = (
+        "Getting a second copy of your diploma costs P100.00, based on the Citizen's Charter."
+    )
+
+    assert _prefer_structured_fee_recovery(
+        "What is the fee for a second copy of a diploma?",
+        recovered,
+        correct_llm_answer,
+    ) is False
+
+
+def test_prefer_structured_fee_recovery_does_not_override_correct_answer_with_decimal_amount():
+    """A correct answer written with a decimal amount but no literal 'P' prefix
+    (e.g. copy-pasted from a table) must still be recognized as already correct."""
+    from app.services.qa.question_answering import _prefer_structured_fee_recovery
+
+    recovered = "The listed fee for the second copy of a diploma is P100.00 (Citizen's Charter)."
+    correct_llm_answer = "The fee for a second copy of your diploma is 100.00 pesos."
+
+    assert _prefer_structured_fee_recovery(
+        "What is the fee for a second copy of a diploma?",
+        recovered,
+        correct_llm_answer,
+    ) is False
+
+
+def test_prefer_structured_fee_recovery_does_not_override_bare_integer_amount_with_no_currency_symbol():
+    """Correct answer stated as a bare number (no decimal, no "P" prefix) is
+    still a real amount, not missing information -- must not be overridden."""
+    from app.services.qa.question_answering import _prefer_structured_fee_recovery
+
+    recovered = "The listed fee for the second copy of a diploma is P100.00 (Citizen's Charter)."
+    correct_llm_answer = "The fee for a second copy of your diploma is 100 pesos."
+
+    assert _prefer_structured_fee_recovery(
+        "What is the fee for a second copy of a diploma?",
+        recovered,
+        correct_llm_answer,
+    ) is False
+
+
+def test_prefer_structured_fee_recovery_fires_when_llm_answer_has_no_amount_at_all():
+    """Genuinely missing information (no amount anywhere in the LLM answer) must
+    still trigger the recovery, distinguishing "wrong/missing" from "stylistic"."""
+    from app.services.qa.question_answering import _prefer_structured_fee_recovery
+
+    recovered = "The listed fee for the second copy of a diploma is P100.00 (Citizen's Charter)."
+    vague_llm_answer = "Please proceed to the Registrar's office to request a second copy of your diploma."
+
+    assert _prefer_structured_fee_recovery(
+        "What is the fee for a second copy of a diploma?",
+        recovered,
+        vague_llm_answer,
+    ) is True
+
+
+def test_prefer_structured_fee_recovery_fires_when_llm_names_wrong_service():
+    from app.services.qa.question_answering import _prefer_structured_fee_recovery
+
+    recovered = "The listed fee for the second copy of a diploma is P100.00 (Citizen's Charter)."
+    wrong_service_answer = "The listed fee for Assessment of Fees is P10931 (Citizen Charter)."
+
+    assert _prefer_structured_fee_recovery(
+        "What is the fee for a second copy of a diploma?",
+        recovered,
+        wrong_service_answer,
+    ) is True
+
+
+def test_should_prefer_recovered_factual_does_not_override_complete_office_answer():
+    """A fully-formed office answer that also names required documents/fees is
+    not an "office-only dump" and must not be treated as needing recovery."""
+    from app.services.qa.question_answering import _should_prefer_recovered_factual
+
+    complete_answer = (
+        "The Office of the Registrar handles diploma requests. The required documents are "
+        "your clearance and a valid ID, and the listed fee is P100.00."
+    )
+
+    assert _should_prefer_recovered_factual(
+        "What documents are required and which office handles diploma requests?",
+        complete_answer,
+    ) is False
+
+
+def test_should_prefer_recovered_factual_overrides_bare_office_only_dump():
+    from app.services.qa.question_answering import _should_prefer_recovered_factual
+
+    office_only_answer = "The responsible office is the Office of the Registrar."
+
+    assert _should_prefer_recovered_factual(
+        "What documents are required and which office handles diploma requests?",
+        office_only_answer,
+    ) is True
+
+
+def test_diploma_fee_recovery_does_not_override_correct_groq_answer_with_different_phrasing():
+    """End-to-end: when Groq already answers correctly (right amount, right
+    service) in its own words, the structured recovery override must not
+    clobber it with the templated sentence."""
+    tor = RetrievedChunk(
+        document_id="tor",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=0,
+        text="Issuance of Transcript of Records\nFees\nSecond copy of diploma: P100.00",
+        relevance_score=0.9,
+        original_score=0.85,
+        reranked_score=0.9,
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Issuance of Transcript of Records/Transfer Credentials",
+            "office": "Office of the Registrar",
+            "total_fees": (
+                "Undergraduate: P75.00/page; Graduate: P150/page; "
+                "Second copy of diploma: P100.00"
+            ),
+            "page_number": 40,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([tor])
+    correct_llm_answer = (
+        "Getting a second copy of your diploma will cost P100.00, per the Citizen's Charter."
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value=correct_llm_answer,
+        ),
+    ):
+        result = answer_qa_question(
+            "What is the fee for a second copy of a diploma according to the Citizen's Charter?"
+        )
+
+    assert result.answer.strip() == correct_llm_answer
+

@@ -19,7 +19,6 @@ from app.services.admin.knowledge_base_pipeline import KnowledgeBaseIngestResult
 from app.services.auth import create_access_token
 from app.services.chroma_store import RetrievedChunk
 from app.services.passwords import hash_password
-from app.services.student.question_service import QuestionAnswerResult
 
 client = TestClient(app)
 ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key"}
@@ -522,7 +521,7 @@ def test_student_ask_empty_kb(mock_answer):
 
     from app.main import app as fastapi_app
     from app.services.auth import get_optional_user
-    from app.services.student.question_service import EmptyKnowledgeBaseError
+    from app.services.qa.question_answering import EmptyKnowledgeBaseError
 
     mock_answer.side_effect = EmptyKnowledgeBaseError("Knowledge base is empty.")
     fastapi_app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(

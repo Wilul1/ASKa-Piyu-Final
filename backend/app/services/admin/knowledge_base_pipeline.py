@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 import re
 
+from app.config import settings
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.chroma_store import get_knowledge_base_store
 from app.models.schemas import DocumentFieldSchema, StructuredDocumentSchema
@@ -304,7 +305,11 @@ def _chunks_for_extraction(
             source_document=source_document,
             preview_file_path=preview_file_path,
         )
-    chunks = chunk_document_text(index_text)
+    chunks = chunk_document_text(
+        index_text,
+        chunk_size=settings.chunk_max_chars,
+        chunk_overlap=settings.chunk_overlap,
+    )
     return [
         DocumentChunk(
             text=chunk.text,

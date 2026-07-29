@@ -483,6 +483,32 @@ def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
     )
 
 
+# Ceiling on the cumulative heuristic adjustment (sum of every score += / -=
+# rule below) applied to a single chunk, relative to its original semantic
+# (cosine) score. This does not change behavior for any currently-known query
+# pattern (observed legitimate deltas across the test suite and the retrieval
+# benchmark top out around +/-3.4), but it stops an unanticipated combination
+# of rules - e.g. triggered by newly-indexed Faculty Manual phrasing - from
+# fully drowning out genuine semantic similarity with an unbounded score.
+MAX_HEURISTIC_DELTA_MAGNITUDE = 4.0
+
+
+def _apply_heuristic_delta_cap(original: float, score: float, reasons: list[str]) -> float:
+    """Clamp the cumulative heuristic adjustment to +/-MAX_HEURISTIC_DELTA_MAGNITUDE.
+
+    Returns the final (possibly clamped) score and records a reason when
+    clamping actually changed the outcome, so it stays visible for debugging.
+    """
+    heuristic_delta = score - original
+    clamped_delta = max(
+        -MAX_HEURISTIC_DELTA_MAGNITUDE,
+        min(MAX_HEURISTIC_DELTA_MAGNITUDE, heuristic_delta),
+    )
+    if clamped_delta != heuristic_delta:
+        reasons.append(f"clamped_heuristic_delta:{heuristic_delta:.2f}->{clamped_delta:.2f}")
+    return original + clamped_delta
+
+
 def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[RetrievedChunk]:
     normalized_query = _normalize(query)
     profile = _query_profile(normalized_query)
@@ -651,8 +677,10 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
             score -= 0.4
             reasons.append("penalty_sample_document")
 
+        final_score = _apply_heuristic_delta_cap(original, score, reasons)
+
         chunk.original_score = round(original, 4)
-        chunk.reranked_score = round(score, 4)
+        chunk.reranked_score = round(final_score, 4)
         chunk.relevance_score = chunk.reranked_score
         chunk.rerank_reasons = reasons or ["semantic_similarity"]
         reranked.append(chunk)

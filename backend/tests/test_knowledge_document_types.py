@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+from app.config import settings
 from app.services.chroma_store import RetrievedChunk
 from app.services.knowledge_document_types import (
     KnowledgeDocumentType,
@@ -6,6 +9,23 @@ from app.services.knowledge_document_types import (
 )
 from app.services.qa.question_answering import _kb_document_type, _typed_answer_from_context
 from pathlib import Path
+
+
+def test_generic_information_chunking_honors_configured_chunk_size():
+    """Regression: INFORMATION-type generic text must use ASKA_CHUNK_MAX_CHARS/OVERLAP,
+    not chunking.py's hardcoded 900/120 defaults."""
+    long_text = "B" * (settings.chunk_max_chars + 50)
+
+    chunks = build_typed_chunks(
+        kb_document_type=KnowledgeDocumentType.INFORMATION,
+        extraction=SimpleNamespace(structured=None),
+        index_text=long_text,
+        title="Sample Document",
+        source_document="sample.pdf",
+    )
+
+    assert len(chunks) == 2
+    assert len(chunks[0].text) == settings.chunk_max_chars
 
 
 def test_detects_requirement_from_generic_form_signals():
@@ -497,3 +517,37 @@ def test_enrich_keeps_extracted_charter_office():
     enriched = enrich_chunks_with_category_metadata(chunks, title="CC")
     assert enriched[0].metadata["office"] == "Registrar"
     assert enriched[0].metadata["responsible_office"] == "Registrar"
+
+
+def test_charter_chunks_carry_both_suggested_category_and_taxonomy_category():
+    """Regression: the charter `suggested_category` label (map_charter_category)
+    and the canonical taxonomy `category`/`subcategory` (classify_chunk) are two
+    intentionally separate vocabularies that must coexist on charter chunks,
+    not overwrite each other. See the taxonomy-divergence notes in
+    knowledge_taxonomy.py and citizen_charter_services.py.
+    """
+    from app.services.chunking import DocumentChunk
+    from app.services.citizen_charter_services import map_charter_category
+    from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
+
+    charter_label = map_charter_category(office="Cashier", title="Assessment of Fees")
+    chunks = [
+        DocumentChunk(
+            text="Payment of tuition and miscellaneous fees at the Cashier's window.",
+            chunk_index=0,
+            char_start=0,
+            metadata={
+                "document_type": "citizen_charter",
+                "article_type": "service_procedure",
+                "office": "Cashier",
+                "title": "Assessment of Fees",
+                "suggested_category": charter_label,
+            },
+        )
+    ]
+    enriched = enrich_chunks_with_category_metadata(chunks, title="CC")
+    metadata = enriched[0].metadata
+
+    assert metadata["suggested_category"] == charter_label
+    assert metadata["category"]
+    assert "subcategory" in metadata

@@ -3,8 +3,10 @@ from unittest.mock import patch
 
 import pytest
 
+from app.config import settings
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.admin.knowledge_base_pipeline import (
+    _chunks_for_extraction,
     extract_document_preview,
     ingest_document_into_knowledge_base,
     retrieval_test,
@@ -59,6 +61,19 @@ def test_replace_existing_requires_document_id(mock_ingest, mock_store):
         )
 
     mock_store.return_value.add_document_chunks.assert_not_called()
+
+
+def test_generic_ingestion_honors_configured_chunk_size():
+    """Regression: generic-text ingestion must use ASKA_CHUNK_MAX_CHARS/OVERLAP,
+    not chunking.py's hardcoded 900/120 defaults."""
+    long_text = "A" * (settings.chunk_max_chars + 50)
+    extraction = SimpleNamespace(structured=None)
+
+    chunks = _chunks_for_extraction(extraction, long_text)
+
+    assert len(chunks) == 2
+    assert len(chunks[0].text) == settings.chunk_max_chars
+    assert chunks[1].char_start == settings.chunk_max_chars - settings.chunk_overlap
 
 
 def test_chunk_document_text_returns_store_compatible_chunks():

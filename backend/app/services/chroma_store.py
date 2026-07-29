@@ -14,8 +14,50 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from app.config import settings
+from app.services.embeddings import current_embedding_model_label, get_embedding_function
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_embedding_function() -> Any:
+    """Chroma's bundled default in tests (fast/offline); local E5 model otherwise."""
+    if settings.env == "test":
+        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
+        return DefaultEmbeddingFunction()
+    return get_embedding_function()
+
+
+def _get_or_create_collection_with_fallback(client: Any, *, name: str, metadata: dict[str, Any]) -> Any:
+    """Create/open the collection with the configured embedding function.
+
+    Chroma persists one embedding function per collection and raises instead of
+    silently switching models. If an older collection already exists with a
+    different embedding function baked in (e.g. right after deploying an
+    embedding model change, before an admin has re-indexed), fall back to
+    opening it with its existing embedding function rather than crashing the
+    app — an explicit /admin/kb/rebuild (or /admin/chroma/reset) is required to
+    actually switch the collection to the new model.
+    """
+    embedding_function = _resolve_embedding_function()
+    try:
+        return client.get_or_create_collection(
+            name=name,
+            metadata=metadata,
+            embedding_function=embedding_function,
+        )
+    except ValueError as exc:
+        if "embedding function" not in str(exc).lower():
+            raise
+        logger.warning(
+            "Chroma collection %s already uses a different embedding function than "
+            "configured (%s); keeping the persisted one until /admin/kb/rebuild or "
+            "/admin/chroma/reset is run. error=%s",
+            name,
+            getattr(embedding_function, "name", lambda: "unknown")(),
+            exc,
+        )
+        return client.get_or_create_collection(name=name, metadata=metadata)
 
 
 @dataclass
@@ -38,7 +80,8 @@ class KnowledgeBaseStore:
             path=settings.chroma_persist_dir,
             settings=ChromaSettings(anonymized_telemetry=False),
         )
-        self._collection = self._client.get_or_create_collection(
+        self._collection = _get_or_create_collection_with_fallback(
+            self._client,
             name=settings.chroma_collection_name,
             metadata={"hnsw:space": "cosine"},
         )
@@ -59,7 +102,8 @@ class KnowledgeBaseStore:
             if not _is_missing_collection_error(exc):
                 raise
 
-        self._collection = self._client.get_or_create_collection(
+        self._collection = _get_or_create_collection_with_fallback(
+            self._client,
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
@@ -131,7 +175,7 @@ class KnowledgeBaseStore:
         stats: dict[str, Any] = {
             "documents_indexed": 0,
             "total_chunks_indexed": count,
-            "embedding_model": "ChromaDB default embedding function",
+            "embedding_model": current_embedding_model_label(),
             "vector_store": "ChromaDB",
             "last_indexed_document": None,
             "citation_ready_documents": 0,

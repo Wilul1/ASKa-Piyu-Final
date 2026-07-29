@@ -1,4 +1,22 @@
-"""Config-driven KB category classification and ticket routing metadata."""
+"""Config-driven KB category classification and ticket routing metadata.
+
+This is the CANONICAL taxonomy: it drives Chroma retrieval-boosting
+(`retrieval_reranker.category_metadata_boost`), ticket auto-routing/office
+assignment (`ticketing.py`), and the student-facing `/kb/categories` browser.
+`classify_chunk()` writes the `category`/`subcategory`/`office` metadata keys
+on every indexed chunk, including Citizen's Charter-derived ones.
+
+NOTE ON TAXONOMY DIVERGENCE (intentional, not a bug): Citizen's Charter
+services are ALSO labeled by a second, deliberately separate ruleset —
+`citizen_charter_services.map_charter_category()` / `_CATEGORY_RULES` — which
+writes a flatter, service-shaped `suggested_category` value used only for
+charter article drafting and admin grouping. A charter-derived chunk will
+therefore carry both `suggested_category` (charter rules) and
+`category`/`subcategory` (this module) side by side; that is expected. Do not
+merge the two vocabularies. Anything that needs a value for retrieval,
+ticket routing, or the KB category browser should read `category`/
+`subcategory` from this module, never `suggested_category`.
+"""
 
 from __future__ import annotations
 

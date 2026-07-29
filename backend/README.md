@@ -63,6 +63,13 @@ KB category metadata is written into ChromaDB when documents are ingested. After
 - Rebuild configured source documents: `POST /admin/kb/rebuild`
 - Re-ingest manually: `POST /admin/knowledge-base/ingest`
 
+There are two intentionally separate category vocabularies — do not try to merge them:
+
+- **Canonical KB taxonomy** (`app/knowledge_base_categories.json`, classified by `app/services/knowledge_taxonomy.classify_chunk()`) drives Chroma retrieval-boosting, ticket auto-routing/office assignment, and the student-facing `/kb/categories` browser. It writes the `category`/`subcategory`/`office` chunk metadata keys on every indexed chunk, including Citizen's Charter-derived ones.
+- **Charter service categories** (`_CATEGORY_RULES` in `app/services/citizen_charter_services.map_charter_category()`) is a flatter, service-shaped vocabulary (e.g. "Payments and Fees", "ICT Services") used only for Citizen's Charter article drafting and admin grouping. It writes `suggested_category`, which can be promoted to a published article's `category` field when preferred over the taxonomy value.
+
+A charter-derived chunk therefore carries both fields side by side; that's expected. Anything needing a category for retrieval, ticket routing, or the KB browser should read the taxonomy's `category`/`subcategory`, never `suggested_category`.
+
 ### Student ask (JSON)
 
 ```json
@@ -119,15 +126,17 @@ development aliases and must not be treated as hardcoded planner logic.
 app/
 ├── routes/
 │   ├── admin/knowledge_base.py   # ingest + extract
-│   └── student/chat.py           # ask only
+│   ├── qa.py                     # POST /qa/ask (production QA endpoint)
+│   └── student/chat.py           # POST /student/ask (same pipeline as /qa/ask)
 ├── services/
 │   ├── admin/knowledge_base_pipeline.py
-│   ├── student/question_service.py
+│   ├── qa/question_answering.py  # production RAG orchestration (answer_qa_question)
+│   ├── qa/groq_answer_service.py # Groq LLM call
+│   ├── retrieval_reranker.py     # query expansion + heuristic reranking
 │   ├── document_ingestion.py     # OCR/PDF (admin only)
 │   ├── text_cleaner.py
 │   ├── chunking.py
-│   ├── chroma_store.py
-│   └── rag_answer.py
+│   └── chroma_store.py
 └── utils/ocr, utils/pdf
 ```
 

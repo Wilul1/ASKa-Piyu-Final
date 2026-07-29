@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from app.config import settings
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.handbook_policy_processor import HandbookPolicyDocument
 from app.services.structured_document_parser import (
@@ -411,7 +412,11 @@ def _information_chunks(extraction: Any, index_text: str, *, title: str, source_
             char_start += len(text) + 2
         return chunks
 
-    chunks = chunk_document_text(index_text)
+    chunks = chunk_document_text(
+        index_text,
+        chunk_size=settings.chunk_max_chars,
+        chunk_overlap=settings.chunk_overlap,
+    )
     return [
         DocumentChunk(
             text=chunk.text,

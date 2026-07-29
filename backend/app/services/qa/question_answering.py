@@ -24,9 +24,11 @@ from app.services.qa.service_answer_formatter import (
     is_service_procedure_chunk,
     prefer_service_chunks,
 )
-from app.services.student.question_service import EmptyKnowledgeBaseError
-
 logger = logging.getLogger(__name__)
+
+
+class EmptyKnowledgeBaseError(ValueError):
+    """Raised when the knowledge base has no indexed chunks to search."""
 
 
 FINAL_CONTEXT_CHUNKS = 7
@@ -1083,9 +1085,10 @@ def _prefer_structured_fee_recovery(question: str, recovered: str, llm_answer: s
         return True
     if "diploma" in normalized_q and "diploma" in recovered_n and "diploma" not in llm_n:
         return True
-    if re.search(r"(?i)\bp\s*\d|\d+\.\d{2}", recovered) and not re.search(
-        r"(?i)\bp\s*\d|\d+\.\d{2}", llm_answer or ""
-    ):
+    # If the LLM cites *some* number at all (e.g. "100 pesos" instead of
+    # "P100.00"), trust it rather than overriding on formatting/style alone —
+    # only override when the answer has no amount whatsoever.
+    if re.search(r"(?i)\bp\s*\d|\d+\.\d{2}", recovered) and not re.search(r"\d", llm_answer or ""):
         return True
     return False
 

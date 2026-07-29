@@ -9,9 +9,12 @@ from app.models.db_models import User
 from app.models.schemas import QAAskRequest, QAAskResponse
 from app.services.auth import get_optional_user, require_admin_user
 from app.services.chroma_store import get_knowledge_base_store
-from app.services.qa.question_answering import answer_qa_question, _citations_from_sources
+from app.services.qa.question_answering import (
+    EmptyKnowledgeBaseError,
+    answer_qa_question,
+    _citations_from_sources,
+)
 from app.services.qa_rate_limit import enforce_qa_rate_limit
-from app.services.student.question_service import EmptyKnowledgeBaseError
 
 
 logger = logging.getLogger(__name__)

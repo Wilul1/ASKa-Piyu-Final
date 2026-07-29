@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     auth_token_ttl_minutes: int = 60 * 8
     chunk_max_chars: int = 1200
     chunk_overlap: int = 150
+    # Local sentence-embedding model for Chroma retrieval (multilingual: handles
+    # English/Tagalog/Taglish student phrasing). Ignored when env=test, which
+    # always uses Chroma's bundled default embedding to keep tests fast/offline.
+    embedding_model_name: str = "intfloat/multilingual-e5-small"
+    embedding_device: str = "cpu"
 
     # --- Student Q&A (retrieval only; no OCR) ---
     rag_top_k: int = 5

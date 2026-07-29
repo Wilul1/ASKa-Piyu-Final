@@ -1,7 +1,13 @@
 from typing import Any
 
 from app.services.chroma_store import RetrievedChunk
-from app.services.retrieval_reranker import expand_query, prepare_retrieval_query, rerank_chunks
+from app.services.retrieval_reranker import (
+    MAX_HEURISTIC_DELTA_MAGNITUDE,
+    _apply_heuristic_delta_cap,
+    expand_query,
+    prepare_retrieval_query,
+    rerank_chunks,
+)
 
 
 def chunk(title: str, text: str, score: float = 0.7, metadata: dict[str, Any] | None = None) -> RetrievedChunk:
@@ -815,3 +821,30 @@ def test_faculty_teaching_load_query_expands_toward_faculty_manual():
     expanded = prepared.expanded_query.casefold()
     assert "teaching load" in expanded
     assert "faculty manual" in expanded
+
+
+def test_heuristic_delta_cap_bounds_runaway_positive_stacking():
+    """A pathological pile-up of boosts must not fully drown out semantic score."""
+    reasons: list[str] = []
+    final_score = _apply_heuristic_delta_cap(original=0.5, score=50.0, reasons=reasons)
+
+    assert final_score == 0.5 + MAX_HEURISTIC_DELTA_MAGNITUDE
+    assert any(reason.startswith("clamped_heuristic_delta:") for reason in reasons)
+
+
+def test_heuristic_delta_cap_bounds_runaway_negative_stacking():
+    reasons: list[str] = []
+    final_score = _apply_heuristic_delta_cap(original=0.5, score=-50.0, reasons=reasons)
+
+    assert final_score == 0.5 - MAX_HEURISTIC_DELTA_MAGNITUDE
+    assert any(reason.startswith("clamped_heuristic_delta:") for reason in reasons)
+
+
+def test_heuristic_delta_cap_is_a_noop_within_normal_range():
+    """Every currently-observed rule combination in this test module and the
+    retrieval benchmark stays well under the cap, so normal scoring is untouched."""
+    reasons: list[str] = []
+    final_score = _apply_heuristic_delta_cap(original=0.7, score=0.7 + 3.4, reasons=reasons)
+
+    assert final_score == 0.7 + 3.4
+    assert reasons == []

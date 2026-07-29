@@ -244,6 +244,28 @@ _HARD_INTERNAL_TITLE_PATTERNS = (
 )
 
 # Category mapping from generic service/office wording → student-friendly categories.
+#
+# NOTE ON TAXONOMY DIVERGENCE (intentional, not a bug):
+# This is a DELIBERATELY SEPARATE, flatter vocabulary from the canonical KB
+# taxonomy in `knowledge_base_categories.json` / `app.services.knowledge_taxonomy`.
+# - This ruleset labels Citizen's Charter *services* (short, service-shaped names
+#   like "Payments and Fees", "ICT Services") for article drafting, charter
+#   bucket/audience decisions, and admin article grouping. Its output is written
+#   to chunk/article metadata as `suggested_category` (never `category`
+#   directly), and is only promoted to a published article's `category` field
+#   when `_preferred_category` wins in article_candidate_generator.py.
+# - `knowledge_taxonomy.classify_chunk()` is the canonical taxonomy used for
+#   Chroma retrieval-boosting, ticket routing/office assignment, and the
+#   student-facing `/kb/categories` browser. It writes `category`/`subcategory`/
+#   `office` on every indexed chunk (including charter-derived ones, via
+#   `enrich_chunks_with_category_metadata`), so a charter chunk ends up with
+#   BOTH `suggested_category` (this ruleset) and `category`/`subcategory`
+#   (the taxonomy) side by side. That is expected, not a data-quality bug.
+# Do NOT try to make these two vocabularies match 1:1 or merge them: the
+# taxonomy is handbook/policy-shaped with ticket-routing offices, this one is
+# service-shaped and office-agnostic by design (see map_charter_category()
+# docstring below). If you need a value for retrieval/ticket routing, use
+# knowledge_taxonomy.classify_chunk()/the `category` metadata field, not this.
 _CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Admissions", (r"\badmission", r"\bentrance\s+exam", r"\benrollment\s+advis", r"\bnew\s+student")),
     ("Student Records", (r"\bregistrar", r"\btranscript", r"\bdiploma", r"\bcertificat", r"\bgood\s+moral", r"\binc\b", r"\bremoval", r"\bdropping", r"\brecords?\s+management")),
@@ -1323,7 +1345,13 @@ def map_charter_category(
     text: str | None = None,
     service_category: str | None = None,
 ) -> str:
-    """Map to a student-friendly category using generic wording (no hardcoded offices)."""
+    """Map to a student-friendly *charter service* category (no hardcoded offices).
+
+    Returns a value for the `suggested_category` metadata field, not the
+    canonical KB `category` field — see the taxonomy-divergence note above
+    `_CATEGORY_RULES`. Do not use this to populate `category` metadata on
+    non-charter chunks or as a substitute for `knowledge_taxonomy.classify_chunk()`.
+    """
     preferred = _normalize_space(service_category)
     if preferred and preferred.casefold() not in {"general", "general information", "other", "misc"}:
         for category, _ in _CATEGORY_RULES:

@@ -307,6 +307,14 @@ async def list_categories(
         name = (art.category or "General").strip() or "General"
         by_category.setdefault(name, []).append(art)
 
+    # Published articles may carry a category from either the canonical KB
+    # taxonomy (knowledge_taxonomy.classify_chunk) or, for Citizen's Charter
+    # articles, a separate service-shaped `suggested_category`
+    # (citizen_charter_services.map_charter_category) that can win via
+    # `_preferred_category` in article_candidate_generator.py. Sort taxonomy
+    # categories first for a stable, familiar ordering, then append any
+    # charter-only labels (e.g. "Payments and Fees") alphabetically rather
+    # than dropping them.
     taxonomy_order = [cat["name"] for cat in knowledge_base_taxonomy()]
     ordered_names = [name for name in taxonomy_order if name in by_category]
     ordered_names.extend(sorted(name for name in by_category if name not in ordered_names))

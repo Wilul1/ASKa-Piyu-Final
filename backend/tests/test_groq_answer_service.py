@@ -226,5 +226,6 @@ def test_answer_question_for_extractors_flattens_prior_context():
     assert "enroll" in flat.casefold()
 
 
-def test_groq_temperature_is_conversational():
-    assert 0.25 <= GROQ_TEMPERATURE <= 0.5
+def test_groq_temperature_favors_factual_consistency():
+    """Low temperature reduces answer drift/hallucination risk on grounded factual QA."""
+    assert 0.05 <= GROQ_TEMPERATURE <= 0.2

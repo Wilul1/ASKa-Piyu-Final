@@ -34,7 +34,7 @@ class FakeChromaClient:
         if self.delete_raises is not None:
             raise self.delete_raises
 
-    def get_or_create_collection(self, *, name: str, metadata: dict) -> FakeCollection:
+    def get_or_create_collection(self, *, name: str, metadata: dict, embedding_function=None) -> FakeCollection:
         self.created_names.append(name)
         return self.created_collection
 

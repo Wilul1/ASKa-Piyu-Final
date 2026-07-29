@@ -11,9 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.models.db_models import User
 from app.models.schemas import AskQuestionRequest, AskQuestionResponse, ErrorResponse, SourceChunk
 from app.services.auth import get_optional_user
-from app.services.qa.question_answering import answer_qa_question
+from app.services.qa.question_answering import EmptyKnowledgeBaseError, answer_qa_question
 from app.services.qa_rate_limit import enforce_qa_rate_limit
-from app.services.student.question_service import EmptyKnowledgeBaseError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/student", tags=["Student — Ask ASKa-Piyu"])

@@ -1,9 +1,12 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from app.services.qa.groq_answer_service import (
     GROQ_TEMPERATURE,
     build_groq_messages,
     format_groq_answer,
+    generate_groq_answer,
     normalize_chat_history,
 )
 from app.services.qa.question_answering import resolve_followup_question
@@ -229,3 +232,53 @@ def test_answer_question_for_extractors_flattens_prior_context():
 def test_groq_temperature_favors_factual_consistency():
     """Low temperature reduces answer drift/hallucination risk on grounded factual QA."""
     assert 0.05 <= GROQ_TEMPERATURE <= 0.2
+
+
+def _mock_httpx_client_returning(content: str) -> MagicMock:
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"choices": [{"message": {"content": content}}]}
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    return mock_client
+
+
+def test_generate_groq_answer_posts_to_configured_llm_base_url_with_extra_headers():
+    """The endpoint/headers are fully driven by settings, so switching providers
+    (e.g. to GitHub Models after Groq started blocking Azure-hosted traffic)
+    only requires changing env vars, not code."""
+    mock_client = _mock_httpx_client_returning("Sure, here's the answer.")
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-github-pat"),
+        patch(
+            "app.services.qa.groq_answer_service.settings.llm_base_url",
+            "https://models.github.ai/inference/chat/completions",
+        ),
+        patch(
+            "app.services.qa.groq_answer_service.settings.llm_extra_headers_json",
+            '{"X-GitHub-Api-Version": "2022-11-28"}',
+        ),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        answer = generate_groq_answer(question="How do I enroll?", context="Title: Enrollment\nContent: ...")
+
+    assert answer == "Sure, here's the answer."
+    call_args, call_kwargs = mock_client.post.call_args
+    assert call_args[0] == "https://models.github.ai/inference/chat/completions"
+    assert call_kwargs["headers"]["Authorization"] == "Bearer a-github-pat"
+    assert call_kwargs["headers"]["X-GitHub-Api-Version"] == "2022-11-28"
+
+
+def test_generate_groq_answer_defaults_to_groq_endpoint_with_no_extra_headers():
+    mock_client = _mock_httpx_client_returning("Answer text.")
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        generate_groq_answer(question="How do I enroll?", context="Title: Enrollment\nContent: ...")
+
+    call_args, call_kwargs = mock_client.post.call_args
+    assert call_args[0] == "https://api.groq.com/openai/v1/chat/completions"
+    assert "X-GitHub-Api-Version" not in call_kwargs["headers"]

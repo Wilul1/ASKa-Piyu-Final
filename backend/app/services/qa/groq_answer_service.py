@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from app.config import settings
+from app.config import llm_extra_headers, settings
 
 
 logger = logging.getLogger(__name__)
@@ -113,12 +113,14 @@ def generate_groq_answer(
 
     try:
         with httpx.Client(timeout=settings.groq_timeout_seconds) as client:
+            headers = {
+                "Authorization": f"Bearer {settings.groq_api_key}",
+                "Content-Type": "application/json",
+            }
+            headers.update(llm_extra_headers())
             response = client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.groq_api_key}",
-                    "Content-Type": "application/json",
-                },
+                settings.llm_base_url,
+                headers=headers,
                 json={
                     "model": settings.groq_model,
                     "temperature": GROQ_TEMPERATURE,

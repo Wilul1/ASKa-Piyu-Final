@@ -211,9 +211,11 @@ Do not commit or expose real secret values.
 - `ASKA_CHROMA_PERSIST_DIR`: ChromaDB persistence directory.
 - `ASKA_CHROMA_COLLECTION_NAME`: ChromaDB collection name.
 - `ASKA_RAG_TOP_K`: default number of chunks retrieved for RAG.
-- `ASKA_GROQ_API_KEY`: Groq API key for QA answer generation and optional taxonomy fallback.
-- `ASKA_GROQ_MODEL`: Groq model name.
-- `ASKA_GROQ_TIMEOUT_SECONDS`: Groq request timeout.
+- `ASKA_GROQ_API_KEY`: API key for QA answer generation and optional taxonomy fallback, sent to whichever endpoint `ASKA_LLM_BASE_URL` points at (name is historical; not necessarily a Groq key — see below).
+- `ASKA_GROQ_MODEL`: model name for that same endpoint.
+- `ASKA_GROQ_TIMEOUT_SECONDS`: request timeout for that endpoint.
+- `ASKA_LLM_BASE_URL`: OpenAI-compatible chat-completions URL to call (default: Groq's). Groq blocks requests from cloud/datacenter IPs (Azure, AWS, GCP) at Cloudflare's edge, so a server deployment may need a different provider — GitHub Models (`https://models.github.ai/inference/chat/completions`, model IDs like `openai/gpt-4o-mini`, key = a GitHub PAT with `models: read`) is a free option that works from Azure since it's Microsoft infrastructure.
+- `ASKA_LLM_EXTRA_HEADERS_JSON`: optional JSON object of extra headers some providers require (e.g. GitHub Models needs `Accept`/`X-GitHub-Api-Version`).
 - `ASKA_CORS_ORIGINS`: allowed CORS origins.
 - `ASKA_KB_REBUILD_DOCUMENT_PATHS`: one or more source document paths used by the rebuild flow.
 - `ASKA_TICKET_STORE_PATH`: JSON persistence path for smart ticketing data.

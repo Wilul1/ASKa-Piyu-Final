@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,9 +62,23 @@ class Settings(BaseSettings):
     # Optional: set for LLM-generated answers; otherwise uses extractive RAG template
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+    # These "groq_" names are historical. The QA answer generator and the LLM-
+    # assisted taxonomy classifier both call an OpenAI-compatible chat
+    # completions endpoint, controlled by llm_base_url below — groq_api_key /
+    # groq_model just hold whatever credential/model that endpoint expects
+    # (Groq, GitHub Models, OpenAI, Azure OpenAI, etc.), not necessarily Groq's.
     groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"
     groq_timeout_seconds: float = 30.0
+    # Chat-completions endpoint to call. Defaults to Groq's OpenAI-compatible
+    # endpoint; override (together with groq_api_key/groq_model) to point at a
+    # different OpenAI-compatible provider, e.g. GitHub Models
+    # (https://models.github.ai/inference/chat/completions).
+    llm_base_url: str = "https://api.groq.com/openai/v1/chat/completions"
+    # Optional extra headers some providers require beyond Authorization/
+    # Content-Type (e.g. GitHub Models needs Accept + X-GitHub-Api-Version).
+    # JSON object string, e.g. '{"X-GitHub-Api-Version": "2022-11-28"}'.
+    llm_extra_headers_json: str | None = None
 
     cors_origins: list[str] = [
         "http://localhost:8080",
@@ -100,6 +115,20 @@ _PLACEHOLDER_SECRET_MARKERS = (
     "dev-secret",
     "replace-me",
 )
+
+
+def llm_extra_headers() -> dict[str, str]:
+    """Parse ASKA_LLM_EXTRA_HEADERS_JSON into a header dict, ignoring bad input."""
+    raw = (settings.llm_extra_headers_json or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(k): str(v) for k, v in parsed.items()}
 
 
 def is_placeholder_secret(value: str | None) -> bool:

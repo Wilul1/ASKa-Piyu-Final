@@ -18,6 +18,20 @@ from app.services.embeddings import current_embedding_model_label, get_embedding
 
 logger = logging.getLogger(__name__)
 
+# Admin-generated KB articles append a "----EXTRACTED METADATA----\n{json}"
+# debug block after the student-facing body (see article_content_formatter.py).
+# If such an article gets indexed, that raw block must never reach a student
+# via retrieved chunk text — strip it once here so every consumer (LLM
+# context, extractive/conversational fallback, admin retrieval-test tooling)
+# is protected, regardless of which question or document triggered the match.
+_INDEXED_METADATA_MARKER = "----EXTRACTED METADATA----"
+
+
+def _strip_indexed_metadata_block(text: str) -> str:
+    if _INDEXED_METADATA_MARKER in text:
+        return text.split(_INDEXED_METADATA_MARKER, 1)[0].rstrip()
+    return text
+
 
 def _resolve_embedding_function() -> Any:
     """Chroma's bundled default in tests (fast/offline); local E5 model otherwise."""
@@ -471,8 +485,11 @@ class KnowledgeBaseStore:
         metas = result.get("metadatas") or [[]]
         distances = result.get("distances") or [[]]
 
-        for text, meta, distance in zip(docs[0], metas[0], distances[0]):
-            if not text or not meta:
+        for raw_text, meta, distance in zip(docs[0], metas[0], distances[0]):
+            if not raw_text or not meta:
+                continue
+            text = _strip_indexed_metadata_block(raw_text)
+            if not text:
                 continue
             # Chroma cosine distance: lower = more similar; convert to 0–1 relevance
             relevance = max(0.0, 1.0 - float(distance))

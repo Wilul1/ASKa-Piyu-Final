@@ -218,6 +218,45 @@ def test_resolve_followup_leaves_standalone_questions_alone():
     assert resolve_followup_question(q, [{"role": "user", "content": "Hello"}]) == q
 
 
+def test_resolve_followup_ignores_grammatical_relative_pronoun_that():
+    """A self-contained question that happens to use "that" as a relative
+    pronoun (not a backward reference) must not get corrupted with an
+    unrelated prior topic — this must generalize across any topic/phrasing,
+    not just one hardcoded question."""
+    history = [
+        {"role": "user", "content": "How can I file a leave of absence?"},
+        {
+            "role": "assistant",
+            "content": (
+                "The slip must be presented to the instructor/professor concerned "
+                "not later than the second class session."
+            ),
+        },
+    ]
+    for question in [
+        "Show me the section that explains scholarship requirements.",
+        "What is the policy that governs graduate school admission?",
+        "Which document lists the fees that apply to shifting courses?",
+    ]:
+        resolved = resolve_followup_question(question, history)
+        assert resolved == question, f"expected no prior-context injection for: {question!r}"
+
+
+def test_resolve_followup_still_resolves_demonstrative_that_near_start():
+    """"That" right at the start of a short question is still a genuine
+    backward reference and should keep resolving as a follow-up."""
+    history = [
+        {"role": "user", "content": "How do I enroll at LSPU?"},
+        {
+            "role": "assistant",
+            "content": "The office responsible for Enrollment is Office of the Registrar.",
+        },
+    ]
+    resolved = resolve_followup_question("Is that required for transferees too?", history)
+    assert "Is that required for transferees too?" in resolved
+    assert "enroll" in resolved.casefold() or "Enrollment" in resolved
+
+
 def test_answer_question_for_extractors_flattens_prior_context():
     from app.services.qa.question_answering import answer_question_for_extractors
 
@@ -272,9 +311,17 @@ def test_generate_groq_answer_posts_to_configured_llm_base_url_with_extra_header
 
 
 def test_generate_groq_answer_defaults_to_groq_endpoint_with_no_extra_headers():
+    """Pin llm_base_url/llm_extra_headers_json explicitly: a local .env can
+    legitimately override these to a non-Groq provider, so this test must not
+    depend on whatever happens to be configured in the current environment."""
     mock_client = _mock_httpx_client_returning("Answer text.")
     with (
         patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch(
+            "app.services.qa.groq_answer_service.settings.llm_base_url",
+            "https://api.groq.com/openai/v1/chat/completions",
+        ),
+        patch("app.services.qa.groq_answer_service.settings.llm_extra_headers_json", None),
         patch("httpx.Client", return_value=mock_client),
     ):
         generate_groq_answer(question="How do I enroll?", context="Title: Enrollment\nContent: ...")

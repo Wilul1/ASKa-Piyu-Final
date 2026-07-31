@@ -8,11 +8,12 @@ datacenter IPs (Azure, AWS, GCP) at Cloudflare's edge.
 
 from unittest.mock import patch
 
-from app.config import llm_extra_headers, settings
+from app.config import Settings, llm_extra_headers, settings
 
 
 def test_llm_extra_headers_defaults_to_empty_dict():
-    assert llm_extra_headers() == {}
+    with patch.object(settings, "llm_extra_headers_json", None):
+        assert llm_extra_headers() == {}
 
 
 def test_llm_extra_headers_parses_json_object():
@@ -37,5 +38,7 @@ def test_llm_extra_headers_ignores_non_object_json():
         assert llm_extra_headers() == {}
 
 
-def test_llm_base_url_defaults_to_groq_endpoint():
-    assert settings.llm_base_url == "https://api.groq.com/openai/v1/chat/completions"
+def test_llm_base_url_field_default_is_groq_endpoint():
+    """Checks the pydantic field default directly (a local .env can legitimately
+    override the live settings.llm_base_url to a non-Groq provider)."""
+    assert Settings.model_fields["llm_base_url"].default == "https://api.groq.com/openai/v1/chat/completions"

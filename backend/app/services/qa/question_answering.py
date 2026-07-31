@@ -426,9 +426,21 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
             normalized,
         )
     )
-    has_pronoun = bool(
-        re.search(r"\b(?:that|this|it|those|them|there|same)\b", normalized)
-    )
+    # "it"/"this"/"those"/"them"/"there"/"same" are almost always anaphoric
+    # (referring back to the prior turn). "that" is ambiguous in English: it can
+    # be the same kind of backward reference ("what about that?"), or a
+    # grammatical relative pronoun inside an otherwise self-contained sentence
+    # ("show me the section THAT explains scholarship requirements") — the
+    # latter must not be treated as a follow-up cue, or any standalone question
+    # that happens to contain "that" gets its retrieval corrupted with an
+    # unrelated prior topic. Relative-clause "that" almost always appears after
+    # the sentence's subject has already been introduced, so only treat "that"
+    # as a follow-up cue when it shows up very early (demonstrative use, e.g.
+    # "That one", "Is that required?").
+    unanchored_pronoun = bool(re.search(r"\b(?:this|it|those|them|there|same)\b", normalized))
+    that_match = re.search(r"\bthat\b", normalized)
+    demonstrative_that = bool(that_match) and len(normalized[: that_match.start()].split()) <= 3
+    has_pronoun = unanchored_pronoun or demonstrative_that
     content_tokens = _content_tokens(normalized)
     # Standalone if the question already names a concrete topic (2+ content words)
     # and has no follow-up cues.

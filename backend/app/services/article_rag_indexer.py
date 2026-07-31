@@ -18,24 +18,33 @@ from app.services.ticket_knowledge import sync_ticket_kb_status
 
 logger = logging.getLogger(__name__)
 
-# Citizen's Charter articles (citizen_charter_services.build_charter_article_body)
-# end with a fixed "Source Information / Document: / Service: / Office: / Page:"
-# citation footer. That's already captured structurally in article/chunk
-# metadata, so it must not be part of the text that gets embedded/chunked:
-# character-count-based chunking (split_into_chunks below) has no awareness of
-# this footer's boundaries, so on some articles it lands mid-footer and
-# produces a chunk that is *only* an unreadable citation fragment with no real
-# content — which then gets surfaced as a "raw dump" answer for whatever
-# question happens to retrieve it. Stripping the footer before chunking (for
-# every article, not one specific document) prevents that whole class of
-# degenerate chunks from ever being created.
+# Admin-edited/generated articles append a "----EXTRACTED METADATA----\n{json}"
+# debug block after the student-facing body (see article_content_formatter.py),
+# and Citizen's Charter articles (build_charter_article_body) separately end
+# with a fixed "Source Information / Document: / Service: / Office: / Page:"
+# citation footer. Both are already captured structurally in article/chunk
+# metadata, so neither belongs in the text that gets embedded/chunked:
+# character-count chunking (split_into_chunks below) has no awareness of
+# either block's boundaries, so it can land mid-block and produce a chunk
+# that is only an unreadable fragment with no real content -- or, if the
+# metadata JSON (which can be large and has few natural break points) isn't
+# stripped first, swallow everything after it into one oversized chunk.
+# Stripping both before chunking (for every article, not one specific
+# document) prevents that whole class of degenerate chunks from ever being
+# created. Order matters: the metadata block can appear *after* the source
+# footer, so it must be removed first or the footer regex's end-of-string
+# anchor won't match.
+_EMBEDDED_METADATA_MARKER = "----EXTRACTED METADATA----"
 _CHARTER_SOURCE_FOOTER_RE = re.compile(
     r"\n{1,2}Source Information\nDocument:[^\n]*\nService:[^\n]*\nOffice:[^\n]*\nPage:[^\n]*\s*\Z"
 )
 
 
 def _strip_charter_source_footer(text: str) -> str:
-    return _CHARTER_SOURCE_FOOTER_RE.sub("", text or "").rstrip()
+    cleaned = str(text or "")
+    if _EMBEDDED_METADATA_MARKER in cleaned:
+        cleaned = cleaned.split(_EMBEDDED_METADATA_MARKER, 1)[0]
+    return _CHARTER_SOURCE_FOOTER_RE.sub("", cleaned).rstrip()
 
 
 class RagIndexOrphanError(RuntimeError):

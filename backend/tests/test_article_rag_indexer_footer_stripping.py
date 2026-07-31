@@ -36,6 +36,23 @@ def test_strip_charter_source_footer_is_noop_without_footer():
     assert _strip_charter_source_footer(body) == body
 
 
+def test_strip_charter_source_footer_removes_metadata_block_appearing_after_footer():
+    """Admin-edited articles can append a "----EXTRACTED METADATA----\\n{json}"
+    debug block *after* the Source Information footer -- both must be
+    stripped, in the right order, regardless of which one comes last."""
+    body = (
+        "Overview\n\nSome real service content here."
+        + _FOOTER
+        + "\n\n----EXTRACTED METADATA----\n"
+        + '{"document_type": "citizen_charter", "parser_debug": {"a": 1}}'
+    )
+    cleaned = _strip_charter_source_footer(body)
+    assert "Source Information" not in cleaned
+    assert "EXTRACTED METADATA" not in cleaned
+    assert "parser_debug" not in cleaned
+    assert cleaned == "Overview\n\nSome real service content here."
+
+
 def test_build_faq_chunks_never_produces_a_footer_only_chunk():
     # Short body: without stripping, a naive char-count chunker could easily
     # split right around/within the footer and leave a chunk that's only the

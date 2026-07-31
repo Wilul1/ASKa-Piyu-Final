@@ -26,10 +26,24 @@ logger = logging.getLogger(__name__)
 # is protected, regardless of which question or document triggered the match.
 _INDEXED_METADATA_MARKER = "----EXTRACTED METADATA----"
 
+# Citizen's Charter articles end with a fixed "Source Information / Document: /
+# Service: / Office: / Page:" citation footer (see
+# citizen_charter_services.build_charter_article_body). That info is already
+# surfaced separately via chunk metadata/citations, so it must never be echoed
+# as answer text. Because chunk boundaries don't align with this footer, some
+# chunks end up being *only* this footer (sometimes missing their leading
+# character, e.g. "ource Information" instead of "Source Information") with no
+# real content at all — those chunks must be dropped entirely rather than
+# surfaced as a "raw dump" answer, for any document/question that hits them.
+_SOURCE_FOOTER_RE = re.compile(
+    r"\n{0,2}S?ource Information\n(?=(?:Document|Service|Office|Page)\s*:)[\s\S]*\Z"
+)
+
 
 def _strip_indexed_metadata_block(text: str) -> str:
     if _INDEXED_METADATA_MARKER in text:
-        return text.split(_INDEXED_METADATA_MARKER, 1)[0].rstrip()
+        text = text.split(_INDEXED_METADATA_MARKER, 1)[0].rstrip()
+    text = _SOURCE_FOOTER_RE.sub("", text).rstrip()
     return text
 
 

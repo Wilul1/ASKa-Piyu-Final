@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,25 @@ from app.services.ticket_knowledge import sync_ticket_kb_status
 
 
 logger = logging.getLogger(__name__)
+
+# Citizen's Charter articles (citizen_charter_services.build_charter_article_body)
+# end with a fixed "Source Information / Document: / Service: / Office: / Page:"
+# citation footer. That's already captured structurally in article/chunk
+# metadata, so it must not be part of the text that gets embedded/chunked:
+# character-count-based chunking (split_into_chunks below) has no awareness of
+# this footer's boundaries, so on some articles it lands mid-footer and
+# produces a chunk that is *only* an unreadable citation fragment with no real
+# content — which then gets surfaced as a "raw dump" answer for whatever
+# question happens to retrieve it. Stripping the footer before chunking (for
+# every article, not one specific document) prevents that whole class of
+# degenerate chunks from ever being created.
+_CHARTER_SOURCE_FOOTER_RE = re.compile(
+    r"\n{1,2}Source Information\nDocument:[^\n]*\nService:[^\n]*\nOffice:[^\n]*\nPage:[^\n]*\s*\Z"
+)
+
+
+def _strip_charter_source_footer(text: str) -> str:
+    return _CHARTER_SOURCE_FOOTER_RE.sub("", text or "").rstrip()
 
 
 class RagIndexOrphanError(RuntimeError):
@@ -153,7 +173,7 @@ def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
         for part in (
             article.title or "",
             article.summary or "",
-            article.content or "",
+            _strip_charter_source_footer(article.content or ""),
         )
         if (part or "").strip()
     ).strip()

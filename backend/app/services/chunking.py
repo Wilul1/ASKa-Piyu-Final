@@ -69,38 +69,92 @@ def chunk_text(text: str, max_chars: int = 900, overlap: int = 120) -> list[str]
 def create_chunks(text: str, max_chars: int = 900, overlap: int = 120) -> list[str]:
     return chunk_text(text, max_chars=max_chars, overlap=overlap)
 
+def _slice_oversized_block(
+    block: str,
+    block_start: int,
+    chunks: list[DocumentChunk],
+    chunk_size: int,
+    chunk_overlap: int,
+) -> None:
+    """Character-window fallback for a single block (paragraph, or the
+    whole text when it has no paragraph breaks at all) that on its own
+    still exceeds chunk_size. This is the only place plain char-count
+    slicing happens now — used as a last resort, not the default path."""
+    start = 0
+    while start < len(block):
+        end = min(start + chunk_size, len(block))
+        piece = block[start:end].strip()
+        if piece:
+            chunks.append(
+                DocumentChunk(text=piece, chunk_index=len(chunks), char_start=block_start + start)
+            )
+        if end >= len(block):
+            break
+        start = max(0, end - chunk_overlap)
+
+
 def chunk_document_text(
     text: str,
     chunk_size: int = 900,
-    chunk_overlap: int = 120
+    chunk_overlap: int = 120,
 ) -> list[DocumentChunk]:
     """
     Compatibility wrapper for knowledge_base_pipeline.py.
 
-    Splits plain cleaned document text into overlapping chunks
-    for embeddings and ChromaDB indexing.
+    Splits plain cleaned document text into overlapping chunks for
+    embeddings and ChromaDB indexing. Packs whole blank-line-separated
+    paragraphs into each chunk so a boundary lands *between* paragraphs
+    rather than mid-sentence/mid-thought wherever the text has paragraph
+    structure (most cleaned document text does). Only a single paragraph
+    (or an entire unbroken block with no paragraph breaks) that alone
+    exceeds chunk_size still falls back to a character-count slice.
     """
     if not text.strip():
         return []
 
     text = text.strip()
+    paragraphs = [p for p in text.split("\n\n") if p.strip()]
+    if not paragraphs:
+        paragraphs = [text]
+
     chunks: list[DocumentChunk] = []
-    start = 0
+    current = ""
+    current_start = 0
+    cursor = 0
 
-    while start < len(text):
-        end = min(start + chunk_size, len(text))
-        chunk_text_value = text[start:end].strip()
-        if chunk_text_value:
-            chunks.append(
-                DocumentChunk(
-                    text=chunk_text_value,
-                    chunk_index=len(chunks),
-                    char_start=start,
-                )
-            )
+    for raw_paragraph in paragraphs:
+        paragraph = raw_paragraph.strip()
+        idx = text.find(raw_paragraph, cursor)
+        if idx == -1:
+            idx = cursor
+        cursor = idx + len(raw_paragraph)
 
-        if end >= len(text):
-            break
-        start = max(0, end - chunk_overlap)
+        candidate = f"{current}\n\n{paragraph}" if current else paragraph
+        if len(candidate) <= chunk_size:
+            if not current:
+                current_start = idx
+            current = candidate
+            continue
+
+        overlap_tail = current[-chunk_overlap:] if (current and chunk_overlap) else ""
+        if current:
+            chunks.append(DocumentChunk(text=current, chunk_index=len(chunks), char_start=current_start))
+            current = ""
+
+        if len(paragraph) <= chunk_size:
+            if overlap_tail:
+                current = f"{overlap_tail}\n\n{paragraph}"
+                current_start = max(0, idx - len(overlap_tail) - 2)
+            else:
+                current = paragraph
+                current_start = idx
+        else:
+            block = f"{overlap_tail}\n\n{paragraph}" if overlap_tail else paragraph
+            block_start = max(0, idx - len(overlap_tail) - 2) if overlap_tail else idx
+            _slice_oversized_block(block, block_start, chunks, chunk_size, chunk_overlap)
+            current_start = idx + len(paragraph)
+
+    if current:
+        chunks.append(DocumentChunk(text=current, chunk_index=len(chunks), char_start=current_start))
 
     return chunks

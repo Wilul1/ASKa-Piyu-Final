@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.services.chroma_store import RetrievedChunk
 from app.services.knowledge_taxonomy import category_metadata_boost
+
+
+def _normalize_ascii(text: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", text or "")
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
 
 
 ACADEMIC_TERMS = (

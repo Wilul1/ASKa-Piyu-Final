@@ -1290,15 +1290,80 @@ def _rule_matches(normalized_query: str, rule: QueryExpansionRule) -> bool:
 
 
 def _normalize_student_phrasing(normalized_query: str, expansions: Iterable[str]) -> str:
+    cleaned_query = _normalize_noisy_student_query(normalized_query)
     terms = list(expansions)
-    if "when is lspu built" in normalized_query or "when was lspu built" in normalized_query:
+    if "when is lspu built" in cleaned_query or "when was lspu built" in cleaned_query:
         terms.extend(("lspu historical development", "established", "1952"))
-    if _is_university_officials_query(normalized_query):
+    if _is_university_officials_query(cleaned_query):
         terms.extend(("administrative officials", "university president"))
-    if "built" in normalized_query:
+    if "built" in cleaned_query:
         terms.extend(("established", "founded", "created", "historical development"))
-    cleaned = _remove_minor_grammar_noise(normalized_query)
+    cleaned = _remove_minor_grammar_noise(cleaned_query)
     return " ".join(_dedupe([cleaned, *terms]))
+
+
+def _normalize_noisy_student_query(text: str) -> str:
+    normalized = _normalize_ascii(_normalize(text))
+    normalized = re.sub(r"[^\w\s.%]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return ""
+
+    typo_map = {
+        "enrol": "enroll",
+        "enrolment": "enrollment",
+        "enrollmentt": "enrollment",
+        "enrolement": "enrollment",
+        "enrollmnt": "enrollment",
+        "admisson": "admission",
+        "admisison": "admission",
+        "admissionn": "admission",
+        "req": "requirements",
+        "reqs": "requirements",
+        "docs": "documents",
+        "docu": "document",
+        "sched": "schedule",
+        "regis": "registrar",
+        "registrat": "registrar",
+        "regstrar": "registrar",
+        "tuision": "tuition",
+        "miscfee": "miscellaneous fee",
+        "bayad": "fee",
+        "magkano": "how much",
+        "ano": "what",
+        "pano": "how",
+        "paano": "how",
+        "kelan": "when",
+        "san": "where",
+        "saan": "where",
+        "pwede": "can",
+        "pwd": "can",
+        "di": "not",
+        "d": "not",
+    }
+    phrase_map = {
+        r"\bpno\b": "paano",
+        r"\bpa no\b": "paano",
+        r"\bmag enroll\b": "enroll",
+        r"\bmag enrol\b": "enroll",
+        r"\bmag enroll\b": "enroll",
+        r"\bhow to enroll\b": "enrollment procedure",
+    }
+
+    for pattern, replacement in phrase_map.items():
+        normalized = re.sub(pattern, replacement, normalized)
+
+    tokens = []
+    for token in normalized.split():
+        token = re.sub(r"(.)\1{2,}", r"\1\1", token)
+        token = typo_map.get(token, token)
+        if len(token) >= 7 and token.endswith("mentt"):
+            token = token[:-1]
+        tokens.append(token)
+    normalized = " ".join(tokens)
+    normalized = re.sub(r"\b(?:pls|pls\.|po)\b", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
 
 
 def _remove_minor_grammar_noise(text: str) -> str:

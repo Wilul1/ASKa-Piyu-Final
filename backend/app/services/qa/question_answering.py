@@ -162,8 +162,10 @@ def answer_qa_question(
             collection_intent,
         )
     else:
-        retrieved = store.search(
-            retrieval_question,
+        retrieval_variants = _retrieval_query_variants(retrieval_question, prepared_query)
+        retrieved = _multi_query_retrieve(
+            store,
+            retrieval_variants,
             top_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else FINAL_CONTEXT_CHUNKS,
             raw_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else RAW_RETRIEVAL_CANDIDATES,
         )
@@ -208,6 +210,48 @@ def answer_qa_question(
             rerank_reasons=_rerank_reasons_summary(retrieved),
             fallback_used=False,
             fallback_reason=None,
+            out_of_scope_detected=False,
+        )
+
+    retrieval_quality = _retrieval_quality(
+        retrieval_question,
+        retrieved,
+        selected_context,
+        broad_query=broad_query,
+        collection_mode=collection_mode,
+    )
+    if retrieval_quality["should_clarify"]:
+        answer = format_conversational_fallback(
+            question=cleaned_question,
+            context=context,
+            sources=sources,
+            confidence="low",
+            style_hint="clarify",
+            reason="retrieval_evidence_weak",
+        )
+        return QAResult(
+            answer=answer,
+            sources=sources,
+            confidence="low",
+            retrieved_chunks=retrieved_debug,
+            normalized_query=prepared_query.normalized_query,
+            expanded_query=prepared_query.expanded_query,
+            matched_expansion_rules=prepared_query.matched_expansion_rules,
+            broad_query=broad_query,
+            broad_query_reason=broad_reason,
+            selected_context_count=len(selected_context),
+            grouped_context_summary=grouped_summary,
+            detected_intent=detected_intent,
+            collection_mode=collection_mode,
+            collection_articles=collection_articles if collection_mode else None,
+            collection_chunk_count=len(retrieved) if collection_mode else None,
+            group_count=len(grouped_summary or []) if collection_mode else None,
+            program_scope=program_scope,
+            ticket_routing=ticket_routing,
+            query_expansions_used=prepared_query.matched_expansion_rules,
+            rerank_reasons=_rerank_reasons_summary(retrieved),
+            fallback_used=True,
+            fallback_reason=retrieval_quality["reason"],
             out_of_scope_detected=False,
         )
 
@@ -1004,6 +1048,92 @@ def _confidence_for(
     if top_score >= 0.58 and not noisy_selected:
         return "medium"
     return "low"
+
+
+def _retrieval_query_variants(question: str, prepared_query: Any) -> list[str]:
+    variants = [question, prepared_query.normalized_query, prepared_query.expanded_query]
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in variants:
+        candidate = str(value or "").strip()
+        if not candidate:
+            continue
+        folded = _normalize_ascii(_normalize(candidate))
+        if folded in seen:
+            continue
+        seen.add(folded)
+        deduped.append(candidate)
+    return deduped
+
+
+def _multi_query_retrieve(
+    store: Any,
+    queries: list[str],
+    *,
+    top_k: int,
+    raw_k: int,
+) -> list[RetrievedChunk]:
+    merged: dict[str, RetrievedChunk] = {}
+    for query in queries:
+        results = store.search(query, top_k=top_k, raw_k=raw_k)
+        for chunk in results:
+            key = _chunk_merge_key(chunk)
+            existing = merged.get(key)
+            if existing is None or _chunk_score(chunk) > _chunk_score(existing):
+                merged[key] = chunk
+    return sorted(merged.values(), key=_chunk_score, reverse=True)
+
+
+def _chunk_merge_key(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata or {}
+    identifier = str(chunk.chunk_id or metadata.get("chunk_id") or "").strip()
+    if identifier:
+        return f"id:{identifier}"
+    document_id = str(chunk.document_id or metadata.get("document_id") or "").strip()
+    page = str(metadata.get("page") or metadata.get("page_label") or "").strip()
+    title = _normalize_ascii(_normalize(str(chunk.title or metadata.get("title") or "")))
+    preview = _normalize_ascii(_normalize(str(chunk.text or "")))[:160]
+    return f"doc:{document_id}|p:{page}|t:{title}|x:{preview}"
+
+
+def _retrieval_quality(
+    question: str,
+    retrieved: list[RetrievedChunk],
+    selected: list[RetrievedChunk],
+    *,
+    broad_query: bool,
+    collection_mode: bool,
+) -> dict[str, Any]:
+    if not retrieved or not selected:
+        return {"should_clarify": True, "reason": "no_retrieval_context"}
+    if broad_query or collection_mode:
+        return {"should_clarify": False, "reason": "broad_or_collection_mode"}
+
+    top = _chunk_score(retrieved[0])
+    second = _chunk_score(retrieved[1]) if len(retrieved) > 1 else 0.0
+    margin = top - second
+    normalized_q = _normalize(question)
+    domain = _detected_query_domain(normalized_q)
+    domain_match_count = sum(1 for chunk in selected if _chunk_matches_domain(chunk, domain)) if domain else len(selected)
+    positive_count = sum(1 for chunk in selected if _positive_reasons(chunk))
+    noisy_count = sum(1 for chunk in selected if _has_strong_penalty(chunk))
+
+    too_short_or_noisy = len(_meaningful_tokens(normalized_q)) <= 3
+    weak_top_score = top < 0.54
+    weak_margin = len(retrieved) > 1 and margin < 0.03 and top < 0.62
+    weak_alignment = domain_match_count == 0 or positive_count == 0
+    noisy_context = noisy_count >= max(1, len(selected) // 2)
+
+    should_clarify = bool(
+        weak_top_score
+        or weak_margin
+        or weak_alignment
+        or noisy_context
+        or (too_short_or_noisy and (weak_top_score or weak_alignment))
+    )
+    if should_clarify:
+        return {"should_clarify": True, "reason": "weak_or_inconsistent_retrieval_evidence"}
+    return {"should_clarify": False, "reason": "retrieval_evidence_sufficient"}
 
 
 def _student_facing_answer(answer: str, confidence: str) -> str:

@@ -60,12 +60,19 @@ class ApiClient {
   /// Wired by SessionExpiry.bind so Tickets/KB/Admin clear dead JWTs.
   static Future<void> Function(ApiResult result, String url)? onUnauthorized;
 
+  static const Duration defaultTimeout = Duration(seconds: 60);
+
   static Future<ApiResult> send({
     required String method,
     required String url,
     Map<String, String>? headers,
     Object? jsonBody,
     bool asBytes = false,
+    // Most endpoints respond well under the 60s default. QA answers can run
+    // through a slow/rate-limited LLM provider, so callers like the chatbot
+    // pass a longer timeout to avoid mislabeling a slow-but-successful
+    // answer as a dead backend.
+    Duration timeout = defaultTimeout,
   }) async {
     final uri = Uri.parse(url);
     final request = http.Request(method.toUpperCase(), uri);
@@ -77,12 +84,8 @@ class ApiClient {
       request.body = jsonBody is String ? jsonBody : jsonEncode(jsonBody);
     }
 
-    final streamed = await _client.send(request).timeout(
-      const Duration(seconds: 60),
-    );
-    final bytes = await streamed.stream.toBytes().timeout(
-      const Duration(seconds: 60),
-    );
+    final streamed = await _client.send(request).timeout(timeout);
+    final bytes = await streamed.stream.toBytes().timeout(timeout);
     final result = ApiResult(
       statusCode: streamed.statusCode,
       body: asBytes ? '' : utf8.decode(bytes, allowMalformed: true),
@@ -99,6 +102,7 @@ class ApiClient {
     Map<String, String>? headers,
     Map<String, String>? fields,
     List<http.MultipartFile>? files,
+    Duration timeout = defaultTimeout,
   }) async {
     final uri = Uri.parse(url);
     final request = http.MultipartRequest(method.toUpperCase(), uri);
@@ -116,8 +120,8 @@ class ApiClient {
       request.files.addAll(files);
     }
 
-    final streamed = await _client.send(request);
-    final bytes = await streamed.stream.toBytes();
+    final streamed = await _client.send(request).timeout(timeout);
+    final bytes = await streamed.stream.toBytes().timeout(timeout);
     final result = ApiResult(
       statusCode: streamed.statusCode,
       body: utf8.decode(bytes, allowMalformed: true),

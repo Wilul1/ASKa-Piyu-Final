@@ -1,5 +1,6 @@
 """Production ASKa-Piyu QA chatbot endpoint."""
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -52,7 +53,10 @@ async def qa_ask(
             {"role": item.role, "content": item.content}
             for item in (payload.history or [])
         ]
-        result = answer_qa_question(
+        # answer_qa_question is sync (embeddings + HTTP). Run off the event
+        # loop so health checks and KB routes stay responsive during slow LLM calls.
+        result = await asyncio.to_thread(
+            answer_qa_question,
             payload.question,
             user_role=user_role,
             history=history,

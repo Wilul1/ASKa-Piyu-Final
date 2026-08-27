@@ -101,7 +101,7 @@ Compose nginx already applies auth/QA rate limits. The API also enforces in-proc
 python scripts\harden_lab_ops.py --apply-db
 ```
 
-Reads/writes `backend/.env.production` + `deploy/BOOTSTRAP_CREDENTIALS.txt` (gitignored). Signup defaults to campus domains `lspu.edu.ph,aska.local` plus a generated invite code. Encrypted backups use `deploy/BACKUP_PASSPHRASE.txt` (see [`deploy/BACKUP.md`](deploy/BACKUP.md)).
+Reads/writes `backend/.env.production` + `deploy/BOOTSTRAP_CREDENTIALS.txt` (gitignored). Signup defaults to campus domains `lspu.edu.ph,aska.local` plus a generated invite code. Encrypted backups use `deploy/BACKUP_PASSPHRASE.txt` with `scripts\backup_aska.bat` / `scripts/backup_aska.sh`.
 
 **Lab rule:** HTTP Compose on `:8080` is for this PC only — never publish it to campus or the public internet. Campus go-live still needs a host + domain + HTTPS overlay.
 
@@ -163,7 +163,7 @@ Or `set ASKA_API_BASE_URL=https://api.your.edu` before the build scripts. Releas
 
 ## 9. Backups
 
-Back up Postgres **and** Chroma/documents together — see [`deploy/BACKUP.md`](deploy/BACKUP.md) and `scripts\backup_aska.bat`.
+Back up Postgres **and** Chroma/documents together with `scripts\backup_aska.bat` (Windows) or `scripts/backup_aska.sh` (Linux).
 
 ## 10. TLS renewal
 

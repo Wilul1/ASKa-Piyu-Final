@@ -17,3 +17,5 @@ services:
       - ./deploy/certs:/etc/nginx/certs:ro
       # Let's Encrypt HTTP-01 webroot (see deploy/certs/README.md)
       - ./deploy/certbot-www:/var/www/certbot:ro
+      # Flutter web release (`flutter build web` → copy into deploy/web/)
+      - ./deploy/web:/usr/share/nginx/html:ro

@@ -88,6 +88,28 @@ class AuthController extends ChangeNotifier {
     return response.user;
   }
 
+  Future<AuthUser> verifyEmail(String code) async {
+    final token = _accessToken;
+    if (token == null || token.trim().isEmpty) {
+      throw StateError('You must be signed in to verify your email.');
+    }
+    final response = await _service.verifyEmail(
+      code: code,
+      accessToken: token,
+    );
+    await _acceptAuthResponse(response, persist: _rememberMe);
+    return response.user;
+  }
+
+  Future<String> resendVerification() async {
+    final token = _accessToken;
+    if (token == null || token.trim().isEmpty) {
+      throw StateError('You must be signed in to resend a verification code.');
+    }
+    final result = await _service.resendVerification(accessToken: token);
+    return result.message;
+  }
+
   /// Changes password and replaces the session token (old JWT is revoked).
   Future<AuthUser> changePassword(ChangePasswordRequest payload) async {
     final token = _accessToken;

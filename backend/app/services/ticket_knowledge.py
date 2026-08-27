@@ -90,7 +90,9 @@ def convert_ticket_to_draft_article(
     title: str | None = None,
     content: str | None = None,
     summary: str | None = None,
+    category: str | None = None,
     audience: str | None = None,
+    publish: bool = False,
 ) -> dict[str, Any]:
     ticket = _load_ticket(session, ticket_id)
     _assert_can_convert(actor, ticket)
@@ -99,9 +101,17 @@ def convert_ticket_to_draft_article(
         raise TicketKnowledgeError("Only Resolved or Closed tickets can be converted to knowledge.")
 
     resolution = _latest_staff_resolution(ticket)
-    if not resolution:
+    resolved_body = (content or "").strip()
+    if not resolved_body:
+        if not resolution:
+            raise TicketKnowledgeError(
+                "Add an office or admin reply with the approved answer before converting."
+            )
+        resolved_body = _default_article_content(ticket, resolution)
+    if len(resolved_body) < _MIN_RESOLUTION_CHARS:
         raise TicketKnowledgeError(
-            "Add an office or admin reply with the approved answer before converting."
+            f"Article content must be at least {_MIN_RESOLUTION_CHARS} characters "
+            "to save as reusable knowledge."
         )
 
     existing = (
@@ -115,17 +125,20 @@ def convert_ticket_to_draft_article(
         )
 
     resolved_title = _clean_title(title or ticket.original_question)
-    resolved_body = (content or _default_article_content(ticket, resolution)).strip()
-    if len(resolved_body) < _MIN_RESOLUTION_CHARS:
-        raise TicketKnowledgeError(
-            f"Article content must be at least {_MIN_RESOLUTION_CHARS} characters "
-            "to save as reusable knowledge."
-        )
+    assert_no_duplicate_published_topic(
+        session,
+        title=resolved_title,
+        exclude_article_id=existing.id if existing else None,
+    )
 
     resolved_summary = (summary or _short_summary(resolved_body)).strip() or None
     resolved_audience = _normalize_audience(
-        audience or infer_audience_from_text(ticket.original_question, ticket.description, resolution)
+        audience
+        or infer_audience_from_text(
+            ticket.original_question, ticket.description, resolution or resolved_body
+        )
     )
+    resolved_category = ((category or ticket.category or "General").strip() or "General")[:120]
     slug = _unique_slug(session, resolved_title, exclude_id=existing.id if existing else None)
 
     if existing is None:
@@ -133,7 +146,7 @@ def convert_ticket_to_draft_article(
             id=str(uuid.uuid4()),
             title=resolved_title,
             slug=slug,
-            category=ticket.category or "General",
+            category=resolved_category,
             summary=resolved_summary,
             content=resolved_body,
             office=ticket.assigned_office,
@@ -141,7 +154,7 @@ def convert_ticket_to_draft_article(
             source_ticket_id=ticket.id,
             audience=resolved_audience,
             kb_origin="ticket_resolution",
-            resolution_summary=resolution.strip(),
+            resolution_summary=(resolution or resolved_body).strip()[:4000],
             created_by_user_id=actor.id,
             published=False,
             published_at=None,
@@ -155,14 +168,14 @@ def convert_ticket_to_draft_article(
         article = existing
         article.title = resolved_title
         article.slug = slug
-        article.category = ticket.category or article.category or "General"
+        article.category = resolved_category
         article.summary = resolved_summary
         article.content = resolved_body
         article.office = ticket.assigned_office
         article.source_filename = f"Ticket FAQ ({ticket.id})"
         article.audience = resolved_audience
         article.kb_origin = "ticket_resolution"
-        article.resolution_summary = resolution.strip()
+        article.resolution_summary = (resolution or resolved_body).strip()[:4000]
         article.published = False
         article.published_at = None
         # Drop any leftover Chroma FAQ vectors from a prior publish before draft rewrite.
@@ -198,6 +211,140 @@ def convert_ticket_to_draft_article(
     )
     session.commit()
     session.refresh(article)
+
+    if not publish:
+        return article_link_payload(article)
+
+    return _publish_converted_ticket_article(session, article=article, actor=actor)
+
+
+def assert_no_duplicate_published_topic(
+    session: Session,
+    *,
+    title: str,
+    exclude_article_id: str | None = None,
+) -> None:
+    """Hard-block ticket FAQs that duplicate an already-published KB article topic."""
+    duplicate = find_duplicate_published_topic(
+        session,
+        title=title,
+        exclude_article_id=exclude_article_id,
+    )
+    if duplicate is None:
+        return
+    raise TicketKnowledgeError(
+        f'A published article already covers this topic: "{duplicate.title}". '
+        "Point the student to the Knowledge Base instead of publishing a duplicate."
+    )
+
+
+def find_duplicate_published_topic(
+    session: Session,
+    *,
+    title: str,
+    exclude_article_id: str | None = None,
+) -> PublishedArticle | None:
+    """Return a published article whose title matches the ticket FAQ topic."""
+    from app.services.admin.article_candidate_generator import (
+        _normalize_match_title,
+        find_matching_published_article,
+    )
+
+    want = _normalize_match_title(title)
+    if len(want) < 3:
+        return None
+
+    # Prefer the shared matcher (exact / near title across the library).
+    match = find_matching_published_article(session, title=title)
+    if (
+        match is not None
+        and bool(match.published)
+        and (not exclude_article_id or match.id != exclude_article_id)
+        and _titles_are_duplicate_topics(want, _normalize_match_title(match.title))
+    ):
+        return match
+
+    # Fallback: only published rows, exact or containment match.
+    rows = (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.published.is_(True))
+        .all()
+    )
+    for row in rows:
+        if exclude_article_id and row.id == exclude_article_id:
+            continue
+        other = _normalize_match_title(row.title)
+        if _titles_are_duplicate_topics(want, other):
+            return row
+    return None
+
+
+def _titles_are_duplicate_topics(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    # Containment only when both sides are long enough to avoid accidental hits.
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    if len(shorter) < 8:
+        return False
+    return shorter in longer
+
+
+def _publish_converted_ticket_article(
+    session: Session,
+    *,
+    article: PublishedArticle,
+    actor: User,
+) -> dict[str, Any]:
+    """Publish a ticket FAQ and index it for chatbot retrieval (fail-closed)."""
+    from datetime import datetime, timezone
+
+    from app.services.article_rag_indexer import index_published_article
+
+    assert_no_duplicate_published_topic(
+        session,
+        title=article.title,
+        exclude_article_id=article.id,
+    )
+
+    article.published = True
+    article.published_at = datetime.now(timezone.utc)
+    article.published_by_user_id = actor.id
+    article.rag_indexed = False
+    sync_ticket_kb_status(session, article)
+    session.add(article)
+    if article.source_ticket_id:
+        record_ticket_audit(
+            session,
+            ticket_id=article.source_ticket_id,
+            actor=actor,
+            action="kb_publish",
+            field_name="kb_conversion_status",
+            old_value="draft",
+            new_value="published",
+        )
+    session.commit()
+    session.refresh(article)
+
+    try:
+        index_published_article(session, article)
+        session.commit()
+        session.refresh(article)
+    except Exception as exc:
+        article.published = False
+        article.published_at = None
+        article.rag_indexed = False
+        article.rag_document_id = None
+        article.chunk_count = 0
+        sync_ticket_kb_status(session, article)
+        session.add(article)
+        session.commit()
+        raise TicketKnowledgeError(
+            "FAQ was saved as a draft, but publishing to the chatbot index failed. "
+            "Try Publish again from the ticket or Article Library."
+        ) from exc
+
     return article_link_payload(article)
 
 
@@ -293,6 +440,8 @@ def _assert_can_view(actor: User, ticket: Ticket) -> None:
 def _latest_staff_resolution(ticket: Ticket) -> str:
     replies = sorted(ticket.replies or [], key=lambda item: item.created_at)
     for reply in reversed(replies):
+        if bool(getattr(reply, "is_internal", False)):
+            continue
         if reply.sender_role in {"office", "admin"} and (reply.message or "").strip():
             return reply.message.strip()
     return ""

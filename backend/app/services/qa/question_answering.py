@@ -13,7 +13,7 @@ from app.services.chroma_store import RetrievedChunk, get_knowledge_base_store
 from app.services.qa.conversational_fallback import format_conversational_fallback
 from app.services.qa.groq_answer_service import GroqAnswerError, generate_groq_answer
 from app.services.knowledge_taxonomy import classify_question
-from app.services.retrieval_reranker import prepare_retrieval_query
+from app.services.retrieval_reranker import is_faculty_restricted_query, prepare_retrieval_query
 from app.services.qa.service_answer_formatter import (
     format_requirements_detail_answer,
     format_service_procedure_answer,
@@ -63,12 +63,28 @@ OUT_OF_SCOPE_ANSWER = (
     "The indexed LSPU documents (Citizen's Charter / student handbook) "
     "do not contain enough information about this topic."
 )
+FACULTY_OUT_OF_SCOPE_ANSWER = (
+    "The indexed LSPU Faculty Manual and related documents do not contain "
+    "enough information about this topic."
+)
+# Students/guests must not be told a Faculty Manual exists or which topics it covers.
+FACULTY_SIGNIN_ANSWER = OUT_OF_SCOPE_ANSWER
+
+
+def _out_of_scope_answer_for_role(user_role: str | None) -> str:
+    if (user_role or "").strip().lower() == "faculty":
+        return FACULTY_OUT_OF_SCOPE_ANSWER
+    return OUT_OF_SCOPE_ANSWER
+
+
 NORMAL_QA = "NORMAL_QA"
 DEFINITION_QUESTION = "DEFINITION_QUESTION"
 PROCEDURE_QUESTION = "PROCEDURE_QUESTION"
 REQUIREMENT_QUESTION = "REQUIREMENT_QUESTION"
 OFFICE_SERVICE_QUESTION = "OFFICE_SERVICE_QUESTION"
 OUT_OF_SCOPE_QUESTION = "OUT_OF_SCOPE"
+GREETING_QUESTION = "GREETING"
+GREETING_ANSWER = "Hello! How can I assist you today?"
 PROGRAM_COLLECTION = "PROGRAM_COLLECTION"
 OFFICE_COLLECTION = "OFFICE_COLLECTION"
 SERVICE_COLLECTION = "SERVICE_COLLECTION"
@@ -112,6 +128,29 @@ def answer_qa_question(
 ) -> QAResult:
     cleaned_question = question.strip()
     chat_history = list(history or [])
+    # Greetings / thanks are not KB questions — never retrieve or cite sources.
+    if is_greeting_query(cleaned_question):
+        return QAResult(
+            answer=GREETING_ANSWER,
+            sources=[],
+            confidence="high",
+            retrieved_chunks=[],
+            normalized_query=_normalize(cleaned_question),
+            expanded_query=_normalize(cleaned_question),
+            matched_expansion_rules=[],
+            broad_query=False,
+            broad_query_reason=None,
+            selected_context_count=0,
+            detected_intent=GREETING_QUESTION,
+            collection_mode=False,
+            ticket_routing=_ticket_routing_for_question(cleaned_question),
+            query_expansions_used=[],
+            rerank_reasons=[],
+            fallback_used=False,
+            fallback_reason="greeting",
+            out_of_scope_detected=False,
+        )
+
     retrieval_question = resolve_followup_question(cleaned_question, chat_history)
     prepared_query = prepare_retrieval_query(retrieval_question)
     ticket_routing = _ticket_routing_for_question(cleaned_question)
@@ -152,6 +191,33 @@ def answer_qa_question(
             out_of_scope_detected=True,
         )
 
+    role = (user_role or "student").strip().lower()
+    if is_faculty_restricted_query(prepared_query.normalized_query) and role not in {
+        "faculty",
+        "office",
+        "admin",
+    }:
+        return QAResult(
+            answer=FACULTY_SIGNIN_ANSWER,
+            sources=[],
+            confidence="low",
+            retrieved_chunks=[],
+            normalized_query=prepared_query.normalized_query,
+            expanded_query=prepared_query.expanded_query,
+            matched_expansion_rules=prepared_query.matched_expansion_rules,
+            broad_query=False,
+            broad_query_reason=None,
+            selected_context_count=0,
+            detected_intent=detected_intent,
+            collection_mode=False,
+            ticket_routing=ticket_routing,
+            query_expansions_used=prepared_query.matched_expansion_rules,
+            rerank_reasons=[],
+            fallback_used=False,
+            fallback_reason="faculty_topic_hidden_from_role",
+            out_of_scope_detected=True,
+        )
+
     program_scope: dict[str, Any] | None = None
     if collection_mode and hasattr(store, "list_chunks"):
         retrieved = collect_intent_chunks(store, collection_intent)
@@ -168,6 +234,7 @@ def answer_qa_question(
             retrieval_variants,
             top_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else FINAL_CONTEXT_CHUNKS,
             raw_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else RAW_RETRIEVAL_CANDIDATES,
+            user_role=user_role,
         )
         retrieved = prefer_service_chunks(retrieved, question=retrieval_question)
         retrieved = _apply_audience_filter(retrieved, user_role)
@@ -188,7 +255,7 @@ def answer_qa_question(
 
     if not retrieved:
         return QAResult(
-            answer=OUT_OF_SCOPE_ANSWER,
+            answer=_out_of_scope_answer_for_role(user_role),
             sources=[],
             confidence="low",
             retrieved_chunks=[],
@@ -403,7 +470,7 @@ def answer_qa_question(
         broad_query=broad_query,
         collection_mode=collection_mode,
     )
-    final_answer = _student_facing_answer(answer, confidence)
+    final_answer = _student_facing_answer(answer, confidence, user_role=user_role)
     recovered = _recover_factual_charter_answer(
         extractor_question,
         retrieved or selected_context,
@@ -717,6 +784,8 @@ def detect_collection_intent(question: str) -> str:
 
 def detect_question_intent(question: str) -> str:
     normalized = _normalize(question)
+    if is_greeting_query(question):
+        return GREETING_QUESTION
     if _is_out_of_scope_query(normalized):
         return OUT_OF_SCOPE_QUESTION
     if _contains_any(normalized, ("how do i", "how can i", "where can i get", "steps", "process", "procedure", "file an", "get an excuse slip")):
@@ -728,6 +797,28 @@ def detect_question_intent(question: str) -> str:
     if _contains_any(normalized, ("what is", "what does", "define", "meaning of", "scholastic delinquency", "retention")):
         return DEFINITION_QUESTION
     return NORMAL_QA
+
+
+_GREETING_RE = re.compile(
+    r"^(?:"
+    r"hi+|hello|hey+|yo|howdy|greetings|"
+    r"good\s*(?:morning|afternoon|evening|day)|"
+    r"(?:what'?s|whats)\s*up|sup|"
+    r"how\s+are\s+you(?:\s+doing)?|"
+    r"thanks?(?:\s+you)?(?:\s+a\s+lot)?|thank\s+you(?:\s+so\s+much)?|"
+    r"ok(?:ay)?|bye|goodbye|see\s+you(?:\s+later)?"
+    r")"
+    r"(?:\s*[!.]*)?$",
+    re.I,
+)
+
+
+def is_greeting_query(question: str) -> bool:
+    """True for short social chat that must not run handbook retrieval."""
+    text = (question or "").strip()
+    if not text or len(text) > 48:
+        return False
+    return bool(_GREETING_RE.match(text))
 
 
 def detect_broad_query(question: str) -> tuple[bool, str | None]:
@@ -1136,7 +1227,12 @@ def _retrieval_quality(
     return {"should_clarify": False, "reason": "retrieval_evidence_sufficient"}
 
 
-def _student_facing_answer(answer: str, confidence: str) -> str:
+def _student_facing_answer(
+    answer: str,
+    confidence: str,
+    *,
+    user_role: str | None = None,
+) -> str:
     from app.services.qa.groq_answer_service import _strip_pointer_phrasing
 
     cleaned = _strip_pointer_phrasing(_strip_source_lines(answer))
@@ -1147,7 +1243,7 @@ def _student_facing_answer(answer: str, confidence: str) -> str:
         and _indicates_missing_information(cleaned)
         and _is_mostly_missing_info_reply(cleaned)
     ):
-        return OUT_OF_SCOPE_ANSWER
+        return _out_of_scope_answer_for_role(user_role)
     return cleaned
 
 
@@ -1202,7 +1298,10 @@ def _should_prefer_recovered_factual(question: str, answer: str) -> bool:
         normalized_a,
     ):
         return True
-    if asks_fee and re.search(r"\b(?:fees?:\s*none|fee:\s*none|not specified)\b", normalized_a):
+    if asks_fee and re.search(
+        r"\b(?:do not specify|does not specify|not specify the cost|do not contain)\b",
+        normalized_a,
+    ):
         return True
     return False
 
@@ -1218,7 +1317,7 @@ def _prefer_structured_fee_recovery(question: str, recovered: str, llm_answer: s
     llm_n = _normalize(llm_answer or "")
     if not llm_n.strip():
         return True
-    if re.search(r"\b(?:fees?:\s*none|fee:\s*none|not specified)\b", llm_n):
+    if re.search(r"\b(?:fees?:\s*none|fee:\s*none|not specified|do not specify|does not specify)\b", llm_n):
         return True
     if re.search(
         r"\b(?:assessment of fees|certified true copy|comprehensive examination)\b",
@@ -1293,6 +1392,7 @@ def _recover_factual_charter_answer(
                 _meta_text(metadata, "total_fees")
                 or _meta_text(metadata, "fees")
                 or _extract_labeled_line(chunk.text or "", ("Fees", "Fee", "Total Fees"))
+                or _extract_tor_fees_from_text(chunk.text or "", normalized)
             )
             fee = _fee_usable_for_question(raw_fee, title, normalized)
         if asks_office:
@@ -1447,6 +1547,25 @@ def _fee_answer_title(title: str, fee: str, normalized_question: str) -> str:
             return "a second copy of a diploma"
         return "diploma"
     return title
+
+
+def _extract_tor_fees_from_text(text: str, normalized_question: str) -> str | None:
+    """Pull per-page TOR amounts out of flattened Citizen's Charter tables."""
+    if not re.search(r"\b(?:tor|transcript)\b", normalized_question):
+        return None
+    blob = re.sub(r"\s+", " ", text or "")
+    match = re.search(
+        r"undergrad(?:uate)?(?:\s+students?)?\s*(P\s*\d+(?:\.\d{2})?\s*/\s*page)"
+        r".{0,80}graduate(?:\s+students?)?\s*(P\s*\d+(?:\.\d{2})?\s*/\s*page)",
+        blob,
+        flags=re.I | re.S,
+    )
+    if match:
+        return f"Undergraduate {match.group(1).strip()}; Graduate {match.group(2).strip()}"
+    undergrad = re.search(r"undergrad(?:uate)?(?:\s+students?)?\s*(P\s*\d+(?:\.\d{2})?\s*/\s*page)", blob, flags=re.I)
+    if undergrad:
+        return undergrad.group(0).strip()
+    return None
 
 
 def _extract_labeled_line(text: str, labels: tuple[str, ...]) -> str:
@@ -1756,29 +1875,61 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
         # even when Chroma still carries a stale ingest UUID.
         resolved_document_id = ready_row.id if ready_row is not None else document_id
         resolved_page = page or _page_number(metadata, chunk.text)
+        page_end = _page_end_number(metadata, resolved_page)
+        section = _source_section(metadata) or _hierarchy_path(metadata) or None
+        # Prefer the service/article title for section crop (cleaner than hierarchy path).
+        section_for_clip = (
+            str(metadata.get("title") or metadata.get("source_section") or section or "")
+            .strip()
+            or None
+        )
+        # Charter services often continue onto the next page. Soft-extend by one
+        # page when end is unknown; section crop removes the following service.
+        if (
+            page_end is not None
+            and resolved_page is not None
+            and page_end == resolved_page
+            and section_for_clip
+        ):
+            page_end = resolved_page + 1
+        elif page_end is None and resolved_page is not None and section_for_clip:
+            page_end = resolved_page + 1
         view_url = (
             source_view_url(resolved_document_id, resolved_page)
             if pdf_ready and resolved_document_id
             else None
         )
         page_url = (
-            source_page_url(resolved_document_id, resolved_page)
+            source_page_url(
+                resolved_document_id,
+                resolved_page,
+                page_end=page_end,
+                section=section_for_clip,
+            )
             if pdf_ready and resolved_document_id and resolved_page
             else None
         )
         note = None if pdf_ready else (
             "PDF source unavailable. Re-index this document to enable PDF viewing."
         )
+        page_range = None
+        if resolved_page is not None:
+            if page_end is not None and page_end != resolved_page:
+                page_range = f"{resolved_page}-{page_end}"
+            else:
+                page_range = str(resolved_page)
         return {
             "page": resolved_page,
             "page_number": resolved_page,
+            "page_end": page_end,
+            "page_range": page_range,
             "citation_id": str(
                 metadata.get("chunk_id")
                 or f"{resolved_document_id or 'doc'}::{chunk.chunk_index or index}"
             ),
             "document_id": resolved_document_id,
             "source_filename": source_filename,
-            "source_section": _source_section(metadata) or _hierarchy_path(metadata) or None,
+            "source_section": section,
             "source_excerpt": str(metadata.get("source_excerpt") or "").strip()
             or _text_preview(chunk.text),
             "source_label": _citation_source_label(metadata, source_filename),
@@ -1866,6 +2017,20 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
             item["matching_sections"] = matching_sections
         if len(pages) > 1:
             item["page_range"] = f"{pages[0]}-{pages[-1]}"
+            item["page"] = pages[0]
+            item["page_number"] = pages[0]
+            item["page_end"] = pages[-1]
+            document_id = item.get("document_id")
+            section = item.get("title") or item.get("source_section")
+            if document_id and pages[0]:
+                from app.services.document_storage import source_page_url
+
+                item["source_page_url"] = source_page_url(
+                    document_id,
+                    pages[0],
+                    page_end=pages[-1],
+                    section=section,
+                )
         sources.append(item)
     return sources
 
@@ -2432,6 +2597,16 @@ def _page_number(metadata: dict[str, Any], text: str | None = None) -> int | Non
     return None
 
 
+def _page_end_number(metadata: dict[str, Any], page_start: int | None) -> int | None:
+    end = metadata.get("page_end")
+    if isinstance(end, str) and end.isdigit():
+        end = int(end)
+    if isinstance(end, int) and end > 0:
+        if page_start is None or end >= page_start:
+            return end
+    return page_start
+
+
 def _page_label(metadata: dict[str, Any]) -> str:
     start = _page_number(metadata)
     end = metadata.get("page_end")
@@ -2510,6 +2685,7 @@ def _has_strong_penalty(chunk: RetrievedChunk) -> bool:
 def _detected_query_domain(normalized_query: str) -> str | None:
     domain_terms = {
         "attendance": ("attendance", "absent", "absence", "excuse", "medical certificate", "illness"),
+        "shifting": ("shift", "shifting"),
         "retention": ("retention", "scholastic delinquency", "probation", "dismissal", "dropped", "failed units"),
         "graduation": ("graduation", "graduate requirements", "candidate for graduation", "clearance", "diploma"),
         "curricular": ("curricular", "program", "course offering", "campus offer", "offered by", "college of"),
@@ -2530,6 +2706,7 @@ def _chunk_matches_domain(chunk: RetrievedChunk, domain: str | None) -> bool:
         return False
     domain_terms = {
         "attendance": ("attendance", "excuse slip", "medical certificate", "absence", "osas"),
+        "shifting": ("shifting of course", "shifting", "shift"),
         "retention": ("retention", "scholastic delinquency", "probation", "dismissal", "dropped"),
         "graduation": ("graduation", "candidate for graduation", "clearance", "diploma"),
         "curricular": ("curricular offerings", "undergraduate programs", "graduate studies", "programs", "college of"),
@@ -2686,11 +2863,17 @@ def _is_specific_query(normalized_query: str) -> bool:
         r"\bwarning and probation rules\b",
         r"\bshift(?:ing)? (?:of )?course\b",
         r"\bshift course\b",
+        r"\bshift(?:ing)?\b.*\b(?:course|program)\b",
+        r"\b25\s*(?:percent|%)\b.*\b(?:class|grade)\b",
         r"\bfail\s+75\s*%\b",
         r"\b75\s*%\s+of my units\b",
         r"\bwhat edition\b",
         r"\bcitizen(?:'s)? charter\b",
         r"\bhow much (?:is|are|does)\b",
+        r"\btranscript of records cost\b",
+        r"\bmaximum residence\b",
+        r"\bhonorable dismissal\b",
+        r"\brefund\b",
         r"\bhow long (?:is|does|should)\b",
         r"\bwhich office\b",
         r"\bwho may avail\b",

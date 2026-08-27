@@ -135,6 +135,15 @@ def _isolate_tests_on_aska_piyu_test() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_qa_rate_limits() -> None:
+    from app.services.qa_rate_limit import reset_qa_rate_limits
+
+    reset_qa_rate_limits()
+    yield
+    reset_qa_rate_limits()
+
+
+@pytest.fixture(autouse=True)
 def _abort_if_dev_database() -> None:
     """
     Per-test guard against the live SQLAlchemy engine binding.

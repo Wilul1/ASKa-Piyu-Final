@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import '../design_tokens.dart';
 import '../services/download_file.dart';
 import '../widgets/admin_action_buttons.dart';
-import 'admin_generate_articles_page.dart';
 import 'admin_kb_outline.dart';
 
 export 'admin_kb_outline.dart';
@@ -64,6 +63,7 @@ class AdminKbWorkspace extends StatelessWidget {
     required this.onExtract,
     required this.onIngest,
     required this.onSelectOutline,
+    this.onOpenArticles,
   });
 
   final String? fileName;
@@ -86,6 +86,7 @@ class AdminKbWorkspace extends StatelessWidget {
   final VoidCallback onExtract;
   final VoidCallback onIngest;
   final ValueChanged<int> onSelectOutline;
+  final VoidCallback? onOpenArticles;
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +118,18 @@ class AdminKbWorkspace extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _ProcessingStatusRow(stages: pipelineStages),
+        if (status.trim().isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            status,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: isBusy ? DesignTokens.maroon : DesignTokens.muted,
+              height: 1.35,
+            ),
+          ),
+        ],
         const SizedBox(height: 14),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -138,7 +151,7 @@ class AdminKbWorkspace extends StatelessWidget {
                   kbStatistics: kbStatistics,
                 ),
                 const SizedBox(height: 12),
-                const _GenerateArticlesShortcut(),
+                _GenerateArticlesShortcut(onOpenArticles: onOpenArticles),
               ],
             );
 
@@ -216,16 +229,16 @@ class _WorkspaceHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Knowledge Base Admin',
+          'Documents',
           style: TextStyle(
-            fontSize: 28,
+            fontSize: 22,
             fontWeight: FontWeight.w800,
             color: DesignTokens.ink,
           ),
         ),
         SizedBox(height: 6),
         Text(
-          'Extract, review, and index document content for chatbot retrieval.',
+          'Extract and index document content for Ask ASKa-Piyu retrieval. Then open Articles to publish student-facing FAQs.',
           style: TextStyle(
             fontSize: 14,
             height: 1.45,
@@ -804,7 +817,9 @@ class _DocumentDetailsCard extends StatelessWidget {
 }
 
 class _GenerateArticlesShortcut extends StatelessWidget {
-  const _GenerateArticlesShortcut();
+  const _GenerateArticlesShortcut({this.onOpenArticles});
+
+  final VoidCallback? onOpenArticles;
 
   @override
   Widget build(BuildContext context) {
@@ -814,7 +829,7 @@ class _GenerateArticlesShortcut extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
-            'Public publishing is handled from Generate Articles.',
+            'Next: generate public articles from this extraction.',
             style: TextStyle(
               fontSize: 12,
               height: 1.4,
@@ -823,15 +838,9 @@ class _GenerateArticlesShortcut extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           AdminSecondaryButton(
-            label: 'Go to Generate Articles',
+            label: 'Continue to Articles',
             expand: true,
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const AdminGenerateArticlesPage(),
-                ),
-              );
-            },
+            onPressed: onOpenArticles,
           ),
         ],
       ),

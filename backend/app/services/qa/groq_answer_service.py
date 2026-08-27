@@ -36,6 +36,9 @@ Answering style (required for every question):
 - Do not answer with only a section heading, breadcrumb path, or truncated title; explain the actual policy content from the chunk text.
 - Do not start answers with "Based on the handbook", "Based on …", or "In simple terms" unless that framing is truly needed for clarity.
 - If prior chat turns are provided, use them to resolve follow-ups (e.g. "what about the fee?") but still ground facts in the retrieved context for this turn.
+- Make the answer feel visibly institutional and document-grounded, not like generic AI advice.
+- Prefer explicit school-policy language such as the exact office, rule, threshold, fee, timeline, condition, or consequence stated in the retrieved document.
+- When helpful, naturally name the source document in the sentence itself (for example, "The LSPU Student Handbook states..." or "The Citizen's Charter lists..."), especially for policy and fee questions.
 
 If a retrieved title, path, metadata, or content provides policy rules, service details, fees, processing times, who may avail, requirements, steps, conditions, standards, thresholds, consequences, edition/year, or vision statements related to the question, answer using those exact details.
 Quote concrete values from context when asked (amounts in pesos, minutes/hours/days, office names, document lists, edition/year, vision wording).
@@ -236,6 +239,10 @@ def _build_user_prompt(*, question: str, context: str, broad_mode: bool = False)
         "- When the question mentions faculty, teaching load, faculty grading, or faculty duties, prefer Faculty Manual details over Student Handbook course-load or grade-change sections.\n"
         "- Summarize actual policy content from chunk text; do not reply with only a heading or breadcrumb path.\n"
         "- When the question asks how much / how long / which office / who may avail / what documents, extract the exact matching values from context.\n"
+        "- Copy refund percentages, unit thresholds, and peso amounts exactly as written (for example 75%, not 80%).\n"
+        "- Honorable dismissal petitions are filed with the Registrar, not the Dean, unless the retrieved context explicitly says otherwise.\n"
+        "- Make the reply sound grounded in LSPU policy: name the office, rule, threshold, fee, or document instead of using vague phrases like 'proper office' or 'required documents'.\n"
+        "- When one document clearly anchors the answer, it is good to mention that document naturally in the sentence.\n"
         "- If the section explains the concept through policy details, give a short student-friendly explanation grounded in those details.\n"
         "- If there is no direct definition, say that briefly and then summarize the related policy rules.\n"
         "- Do not say there is no direct definition when the retrieved policy details already explain the concept.\n"

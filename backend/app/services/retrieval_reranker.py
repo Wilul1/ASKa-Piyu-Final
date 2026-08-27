@@ -53,6 +53,68 @@ DISCIPLINARY_TERMS = (
     "uniform",
     "sanction",
 )
+# Generic student phrasing that should never alone decide a title match.
+# "What is the X policy?" otherwise near-exact-matches every "* Policy" title.
+GENERIC_INTENT_TOKENS = frozenset(
+    {
+        "policy",
+        "policies",
+        "rule",
+        "rules",
+        "guideline",
+        "guidelines",
+        "regulation",
+        "regulations",
+        "procedure",
+        "procedures",
+        "process",
+        "requirement",
+        "requirements",
+        "information",
+        "student",
+        "students",
+        "university",
+        "lspu",
+        "manual",
+        "handbook",
+        "section",
+        "article",
+        "chapter",
+        "office",
+        "campus",
+        "about",
+        "related",
+        "regarding",
+        "concerning",
+        "based",
+        "according",
+        "please",
+        "help",
+        "need",
+        "know",
+        "tell",
+        "explain",
+        "define",
+        "definition",
+        "means",
+        "meaning",
+    }
+)
+DRESS_CODE_TERMS = (
+    "haircut",
+    "hair cut",
+    "hair-cut",
+    "hair style",
+    "hairstyle",
+    "grooming",
+    "dress code",
+    "school uniform",
+    "norms and decorum",
+    "tattoo",
+    "earrings",
+    "approved hair-cut",
+    "fixie crop",
+)
 PROCEDURAL_TERMS = ("ojt", "on-the-job", "on the job", "procedure", "procedures", "process flow")
 APPENDIX_TERMS = ("appendix", "appendices", "form template")
 AWARD_TERMS = ("award", "awards", "honor", "honors", "medal", "recognition")
@@ -75,6 +137,13 @@ TEACHING_LOAD_TERMS = (
     "teaching loads",
     "load assignment",
     "workload",
+    "instruction hours",
+    "instruction load",
+)
+ACADEMIC_FREEDOM_TERMS = (
+    "academic freedom",
+    "indoctrination",
+    "classroom cannot be used",
 )
 STUDENT_COURSE_LOAD_TERMS = (
     "course load",
@@ -94,6 +163,19 @@ STUDENT_GRADE_CHANGE_TERMS = (
     "rectification of grades",
     "change of grade",
     "grade rectification",
+)
+SHIFTING_TERMS = (
+    "shifting of course",
+    "shifting form",
+    "shift to another",
+)
+FACULTY_GRADE_CHANGE_TERMS = (
+    "change/rectification of grades",
+    "rectification of grades",
+    "academic council",
+    "twenty-five percent",
+    "twenty five percent",
+    "submission of grades",
 )
 FACULTY_RESPONSIBILITY_TERMS = (
     "commitment of the lspu faculty",
@@ -120,6 +202,9 @@ DOMAIN_PATH_TERMS = {
     "enrollment": ("enrollment", "registration"),
     "records": ("transcript of records", "student records", "registrar"),
     "counseling": ("guidance", "counseling", "student services"),
+    "shifting": ("shifting of course", "shifting"),
+    "residence": ("maximum residence", "maximum residence rule"),
+    "refund": ("refunding of fees", "refund"),
 }
 
 
@@ -190,11 +275,37 @@ QUERY_EXPANSION_RULES = (
         name="attendance_excuse_slip",
         trigger_terms=("excuse slip", "excuse", "absent", "absence", "attendance", "illness", "medical"),
         expansion_terms=ATTENDANCE_TERMS,
+        blocked_terms=("leave of absence",),
+    ),
+    QueryExpansionRule(
+        name="leave_of_absence",
+        trigger_terms=("leave of absence",),
+        expansion_terms=(
+            "leave of absence",
+            "loa",
+            "registrar",
+            "written request",
+            "academic policies",
+        ),
     ),
     QueryExpansionRule(
         name="scholastic_delinquency_failed_units",
         trigger_terms=("failed units", "failing", "failed", "fail", "many subjects", "probation", "dismissal"),
         expansion_terms=("scholastic delinquency", "warning", "probation", "dismissal", "failed academic units"),
+        blocked_terms=("shift", "shifting"),
+    ),
+    QueryExpansionRule(
+        name="shifting_of_course",
+        trigger_terms=("shift", "shifting", "shift course", "change course", "another bs program"),
+        expansion_terms=(
+            "shifting of course",
+            "registrar",
+            "shifting form",
+            "admission requirements",
+            "no failure of greater than six (6) units",
+        ),
+        required_any_terms=("shift", "shifting"),
+        blocked_terms=("night shift", "work shift"),
     ),
     QueryExpansionRule(
         name="curricular_offerings_programs",
@@ -285,13 +396,58 @@ QUERY_EXPANSION_RULES = (
         trigger_terms=("tor", "transcript", "transcript of records", "cav", "copy of grades", "certificate of transfer"),
         expansion_terms=(
             "transcript of records",
+            "issuance of transcript of records",
             "registrar",
             "per page",
+            "P75.00/page",
+            "P150/page",
             "undergraduate",
             "graduate",
             "certification",
             "citizen charter",
         ),
+    ),
+    QueryExpansionRule(
+        name="maximum_residence_rule",
+        trigger_terms=("maximum residence", "residence rule", "maximum residency"),
+        expansion_terms=(
+            "maximum residence rule",
+            "1.5 times the normal length",
+            "actual residence",
+        ),
+    ),
+    QueryExpansionRule(
+        name="tuition_fee_refund",
+        trigger_terms=("refund", "tuition refund", "withdraw after paying", "refunded"),
+        expansion_terms=(
+            "refunding of fees",
+            "seventy-five percent (75%)",
+            "fifty percent (50%)",
+            "opening of classes",
+            "honorable dismissal",
+            "leave of absence",
+        ),
+        required_any_terms=("refund", "withdraw", "withdrawal", "tuition"),
+    ),
+    QueryExpansionRule(
+        name="honorable_dismissal_petition",
+        trigger_terms=("honorable dismissal", "honourable dismissal"),
+        expansion_terms=(
+            "honorable dismissal",
+            "written petition to the registrar",
+            "parent or guardian",
+            "voluntary withdrawal",
+        ),
+    ),
+    QueryExpansionRule(
+        name="faculty_academic_freedom",
+        trigger_terms=("academic freedom", "political party", "campaign", "indoctrination"),
+        expansion_terms=(
+            "academic freedom",
+            "faculty manual",
+            "classroom cannot be used as a venue for indoctrination",
+        ),
+        required_any_terms=("academic freedom", "campaign", "political", "indoctrination", "classroom"),
     ),
     QueryExpansionRule(
         name="diploma_second_copy_fees",
@@ -306,6 +462,25 @@ QUERY_EXPANSION_RULES = (
             "P100",
         ),
         blocked_terms=("comprehensive examination", "examination schedule"),
+    ),
+    QueryExpansionRule(
+        name="faculty_class_dismiss_time",
+        trigger_terms=(
+            "dismiss my class",
+            "dismiss class",
+            "dismiss classes",
+            "earlier than the official time",
+            "earlier than official time",
+        ),
+        expansion_terms=(
+            "faculty attendance and absences",
+            "shall not be allowed to dismiss",
+            "classes earlier than the official time",
+            "faculty manual",
+            "official time",
+        ),
+        required_any_terms=("dismiss", "official time"),
+        blocked_terms=("honorable dismissal", "excuse slip", "scholastic delinquency"),
     ),
     QueryExpansionRule(
         name="faculty_teaching_load",
@@ -333,6 +508,25 @@ QUERY_EXPANSION_RULES = (
             "faculty manual",
         ),
         required_any_terms=("faculty", "grading", "grades", "grade"),
+        blocked_terms=("grade change", "rectification", "25 percent", "25%"),
+    ),
+    QueryExpansionRule(
+        name="faculty_grade_rectification",
+        trigger_terms=(
+            "grade change",
+            "rectification of grades",
+            "change of grades",
+            "25 percent of a class",
+            "25% of a class",
+        ),
+        expansion_terms=(
+            "change/rectification of grades",
+            "rectification of grades",
+            "academic council",
+            "faculty manual",
+            "twenty-five percent",
+            "submission of grades",
+        ),
     ),
     QueryExpansionRule(
         name="faculty_responsibilities",
@@ -414,6 +608,26 @@ QUERY_EXPANSION_RULES = (
             "citizen charter",
         ),
     ),
+    QueryExpansionRule(
+        name="dress_code_grooming",
+        trigger_terms=(
+            "haircut",
+            "hair cut",
+            "hair-cut",
+            "hair style",
+            "hairstyle",
+            "grooming",
+            "dress code",
+            "school uniform",
+            "uniform policy",
+            "tattoo",
+            "earrings",
+            "norms and decorum",
+            "fixie",
+            "barber",
+        ),
+        expansion_terms=DRESS_CODE_TERMS,
+    ),
 )
 
 
@@ -424,8 +638,8 @@ def expand_query(query: str) -> str:
 
 def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
     """Normalize natural student phrasing while preserving the original query."""
-    original = query.strip()
-    normalized = _normalize(query)
+    original = _repair_common_query_typos(query.strip())
+    normalized = _normalize(original)
     expansions: list[str] = []
     matched_rules: list[str] = []
 
@@ -434,7 +648,9 @@ def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
             expansions.extend(rule.expansion_terms)
             matched_rules.append(rule.name)
 
-    if _matches(normalized, r"\bfail(?:ed|ing)?\b", r"\bmany subjects?\b", r"\bcontinue (?:my )?course\b"):
+    if _matches(normalized, r"\bfail(?:ed|ing)?\b", r"\bmany subjects?\b", r"\bcontinue (?:my )?course\b") and not _is_shifting_query(
+        normalized
+    ):
         expansions.extend(ACADEMIC_TERMS)
     if "probation" in normalized:
         expansions.extend(("scholastic delinquency", "retention policy", "warning", "probation"))
@@ -452,11 +668,23 @@ def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
                 "office of the student affairs and services",
             )
         )
-    if _matches(normalized, r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b"):
+    if _is_leave_of_absence_query(normalized):
+        expansions.extend(
+            (
+                "leave of absence",
+                "loa",
+                "registrar",
+                "written request",
+                "academic policies",
+            )
+        )
+    elif _matches(normalized, r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b"):
         expansions.extend(ATTENDANCE_TERMS)
-    if _matches(normalized, r"\bshift(?:ing)?\b.*\bcourse\b", r"\bchange\b.*\bcourse\b"):
+    if _is_shifting_query(normalized):
         expansions.extend(("shifting of course", "registrar", "shifting form", "admission requirements"))
-    if _matches(normalized, r"\bundergraduate\b", r"\bbachelor\b", r"\bbs\b", r"\bb\.s\.\b"):
+    if _matches(normalized, r"\bundergraduate\b", r"\bbachelor\b", r"\bbs\b", r"\bb\.s\.\b") and not _is_shifting_query(
+        normalized
+    ):
         expansions.extend(("undergraduate programs", "curricular offerings", "bachelor", "BS"))
     if _matches(normalized, r"\bgraduate\b", r"\bmaster\b", r"\bdoctorate\b", r"\bphd\b", r"\bma\b", r"\bms\b"):
         expansions.extend(("graduate studies", "master", "doctorate", "PhD", "MA", "MS"))
@@ -465,7 +693,24 @@ def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
     if _is_teaching_load_query(normalized):
         expansions.extend(TEACHING_LOAD_TERMS)
         expansions.append("faculty manual")
-    if _is_faculty_grading_query(normalized):
+    if _is_academic_freedom_query(normalized):
+        expansions.extend(ACADEMIC_FREEDOM_TERMS)
+        expansions.append("faculty manual")
+    if _is_maximum_residence_query(normalized):
+        expansions.extend(("maximum residence rule", "1.5 times the normal length", "actual residence"))
+    if _is_tuition_refund_query(normalized):
+        expansions.extend(
+            (
+                "refunding of fees",
+                "seventy-five percent (75%)",
+                "fifty percent (50%)",
+                "opening of classes",
+            )
+        )
+    if _is_faculty_grade_change_query(normalized):
+        expansions.extend(FACULTY_GRADE_CHANGE_TERMS)
+        expansions.append("faculty manual")
+    elif _is_faculty_grading_query(normalized):
         expansions.extend(FACULTY_GRADING_TERMS)
         expansions.append("faculty manual")
     if _is_faculty_responsibilities_query(normalized):
@@ -545,6 +790,12 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
 
         score += _keyword_overlap_boost(normalized_query, normalized_title_path, reasons)
         score += _service_title_similarity_boost(intent_phrases, normalized_title_path, reasons)
+        score += _distinctive_term_boost(
+            normalized_query,
+            normalized_title_path,
+            normalized_content,
+            reasons,
+        )
 
         domain = _detected_domain(profile)
         if domain:
@@ -558,15 +809,69 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if profile["failing_many"] and _contains_any(normalized_content, ("scholastic delinquency", "probation", "dismissal", "dropped", "retention")):
             score += 0.18
             reasons.append("failing_subjects_policy")
+        if profile.get("delinquency_thresholds"):
+            if "scholastic delinquency" in normalized_title_path:
+                score += 0.48
+                reasons.append("boost_scholastic_delinquency_thresholds")
+            if _contains_any(normalized_content, ("25%", "25 %", "fails 25")) and "warning" in normalized_content:
+                score += 0.18
+                reasons.append("boost_warning_threshold_text")
+            if (
+                "dropped" in normalized_title_path
+                and "scholastic delinquency" not in normalized_title_path
+                and _contains_any(
+                    normalized_content,
+                    ("shall not be admitted", "not be admitted to another"),
+                )
+            ):
+                score -= 0.5
+                reasons.append("penalty_dropped_transfer_rule_for_threshold_query")
+        if profile.get("shifting"):
+            if _contains_any(normalized_title_path, SHIFTING_TERMS) or "shifting of course" in normalized_content:
+                score += 0.45
+                reasons.append("boost_shifting_of_course")
+            if _contains_any(
+                normalized_title_path, ("dropped", "scholastic delinquency", "dismissal")
+            ) and not _contains_any(normalized_title_path, SHIFTING_TERMS):
+                score -= 0.52
+                reasons.append("penalty_dropped_for_shifting_query")
         if profile["fail_75"] and "dismiss" in normalized_content and "honorable dismissal" not in normalized_content:
             score += 0.32
             reasons.append("failed_units_dismissal")
         if profile["honorable"] and _contains_any(normalized_content, HONORABLE_TERMS):
             score += 0.28
             reasons.append("honorable_dismissal_match")
+            if "honorable dismissal" in normalized_title_path:
+                score += 0.35
+                reasons.append("boost_honorable_dismissal_title")
+            if _contains_any(normalized_title_path, ("dropping of subjects", "drop a course")):
+                score -= 0.4
+                reasons.append("penalty_dropping_subjects_for_honorable_dismissal")
+        if profile.get("residence") and _contains_any(
+            normalized_title_path, ("maximum residence", "residence rule")
+        ):
+            score += 0.5
+            reasons.append("boost_maximum_residence_rule")
+        if profile.get("refund") and _contains_any(
+            normalized_content, ("refunding of fees", "seventy-five percent", "75%", "opening of classes")
+        ):
+            score += 0.4
+            reasons.append("boost_tuition_refund_schedule")
+        if profile.get("academic_freedom") and _contains_any(
+            normalized_content, ACADEMIC_FREEDOM_TERMS
+        ):
+            score += 0.45
+            reasons.append("boost_academic_freedom_section")
         if profile["attendance"] and _contains_any(normalized_content, ATTENDANCE_TERMS):
             score += 0.28
             reasons.append("attendance_policy_match")
+        if profile.get("leave_of_absence"):
+            if _contains_any(normalized_title_path, ("leave of absence",)):
+                score += 0.55
+                reasons.append("boost_leave_of_absence_title")
+            if _contains_any(normalized_title_path, ("attendance", "excuse slip")):
+                score -= 0.45
+                reasons.append("penalty_attendance_for_leave_of_absence_query")
         if profile["enrollment"] and _contains_any(normalized_content, ENROLLMENT_TERMS):
             score += 0.24
             reasons.append("enrollment_procedure_match")
@@ -592,6 +897,7 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         score += _fee_service_boost(
             normalized_query=normalized_query,
             normalized_title_path=normalized_title_path,
+            normalized_content=normalized_content,
             metadata=metadata,
             reasons=reasons,
         )
@@ -650,6 +956,7 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
             profile=profile,
             normalized_title_path=normalized_title_path,
             normalized_content=normalized_content,
+            metadata=metadata,
             reasons=reasons,
         )
 
@@ -696,11 +1003,16 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
 
 
 def _query_profile(normalized_query: str) -> dict[str, bool]:
+    shifting = _is_shifting_query(normalized_query)
     honorable = _is_honorable_dismissal_query(normalized_query)
-    undergraduate = _matches(normalized_query, r"\bundergraduate\b", r"\bbachelor\b", r"\bbs\b", r"\bb\.s\.\b")
+    undergraduate = (not shifting) and _matches(
+        normalized_query, r"\bundergraduate\b", r"\bbachelor\b", r"\bbs\b", r"\bb\.s\.\b"
+    )
     graduate = _matches(normalized_query, r"\bgraduate\b", r"\bmaster\b", r"\bdoctorate\b", r"\bphd\b", r"\bma\b", r"\bms\b")
     failing = _matches(normalized_query, r"\bfail(?:ed|ing)?\b", r"\bmany subjects?\b", r"\b75\s*%", r"\bfailed units?\b")
-    attendance = _matches(normalized_query, r"\battendance\b", r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b")
+    attendance = (not _is_leave_of_absence_query(normalized_query)) and _matches(
+        normalized_query, r"\battendance\b", r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b"
+    )
     enrollment = _matches(normalized_query, r"\benroll(?:ment)?\b", r"\benrolment\b", r"\bhow do i enroll\b")
     records = _matches(normalized_query, r"\btor\b", r"\btranscript\b", r"\bcopy of grades\b", r"\bgood moral\b", r"\bcertificate of registration\b")
     counseling = _matches(normalized_query, r"\bcounsel(?:ing|ling)\b", r"\bguidance\b", r"\bwho handles counseling\b")
@@ -714,7 +1026,7 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
         "diploma" in normalized_query
         and not re.search(r"\b(?:fee|fees|cost|how much|second copy)\b", normalized_query)
     )
-    curricular = _matches(
+    curricular = (not shifting) and _matches(
         normalized_query,
         r"\bcurricular\b",
         r"\bprogram",
@@ -722,12 +1034,23 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
         r"\bcampus(?:es)?\b.*\boffer",
         r"\boffer(?:ed|s)?\b.*\bprogram",
     )
-    academic_risk = not honorable and (
+    academic_risk = (not honorable) and (not shifting) and (
         failing
         or "probation" in normalized_query
         or "retention" in normalized_query
         or "scholastic delinquency" in normalized_query
         or "dismissal" in normalized_query
+    )
+    delinquency_thresholds = (not honorable) and (not shifting) and (
+        "scholastic delinquency" in normalized_query
+        or (
+            "probation" in normalized_query
+            and _contains_any(normalized_query, ("warning", "warn me", "warn"))
+        )
+        or (
+            "probation" in normalized_query
+            and _contains_any(normalized_query, ("continuing", "stop me", "keep going"))
+        )
     )
     identity_document = _is_identity_document_query(normalized_query)
     service_howto = identity_document or _matches(
@@ -740,11 +1063,14 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
     )
     return {
         "academic_risk": academic_risk,
+        "delinquency_thresholds": delinquency_thresholds,
         "retention": academic_risk or "retention" in normalized_query or "scholastic delinquency" in normalized_query,
-        "failing_many": failing or "continue course" in normalized_query,
+        "failing_many": (not shifting) and (failing or "continue course" in normalized_query),
         "fail_75": bool(re.search(r"\b75\s*%", normalized_query)) and "fail" in normalized_query,
         "honorable": honorable,
+        "shifting": shifting,
         "attendance": attendance,
+        "leave_of_absence": _is_leave_of_absence_query(normalized_query),
         "enrollment": enrollment,
         "records": records,
         "counseling": counseling,
@@ -775,7 +1101,12 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
         "faculty": _is_faculty_audience_query(normalized_query),
         "teaching_load": _is_teaching_load_query(normalized_query),
         "faculty_grading": _is_faculty_grading_query(normalized_query),
+        "faculty_grade_change": _is_faculty_grade_change_query(normalized_query),
         "faculty_responsibilities": _is_faculty_responsibilities_query(normalized_query),
+        "faculty_class_time": _is_faculty_class_time_query(normalized_query),
+        "academic_freedom": _is_academic_freedom_query(normalized_query),
+        "residence": _is_maximum_residence_query(normalized_query),
+        "refund": _is_tuition_refund_query(normalized_query),
     }
 
 
@@ -790,7 +1121,20 @@ def _is_form_requirement_query(normalized_query: str) -> bool:
 
 
 def _detected_domain(profile: dict[str, bool]) -> str | None:
-    for domain in ("attendance", "retention", "graduation", "curricular", "history", "officials", "enrollment", "records", "counseling"):
+    for domain in (
+        "attendance",
+        "shifting",
+        "residence",
+        "refund",
+        "retention",
+        "graduation",
+        "curricular",
+        "history",
+        "officials",
+        "enrollment",
+        "records",
+        "counseling",
+    ):
         if profile.get(domain):
             return domain
     return None
@@ -979,12 +1323,27 @@ def _intent_phrases(normalized_query: str) -> list[str]:
         "on",
         "at",
     }
-    tokens = [token for token in re.findall(r"[a-z0-9]+", normalized_query) if token not in stop and len(token) >= 2]
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized_query)
+        if token not in stop and len(token) >= 2
+    ]
     phrases = list(tokens)
     for size in (2, 3):
         for index in range(len(tokens) - size + 1):
             phrases.append(" ".join(tokens[index : index + size]))
-    return _dedupe(phrases)
+    # Drop lone generic tokens like "policy" so they cannot near-exact-match
+    # every handbook title that happens to include that word.
+    return _dedupe(
+        [
+            phrase
+            for phrase in phrases
+            if not (
+                " " not in phrase
+                and phrase in GENERIC_INTENT_TOKENS
+            )
+        ]
+    )
 
 
 def _service_title_similarity_boost(intent_phrases: list[str], normalized_title_path: str, reasons: list[str]) -> float:
@@ -1012,22 +1371,121 @@ def _service_title_similarity_boost(intent_phrases: list[str], normalized_title_
 
 
 def _phrase_title_similarity(phrase: str, title_path: str) -> float:
-    if phrase == title_path or phrase in title_path:
-        return 1.0 if phrase == title_path or len(phrase.split()) >= 2 else 0.82
-    phrase_tokens = phrase.split()
-    title_tokens = set(re.findall(r"[a-z0-9]+", title_path))
+    title_folded = _lexical_token_set(title_path)
+    phrase_tokens = [token for token in phrase.split() if token]
     if not phrase_tokens:
         return 0.0
-    overlap = sum(1 for token in phrase_tokens if token in title_tokens)
+
+    distinctive = [
+        token
+        for token in phrase_tokens
+        if token not in GENERIC_INTENT_TOKENS and len(token) >= 4
+    ]
+    # Phrases like "haircut policy" must match the distinctive topic token(s),
+    # not only the generic word "policy".
+    if distinctive and not all(_token_matches_folded(token, title_folded) for token in distinctive):
+        return 0.0
+
+    if phrase == title_path:
+        return 1.0
+    if phrase in title_path:
+        return 1.0 if len(phrase_tokens) >= 2 else 0.82
+
+    overlap = sum(1 for token in phrase_tokens if _token_matches_folded(token, title_folded))
     ratio = overlap / len(phrase_tokens)
     if ratio == 1.0 and len(phrase_tokens) >= 2:
         return 0.92
     if ratio >= 0.67 and len(phrase_tokens) >= 2:
         return 0.7
-    if ratio >= 0.5:
+    if ratio >= 0.5 and (not distinctive or all(_token_matches_folded(token, title_folded) for token in distinctive)):
         return 0.55
     return 0.0
 
+
+def _lexical_token_set(text: str) -> set[str]:
+    """Tokens plus adjacent joins so hair-cut / hair cut ↔ haircut."""
+    tokens = re.findall(r"[a-z0-9]+", _normalize(text))
+    folded = set(tokens)
+    for index in range(len(tokens) - 1):
+        folded.add(tokens[index] + tokens[index + 1])
+    return folded
+
+
+def _token_matches_folded(token: str, folded: set[str]) -> bool:
+    if not token:
+        return False
+    if token in folded:
+        return True
+    # Allow "haircut" to match {"hair", "cut"} via join already in folded.
+    return False
+
+
+def _distinctive_query_tokens(normalized_query: str) -> list[str]:
+    tokens = re.findall(r"[a-z0-9]+", normalized_query)
+    distinctive = [
+        token
+        for token in tokens
+        if len(token) >= 4 and token not in GENERIC_INTENT_TOKENS
+    ]
+    # Also keep joined bigrams from the query itself (hair + cut → haircut).
+    joined: list[str] = []
+    for index in range(len(tokens) - 1):
+        left, right = tokens[index], tokens[index + 1]
+        if left in GENERIC_INTENT_TOKENS and right in GENERIC_INTENT_TOKENS:
+            continue
+        compound = left + right
+        if len(compound) >= 6:
+            joined.append(compound)
+    return _dedupe([*distinctive, *joined])
+
+
+def _distinctive_term_boost(
+    normalized_query: str,
+    normalized_title_path: str,
+    normalized_content: str,
+    reasons: list[str],
+) -> float:
+    """Boost chunks that carry the query's distinctive topic words.
+
+    Prevents generic wrappers like "policy"/"guidelines" from drowning out the
+    actual subject (haircut, tattoo, shifting, etc.) after semantic retrieval.
+    """
+    distinctive = _distinctive_query_tokens(normalized_query)
+    if not distinctive:
+        return 0.0
+
+    title_folded = _lexical_token_set(normalized_title_path)
+    content_folded = _lexical_token_set(normalized_content)
+    title_hits = [token for token in distinctive if _token_matches_folded(token, title_folded)]
+    content_hits = [
+        token
+        for token in distinctive
+        if _token_matches_folded(token, content_folded)
+    ]
+    if not title_hits and not content_hits:
+        return 0.0
+
+    boost = 0.0
+    if title_hits:
+        boost += min(0.55, 0.28 * len(title_hits))
+        reasons.append(f"boost_distinctive_title_terms:{','.join(title_hits[:4])}")
+    elif content_hits:
+        boost += min(0.36, 0.18 * len(content_hits))
+        reasons.append(f"boost_distinctive_content_terms:{','.join(content_hits[:4])}")
+
+    # Soft penalty when the title is a generic "* Policy" page and none of the
+    # distinctive query terms appear there — common failure for "X policy?".
+    title_tokens = set(re.findall(r"[a-z0-9]+", normalized_title_path))
+    if (
+        distinctive
+        and not title_hits
+        and ("policy" in title_tokens or "policies" in title_tokens)
+        and not any(_token_matches_folded(token, title_folded) for token in distinctive)
+    ):
+        boost -= 0.22
+        reasons.append("penalty_generic_policy_title_without_topic")
+
+    return boost
 
 def _identity_document_service_boost(
     *,
@@ -1131,6 +1589,7 @@ def _fee_service_boost(
     *,
     normalized_query: str,
     normalized_title_path: str,
+    normalized_content: str,
     metadata: dict,
     reasons: list[str],
 ) -> float:
@@ -1150,6 +1609,7 @@ def _fee_service_boost(
     )
     source_type = _normalize(str(metadata.get("source_type") or ""))
     is_charter = doc_type in {"citizen_charter", "procedure"} or "citizen" in source_type
+    fee_text = _normalize(f"{total_fees} {normalized_content}")
 
     if asks_tor:
         if re.search(r"\b(?:transcript of records|issuance of transcript|\btor\b)\b", normalized_title_path):
@@ -1161,6 +1621,9 @@ def _fee_service_boost(
         ):
             boost -= 0.45
             reasons.append("penalty_non_tor_handbook_for_tor_query")
+        if asks_fee and _contains_any(fee_text, ("p75", "75.00/page", "p150", "150/page")):
+            boost += 0.55
+            reasons.append("boost_tor_per_page_fee_text")
 
     if asks_diploma:
         fee_blob = _normalize(total_fees)
@@ -1536,15 +1999,26 @@ def _is_grade_removal_query(normalized_query: str) -> bool:
 
 
 def _keyword_overlap_boost(query: str, title_path: str, reasons: list[str]) -> float:
-    tokens = {token for token in re.findall(r"[a-z0-9]+", query) if len(token) >= 4}
+    tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", query)
+        if len(token) >= 4 and token not in GENERIC_INTENT_TOKENS
+    }
     if not tokens:
         return 0.0
-    matched = [token for token in tokens if token in title_path]
+    title_folded = _lexical_token_set(title_path)
+    matched = [token for token in tokens if _token_matches_folded(token, title_folded)]
     if not matched:
         return 0.0
-    boost = min(0.18, 0.045 * len(matched))
+    boost = min(0.22, 0.055 * len(matched))
     reasons.append("title_path_keyword_match")
     return boost
+
+
+def _is_leave_of_absence_query(normalized_query: str) -> bool:
+    if "leave of absence" in normalized_query:
+        return True
+    return bool(re.search(r"\bloa\b", normalized_query))
 
 
 def _is_faculty_audience_query(normalized_query: str) -> bool:
@@ -1562,19 +2036,116 @@ def _is_teaching_load_query(normalized_query: str) -> bool:
         normalized_query,
         r"\bteaching load\b",
         r"\bfaculty load\b",
-        r"\bfaculty\b.*\b(?:load|workload|assigned|assignment)\b",
+        r"\bfaculty\b.*\b(?:load|workload|assigned|assignment|instruction)\b",
         r"\b(?:load|workload)\b.*\bfaculty\b",
         r"\bhow is teaching load\b",
+        r"\binstruction hours?\b",
+        r"\binstruction load\b",
+        r"\bweekly (?:instruction |teaching )?load\b",
+        r"\bdesignated as dean\b",
+        r"\bdean\b.*\binstruction\b",
+        r"\bregular faculty\b.*\b(?:hour|load|instruction)\b",
     )
 
 
+def _is_academic_freedom_query(normalized_query: str) -> bool:
+    return _matches(
+        normalized_query,
+        r"\bacademic freedom\b",
+        r"\bindoctrination\b",
+        r"\bcampaign\b.*\bpolitical\b",
+        r"\bpolitical party\b",
+        r"\bclass(?:room)? time\b.*\bcampaign\b",
+    )
+
+
+def _is_maximum_residence_query(normalized_query: str) -> bool:
+    return _matches(
+        normalized_query,
+        r"\bmaximum residence\b",
+        r"\bresidence rule\b",
+        r"\bmaximum residency\b",
+    )
+
+
+def _is_tuition_refund_query(normalized_query: str) -> bool:
+    return _matches(
+        normalized_query,
+        r"\brefund\b",
+        r"\brefunded\b",
+        r"\bwithdraw\b.*\b(?:tuition|enrollment fees|enrolment fees|paid)\b",
+    )
+
+
+def is_faculty_restricted_query(query: str) -> bool:
+    """True when the answer lives in the Faculty Manual, not student-facing KB."""
+    normalized = _normalize(query)
+    return (
+        _is_teaching_load_query(normalized)
+        or _is_academic_freedom_query(normalized)
+        or _is_faculty_grading_query(normalized)
+        or _is_faculty_grade_change_query(normalized)
+        or _is_faculty_responsibilities_query(normalized)
+        or _is_faculty_class_time_query(normalized)
+    )
+
+
+def _repair_common_query_typos(query: str) -> str:
+    """Fix the most common first-word typos so retrieval still hits policy titles."""
+    text = (query or "").strip()
+    text = re.sub(r"^(?:ow|hw|hwo|ho)\b", "How", text, flags=re.I)
+    text = re.sub(r"^(?:wat|wht|waht)\b", "What", text, flags=re.I)
+    text = re.sub(r"^(?:wnere|wher)\b", "Where", text, flags=re.I)
+    return text
+
+
 def _is_faculty_grading_query(normalized_query: str) -> bool:
+    if _is_faculty_grade_change_query(normalized_query):
+        return False
     if not _matches(normalized_query, r"\bgrad(?:e|es|ing)\b"):
         return False
     return _is_faculty_audience_query(normalized_query) or _matches(
         normalized_query,
         r"\bgrading sheets?\b",
         r"\bfaculty grading\b",
+    )
+
+
+def _is_shifting_query(normalized_query: str) -> bool:
+    if not _matches(normalized_query, r"\bshift(?:ing)?\b"):
+        return False
+    return _matches(
+        normalized_query,
+        r"\bcourse\b",
+        r"\bprogram\b",
+        r"\bbs\b",
+        r"\bb\.s\.\b",
+        r"\bmajor\b",
+        r"\banother\b",
+    )
+
+
+def _is_faculty_grade_change_query(normalized_query: str) -> bool:
+    if not _matches(normalized_query, r"\bgrad(?:e|es|ing)\b"):
+        return False
+    return _matches(
+        normalized_query,
+        r"\brectification\b",
+        r"\bgrade change\b",
+        r"\bchange of grades?\b",
+        r"\bchange/rectification\b",
+        r"\b25\s*(?:percent|%)\b.*\bclass\b",
+        r"\bclass\b.*\b25\s*(?:percent|%)\b",
+    )
+
+
+def _is_faculty_class_time_query(normalized_query: str) -> bool:
+    return _matches(
+        normalized_query,
+        r"\bdismiss(?: my)? class",
+        r"\bdismiss(?:ing)? class(?:es)?\b",
+        r"\bearlier than (?:the )?official time\b",
+        r"\bhold classes on time\b",
     )
 
 
@@ -1589,20 +2160,34 @@ def _is_faculty_responsibilities_query(normalized_query: str) -> bool:
     )
 
 
-def _chunk_looks_like_faculty_manual(normalized_title_path: str) -> bool:
-    return _contains_any(
+def _chunk_looks_like_faculty_manual(
+    normalized_title_path: str,
+    metadata: dict | None = None,
+) -> bool:
+    if _contains_any(
         normalized_title_path,
         ("faculty manual", "lspu faculty", "faculty_manual"),
-    ) or bool(re.search(r"\bfaculty manual\b", normalized_title_path))
+    ) or bool(re.search(r"\bfaculty manual\b", normalized_title_path)):
+        return True
+    meta = metadata or {}
+    filename = _normalize(str(meta.get("source_filename") or ""))
+    doc_type = _normalize(str(meta.get("document_type") or meta.get("article_type") or ""))
+    return "faculty manual" in filename or doc_type == "faculty_manual"
 
 
-def _chunk_looks_like_student_handbook(normalized_title_path: str) -> bool:
-    if _chunk_looks_like_faculty_manual(normalized_title_path):
+def _chunk_looks_like_student_handbook(
+    normalized_title_path: str,
+    metadata: dict | None = None,
+) -> bool:
+    if _chunk_looks_like_faculty_manual(normalized_title_path, metadata):
+        return False
+    filename = _normalize(str((metadata or {}).get("source_filename") or ""))
+    if "faculty manual" in filename:
         return False
     return _contains_any(
         normalized_title_path,
         ("student handbook", "lspu student handbook", "handbook"),
-    )
+    ) or "student handbook" in filename
 
 
 def _faculty_audience_rerank_delta(
@@ -1610,6 +2195,7 @@ def _faculty_audience_rerank_delta(
     profile: dict[str, bool],
     normalized_title_path: str,
     normalized_content: str,
+    metadata: dict | None,
     reasons: list[str],
 ) -> float:
     """Boost Faculty Manual / faculty policy chunks; demote student-homonym collisions."""
@@ -1617,15 +2203,18 @@ def _faculty_audience_rerank_delta(
         profile.get("faculty")
         or profile.get("teaching_load")
         or profile.get("faculty_grading")
+        or profile.get("faculty_grade_change")
         or profile.get("faculty_responsibilities")
+        or profile.get("faculty_class_time")
+        or profile.get("academic_freedom")
     ):
         return 0.0
 
     delta = 0.0
-    if _chunk_looks_like_faculty_manual(normalized_title_path):
+    if _chunk_looks_like_faculty_manual(normalized_title_path, metadata):
         delta += 0.38
         reasons.append("boost_faculty_manual_for_faculty_query")
-    elif _chunk_looks_like_student_handbook(normalized_title_path):
+    elif _chunk_looks_like_student_handbook(normalized_title_path, metadata):
         delta -= 0.32
         reasons.append("penalty_student_handbook_for_faculty_query")
 
@@ -1641,6 +2230,14 @@ def _faculty_audience_rerank_delta(
             delta -= 0.55
             reasons.append("penalty_student_course_load_for_teaching_load_query")
 
+    if profile.get("academic_freedom"):
+        if _contains_any(normalized_content, ACADEMIC_FREEDOM_TERMS):
+            delta += 0.42
+            reasons.append("boost_academic_freedom_faculty_manual")
+        if _contains_any(normalized_title_path, STUDENT_COURSE_LOAD_TERMS):
+            delta -= 0.4
+            reasons.append("penalty_student_load_for_academic_freedom")
+
     if profile.get("faculty_grading"):
         if _contains_any(normalized_title_path, FACULTY_GRADING_TERMS) or "grading sheets" in normalized_content:
             delta += 0.4
@@ -1648,6 +2245,27 @@ def _faculty_audience_rerank_delta(
         if _contains_any(normalized_title_path, STUDENT_GRADE_CHANGE_TERMS):
             delta -= 0.45
             reasons.append("penalty_student_grade_rectification_for_faculty_grading")
+
+    if profile.get("faculty_grade_change"):
+        if _contains_any(normalized_title_path, STUDENT_GRADE_CHANGE_TERMS) or "rectification" in normalized_title_path:
+            delta += 0.48
+            reasons.append("boost_faculty_grade_rectification")
+        if _contains_any(normalized_content, FACULTY_GRADE_CHANGE_TERMS):
+            delta += 0.2
+            reasons.append("boost_faculty_grade_change_threshold")
+        if "submission of grades" in normalized_title_path and _contains_any(
+            normalized_content, ("twenty-five percent", "rectification", "academic council")
+        ):
+            delta += 0.42
+            reasons.append("boost_submission_of_grades_rectification_body")
+        if _contains_any(normalized_title_path, ("grading sheets",)) and "rectification" not in normalized_title_path:
+            delta -= 0.3
+            reasons.append("penalty_grading_sheets_for_grade_change_query")
+        if _chunk_looks_like_student_handbook(normalized_title_path, metadata) and _contains_any(
+            normalized_title_path, STUDENT_GRADE_CHANGE_TERMS
+        ):
+            delta -= 0.35
+            reasons.append("penalty_student_handbook_rectification_for_faculty_change")
 
     if profile.get("faculty_responsibilities"):
         if _contains_any(normalized_title_path, FACULTY_RESPONSIBILITY_TERMS) or _contains_any(
@@ -1659,10 +2277,22 @@ def _faculty_audience_rerank_delta(
             delta -= 0.48
             reasons.append("penalty_narrow_faculty_role_for_broad_responsibilities")
 
+    if profile.get("faculty_class_time"):
+        if _contains_any(normalized_content, ("shall not be allowed to dismiss", "earlier than the official time")):
+            delta += 0.48
+            reasons.append("boost_faculty_dismiss_class_rule")
+        if _chunk_looks_like_student_handbook(normalized_title_path, metadata) and _contains_any(
+            normalized_title_path, ("attendance", "excuse slip")
+        ):
+            delta -= 0.5
+            reasons.append("penalty_student_attendance_for_faculty_class_time")
+
     return delta
 
 
 def _is_academic_dismissal_query(normalized_query: str) -> bool:
+    if _is_faculty_class_time_query(normalized_query):
+        return False
     return "dismiss" in normalized_query and not _is_honorable_dismissal_query(normalized_query)
 
 
@@ -1693,7 +2323,9 @@ def _matches(text: str, *patterns: str) -> bool:
 
 
 def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").lower()).strip()
+    cleaned = (text or "").lower()
+    cleaned = re.sub(r"[-_/]+", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:

@@ -164,12 +164,15 @@ def test_sources_from_chunks_include_citation_fields(tmp_path, monkeypatch):
     assert source["pdf_available"] is True
     assert source["citation_note"] is None
     assert source["citation_id"] == f"{doc_id}::3"
-    assert source["source_page_url"] == f"/documents/{doc_id}/source/page/12"
+    assert source["page_end"] == 13
+    assert source["source_page_url"].startswith(f"/documents/{doc_id}/source/page/12?")
+    assert "end=13" in source["source_page_url"]
+    assert "section=" in source["source_page_url"]
 
     citations = _citations_from_sources(sources)
     assert citations[0]["citation_id"] == f"{doc_id}::3"
     assert "#page=12" in citations[0]["source_view_url"]
-    assert citations[0]["source_page_url"].endswith("/page/12")
+    assert f"/documents/{doc_id}/source/page/12" in citations[0]["source_page_url"]
 
 
 def test_orphan_legacy_chunk_has_no_clickable_source_view_url(tmp_path, monkeypatch):

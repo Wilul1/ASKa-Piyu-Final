@@ -70,8 +70,13 @@ def classify_chunk(
     *,
     metadata: dict[str, Any] | None = None,
     title: str | None = None,
+    allow_llm: bool = True,
 ) -> ClassificationResult:
-    """Classify one chunk using rules, taxonomy similarity, then optional LLM fallback."""
+    """Classify one chunk using rules, taxonomy similarity, then optional LLM fallback.
+
+    ``allow_llm=False`` skips Groq. Article candidate generation must use this
+    because one LLM call per unit (often twice) times out large handbooks.
+    """
     haystack = _classification_text(text, metadata=metadata, title=title)
     rule_result = _rule_based_classification(haystack)
     if rule_result.confidence >= RULE_CONFIDENCE_THRESHOLD:
@@ -79,7 +84,7 @@ def classify_chunk(
 
     similarity_result = _taxonomy_similarity_classification(haystack)
     best = similarity_result if similarity_result.confidence > rule_result.confidence else rule_result
-    if best.confidence >= LOW_CONFIDENCE_THRESHOLD:
+    if best.confidence >= LOW_CONFIDENCE_THRESHOLD or not allow_llm:
         return best
 
     llm_result = _llm_classification(haystack)
@@ -89,8 +94,21 @@ def classify_chunk(
 
 
 def classify_question(question: str) -> ClassificationResult:
-    """Classify a student question for retrieval boosts and ticket routing."""
-    return classify_chunk(question)
+    """Classify a student question for retrieval boosts and ticket routing.
+
+    Rules + taxonomy similarity only — never the LLM. ``/qa/ask`` already makes
+    one chat-completions call for the answer; a second free-tier LLM call for
+    ticket routing routinely queues long enough to trip the Flutter timeout.
+    Chunk ingest still uses ``classify_chunk`` (optional LLM fallback).
+    """
+    haystack = _classification_text(question, metadata=None, title=None)
+    rule_result = _rule_based_classification(haystack)
+    if rule_result.confidence >= RULE_CONFIDENCE_THRESHOLD:
+        return rule_result
+    similarity_result = _taxonomy_similarity_classification(haystack)
+    if similarity_result.confidence > rule_result.confidence:
+        return similarity_result
+    return rule_result
 
 
 def enrich_chunks_with_category_metadata(

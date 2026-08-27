@@ -190,7 +190,10 @@ def test_jwt_required_for_ticket_routes(ticket_client):
 
     response = ticket_client.post(
         "/tickets",
-        json={"original_question": "Need help", "description": ""},
+        json={
+            "original_question": "Need help",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     )
     assert response.status_code == 401
 
@@ -238,7 +241,33 @@ def test_student_can_create_and_list_own_ticket(ticket_client):
     assert list_response.json()["items"][0]["id"] == ticket["id"]
 
 
-def test_student_cannot_view_another_students_ticket(ticket_client):
+def test_student_cannot_submit_unreadable_ticket_description(ticket_client):
+    headers = _student_headers(ticket_client)
+    response = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": "How can i request Transcript of records?",
+            "description": "SIHOFDDOASFNacfcxc mjhisc k x",
+        },
+    )
+    assert response.status_code == 422
+    detail = str(response.json().get("detail", "")).lower()
+    assert "description" in detail or "words" in detail or "readable" in detail
+
+
+def test_student_cannot_submit_empty_ticket_description(ticket_client):
+    headers = _student_headers(ticket_client)
+    response = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": "How can I request my transcript of records?",
+            "description": "",
+        },
+    )
+    assert response.status_code == 422
+
     student_login = ticket_client.post(
         "/auth/login",
         json={"email": "student1@aska.local", "password": "student123"},
@@ -253,7 +282,10 @@ def test_student_cannot_view_another_students_ticket(ticket_client):
     created = ticket_client.post(
         "/tickets",
         headers=student_headers,
-        json={"original_question": "I need my TOR.", "description": ""},
+        json={
+            "original_question": "I need my TOR.",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     ).json()
 
     response = ticket_client.get(f"/tickets/{created['id']}", headers=other_headers)
@@ -293,7 +325,10 @@ def test_office_only_sees_assigned_tickets(ticket_client):
     ticket_client.post(
         "/tickets",
         headers=student_headers,
-        json={"original_question": "I cannot login to the student portal.", "description": ""},
+        json={
+            "original_question": "I cannot login to the student portal.",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     )
 
     ict_response = ticket_client.get("/tickets", headers=ict_headers)
@@ -320,7 +355,10 @@ def test_office_cannot_view_other_office_ticket(ticket_client):
     created = ticket_client.post(
         "/tickets",
         headers=student_headers,
-        json={"original_question": "I cannot login to the student portal.", "description": ""},
+        json={
+            "original_question": "I cannot login to the student portal.",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     ).json()
 
     response = ticket_client.get(f"/tickets/{created['id']}", headers=registrar_headers)
@@ -342,7 +380,10 @@ def test_office_can_reply_and_resolve_ticket(ticket_client):
     created = ticket_client.post(
         "/tickets",
         headers=student_headers,
-        json={"original_question": "I cannot login to the student portal.", "description": ""},
+        json={
+            "original_question": "I cannot login to the student portal.",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     ).json()
 
     reply_response = ticket_client.post(
@@ -381,7 +422,10 @@ def test_student_can_reply_on_open_ticket(ticket_client):
     created = ticket_client.post(
         "/tickets",
         headers=headers,
-        json={"original_question": "I need help with enrollment.", "description": "Details here."},
+        json={
+            "original_question": "I need help with enrollment.",
+            "description": "I already visited the office and still need enrollment help.",
+        },
     ).json()
 
     reply_response = ticket_client.post(
@@ -411,7 +455,10 @@ def test_student_cannot_reply_on_closed_ticket(ticket_client):
     created = ticket_client.post(
         "/tickets",
         headers=student_headers,
-        json={"original_question": "Portal issue", "description": ""},
+        json={
+            "original_question": "Portal issue",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     ).json()
     ticket_client.patch(
         f"/tickets/{created['id']}",
@@ -448,7 +495,10 @@ def test_admin_can_reassign_ticket(ticket_client):
     created = ticket_client.post(
         "/tickets",
         headers=student_headers,
-        json={"original_question": "I need help with my TOR.", "description": ""},
+        json={
+            "original_question": "I need help with my TOR.",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     ).json()
 
     response = ticket_client.patch(
@@ -479,7 +529,10 @@ def test_admin_can_view_all_tickets(ticket_client):
     ticket_client.post(
         "/tickets",
         headers=student_headers,
-        json={"original_question": "Need TOR", "description": ""},
+        json={
+            "original_question": "Need TOR",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     )
     response = ticket_client.get("/tickets", headers=admin_headers)
     assert response.status_code == 200
@@ -498,7 +551,10 @@ def test_ticket_persistence_uses_postgres_not_json(ticket_client, tmp_path, monk
     created = ticket_client.post(
         "/tickets",
         headers=headers,
-        json={"original_question": "Scholarship question", "description": ""},
+        json={
+            "original_question": "Scholarship question",
+            "description": "I already tried the student portal and still need assistance.",
+        },
     ).json()
 
     assert not (tmp_path / "tickets.json").exists()
@@ -508,7 +564,7 @@ def test_ticket_persistence_uses_postgres_not_json(ticket_client, tmp_path, monk
     assert fetched.json()["id"] == created["id"]
 
 
-def test_student_can_confirm_preferred_office(ticket_client):
+def test_student_preferred_office_is_ignored(ticket_client):
     student_login = ticket_client.post(
         "/auth/login",
         json={"email": "student1@aska.local", "password": "student123"},
@@ -519,25 +575,35 @@ def test_student_can_confirm_preferred_office(ticket_client):
     assert offices.status_code == 200
     osas = next(item for item in offices.json()["items"] if item["name"] == "Office of Student Affairs")
 
+    triage = ticket_client.post(
+        "/tickets/triage",
+        headers=headers,
+        json={
+            "original_question": "How can I request a copy of my TOR?",
+            "description": "I need this document for employment purposes.",
+        },
+    )
+    assert triage.status_code == 200
+    expected_office = triage.json()["assigned_office"]
+
     created = ticket_client.post(
         "/tickets",
         headers=headers,
         json={
             "original_question": "How can I request a copy of my TOR?",
-            "description": "Needed for employment",
+            "description": "I need this document for employment purposes.",
             "preferred_office_id": osas["id"],
         },
     )
     assert created.status_code == 200
     ticket = created.json()
-    assert ticket["assigned_office"] == "Office of Student Affairs"
-    assert ticket["assigned_office_id"] == osas["id"]
+    assert ticket["assigned_office"] == expected_office
 
     audit = ticket_client.get(f"/tickets/{ticket['id']}/audit", headers=headers)
     assert audit.status_code == 200
     actions = {item["action"] for item in audit.json()}
     assert "created" in actions
-    assert "office_confirmed" in actions
+    assert "office_confirmed" not in actions
 
 
 def test_urgent_priority_from_strong_urgency_language(ticket_client):
@@ -546,7 +612,7 @@ def test_urgent_priority_from_strong_urgency_language(ticket_client):
         headers=_student_headers(ticket_client),
         json={
             "original_question": "URGENT emergency: portal is completely down and I cannot graduate",
-            "description": "Need help ASAP",
+            "description": "I need urgent help with the portal outage.",
         },
     )
     assert response.status_code == 200
@@ -580,19 +646,19 @@ def test_faculty_can_list_and_open_own_tickets(ticket_client):
     assert fetched.json()["id"] == ticket_id
 
 
-def test_requester_cannot_self_set_urgent_priority(ticket_client):
+def test_requester_preferred_urgent_priority_is_ignored(ticket_client):
     headers = _student_headers(ticket_client)
     response = ticket_client.post(
         "/tickets",
         headers=headers,
         json={
             "original_question": "I need help with enrollment.",
-            "description": "Please assist.",
+            "description": "Please assist with my enrollment concern today.",
             "preferred_priority": "Urgent",
         },
     )
-    assert response.status_code == 422
-    assert "Urgent" in response.text
+    assert response.status_code == 200
+    assert response.json()["priority"] != "Urgent"
 
 
 def test_office_reply_creates_student_notification(ticket_client):
@@ -615,10 +681,32 @@ def test_office_reply_creates_student_notification(ticket_client):
         headers=student_headers,
         json={
             "original_question": "I need my TOR for scholarship.",
-            "description": "",
-            "preferred_office_id": registrar["id"],
+            "description": "I already tried the student portal and still need assistance.",
         },
     ).json()
+
+    if created["assigned_office_id"] != registrar["id"]:
+        reassigned = ticket_client.patch(
+            f"/tickets/{created['id']}",
+            headers=office_headers,
+            json={"assigned_office_id": registrar["id"]},
+        )
+        # Office can only reassign tickets already on their queue; use admin if needed.
+        if reassigned.status_code != 200:
+            admin_login = ticket_client.post(
+                "/auth/login",
+                json={"email": "admin@aska.local", "password": "admin123"},
+            )
+            admin_headers = {
+                "Authorization": f"Bearer {admin_login.json()['access_token']}"
+            }
+            reassigned = ticket_client.patch(
+                f"/tickets/{created['id']}",
+                headers=admin_headers,
+                json={"assigned_office_id": registrar["id"]},
+            )
+        assert reassigned.status_code == 200
+        created = reassigned.json()
     assert created["assigned_office"] == "Registrar"
 
     patch = ticket_client.patch(
@@ -653,7 +741,10 @@ def test_student_can_upload_ticket_attachment(ticket_client, tmp_path, monkeypat
     created = ticket_client.post(
         "/tickets",
         headers=headers,
-        json={"original_question": "Portal screenshot issue", "description": "See attached"},
+        json={
+            "original_question": "Portal screenshot issue",
+            "description": "Please review the attached screenshot of the portal error.",
+        },
     ).json()
 
     png_bytes = b"\x89PNG\r\n\x1a\n" + b"fakepngbytes"

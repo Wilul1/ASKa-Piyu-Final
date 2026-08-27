@@ -477,7 +477,15 @@ class KnowledgeBaseStore:
             self._collection.delete(ids=ids)
         return len(ids)
 
-    def search(self, query: str, *, top_k: int | None = None, raw_k: int | None = None) -> list[RetrievedChunk]:
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        raw_k: int | None = None,
+        user_role: str | None = None,
+    ) -> list[RetrievedChunk]:
+        from app.services.article_rag_indexer import chroma_where_for_audience
         from app.services.retrieval_reranker import prepare_retrieval_query, rerank_chunks
 
         k = top_k or settings.rag_top_k
@@ -487,17 +495,37 @@ class KnowledgeBaseStore:
         candidate_k = raw_k or max(k, 10)
         candidate_k = max(k, candidate_k)
         prepared_query = prepare_retrieval_query(query.strip())
-
-        result = self._collection.query(
-            query_texts=[prepared_query.expanded_query],
-            n_results=min(candidate_k, self._collection.count()),
-            include=["documents", "metadatas", "distances"],
-        )
+        query_kwargs: dict[str, Any] = {
+            "query_texts": [prepared_query.expanded_query],
+            "n_results": min(candidate_k, self._collection.count()),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        where = chroma_where_for_audience(user_role)
+        if where:
+            query_kwargs["where"] = where
+        try:
+            result = self._collection.query(**query_kwargs)
+        except Exception:
+            if where:
+                logger.warning(
+                    "Chroma audience where-filter failed; retrying unfiltered search",
+                    exc_info=True,
+                )
+                query_kwargs.pop("where", None)
+                result = self._collection.query(**query_kwargs)
+            else:
+                raise
 
         chunks: list[RetrievedChunk] = []
         docs = result.get("documents") or [[]]
         metas = result.get("metadatas") or [[]]
         distances = result.get("distances") or [[]]
+        if not docs or docs[0] is None:
+            docs = [[]]
+        if not metas or metas[0] is None:
+            metas = [[]]
+        if not distances or distances[0] is None:
+            distances = [[]]
 
         for raw_text, meta, distance in zip(docs[0], metas[0], distances[0]):
             if not raw_text or not meta:

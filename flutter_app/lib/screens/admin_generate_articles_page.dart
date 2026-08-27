@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
@@ -12,12 +14,20 @@ import 'admin_kb_article_library_section.dart';
 import 'admin_kb_generate_articles_section.dart';
 import 'admin_kb_outline.dart';
 import 'admin_scaffold.dart';
+import 'office_scaffold.dart';
 
 class AdminGenerateArticlesPage extends StatefulWidget {
-  const AdminGenerateArticlesPage({super.key, this.focusArticleId});
+  const AdminGenerateArticlesPage({
+    super.key,
+    this.focusArticleId,
+    this.embedded = false,
+  });
 
   /// When set, expands Article Library and highlights this article.
   final String? focusArticleId;
+
+  /// When true, render body content only (used inside Knowledge Base tabs).
+  final bool embedded;
 
   @override
   State<AdminGenerateArticlesPage> createState() =>
@@ -143,7 +153,8 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
   void _setAdminHeader(Map<String, String> headers) {
     final auth = AuthScope.of(context);
     final token = auth.accessToken;
-    if (auth.role != 'admin') {
+    final role = auth.role;
+    if (role != 'admin' && role != 'office') {
       throw StateError('not_admin');
     }
     if (token == null || token.trim().isEmpty) {
@@ -205,6 +216,15 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(error.toString())));
+    } on TimeoutException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Article generation timed out. Large handbooks can take a few minutes — please try again.',
+          ),
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -238,74 +258,96 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
 
   @override
   Widget build(BuildContext context) {
-    return AdminScaffold(
-      current: StudentNavItem.adminGenerateArticles,
-      title: 'Generate Articles',
-      description:
-          'Generate and review student-facing article candidates from extracted documents before saving or publishing.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _GenerateArticlesExtractionSummary(
-            sourceFilename: _sourceFilename,
-            documentType: _detectedDocumentType,
-            documentProfile: _documentProfile,
-            knowledgeUnitCount: _knowledgeUnitCount,
-            charterV2ServicesCount: _charterV2ServicesCount,
-            hasCharterV2Services: _hasCharterV2Services,
-            status: _extractionStatus,
-            hasExtractionPreview: _hasExtractionPreview,
-            onReload: _loadLastExtraction,
-          ),
+    final auth = AuthScope.of(context);
+    final isOffice = auth.role == 'office';
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _GenerateArticlesExtractionSummary(
+          sourceFilename: _sourceFilename,
+          documentType: _detectedDocumentType,
+          documentProfile: _documentProfile,
+          knowledgeUnitCount: _knowledgeUnitCount,
+          charterV2ServicesCount: _charterV2ServicesCount,
+          hasCharterV2Services: _hasCharterV2Services,
+          status: _extractionStatus,
+          hasExtractionPreview: _hasExtractionPreview,
+          onReload: _loadLastExtraction,
+        ),
+        const SizedBox(height: 14),
+        _GenerateArticlesControls(
+          recommendedPreviewLimitController: _recommendedPreviewLimitController,
+          isBusy: _isGeneratingCandidates,
+          hasExtractionPreview: _hasExtractionPreview,
+          onGenerate: _generateArticleCandidates,
+        ),
+        if (_candidateGenerationResult != null) ...[
+          const SizedBox(height: 16),
+          _GenerateArticlesSummary(generation: _candidateGenerationResult!),
           const SizedBox(height: 14),
-          _GenerateArticlesControls(
-            recommendedPreviewLimitController: _recommendedPreviewLimitController,
-            isBusy: _isGeneratingCandidates,
-            hasExtractionPreview: _hasExtractionPreview,
-            onGenerate: _generateArticleCandidates,
+          GenerateArticlesReviewSection(
+            generationResult: _candidateGenerationResult!,
+            previewArticlesById: _previewArticlesById,
+            savedArticlesByPreviewId: _savedArticlesByPreviewId,
+            discardedPreviewIds: _discardedPreviewIds,
+            service: _articleService(),
+            onArticlesChanged: _onGeneratedArticlesChanged,
+            onPreviewUpdated: _onPreviewUpdated,
+            onPreviewSaved: _onPreviewSaved,
+            onDiscardPreview: _onDiscardPreview,
+            fallbackSourceFilename: _sourceFilename,
+            extractionPreview: _extractionPreview,
           ),
-          if (_candidateGenerationResult != null) ...[
-            const SizedBox(height: 16),
-            _GenerateArticlesSummary(generation: _candidateGenerationResult!),
-            const SizedBox(height: 14),
-            GenerateArticlesReviewSection(
-              generationResult: _candidateGenerationResult!,
-              previewArticlesById: _previewArticlesById,
-              savedArticlesByPreviewId: _savedArticlesByPreviewId,
-              discardedPreviewIds: _discardedPreviewIds,
-              service: _articleService(),
-              onArticlesChanged: _onGeneratedArticlesChanged,
-              onPreviewUpdated: _onPreviewUpdated,
-              onPreviewSaved: _onPreviewSaved,
-              onDiscardPreview: _onDiscardPreview,
-              fallbackSourceFilename: _sourceFilename,
-              extractionPreview: _extractionPreview,
-            ),
-          ] else ...[
-            const SizedBox(height: 16),
-            StudentPanel(
-              shadow: false,
-              child: Text(
-                _hasExtractionPreview
-                    ? 'No article candidates generated yet. Click Generate Article Candidates to create unsaved previews.'
-                    : 'No extracted document found. Please run Extract & Structure first.',
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: DesignTokens.muted,
-                  height: 1.45,
-                  fontWeight: FontWeight.w700,
-                ),
+        ] else ...[
+          const SizedBox(height: 16),
+          StudentPanel(
+            shadow: false,
+            child: Text(
+              _hasExtractionPreview
+                  ? 'No article candidates generated yet. Click Generate Article Candidates to create unsaved previews.'
+                  : 'No extracted document found. Please run Extract & Structure first.',
+              style: const TextStyle(
+                fontSize: 13,
+                color: DesignTokens.muted,
+                height: 1.45,
+                fontWeight: FontWeight.w700,
               ),
             ),
-          ],
-          const SizedBox(height: 18),
-          AdminKbArticleLibrarySection(
-            setAdminHeader: _setAdminHeader,
-            refreshToken: _articleLibraryRefreshToken,
-            focusArticleId: widget.focusArticleId,
           ),
         ],
-      ),
+        const SizedBox(height: 18),
+        AdminKbArticleLibrarySection(
+          setAdminHeader: _setAdminHeader,
+          refreshToken: _articleLibraryRefreshToken,
+          focusArticleId: widget.focusArticleId,
+        ),
+      ],
+    );
+
+    const title = 'Generate Articles';
+    const description =
+        'Generate and review student-facing article candidates from extracted documents before saving or publishing.';
+
+    if (widget.embedded) {
+      return content;
+    }
+
+    if (isOffice) {
+      // Legacy standalone route — keep working, but prefer Knowledge Base tabs.
+      return OfficeScaffold(
+        current: StudentNavItem.officeKnowledgeBase,
+        title: 'Knowledge Base',
+        description:
+            'Extract campus documents, then generate and publish public articles.',
+        child: content,
+      );
+    }
+
+    return AdminScaffold(
+      current: StudentNavItem.adminKnowledgeBase,
+      title: title,
+      description: description,
+      child: content,
     );
   }
 }

@@ -113,14 +113,14 @@ async def get_article(
 
 def _article_visible_for_role(article: PublishedArticle, role: str | None) -> bool:
     audience = str(getattr(article, "audience", None) or "student").strip().lower()
+    if not audience:
+        audience = "student"
     normalized_role = (role or "student").strip().lower()
     if normalized_role in {"office", "admin"}:
         return True
-    if audience in {"", "both"}:
-        return True
     if normalized_role == "faculty":
-        # Faculty can browse student-facing campus FAQs as well as faculty-only.
-        return audience in {"student", "faculty", "both"}
+        # Faculty KB is faculty-targeted (+ shared both). Hide student-only articles.
+        return audience in {"faculty", "both"}
     return audience in {"student", "both"}
 
 
@@ -1577,6 +1577,27 @@ def _normalize_ascii(value: str) -> str:
     normalized = _normalize(value).replace("ñ", "n")
     normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
     return re.sub(r"\s+", " ", normalized).strip()
+
+
+@router.get("/media/{stored_filename}", summary="Public KB article image")
+async def download_kb_media(stored_filename: str):
+    from fastapi.responses import FileResponse
+
+    from app.services.kb_media import resolve_kb_media_path
+
+    try:
+        path = resolve_kb_media_path(stored_filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    suffix = path.suffix.lower()
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 def _dedupe(values: list[str]) -> list[str]:

@@ -53,27 +53,47 @@ def extract_pdf(pdf_bytes: bytes) -> PdfExtractionResult:
 def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
     zoom = settings.pdf_ocr_zoom
     matrix = fitz.Matrix(zoom, zoom)
-    pages: list[PageExtraction] = []
     min_chars = settings.min_chars_per_page_for_digital_pdf
 
+    # Pass 1: digital text for every page. Decide whether OCR is worth the cost.
+    digital_by_index: list[tuple[str, list[dict], list[dict] | None]] = []
+    sparse_indices: list[int] = []
     for index in range(len(doc)):
         page = doc[index]
         word_items = _page_word_items(page)
         digital = _extract_layout_text(page, word_items=word_items).strip()
+        tables = _extract_table_regions(page) or None
+        digital_by_index.append((digital, word_items, tables))
+        if len(digital) < min_chars:
+            sparse_indices.append(index)
 
-        if len(digital) >= min_chars:
+    page_count = len(doc) or 1
+    digital_page_count = page_count - len(sparse_indices)
+    digital_ratio = digital_page_count / page_count
+    total_digital_chars = sum(len(text) for text, _words, _tables in digital_by_index)
+    skip_ocr = (
+        digital_ratio >= float(settings.pdf_skip_ocr_when_digital_page_ratio)
+        and total_digital_chars >= int(settings.pdf_skip_ocr_min_digital_chars)
+    )
+    ocr_budget = 0 if skip_ocr else max(0, int(settings.pdf_ocr_max_pages))
+    ocr_indices = set(sparse_indices[:ocr_budget])
+
+    pages: list[PageExtraction] = []
+    for index, (digital, word_items, tables) in enumerate(digital_by_index):
+        if index not in ocr_indices:
             pages.append(
                 PageExtraction(
                     page_number=index + 1,
                     text=digital,
                     method="digital",
                     words=word_items or None,
-                    table_regions=_extract_table_regions(page) or None,
+                    table_regions=tables,
                     geometry_scale=1.0,
                 )
             )
             continue
 
+        page = doc[index]
         pixmap = page.get_pixmap(matrix=matrix, alpha=False)
         image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
         ocr_text, ocr_boxes = extract_text_and_boxes_from_pil_image(image)

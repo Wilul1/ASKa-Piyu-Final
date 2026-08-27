@@ -5,6 +5,7 @@ from app.services.retrieval_reranker import (
     MAX_HEURISTIC_DELTA_MAGNITUDE,
     _apply_heuristic_delta_cap,
     expand_query,
+    is_faculty_restricted_query,
     prepare_retrieval_query,
     rerank_chunks,
 )
@@ -54,6 +55,78 @@ def test_honorable_dismissal_query_can_rank_honorable_dismissal_first():
     assert results[0] == "Honorable Dismissal"
 
 
+def test_haircut_policy_query_ranks_hair_style_above_generic_named_policies():
+    """Regression: 'X policy?' must not near-exact-match every '* Policy' title."""
+    ranked = titles_for(
+        "What is the haircut policy?",
+        [
+            chunk(
+                "University Policy on On-the-job Training (OJT)/Practicum/ Internship",
+                "OJT and internship policies for partner agencies.",
+                0.83,
+            ),
+            chunk(
+                "Substitution Policy",
+                "Students may request subject substitution under academic load rules.",
+                0.82,
+            ),
+            chunk(
+                "Policy on Grades of 4 and 5",
+                "Grade of 4 is conditional and grade of 5 is failing.",
+                0.81,
+            ),
+            chunk(
+                "Hair Style/Hair-cut",
+                "The following are prohibited: colored hair and fixie crop hairstyles.",
+                0.84,
+                metadata={"section": "Hair Style/Hair-cut", "hierarchy_path": "Norms and Decorum > Hair Style/Hair-cut"},
+            ),
+            chunk(
+                "Departure from approved hair-cut below",
+                "2x3 for freshmen and 1x2 barbers cut for upper years.",
+                0.85,
+                metadata={
+                    "section": "Departure from approved hair-cut below",
+                    "hierarchy_path": "Norms and Decorum > Departure from approved hair-cut below",
+                },
+            ),
+        ],
+    )
+
+    assert ranked[0] in {
+        "Hair Style/Hair-cut",
+        "Departure from approved hair-cut below",
+    }
+    assert "Substitution Policy" not in ranked[:2]
+
+
+def test_generic_policy_word_does_not_near_exact_match_unrelated_policy_titles():
+    from app.services.retrieval_reranker import (
+        _intent_phrases,
+        _normalize,
+        _service_title_similarity_boost,
+    )
+
+    phrases = _intent_phrases(_normalize("What is the haircut policy?"))
+    assert "policy" not in phrases
+    assert "haircut" in phrases
+
+    reasons: list[str] = []
+    boost = _service_title_similarity_boost(
+        phrases,
+        _normalize("Substitution Policy"),
+        reasons,
+    )
+    assert boost == 0.0
+
+
+def test_dress_code_query_expands_to_norms_and_grooming_terms():
+    prepared = prepare_retrieval_query("What is the haircut policy?")
+    assert "dress_code_grooming" in prepared.matched_expansion_rules
+    assert "hair style" in prepared.expanded_query.lower()
+    assert "norms and decorum" in prepared.expanded_query.lower()
+
+
 def test_failing_many_subjects_retrieves_academic_consequences_in_top_three():
     ranked = titles_for(
         "What are the consequences of failing many subjects?",
@@ -78,6 +151,30 @@ def test_failing_75_percent_units_ranks_dismissal_top_one():
     )
 
     assert ranked[0] == "Dismissal"
+
+
+def test_warning_probation_continue_query_ranks_scholastic_delinquency_above_dropped():
+    ranked = titles_for(
+        "I'm already struggling in one semester. At what point does LSPU only warn me, put me on probation, or stop me from continuing?",
+        [
+            chunk(
+                "Dropped",
+                "Any student dropped from one college/school shall not be admitted to another course in LSPU, unless in the evaluation of the Dean, the student's aptitude and interest may qualify him/her to another field of study.",
+                0.9,
+            ),
+            chunk(
+                "Scholastic Delinquency",
+                "Warning. At the end of the semester, a student who fails 25% to 49% of the total number of academic units. Probation. A student who fails 50% to 74% of registered units. A student who fails 75% or more may be dropped from the college.",
+                0.72,
+            ),
+            chunk(
+                "Retention Requirement",
+                "After admission, the student must maintain good moral character and the required GWA.",
+                0.7,
+            ),
+        ],
+    )
+    assert ranked[0] == "Scholastic Delinquency"
 
 
 def test_undergraduate_ccs_programs_rank_above_graduate_ccs_programs():
@@ -122,6 +219,36 @@ def test_absent_due_to_illness_ranks_attendance_policy_top_one():
     )
 
     assert ranked[0] == "Attendance Policy"
+
+
+def test_leave_of_absence_query_does_not_expand_to_excuse_slip():
+    prepared = prepare_retrieval_query("How do I apply for a Leave of Absence (LOA)?")
+    expanded = prepared.expanded_query.casefold()
+    assert "leave_of_absence" in prepared.matched_expansion_rules
+    assert "attendance_excuse_slip" not in prepared.matched_expansion_rules
+    assert "excuse slip" not in expanded
+    assert "leave of absence" in expanded
+
+
+def test_leave_of_absence_query_ranks_loa_above_attendance():
+    ranked = titles_for(
+        "How do I apply for a Leave of Absence (LOA)?",
+        [
+            chunk(
+                "Policy",
+                "A student absent from classes for unavoidable cause must obtain an excuse slip from OSAS or the Guidance Office.",
+                0.91,
+                metadata={"section": "Sec. 1 > Policy", "chapter": "Attendance"},
+            ),
+            chunk(
+                "Leave of Absence (LOA)",
+                "A student who intends to interrupt enrollment must file a written request for leave of absence with the Registrar, subject to approval of the Dean.",
+                0.62,
+                metadata={"section": "Leave of Absence (LOA)"},
+            ),
+        ],
+    )
+    assert ranked[0] == "Leave of Absence (LOA)"
 
 
 def test_attendance_query_penalizes_offenses_ojt_and_appendices():
@@ -787,6 +914,115 @@ def test_faculty_grading_ranks_grading_sheets_above_student_rectification():
     assert ranked[0] == "Grading Sheets and Other Academic Records"
 
 
+def test_shift_to_bs_program_ranks_shifting_of_course_above_dropped():
+    ranked = titles_for(
+        "Can I shift to another BS program if I failed more than six units this semester?",
+        [
+            chunk(
+                "Dropped",
+                "A student may be dropped after continued scholastic delinquency and failed academic units.",
+                0.88,
+            ),
+            chunk(
+                "Scholastic Delinquency",
+                "Students with failed academic units may receive warning, probation, or dismissal.",
+                0.84,
+            ),
+            chunk(
+                "Shifting of Course",
+                "Students from other courses can shift to any BS Program provided there is no failure of greater than six (6) units during the semester.",
+                0.62,
+                metadata={
+                    "section": "Shifting of Course",
+                    "source_filename": "LSPU Student Handbook.pdf",
+                    "source_section": "2.10. Shifting of Course",
+                },
+            ),
+        ],
+    )
+    assert ranked[0] == "Shifting of Course"
+
+
+def test_shift_program_query_expands_to_shifting_not_scholastic_delinquency():
+    prepared = prepare_retrieval_query(
+        "Can I shift to another BS program if I failed more than six units this semester?"
+    )
+    expanded = prepared.expanded_query.casefold()
+    assert "shifting of course" in expanded
+    assert "shifting_of_course" in prepared.matched_expansion_rules
+    assert "scholastic_delinquency_failed_units" not in prepared.matched_expansion_rules
+    assert "undergraduate programs" not in expanded
+
+
+def test_faculty_25_percent_grade_change_ranks_rectification_above_grading_sheets():
+    ranked = titles_for(
+        "If more than 25 percent of a class needs a grade change, what approval process is required?",
+        [
+            chunk(
+                "Grading Sheets and Other Academic Records",
+                "Faculty shall submit grading sheets and other academic records through proper channels.",
+                0.86,
+                metadata={
+                    "section": "Grading Sheets and Other Academic Records",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                },
+            ),
+            chunk(
+                "Change/Rectification of Grades",
+                "If the number of students affected is twenty-five percent (25%) and above the class, "
+                "the faculty must seek approval of the University President for an Academic Council Meeting.",
+                0.64,
+                metadata={
+                    "section": "Change/Rectification of Grades",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                    "source_section": "J. Change/Rectification of Grades",
+                },
+            ),
+        ],
+    )
+    assert ranked[0] == "Change/Rectification of Grades"
+
+
+def test_faculty_25_percent_query_ranks_submission_of_grades_when_body_has_rectification():
+    ranked = titles_for(
+        "If more than 25 percent of a class needs a grade change, what approval process is required?",
+        [
+            chunk(
+                "Grading Sheets and Other Academic Records",
+                "Faculty shall submit grading sheets and other academic records through proper channels.",
+                0.86,
+                metadata={
+                    "section": "Grading Sheets and Other Academic Records",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                },
+            ),
+            chunk(
+                "Submission of Grades",
+                "J. Change/Rectification of Grades. If the number of students affected is twenty-five percent "
+                "(25%) and above the class, seek approval of the University President for an Academic Council Meeting.",
+                0.61,
+                metadata={
+                    "section": "Submission of Grades",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                },
+            ),
+        ],
+    )
+    assert ranked[0] == "Submission of Grades"
+
+
+def test_faculty_grade_change_query_expands_to_rectification_and_academic_council():
+    prepared = prepare_retrieval_query(
+        "If more than 25 percent of a class needs a grade change, what approval process is required?"
+    )
+    expanded = prepared.expanded_query.casefold()
+    assert "rectification" in expanded
+    assert "academic council" in expanded
+    assert "faculty_grade_rectification" in prepared.matched_expansion_rules
+    assert "faculty_grading_policies" not in prepared.matched_expansion_rules
+    assert "submission of grades" in expanded
+
+
 def test_faculty_responsibilities_ranks_commitment_above_chairperson_designation():
     ranked = titles_for(
         "What are the responsibilities of faculty members?",
@@ -823,6 +1059,46 @@ def test_faculty_teaching_load_query_expands_toward_faculty_manual():
     assert "faculty manual" in expanded
 
 
+def test_dismiss_class_early_expands_to_faculty_manual_not_academic_dismissal():
+    prepared = prepare_retrieval_query("Can I dismiss my class earlier than the official time?")
+    expanded = prepared.expanded_query.casefold()
+    assert "faculty_class_dismiss_time" in prepared.matched_expansion_rules
+    assert "faculty manual" in expanded
+    assert "shall not be allowed to dismiss" in expanded
+    assert "scholastic delinquency" not in expanded
+    assert "academic dismissal" not in expanded
+
+
+def test_dismiss_class_early_ranks_faculty_attendance_above_student_attendance():
+    ranked = titles_for(
+        "Can I dismiss my class earlier than the official time?",
+        [
+            chunk(
+                "Attendance",
+                "Students who are absent should submit an excuse slip to OSAS.",
+                0.9,
+                metadata={
+                    "section": "Attendance",
+                    "source_filename": "LSPU Student Handbook.pdf",
+                    "source_section": "Attendance",
+                },
+            ),
+            chunk(
+                "Faculty Attendance and Absences",
+                "Faculty member shall not be allowed to dismiss his/her classes earlier than the official time.",
+                0.62,
+                metadata={
+                    "section": "Faculty Attendance and Absences",
+                    "source_filename": "LSPU Faculty Manual 2020.pdf",
+                    "document_type": "faculty_manual",
+                    "source_section": "B. Faculty Attendance and Absences",
+                },
+            ),
+        ],
+    )
+    assert ranked[0] == "Faculty Attendance and Absences"
+
+
 def test_heuristic_delta_cap_bounds_runaway_positive_stacking():
     """A pathological pile-up of boosts must not fully drown out semantic score."""
     reasons: list[str] = []
@@ -848,3 +1124,53 @@ def test_heuristic_delta_cap_is_a_noop_within_normal_range():
 
     assert final_score == 0.7 + 3.4
     assert reasons == []
+
+
+def test_leading_ow_typo_still_retrieves_honorable_dismissal():
+    prepared = prepare_retrieval_query("ow do I request honorable dismissal?")
+    expanded = prepared.expanded_query.casefold()
+    assert expanded.startswith("how ") or "how do i request honorable dismissal" in expanded
+    assert "honorable dismissal" in expanded
+    assert "registrar" in expanded
+
+
+def test_maximum_residence_query_ranks_residence_rule_first():
+    ranked = titles_for(
+        "What is the maximum residence rule?",
+        [
+            chunk("Dormitory Residence", "Students living outside campus may leave for face-to-face classes.", 0.88),
+            chunk(
+                "Maximum Residence Rule",
+                "A student must finish the requirements within a period of actual residence equivalent to 1.5 times the normal length prescribed for the course.",
+                0.62,
+            ),
+        ],
+    )
+    assert ranked[0] == "Maximum Residence Rule"
+
+
+def test_tor_cost_query_expands_to_per_page_peso_amounts():
+    prepared = prepare_retrieval_query("How much does a transcript of records cost?")
+    expanded = prepared.expanded_query.casefold()
+    assert "p75" in expanded or "75.00" in expanded
+    assert "transcript of records" in expanded
+
+
+def test_tuition_refund_query_expands_to_seventy_five_percent():
+    prepared = prepare_retrieval_query(
+        "If I withdraw after paying enrollment fees, how much of my tuition is refunded?"
+    )
+    expanded = prepared.expanded_query.casefold()
+    assert "seventy-five percent" in expanded or "75%" in expanded
+    assert "refunding of fees" in expanded
+
+
+def test_dean_instruction_load_and_campaign_questions_are_faculty_restricted():
+    assert is_faculty_restricted_query(
+        "How many instruction hours does a regular faculty member have in the weekly load?"
+    )
+    assert is_faculty_restricted_query(
+        "If I am designated as dean, how does my weekly instruction load change?"
+    )
+    assert is_faculty_restricted_query("Can I use class time to campaign for a political party?")
+    assert not is_faculty_restricted_query("What is the maximum residence rule?")

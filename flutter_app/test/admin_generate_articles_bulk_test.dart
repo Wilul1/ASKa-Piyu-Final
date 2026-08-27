@@ -25,11 +25,57 @@ void main() {
         File('lib/widgets/admin_kb_article_shared.dart').readAsStringSync();
     expect(section, contains("bulkPublishAllLabel: 'Publish All Recommended'"));
     expect(section, contains('allowBulkPublish: false'));
+    expect(section, contains('Download All TXT'));
+    expect(section, contains('downloadAllArticlePreviewsTxt'));
+    expect(shared, contains('Download Section TXT'));
     expect(shared, contains('Save Selected as Draft'));
     expect(shared, contains('Publish Selected'));
     expect(shared, contains('Publish selected articles?'));
     expect(shared, contains('bulkPublish'));
     expect(shared, contains('bulkSaveDraft'));
+  });
+
+  test('buildAllArticlePreviewsTxt concatenates multiple article exports', () {
+    final a = AdminArticle(
+      id: 'preview-1',
+      title: 'Enrollment',
+      category: 'Student Records',
+      published: false,
+      summary: 'How to enroll',
+      content: 'Overview\nEnrollment steps.',
+      displayContent: 'Overview\nEnrollment steps.',
+    );
+    final b = AdminArticle(
+      id: 'preview-2',
+      title: 'Library Circulation',
+      category: 'Library Services',
+      published: false,
+      summary: 'Borrow books',
+      content: 'Overview\nBorrow and return.',
+      displayContent: 'Overview\nBorrow and return.',
+    );
+    final text = buildAllArticlePreviewsTxt(
+      entries: [
+        ArticlePreviewExportEntry(article: a, bucketLabel: 'Recommended'),
+        ArticlePreviewExportEntry(article: b, bucketLabel: 'Needs Review'),
+      ],
+      sourceFilename: 'charter.pdf',
+      scopeLabel: 'All generated article previews',
+    );
+    expect(text, contains('ASKa-Piyu generated article previews'));
+    expect(text, contains('Total articles: 2'));
+    expect(text, contains('ARTICLE 1 / 2'));
+    expect(text, contains('ARTICLE 2 / 2'));
+    expect(text, contains('Title:\nEnrollment'));
+    expect(text, contains('Title:\nLibrary Circulation'));
+    expect(
+      safeAllPreviewsFilename(
+        sourceFilename: 'Laguna Charter.pdf',
+        bucketLabel: 'all',
+        count: 2,
+      ),
+      'aska_piyu_article_previews_laguna_charter_all_2_articles.txt',
+    );
   });
 
   test('Low Quality section exposes Edit as Review Draft but never Publish', () {
@@ -97,6 +143,7 @@ void main() {
     expect(payload['publish_status'], isFalse);
     expect(payload['planner_bucket'], 'needs_review');
     expect(payload['source_document'], 'charter.pdf');
+    expect(payload['audience'], 'both');
     final content = payload['content'] as String;
     expect(content, contains('manual_review_from_low_quality'));
     expect(content, contains('manually_corrected_draft'));

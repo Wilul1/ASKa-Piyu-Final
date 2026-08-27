@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
 import '../services/admin_article_service.dart';
+import '../widgets/admin_article_preview_download_stub.dart'
+    if (dart.library.html) '../widgets/admin_article_preview_download_web.dart';
 import '../widgets/admin_article_preview_export.dart';
 import '../widgets/admin_kb_article_shared.dart';
 import '../widgets/admin_kb_article_widgets.dart';
@@ -198,6 +200,53 @@ class GenerateArticlesReviewSection extends StatelessWidget {
             '${generationResult.previewCount} preview candidates from ${generationResult.blueprintCount} blueprints '
             '(${generationResult.totalDetected} knowledge units tagged; ${generationResult.ragOnlyCount} RAG-only).',
             style: const TextStyle(fontSize: 13, color: DesignTokens.muted, height: 1.45),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton(
+                onPressed: () async {
+                  final entries = <ArticlePreviewExportEntry>[];
+                  for (final section in sections) {
+                    entries.addAll(
+                      buildPreviewExportEntries(
+                        candidates: section.items,
+                        previewArticlesById: previewArticlesById,
+                        savedArticlesByPreviewId: savedArticlesByPreviewId,
+                        discardedPreviewIds: discardedPreviewIds,
+                        bucketKey: section.bucketKey,
+                        sectionTitle: section.title,
+                      ),
+                    );
+                  }
+                  if (entries.isEmpty) {
+                    showKbSnackBar(context, 'No generated articles to download.');
+                    return;
+                  }
+                  await downloadAllArticlePreviewsTxt(
+                    entries: entries,
+                    fallbackSourceFilename: fallbackSourceFilename,
+                    scopeLabel: 'All generated article previews',
+                    bucketLabel: 'all',
+                  );
+                  if (!context.mounted) return;
+                  showKbSnackBar(
+                    context,
+                    'Downloaded ${entries.length} generated articles as one .txt',
+                  );
+                },
+                child: Text(
+                  'Download All TXT (${sections.fold<int>(0, (sum, s) => sum + s.items.length)})',
+                ),
+              ),
+              const Text(
+                'One file with every generated preview — no need to download each article.',
+                style: TextStyle(fontSize: 12, color: DesignTokens.muted),
+              ),
+            ],
           ),
           if (generationResult.charterReport != null) ...[
             const SizedBox(height: 14),

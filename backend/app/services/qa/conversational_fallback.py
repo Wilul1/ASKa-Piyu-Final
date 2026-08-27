@@ -95,12 +95,36 @@ def detect_fallback_intent(question: str, chunks: list[RetrievedChunk] | None = 
 
 def format_conversational_fallback(
     question: str,
-    chunks: list[RetrievedChunk],
+    chunks: list[RetrievedChunk] | str | None = None,
     sources: list[dict[str, Any]] | None = None,
     *,
     confidence: str = "medium",
+    context: str | None = None,
+    style_hint: str | None = None,
+    reason: str | None = None,
 ) -> str:
-    """Build a student-facing answer from retrieved chunks without LLM copy."""
+    """Build a student-facing answer from retrieved chunks without LLM copy.
+
+    Older callers passed ``context=`` (formatted string) plus ``style_hint`` /
+    ``reason``. Accept those so a mixed deploy cannot 500 the Ask endpoint.
+    """
+    if isinstance(chunks, str):
+        context = context or chunks
+        chunks = None
+    if not chunks:
+        if (style_hint or "").strip().lower() == "clarify":
+            return (
+                "I found related LSPU material, but I need a more specific question. "
+                "Try naming the process, office, or requirement (for example "
+                "enrollment, student ID, dropping a subject, or leave of absence)."
+            )
+        if (context or "").strip():
+            snippet = re.sub(r"\s+", " ", context).strip()
+            if len(snippet) > 420:
+                snippet = snippet[:417].rstrip() + "..."
+            return snippet
+        return ""
+
     usable = [
         chunk
         for chunk in chunks

@@ -621,7 +621,7 @@ def test_id_validation_question_retrieves_charter_service(tmp_path, monkeypatch)
     class _Store:
         chunk_count = 2
 
-        def search(self, question, *, top_k=None, raw_k=None):
+        def search(self, question, *, top_k=None, raw_k=None, user_role=None):
             return [form_chunk, id_chunk]
 
         def list_chunks(self):

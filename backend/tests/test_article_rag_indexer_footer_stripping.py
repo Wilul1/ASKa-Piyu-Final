@@ -79,3 +79,32 @@ def test_build_faq_chunks_never_produces_a_footer_only_chunk():
         assert "Page: 15" not in chunk.text
         # Every chunk must retain some real, non-footer content.
         assert len(chunk.text.strip()) > 20
+
+
+def test_build_faq_chunks_indexes_content_sections_from_extracted_metadata():
+    content = (
+        "Overview\nOfficial grading sheets go to the Registrar within ten (10) days.\n\n"
+        "----EXTRACTED METADATA----\n"
+        '{"content_sections":['
+        '{"heading":"Overview","body":"This article explains the i. submission of grades."},'
+        '{"heading":"Process","body":"If twenty-five percent (25%) and above the class need a grade change, '
+        'seek approval of the University President for an Academic Council Meeting."}'
+        "]}"
+    )
+    article = SimpleNamespace(
+        id="article-grades",
+        title="Submission of Grades",
+        summary="",
+        content=content,
+        category="",
+        office="Registrar",
+        audience="faculty",
+        kb_origin="document",
+        source_ticket_id="",
+    )
+    chunks = _build_faq_chunks(article)
+    blob = " ".join(chunk.text for chunk in chunks)
+    assert "EXTRACTED METADATA" not in blob
+    assert "content_sections" not in blob
+    assert "Academic Council Meeting" in blob
+    assert "twenty-five percent" in blob

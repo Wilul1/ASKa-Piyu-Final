@@ -15,6 +15,16 @@ class DesignTokens {
   static const double spacing = 16.0;
   static const double radius = 18.0;
 
+  /// Admin shell surfaces (professional dashboard).
+  /// Deep maroon sidebar (brand), not charcoal/blue-gray.
+  static const Color adminSidebarBg = Color(0xFF4A0A0E);
+  static const Color adminSidebarText = Color(0xFFF3D5D8);
+  static const Color adminSidebarMuted = Color(0xFFD4A0A5);
+  static const Color adminSidebarActive = Color(0xFF6E1016);
+  static const Color adminSurface = Color(0xFFF5F7FB);
+  static const double adminRadius = 12.0;
+  static const double adminSidebarWidth = 250.0;
+
   static const TextStyle h1 =
       TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: ink);
   static const TextStyle h2 =

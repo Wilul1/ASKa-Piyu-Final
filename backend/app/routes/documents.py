@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
@@ -12,6 +11,7 @@ from app.models.db_models import SourceDocument, User
 from app.models.schemas import DocumentSourceMetaSchema
 from app.services.article_rag_indexer import infer_rag_audience_from_document
 from app.services.auth import get_current_user
+from app.services.citation_pdf import extract_citation_pages_pdf
 from app.services.document_storage import (
     get_source_document,
     resolve_stored_path,
@@ -99,21 +99,37 @@ def get_document_source(
 
 @router.get(
     "/{document_id}/source/page/{page_number}",
-    summary="Return only the cited page as a single-page PDF",
+    summary="Return the cited page range as a focused PDF clip",
     response_model=None,
 )
 def get_document_source_page(
     document_id: str,
     page_number: int,
+    end: int | None = Query(
+        default=None,
+        ge=1,
+        description="Inclusive end page when the cited section spans multiple pages",
+    ),
+    section: str | None = Query(
+        default=None,
+        max_length=240,
+        description="Cited section title — crops away neighboring services on the page",
+    ),
     current_user: User = Depends(get_current_user),
 ):
     if page_number < 1:
         raise HTTPException(status_code=400, detail="page_number must be >= 1")
 
     row, path = _load_source_row(document_id, current_user)
+    page_end = end if end is not None and end >= page_number else page_number
 
     try:
-        page_bytes = _extract_single_page_pdf(path, page_number)
+        page_bytes = extract_citation_pages_pdf(
+            path,
+            page_start=page_number,
+            page_end=page_end,
+            section_title=(section or "").strip() or None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -126,10 +142,14 @@ def get_document_source_page(
         "ascii", "replace"
     ).decode("ascii")
     stem = Path(safe_filename).stem
-    page_name = f"{stem}-page-{page_number}.pdf"
+    if page_end > page_number:
+        page_name = f"{stem}-pages-{page_number}-{page_end}.pdf"
+    else:
+        page_name = f"{stem}-page-{page_number}.pdf"
     headers = {
         "X-Document-Id": row.id,
         "X-Source-Page": str(page_number),
+        "X-Source-Page-End": str(page_end),
         "X-Source-Page-Only": "true",
         "Content-Disposition": f'inline; filename="{page_name}"',
     }
@@ -152,21 +172,3 @@ def get_document_source_meta(
 ) -> DocumentSourceMetaSchema:
     row, _path = _load_source_row(document_id, current_user)
     return DocumentSourceMetaSchema(**source_document_payload(row, page_number=page))
-
-
-def _extract_single_page_pdf(path: Path, page_number: int) -> bytes:
-    """Extract a 1-based page into a standalone PDF document."""
-    source = fitz.open(path)
-    try:
-        if page_number > source.page_count:
-            raise ValueError(
-                f"Page {page_number} not found (document has {source.page_count} pages)."
-            )
-        single = fitz.open()
-        try:
-            single.insert_pdf(source, from_page=page_number - 1, to_page=page_number - 1)
-            return single.tobytes()
-        finally:
-            single.close()
-    finally:
-        source.close()

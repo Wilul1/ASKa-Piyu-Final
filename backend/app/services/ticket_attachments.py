@@ -90,7 +90,7 @@ def add_ticket_attachment(
     ticket = _load_ticket(session, ticket_id)
     if not _can_view(ticket, actor, session):
         raise TicketAccessError("You do not have access to this ticket.")
-    if actor.role == "student" and ticket.user_id != actor.id:
+    if actor.role in {"student", "faculty"} and ticket.user_id != actor.id:
         raise TicketAccessError("You can only attach files to your own tickets.")
     if ticket.status == "Closed":
         raise TicketValidationError("Closed tickets do not accept attachments.")
@@ -116,6 +116,7 @@ def add_ticket_attachment(
     path = ticket_dir / stored_name
     path.write_bytes(content)
 
+    now = utc_now()
     row = TicketAttachment(
         id=attachment_id,
         ticket_id=ticket.id,
@@ -124,8 +125,9 @@ def add_ticket_attachment(
         content_type=ctype,
         size_bytes=len(content),
         stored_filename=stored_name,
-        created_at=utc_now(),
+        created_at=now,
     )
+    ticket.updated_at = now
     session.add(row)
     session.commit()
     session.refresh(row)

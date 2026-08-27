@@ -20,6 +20,7 @@ from app.models.schemas import (
     TicketAttachmentSchema,
     TicketAuditEventSchema,
     TicketKbArticleSchema,
+    TicketKbDuplicateCheckResponse,
     TicketListResponse,
     TicketSchema,
     TicketStatisticsResponse,
@@ -27,6 +28,7 @@ from app.models.schemas import (
     UpdateTicketRequest,
 )
 from app.services.auth import get_current_user
+from app.services.kb_media import save_kb_image
 from app.services.ticket_attachments import add_ticket_attachment, attachment_file_path
 from app.services.ticket_audit import list_ticket_audit_events
 from app.services.ticket_knowledge import (
@@ -34,6 +36,7 @@ from app.services.ticket_knowledge import (
     TicketKnowledgeError,
     TicketKnowledgeNotFoundError,
     convert_ticket_to_draft_article,
+    find_duplicate_published_topic,
     get_ticket_kb_article,
 )
 from app.services.ticket_notifications import (
@@ -48,6 +51,7 @@ from app.services.ticketing import (
     TicketNotFoundError,
     TicketValidationError,
     add_ticket_reply,
+    delete_office,
     create_office,
     create_ticket,
     get_ticket,
@@ -110,6 +114,23 @@ async def create_office_endpoint(
         name=office.name,
         service_category=office.service_category,
     )
+
+
+@router.delete("/offices/{office_id}")
+async def delete_office_endpoint(
+    office_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> dict[str, str]:
+    if str(actor.role).strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can delete offices.")
+    try:
+        delete_office(session, office_id)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "success", "detail": "Office deleted."}
 
 
 @router.post("", response_model=TicketSchema)
@@ -246,6 +267,52 @@ async def get_ticket_kb_article_endpoint(
     return TicketKbArticleSchema(**payload)
 
 
+@router.get(
+    "/{ticket_id}/kb-duplicate-check",
+    response_model=TicketKbDuplicateCheckResponse,
+)
+async def check_ticket_kb_duplicate_endpoint(
+    ticket_id: str,
+    title: str = Query(..., min_length=3, max_length=240),
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketKbDuplicateCheckResponse:
+    """Soft check used by Compose KB before Save/Publish."""
+    from app.models.db_models import PublishedArticle
+    from app.services.ticket_knowledge import _assert_can_view, _load_ticket
+
+    try:
+        ticket = _load_ticket(session, ticket_id)
+        _assert_can_view(actor, ticket)
+    except TicketKnowledgeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketKnowledgeAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    existing = (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .one_or_none()
+    )
+    duplicate = find_duplicate_published_topic(
+        session,
+        title=title,
+        exclude_article_id=existing.id if existing else None,
+    )
+    if duplicate is None:
+        return TicketKbDuplicateCheckResponse(has_duplicate=False)
+    return TicketKbDuplicateCheckResponse(
+        has_duplicate=True,
+        title=duplicate.title,
+        article_id=duplicate.id,
+        slug=duplicate.slug,
+        message=(
+            f'A published article already covers this topic: "{duplicate.title}". '
+            "Change the title or open the existing article instead of publishing a duplicate."
+        ),
+    )
+
+
 @router.post("/{ticket_id}/convert-to-article", response_model=TicketKbArticleSchema)
 async def convert_ticket_to_article_endpoint(
     ticket_id: str,
@@ -262,14 +329,16 @@ async def convert_ticket_to_article_endpoint(
             title=body.title,
             content=body.content,
             summary=body.summary,
+            category=body.category,
             audience=body.audience,
+            publish=bool(body.publish),
         )
     except TicketKnowledgeNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TicketKnowledgeAccessError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except TicketKnowledgeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return TicketKbArticleSchema(**result)
 
 
@@ -298,7 +367,13 @@ async def add_ticket_reply_endpoint(
     session: Session = Depends(get_db_session),
 ) -> TicketSchema:
     try:
-        return add_ticket_reply(session, ticket_id, payload.message, actor)
+        return add_ticket_reply(
+            session,
+            ticket_id,
+            payload.message,
+            actor,
+            is_internal=bool(payload.is_internal),
+        )
     except TicketNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TicketValidationError as exc:
@@ -330,6 +405,33 @@ async def upload_ticket_attachment_endpoint(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TicketAccessError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/{ticket_id}/kb-images")
+async def upload_ticket_kb_image_endpoint(
+    ticket_id: str,
+    file: UploadFile = File(...),
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """Upload an image for a ticket→KB article draft (office/admin only)."""
+    from app.services.ticket_knowledge import _assert_can_convert, _load_ticket
+
+    if actor.role not in {"admin", "office"}:
+        raise HTTPException(status_code=403, detail="Only office or admin can upload KB images.")
+    try:
+        ticket = _load_ticket(session, ticket_id)
+        _assert_can_convert(actor, ticket)
+    except TicketKnowledgeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketKnowledgeAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    content = await file.read()
+    try:
+        return save_kb_image(filename=file.filename or "image", content=content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{ticket_id}/attachments/{attachment_id}/download")

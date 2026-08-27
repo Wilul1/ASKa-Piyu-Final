@@ -5,13 +5,13 @@ import '../app_config.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
+import '../navigation/soft_page_route.dart';
 import '../services/api_client.dart';
 import '../services/print_helper.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
 import '../widgets/student_ui.dart';
 import 'chatbot_page.dart';
-import 'student_home.dart';
 
 const _articleFontFamily = 'Inter';
 
@@ -38,6 +38,8 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
   String? _error;
   String _activeQuery = '';
   String? _activeCategory;
+  String? _lastAuthKey;
+  bool _bootstrapped = false;
 
   @override
   void initState() {
@@ -51,7 +53,18 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
     if (initialCategory != null && initialCategory.isNotEmpty) {
       _activeCategory = initialCategory;
     }
-    _loadInitialData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = AuthScope.of(context);
+    final authKey = '${auth.isAuthenticated}:${auth.role ?? ''}';
+    if (!_bootstrapped || _lastAuthKey != authKey) {
+      _bootstrapped = true;
+      _lastAuthKey = authKey;
+      _loadInitialData();
+    }
   }
 
   @override
@@ -178,12 +191,11 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
   }
 
   void _openArticle(_KbArticle article) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _ArticleReaderPage(
-          apiBase: AppConfig.resolvedApiBase,
-          article: article,
-        ),
+    softPush(
+      context,
+      _ArticleReaderPage(
+        apiBase: AppConfig.resolvedApiBase,
+        article: article,
       ),
     );
   }
@@ -204,12 +216,6 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
       onSelectCategory: _selectCategory,
       onShowCategories: _showCategoryBrowse,
       onOpenArticle: _openArticle,
-      onGoHome: () {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const StudentHomePage()),
-          (route) => false,
-        );
-      },
     );
 
     return Scaffold(
@@ -242,7 +248,6 @@ class _KnowledgeBaseBody extends StatelessWidget {
   final ValueChanged<String?> onSelectCategory;
   final VoidCallback onShowCategories;
   final ValueChanged<_KbArticle> onOpenArticle;
-  final VoidCallback onGoHome;
 
   const _KnowledgeBaseBody({
     required this.searchController,
@@ -258,7 +263,6 @@ class _KnowledgeBaseBody extends StatelessWidget {
     required this.onSelectCategory,
     required this.onShowCategories,
     required this.onOpenArticle,
-    required this.onGoHome,
   });
 
   @override
@@ -274,6 +278,9 @@ class _KnowledgeBaseBody extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const PublicBackToHomeButton(
+                padding: EdgeInsets.only(bottom: 10),
+              ),
               if (!browsingCategory || activeQuery.isNotEmpty) ...[
                 _HeroSearch(
                   controller: searchController,
@@ -297,7 +304,6 @@ class _KnowledgeBaseBody extends StatelessWidget {
                   loading: loading,
                   error: error,
                   onRetry: onRetry,
-                  onGoHome: onGoHome,
                   onBrowseCategories: onShowCategories,
                   onOpenArticle: onOpenArticle,
                   searchController: searchController,
@@ -329,7 +335,6 @@ class _CategoryHelpCenterView extends StatelessWidget {
   final bool loading;
   final String? error;
   final VoidCallback onRetry;
-  final VoidCallback onGoHome;
   final VoidCallback onBrowseCategories;
   final ValueChanged<_KbArticle> onOpenArticle;
   final TextEditingController searchController;
@@ -341,7 +346,6 @@ class _CategoryHelpCenterView extends StatelessWidget {
     required this.loading,
     required this.error,
     required this.onRetry,
-    required this.onGoHome,
     required this.onBrowseCategories,
     required this.onOpenArticle,
     required this.searchController,
@@ -353,24 +357,6 @@ class _CategoryHelpCenterView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            onPressed: onGoHome,
-            style: TextButton.styleFrom(
-              foregroundColor: DesignTokens.ink,
-              padding: EdgeInsets.zero,
-            ),
-            child: const Text(
-              'Home',
-              style: TextStyle(
-                decoration: TextDecoration.underline,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
         Center(
           child: Column(
             children: [
@@ -567,9 +553,11 @@ class _HeroSearch extends StatelessWidget {
               color: DesignTokens.maroon.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(999),
             ),
-            child: const Text(
-              'ASKa-Piyu Knowledge Base',
-              style: TextStyle(
+            child: Text(
+              AuthScope.of(context).role == 'faculty'
+                  ? 'ASKa-Piyu Faculty Knowledge Base'
+                  : 'ASKa-Piyu Knowledge Base',
+              style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
                 color: DesignTokens.maroon,
@@ -577,10 +565,12 @@ class _HeroSearch extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          const Text(
-            'Find student support topics',
+          Text(
+            AuthScope.of(context).role == 'faculty'
+                ? 'Find faculty support topics'
+                : 'Find student support topics',
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 34,
               height: 1.12,
               fontWeight: FontWeight.w900,
@@ -588,10 +578,12 @@ class _HeroSearch extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          const Text(
-            'Browse published articles by category, or search titles and summaries.',
+          Text(
+            AuthScope.of(context).role == 'faculty'
+                ? 'Browse published faculty articles by category, or search titles and summaries.'
+                : 'Browse published articles by category, or search titles and summaries.',
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
                 fontSize: 16, height: 1.45, color: DesignTokens.muted),
           ),
           const SizedBox(height: 24),
@@ -848,119 +840,109 @@ class _CategoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topics = category.visibleSubcategories;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: expanded
-              ? DesignTokens.maroon.withValues(alpha: 0.22)
-              : DesignTokens.border,
-        ),
-        boxShadow: DesignTokens.softShadow(expanded ? 0.08 : 0.04),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(18),
-        child: Column(
-          children: [
-            InkWell(
-              onTap: onOpen,
-              borderRadius: BorderRadius.circular(18),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    StudentIconBox(
-                      icon: _categoryIcon(category.name),
-                      color: DesignTokens.maroon,
-                      size: 44,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            category.name,
-                            style: const TextStyle(
-                              fontSize: 17,
-                              height: 1.25,
-                              fontWeight: FontWeight.w900,
-                              color: DesignTokens.ink,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '${category.articleCount} focused ${category.articleCount == 1 ? 'article' : 'articles'}',
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w700,
-                              color: DesignTokens.muted,
-                            ),
-                          ),
-                        ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: const Color(0xFF5C0A0F),
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            onTap: onOpen,
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      category.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        height: 1.3,
                       ),
                     ),
-                    IconButton(
-                      tooltip: expanded ? 'Collapse' : 'Preview topics',
-                      onPressed: onToggle,
-                      icon: Icon(
-                        expanded
-                            ? Icons.expand_less_rounded
-                            : Icons.expand_more_rounded,
-                        color: DesignTokens.maroon,
-                      ),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton(
+                    tooltip: expanded ? 'Collapse' : 'Preview topics',
+                    onPressed: onToggle,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
                     ),
-                  ],
-                ),
+                    icon: Icon(
+                      expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
             ),
-            if (expanded) ...[
-              const Divider(height: 1, color: DesignTokens.border),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: topics
-                          .map<Widget>(
-                            (topic) => _TopicChip(
-                              label: topic.name,
-                              articleCount: topic.articleCount,
-                            ),
-                          )
-                          .toList(),
-                    ),
-                    const SizedBox(height: 14),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: ElevatedButton.icon(
-                        onPressed: onOpen,
-                        icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-                        label: const Text('View articles'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: DesignTokens.maroon,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
-      ),
+        if (expanded) ...[
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: DesignTokens.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${category.articleCount} focused ${category.articleCount == 1 ? 'article' : 'articles'}',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: DesignTokens.muted,
+                  ),
+                ),
+                if (topics.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: topics
+                        .map<Widget>(
+                          (topic) => _TopicChip(
+                            label: topic.name,
+                            articleCount: topic.articleCount,
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: onOpen,
+                    style: TextButton.styleFrom(
+                      foregroundColor: DesignTokens.maroon,
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: const Text(
+                      'View articles',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -1516,9 +1498,7 @@ class _AskPanel extends StatelessWidget {
           SizedBox(
             height: 42,
             child: ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ChatbotPage()),
-              ),
+              onPressed: () => softPush(context, const ChatbotPage()),
               icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
               label: const Text('Ask ASKa-Piyu'),
               style: ElevatedButton.styleFrom(
@@ -1677,6 +1657,46 @@ class _ArticleBlockView extends StatelessWidget {
             ),
           ),
         );
+      case _ArticleBlockKind.image:
+        final rawUrl = (block.marker ?? block.text).trim();
+        final url = rawUrl.startsWith('http')
+            ? rawUrl
+            : '${AppConfig.resolvedApiBase}$rawUrl';
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    color: const Color(0xFFF1F5F9),
+                    child: Text(
+                      block.text.isEmpty ? 'Image unavailable' : block.text,
+                      style: const TextStyle(color: DesignTokens.muted),
+                    ),
+                  ),
+                ),
+              ),
+              if (block.text.trim().isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  block.text,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: DesignTokens.muted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
       case _ArticleBlockKind.paragraph:
         return Padding(
           padding: const EdgeInsets.only(bottom: 14),
@@ -1762,6 +1782,7 @@ enum _ArticleBlockKind {
   numbered,
   bullet,
   note,
+  image,
 }
 
 class _ArticleBlock {
@@ -1933,6 +1954,23 @@ List<_ArticleBlock> _formatArticleBlocks(String content) {
     } else if (bullet != null) {
       blocks.add(
           _ArticleBlock(_ArticleBlockKind.bullet, bullet.group(2)!.trim()));
+    } else if (_isMarkdownImage(line)) {
+      final image = _parseMarkdownImage(line);
+      blocks.add(_ArticleBlock(
+        _ArticleBlockKind.image,
+        image?.$1 ?? '',
+        marker: image?.$2,
+      ));
+    } else if (line.startsWith('## ')) {
+      blocks.add(_ArticleBlock(
+        _ArticleBlockKind.heading,
+        line.substring(3).trim(),
+      ));
+    } else if (line.startsWith('# ')) {
+      blocks.add(_ArticleBlock(
+        _ArticleBlockKind.heading,
+        line.substring(2).trim(),
+      ));
     } else if (_isMajorHeading(line)) {
       blocks.add(_ArticleBlock(_ArticleBlockKind.heading, _cleanHeading(line)));
     } else if (_isSubheading(line)) {
@@ -1946,6 +1984,16 @@ List<_ArticleBlock> _formatArticleBlocks(String content) {
   }
 
   return blocks;
+}
+
+bool _isMarkdownImage(String line) {
+  return RegExp(r'^!\[[^\]]*\]\([^)]+\)$').hasMatch(line.trim());
+}
+
+(String, String)? _parseMarkdownImage(String line) {
+  final match = RegExp(r'^!\[([^\]]*)\]\(([^)]+)\)$').firstMatch(line.trim());
+  if (match == null) return null;
+  return (match.group(1) ?? '', match.group(2) ?? '');
 }
 
 bool _isPageMarker(String line) {
@@ -2164,13 +2212,16 @@ class _EmptyCategoryState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 34),
+    final isFaculty = AuthScope.of(context).role == 'faculty';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 34),
       child: Center(
         child: Text(
-          'No published Knowledge Base articles yet. Ask an administrator to publish reviewed articles first.',
+          isFaculty
+              ? 'No faculty Knowledge Base articles published yet. Ask an administrator to publish Faculty Manual topics for faculty.'
+              : 'No published Knowledge Base articles yet. Ask an administrator to publish reviewed articles first.',
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w800,
             color: DesignTokens.muted,
@@ -2297,38 +2348,6 @@ bool _pathRepeatsCategoryOnly(String path, String category) {
       .where((part) => part.isNotEmpty)
       .toList();
   return parts.length == 1 && parts.first.toLowerCase() == normalizedCategory;
-}
-
-IconData _categoryIcon(String name) {
-  final value = name.toLowerCase();
-  if (value.contains('admission')) {
-    return Icons.how_to_reg_rounded;
-  }
-  if (value.contains('academic')) {
-    return Icons.school_rounded;
-  }
-  if (value.contains('record')) {
-    return Icons.folder_copy_rounded;
-  }
-  if (value.contains('scholarship') || value.contains('financial')) {
-    return Icons.payments_rounded;
-  }
-  if (value.contains('program') || value.contains('curricular')) {
-    return Icons.account_balance_rounded;
-  }
-  if (value.contains('service')) {
-    return Icons.support_agent_rounded;
-  }
-  if (value.contains('administrative')) {
-    return Icons.groups_rounded;
-  }
-  if (value.contains('technical')) {
-    return Icons.computer_rounded;
-  }
-  if (value.contains('requirement') || value.contains('form')) {
-    return Icons.assignment_rounded;
-  }
-  return Icons.menu_book_rounded;
 }
 
 int _categorySortKey(String name) {

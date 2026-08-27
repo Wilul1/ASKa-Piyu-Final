@@ -1574,3 +1574,72 @@ def test_diagnostic_report_summarizes_units_and_samples():
     form = next(unit for unit in doc.units if unit.metadata["content_type"] == "form_template")
     assert "Required Fields:" in form.content
     assert "________________" not in form.content
+
+
+def test_lettered_faculty_manual_sections_split_as_sibling_articles():
+    page_texts = [
+        """
+        A. Faculty Official Time
+        All faculty shall observe strictly their official time and render forty hours a week.
+        B. Faculty Attendance and Absences
+        1. Faculty member shall hold classes on time in his/her designated room assignments.
+        2. Faculty member shall observe official time.
+        3. Faculty member shall not be allowed to dismiss his/her classes earlier than the official time.
+        4. Substitution of a duly qualified faculty for another teacher shall be done only by the Dean/Associate Dean of the College in case of exigency. C. Faculty I.D. and Uniform
+        1. Faculty is required to wear the University Identification Card at all times. The identification card shall not be transferable.
+        2. Faculty shall wear the prescribed uniform of the university. D. Teaching Load Assignment
+        1. The Dean / Associate Dean of the College are responsible in the preparation and assignment of teaching loads and approved through channels.
+        2. Teaching assignments shall be in line with the faculty's field of specialization.
+        """
+    ]
+
+    doc = build_handbook_policy_document(
+        raw_text=page_texts[0],
+        page_texts=page_texts,
+        source_title="LSPU Faculty Manual 2020",
+    )
+
+    by_title = {unit.title: unit for unit in doc.units}
+    assert "A. Faculty Official Time" in by_title
+    assert "B. Faculty Attendance and Absences" in by_title
+    assert "C. Faculty I.D. and Uniform" in by_title
+    assert "D. Teaching Load Assignment" in by_title
+
+    attendance = by_title["B. Faculty Attendance and Absences"]
+    identity = by_title["C. Faculty I.D. and Uniform"]
+    teaching_load = by_title["D. Teaching Load Assignment"]
+
+    assert "Identification Card" not in attendance.content
+    assert "Teaching Load Assignment" not in attendance.content
+    assert "Identification Card" in identity.content
+    assert "prescribed uniform" in identity.content
+    assert "teaching loads" in teaching_load.content
+    assert attendance.metadata["chapter"] != "B. Faculty Attendance And Absences"
+    assert teaching_load.metadata["article"] == "D. Teaching Load Assignment"
+    assert identity.metadata["article"] == "C. Faculty I.D. and Uniform"
+
+
+def test_lettered_activity_lists_stay_inside_parent_unit():
+    page_texts = [
+        """
+        Section 9 Vacation service credits of teachers
+        Teacher's vacation service credits refer to the leave credits earned for services rendered during summer.
+        The activities for which service credits may be granted are enumerated below.
+        A. Service during registration and election days;
+        B. Service for calamity assistance and rehabilitation when schools are used as evaluation center;
+        C. Attendance in in-service training courses/seminars during summers and vacation/holidays;
+        """
+    ]
+
+    doc = build_handbook_policy_document(
+        raw_text=page_texts[0],
+        page_texts=page_texts,
+        source_title="LSPU Faculty Manual 2020",
+    )
+
+    titles = [unit.title for unit in doc.units]
+    assert "A. Service during registration and election days" not in titles
+    assert "C. Attendance in in-service training courses/seminars during summers and vacation/holidays" not in titles
+    parent = next(unit for unit in doc.units if "Vacation service credits" in unit.title)
+    assert "Service during registration and election days" in parent.content
+    assert "Attendance in in-service training" in parent.content

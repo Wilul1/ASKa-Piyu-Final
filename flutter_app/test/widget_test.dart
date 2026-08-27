@@ -156,7 +156,7 @@ AuthUser _user(String role) {
     role: role,
     officeId: role == 'office' ? 'office-1' : null,
     officeName: role == 'office' ? 'ICT Office' : null,
-    studentId: role == 'student' ? '2026-0001' : null,
+    emailVerified: true,
     createdAt: null,
     updatedAt: null,
   );

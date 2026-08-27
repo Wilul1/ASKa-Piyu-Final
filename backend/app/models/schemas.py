@@ -240,7 +240,7 @@ class QAChatMessage(BaseModel):
 
 
 class AskQuestionRequest(BaseModel):
-    question: str = Field(..., min_length=3, max_length=2000)
+    question: str = Field(..., min_length=1, max_length=2000)
     history: list[QAChatMessage] = Field(default_factory=list, max_length=12)
 
 
@@ -267,7 +267,7 @@ class AskQuestionResponse(BaseModel):
 
 
 class QAAskRequest(BaseModel):
-    question: str = Field(..., min_length=3, max_length=2000)
+    question: str = Field(..., min_length=1, max_length=2000)
     debug: bool = False
     # Recent turns only — oldest first. Backend keeps at most ~8 messages.
     history: list[QAChatMessage] = Field(default_factory=list, max_length=12)
@@ -278,6 +278,7 @@ class QASourceSchema(BaseModel):
     path: str
     page: int | None = None
     page_range: str | None = None
+    page_end: int | None = None
     matching_sections: int | None = None
     # Level-2 citation grounding
     citation_id: str | None = None
@@ -299,6 +300,8 @@ class QACitationSchema(BaseModel):
     source_filename: str | None = None
     source_section: str | None = None
     page_number: int | None = None
+    page_end: int | None = None
+    page_range: str | None = None
     source_excerpt: str | None = None
     source_view_url: str | None = None
     source_page_url: str | None = None
@@ -447,6 +450,7 @@ class TicketMessageSchema(BaseModel):
     sender_name: str
     message: str
     created_at: str
+    is_internal: bool = False
 
 
 class TicketCreatedBySchema(BaseModel):
@@ -499,7 +503,10 @@ class ConvertTicketToArticleRequest(BaseModel):
     title: str | None = Field(default=None, min_length=3, max_length=240)
     content: str | None = Field(default=None, min_length=20, max_length=20000)
     summary: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, min_length=2, max_length=120)
     audience: KbAudience | None = None
+    # When true, office/admin publish + Chroma-index in the same convert step.
+    publish: bool = False
 
 
 class TicketKbArticleSchema(BaseModel):
@@ -520,6 +527,14 @@ class TicketKbArticleSchema(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     published_at: str | None = None
+
+
+class TicketKbDuplicateCheckResponse(BaseModel):
+    has_duplicate: bool
+    title: str | None = None
+    article_id: str | None = None
+    slug: str | None = None
+    message: str | None = None
 
 
 class CreateTicketRequest(BaseModel):
@@ -552,6 +567,8 @@ class UpdateTicketRequest(BaseModel):
 
 class AddTicketReplyRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
+    # Staff-only notes; never shown to student/faculty requesters.
+    is_internal: bool = False
 
 
 class TicketListResponse(BaseModel):
@@ -606,10 +623,19 @@ class UserSchema(BaseModel):
     role: UserRole
     office_id: str | None = None
     office_name: str | None = None
-    student_id: str | None = None
     is_active: bool = True
+    email_verified: bool = True
     created_at: str
     updated_at: str
+
+
+class VerifyEmailRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=16)
+
+
+class ResendVerificationResponse(BaseModel):
+    sent: bool
+    message: str
 
 
 def _validate_strong_password(value: str) -> str:
@@ -628,7 +654,6 @@ class SignupRequest(BaseModel):
     password: str = Field(..., min_length=10, max_length=256)
     full_name: str = Field(..., min_length=1, max_length=255)
     role: UserRole = "student"
-    student_id: str | None = Field(default=None, max_length=80)
     invite_code: str | None = Field(default=None, max_length=128)
 
     @field_validator("email")
@@ -643,14 +668,6 @@ class SignupRequest(BaseModel):
     @classmethod
     def normalize_full_name(cls, value: str) -> str:
         return " ".join(value.split())
-
-    @field_validator("student_id")
-    @classmethod
-    def normalize_student_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        student_id = value.strip()
-        return student_id or None
 
     @field_validator("password")
     @classmethod
@@ -756,6 +773,45 @@ class AuthResponse(BaseModel):
 
 class UserListResponse(BaseModel):
     items: list[UserSchema]
+    total: int
+
+
+class AbuseRelatedUserSchema(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    role: str
+    is_active: bool = True
+
+
+class AbuseFlagSchema(BaseModel):
+    kind: str
+    ip_address: str
+    count: int
+    window_hours: int
+    reason: str
+    latest_at: str
+    related_users: list[AbuseRelatedUserSchema] = []
+    event_type: str
+
+
+class AbuseFlagListResponse(BaseModel):
+    items: list[AbuseFlagSchema]
+    total: int
+
+
+class AuthEventSchema(BaseModel):
+    id: str
+    event_type: str
+    email: str | None = None
+    user_id: str | None = None
+    ip_address: str
+    user_agent: str | None = None
+    created_at: str
+
+
+class AuthEventListResponse(BaseModel):
+    items: list[AuthEventSchema]
     total: int
 
 

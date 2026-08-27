@@ -1319,11 +1319,15 @@ def _build_saved_article_fields(
         article_type=str(candidate.get("article_type") or candidate.get("document_type") or "information"),
     )
     resolved_category = category or (
-        classify_chunk(_candidate_classification_text({
-            "title": title,
-            "summary": summary,
-            "content": raw_content,
-        }), title=title).category or "General Information"
+        classify_chunk(
+            _candidate_classification_text({
+                "title": title,
+                "summary": summary,
+                "content": raw_content,
+            }),
+            title=title,
+            allow_llm=False,
+        ).category or "General Information"
     )
     preferred = str(candidate.get("_preferred_category") or candidate.get("suggested_category") or "").strip()
     if preferred:
@@ -2777,7 +2781,10 @@ def generate_candidates_from_preview(
             classification = classify_chunk(
                 _candidate_classification_text(candidate),
                 title=candidate.get("title"),
+                allow_llm=False,
             )
+            if classification.category and not candidate.get("_preferred_category"):
+                candidate["_preferred_category"] = classification.category
             confidence = float(classification.confidence or 0.0)
             quality, reasons = _score_candidate(candidate, seed, confidence)
             if _is_unpublishable_title(resolved_title):
@@ -3100,6 +3107,7 @@ def generate_candidates_from_preview(
                 classify_chunk(
                     _candidate_classification_text(cand),
                     title=title,
+                    allow_llm=False,
                 ).category
                 or "General Information"
             )

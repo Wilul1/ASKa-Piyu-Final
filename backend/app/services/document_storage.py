@@ -81,11 +81,29 @@ def source_view_url(document_id: str, page_number: int | None = None) -> str:
     return url
 
 
-def source_page_url(document_id: str, page_number: int | None = None) -> str | None:
-    """URL that returns only the cited page as a single-page PDF."""
+def source_page_url(
+    document_id: str,
+    page_number: int | None = None,
+    *,
+    page_end: int | None = None,
+    section: str | None = None,
+) -> str | None:
+    """URL that returns the cited page range as a focused PDF clip."""
     if page_number is None or int(page_number) <= 0:
         return None
-    return f"/documents/{document_id}/source/page/{int(page_number)}"
+    start = int(page_number)
+    url = f"/documents/{document_id}/source/page/{start}"
+    params: list[str] = []
+    if page_end is not None and int(page_end) > start:
+        params.append(f"end={int(page_end)}")
+    cleaned_section = (section or "").strip()
+    if cleaned_section:
+        from urllib.parse import quote
+
+        params.append(f"section={quote(cleaned_section, safe='')}")
+    if params:
+        url = f"{url}?{'&'.join(params)}"
+    return url
 
 
 def resolve_stored_path(stored_file_path: str) -> Path:

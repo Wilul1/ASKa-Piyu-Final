@@ -17,6 +17,12 @@ class Settings(BaseSettings):
 
     # --- Document extraction (admin flow only) ---
     min_chars_per_page_for_digital_pdf: int = 40
+    # When most pages already have a text layer, skip OCR on sparse cover/image
+    # pages so large handbooks finish before the reverse-proxy timeout.
+    pdf_skip_ocr_when_digital_page_ratio: float = 0.7
+    pdf_skip_ocr_min_digital_chars: int = 2000
+    # Hard cap on OCR pages per document (CPU OCR is slow on the VPS).
+    pdf_ocr_max_pages: int = 25
     pdf_ocr_zoom: float = 2.0
     easyocr_languages: list[str] = ["en"]
     easyocr_gpu: bool = False
@@ -46,6 +52,7 @@ class Settings(BaseSettings):
     # Durable storage for original uploaded PDFs (citation / source viewer)
     documents_persist_dir: str = "./data/documents"
     ticket_attachments_dir: str = "./data/ticket_attachments"
+    kb_media_dir: str = "./data/kb_media"
     auth_secret_key: str | None = None
     # Shorter default reduces stolen-token window (no server-side revoke list).
     auth_token_ttl_minutes: int = 60 * 8
@@ -102,6 +109,14 @@ class Settings(BaseSettings):
     signup_allowed_email_domains: str | None = None
     # When set, public signup requires a matching invite_code in the request body.
     signup_invite_code: str | None = None
+
+    # --- Email verification (Resend) ---
+    # Sending API key from https://resend.com/api-keys. None = verification
+    # emails are skipped (signup still succeeds; account stays unverified).
+    resend_api_key: str | None = None
+    resend_from_email: str = "ASKa-Piyu <onboarding@resend.dev>"
+    email_verification_code_ttl_minutes: int = 30
+    email_verification_resend_cooldown_seconds: int = 60
 
 
 settings = Settings()

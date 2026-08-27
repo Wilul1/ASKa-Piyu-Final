@@ -2,6 +2,7 @@ from app.utils.console_encoding import configure_console_encoding
 
 configure_console_encoding()
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -143,9 +144,25 @@ async def validate_startup_configuration() -> None:
             )
 
 
+def _warm_embedding_model() -> None:
+    """Load the local embedding model in the background so the first /qa/ask
+    is not blocked for 20–60s on a cold sentence-transformers download/load.
+    Failures are logged only — chat can still fall back later if needed.
+    """
+    try:
+        from app.services.embeddings import get_embedding_function
+
+        get_embedding_function()(["query: warmup"])
+        logger.info("Embedding model warm-up complete")
+    except Exception:
+        logger.exception("Embedding model warm-up failed")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await validate_startup_configuration()
+    # Do not block startup/healthchecks on model load.
+    asyncio.create_task(asyncio.to_thread(_warm_embedding_model))
     yield
 
 

@@ -20,3 +20,22 @@ Future<void> downloadArticlePreviewTxt({
   );
   return downloadTextFile(filename: filename, text: text);
 }
+
+Future<void> downloadAllArticlePreviewsTxt({
+  required List<ArticlePreviewExportEntry> entries,
+  String? fallbackSourceFilename,
+  String? scopeLabel,
+  String? bucketLabel,
+}) {
+  final text = buildAllArticlePreviewsTxt(
+    entries: entries,
+    sourceFilename: fallbackSourceFilename,
+    scopeLabel: scopeLabel,
+  );
+  final filename = safeAllPreviewsFilename(
+    sourceFilename: fallbackSourceFilename,
+    bucketLabel: bucketLabel ?? scopeLabel,
+    count: entries.length,
+  );
+  return downloadTextFile(filename: filename, text: text);
+}

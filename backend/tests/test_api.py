@@ -835,7 +835,7 @@ def test_qa_ask_validate_id_does_not_crash_on_citation_fallback_label(mock_store
     class _Store:
         chunk_count = 1
 
-        def search(self, query, *, top_k=None, raw_k=None):
+        def search(self, query, *, top_k=None, raw_k=None, user_role=None):
             return [chunk]
 
     mock_store.return_value = _Store()

@@ -66,6 +66,16 @@ class User(Base):
     student_id: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     credentials_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Public student signup starts unverified; admin-created faculty/office/admin
+    # accounts are set True at creation (an admin already vouched for them).
+    # Existing rows are backfilled True by the additive schema upgrade so
+    # accounts created before this feature shipped are grandfathered in.
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # SHA-256 hex digest of the current one-time code; never store the raw code.
+    email_verification_code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    email_verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Drives the resend cooldown (see email_verification_resend_cooldown_seconds).
+    email_verification_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -147,6 +157,7 @@ class TicketReply(Base):
     sender_role: Mapped[str] = mapped_column(String(20), nullable=False)
     sender_name: Mapped[str] = mapped_column(String(255), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
+    is_internal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     ticket: Mapped[Ticket] = relationship(back_populates="replies")
@@ -197,6 +208,26 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True, nullable=False)
+
+
+class AuthEvent(Base):
+    """Login/signup audit trail used for abuse detection (IP velocity)."""
+
+    __tablename__ = "auth_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('signup', 'login_ok', 'login_fail')",
+            name="ck_auth_events_event_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_type: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), index=True, nullable=True)
+    ip_address: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True, nullable=False)
 
 

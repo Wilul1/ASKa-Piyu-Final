@@ -69,6 +69,52 @@ class AuthService {
     return AuthResponse.fromJson(data);
   }
 
+  Future<AuthResponse> verifyEmail({
+    required String code,
+    required String accessToken,
+  }) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/auth/verify-email',
+      headers: {'Authorization': 'Bearer $accessToken'},
+      jsonBody: {'code': code.trim()},
+    );
+    final data = result.jsonObject;
+    if (!result.ok) {
+      throw AuthRequestException(
+        ApiClient.extractError(data, fallback: 'Could not verify email.'),
+        statusCode: result.statusCode,
+        isUnauthorized: result.statusCode == 401 || result.statusCode == 403,
+      );
+    }
+    return AuthResponse.fromJson(data);
+  }
+
+  Future<({bool sent, String message})> resendVerification({
+    required String accessToken,
+  }) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/auth/resend-verification',
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    final data = result.jsonObject;
+    if (!result.ok) {
+      throw AuthRequestException(
+        ApiClient.extractError(
+          data,
+          fallback: 'Could not resend the verification code.',
+        ),
+        statusCode: result.statusCode,
+        isUnauthorized: result.statusCode == 401 || result.statusCode == 403,
+      );
+    }
+    return (
+      sent: data['sent'] == true,
+      message: (data['message'] ?? 'Check your email for a new code.').toString(),
+    );
+  }
+
   Future<AuthResponse> changePassword(
     ChangePasswordRequest payload, {
     required String accessToken,

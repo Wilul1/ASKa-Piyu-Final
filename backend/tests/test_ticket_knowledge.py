@@ -15,6 +15,7 @@ from app.services.article_rag_indexer import (
     FaqIndexWriteError,
     RagIndexOrphanError,
     cleanup_failed_faq_index,
+    chroma_where_for_audience,
     filter_chunks_for_audience,
     filter_unpublished_faq_chunks,
     index_published_article,
@@ -156,6 +157,144 @@ def test_convert_ticket_creates_draft_faq(session: Session):
     assert article.published is False
 
 
+def test_convert_blocks_duplicate_of_published_pdf_article(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    now = datetime.now(timezone.utc)
+    session.add(
+        PublishedArticle(
+            id="art-id-validation",
+            title="ID Validation",
+            slug="id-validation",
+            category="Student Services",
+            summary="Citizen Charter service",
+            content="## Service\n\nID Validation steps from the Citizen Charter.",
+            office="Office of Student Affairs",
+            source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+            audience="student",
+            kb_origin="document",
+            published=True,
+            published_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ticket = Ticket(
+        id="TKT-KB-DUP",
+        user_id=student.id,
+        original_question="ID Validation",
+        description="I already tried OSAS and still need help with my ID.",
+        category="Student Services",
+        assigned_office_id=office.id,
+        assigned_office=office.name,
+        priority="Medium",
+        status="Resolved",
+        kb_conversion_status="none",
+        created_at=now,
+        updated_at=now,
+        resolved_at=now,
+    )
+    session.add(ticket)
+    session.flush()
+    session.add(
+        TicketReply(
+            ticket_id=ticket.id,
+            sender_id=staff.id,
+            sender_role=staff.role,
+            sender_name=staff.full_name,
+            message=(
+                "Bring your Certificate of Registration and a valid government ID. "
+                "Validation is processed within one working day at OSAS."
+            ),
+            created_at=now,
+        )
+    )
+    session.commit()
+
+    with pytest.raises(TicketKnowledgeError, match="already covers this topic"):
+        convert_ticket_to_draft_article(
+            session,
+            ticket_id=ticket.id,
+            actor=staff,
+            title="ID Validation",
+            publish=True,
+        )
+
+    from app.services.ticket_knowledge import find_duplicate_published_topic
+
+    match = find_duplicate_published_topic(session, title="ID Validation")
+    assert match is not None
+    assert match.title == "ID Validation"
+    assert find_duplicate_published_topic(session, title="Completely different topic") is None
+
+
+def test_convert_allows_novel_faculty_manual_topic(session: Session, monkeypatch):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    now = datetime.now(timezone.utc)
+    ticket = Ticket(
+        id="TKT-KB-FAC",
+        user_id=student.id,
+        original_question="How is teaching load computed for full-time faculty?",
+        description=(
+            "I need clarification from the Faculty Manual about regular teaching load units."
+        ),
+        category="Faculty Policies",
+        assigned_office_id=office.id,
+        assigned_office=office.name,
+        priority="Medium",
+        status="Resolved",
+        kb_conversion_status="none",
+        created_at=now,
+        updated_at=now,
+        resolved_at=now,
+    )
+    session.add(ticket)
+    session.flush()
+    session.add(
+        TicketReply(
+            ticket_id=ticket.id,
+            sender_id=staff.id,
+            sender_role=staff.role,
+            sender_name=staff.full_name,
+            message=(
+                "Per the Faculty Manual, full-time faculty generally carry eighteen units "
+                "per semester unless an overload is approved by the campus director."
+            ),
+            created_at=now,
+        )
+    )
+    session.commit()
+
+    def _fake_index(session_arg, article):
+        article.rag_indexed = True
+        article.rag_document_id = f"faq-{article.id}"
+        article.chunk_count = 1
+        session_arg.add(article)
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.index_published_article",
+        _fake_index,
+    )
+
+    payload = convert_ticket_to_draft_article(
+        session,
+        ticket_id=ticket.id,
+        actor=staff,
+        publish=True,
+    )
+    assert payload["published"] is True
+    assert payload["kb_origin"] == "ticket_resolution"
+    assert "teaching load" in (payload["title"] or "").casefold()
+    article = session.get(PublishedArticle, payload["article_id"])
+    assert article is not None
+    assert article.published is True
+    assert article.rag_indexed is True
+
+
 def test_convert_requires_staff_reply(session: Session):
     office = _office(session)
     student = _user(session, role="student")
@@ -219,14 +358,57 @@ def test_audience_filter_keeps_legacy_and_role_chunks():
     assert legacy_chunk in student_view
 
     faculty_view = filter_chunks_for_audience(chunks, "faculty")
-    # Faculty can read student handbook content plus faculty-only.
-    assert student_chunk in faculty_view
+    # Faculty KB/RAG is faculty-targeted (+ shared both), not student-only.
+    assert student_chunk not in faculty_view
     assert faculty_chunk in faculty_view
-    assert legacy_chunk in faculty_view
+    assert legacy_chunk not in faculty_view
 
     admin_view = filter_chunks_for_audience(chunks, "admin")
     assert len(admin_view) == 3
+
+    assert chroma_where_for_audience("student") is None
+    assert chroma_where_for_audience("admin") is None
+    assert chroma_where_for_audience("faculty") == {"audience": {"$in": ["faculty", "both"]}}
     assert legacy_chunk in admin_view
+
+
+def test_office_can_convert_and_publish_in_one_step(session: Session, monkeypatch):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _resolved_ticket(session, office, student, staff)
+
+    indexed: list[str] = []
+
+    def _fake_index(db, article):
+        indexed.append(article.id)
+        article.rag_indexed = True
+        article.rag_document_id = f"faq:{article.id}"
+        article.chunk_count = 1
+        db.add(article)
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.index_published_article",
+        _fake_index,
+    )
+
+    payload = convert_ticket_to_draft_article(
+        session,
+        ticket_id=ticket.id,
+        actor=staff,
+        publish=True,
+    )
+    assert payload["published"] is True
+    assert payload["kb_conversion_status"] == "published"
+    assert indexed == [payload["article_id"]]
+
+    article = session.get(PublishedArticle, payload["article_id"])
+    assert article is not None
+    assert article.published is True
+    assert article.rag_indexed is True
+    session.refresh(ticket)
+    assert ticket.kb_conversion_status == "published"
 
 
 def test_publish_indexes_and_unpublish_removes_chroma(session: Session, monkeypatch):

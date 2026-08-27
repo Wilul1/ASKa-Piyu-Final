@@ -4,6 +4,7 @@ backend/.env
 backend/.env.production
 backend/.env.development.bak
 deploy/BOOTSTRAP_CREDENTIALS.txt
+deploy/SANTA_CRUZ_OFFICE_CREDENTIALS.txt
 deploy/BACKUP_PASSPHRASE.txt
 aska_piyu_demo.sql
 *.sql.bak
@@ -28,6 +29,10 @@ deploy/backups/
 # Certbot ACME webroot challenge files (keep directory)
 deploy/certbot-www/*
 !deploy/certbot-www/.gitkeep
+
+# Flutter web release uploaded to the VPS (keep directory)
+deploy/web/*
+!deploy/web/.gitkeep
 
 # Python
 **/__pycache__/
@@ -58,5 +63,9 @@ backend/.EasyOCR/
 .agents/
 .idea/
 .vscode/
+.cursor/
 *.swp
 *~
+
+# Local draft docs / previews (not part of the product)
+docs/

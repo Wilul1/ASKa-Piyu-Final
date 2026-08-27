@@ -6,12 +6,18 @@ from app.services.chroma_store import RetrievedChunk
 from app.services.qa.groq_answer_service import GroqAnswerError
 from app.services.qa.question_answering import (
     PROGRAM_COLLECTION,
+    FACULTY_SIGNIN_ANSWER,
+    FINAL_CONTEXT_CHUNKS,
+    GREETING_ANSWER,
+    GREETING_QUESTION,
     OUT_OF_SCOPE_ANSWER,
+    RAW_RETRIEVAL_CANDIDATES,
     _confidence_for,
     answer_qa_question,
     detect_collection_intent,
     detect_broad_query,
     format_retrieved_context,
+    is_greeting_query,
 )
 
 
@@ -51,9 +57,19 @@ class FakeStore:
     def __init__(self, chunks: list[RetrievedChunk]) -> None:
         self.chunks = chunks
         self.calls = []
+        self.chunk_count = max(len(chunks), 1)
 
-    def search(self, question: str, *, top_k: int | None = None, raw_k: int | None = None):
-        self.calls.append({"question": question, "top_k": top_k, "raw_k": raw_k})
+    def search(
+        self,
+        question: str,
+        *,
+        top_k: int | None = None,
+        raw_k: int | None = None,
+        user_role: str | None = None,
+    ):
+        self.calls.append(
+            {"question": question, "top_k": top_k, "raw_k": raw_k, "user_role": user_role}
+        )
         return self.chunks
 
     def list_chunks(self):
@@ -73,7 +89,7 @@ class FakeStore:
         return items
 
 
-def run_question(question: str, chunks: list[RetrievedChunk]):
+def run_question(question: str, chunks: list[RetrievedChunk], *, user_role: str | None = None):
     store = FakeStore(chunks)
     with (
         patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
@@ -82,8 +98,76 @@ def run_question(question: str, chunks: list[RetrievedChunk]):
             return_value="Follow the cited policy in the retrieved context.",
         ) as mock_generate,
     ):
-        result = answer_qa_question(question)
+        result = answer_qa_question(question, user_role=user_role)
     return result, store, mock_generate
+
+
+def test_faculty_manual_question_as_guest_asks_to_sign_in():
+    result, store, mock_generate = run_question(
+        "How many instruction hours does a regular faculty member have in the weekly load?",
+        [chunk("Course Load", "Graduate studies maximum load is nine units per semester.")],
+    )
+    assert result.answer == FACULTY_SIGNIN_ANSWER
+    assert result.answer == OUT_OF_SCOPE_ANSWER
+    assert "faculty manual" not in result.answer.casefold()
+    assert "sign in" not in result.answer.casefold()
+    assert store.calls == []
+    mock_generate.assert_not_called()
+
+
+def test_dean_instruction_load_as_guest_asks_to_sign_in():
+    result, store, mock_generate = run_question(
+        "If I am designated as dean, how does my weekly instruction load change?",
+        [chunk("Course Load", "A student's maximum load is nine (9) units per semester.")],
+    )
+    assert result.answer == FACULTY_SIGNIN_ANSWER
+    assert store.calls == []
+    mock_generate.assert_not_called()
+
+
+def test_dismiss_class_early_as_student_asks_to_sign_in_for_faculty_manual():
+    result, store, mock_generate = run_question(
+        "Can I dismiss my class earlier than the official time?",
+        [chunk("Attendance Policy", "Students should submit an excuse slip.")],
+    )
+    assert result.answer == FACULTY_SIGNIN_ANSWER
+    assert store.calls == []
+    mock_generate.assert_not_called()
+
+
+def test_dismiss_class_early_as_faculty_uses_faculty_manual_context():
+    faculty_rule = RetrievedChunk(
+        document_id="faculty-attendance",
+        title="LSPU Faculty Manual 2020",
+        source_filename="LSPU Faculty Manual 2020.pdf",
+        chunk_index=0,
+        text=(
+            "Faculty member shall not be allowed to dismiss his/her classes "
+            "earlier than the official time."
+        ),
+        relevance_score=0.81,
+        original_score=0.73,
+        reranked_score=0.81,
+        rerank_reasons=["boost_faculty_dismiss_class_rule"],
+        metadata={
+            "chapter": "University Policies",
+            "article": "Faculty Attendance and Absences",
+            "section": "Faculty Attendance and Absences",
+            "page_start": 10,
+            "audience": "faculty",
+            "document_type": "faculty_manual",
+            "source_filename": "LSPU Faculty Manual 2020.pdf",
+        },
+    )
+    result, store, mock_generate = run_question(
+        "Can I dismiss my class earlier than the official time?",
+        [faculty_rule],
+        user_role="faculty",
+    )
+    assert result.answer != FACULTY_SIGNIN_ANSWER
+    assert store.calls
+    assert store.calls[0]["user_role"] == "faculty"
+    assert "not be allowed to dismiss" in mock_generate.call_args.kwargs["context"]
 
 
 def test_qa_absence_due_to_illness_uses_attendance_context():
@@ -97,8 +181,8 @@ def test_qa_absence_due_to_illness_uses_attendance_context():
         ],
     )
 
-    assert store.calls[0]["top_k"] == 7
-    assert store.calls[0]["raw_k"] == 18
+    assert store.calls[0]["top_k"] == FINAL_CONTEXT_CHUNKS
+    assert store.calls[0]["raw_k"] == RAW_RETRIEVAL_CANDIDATES
     assert "Title: Attendance Policy" in mock_generate.call_args.kwargs["context"]
     assert result.sources[0]["title"] == "Attendance Policy"
     assert result.confidence in {"high", "medium"}
@@ -848,8 +932,8 @@ def test_specific_program_questions_use_normal_qa_retrieval():
         ],
     )
 
-    assert store.calls[0]["top_k"] == 7
-    assert store.calls[0]["raw_k"] == 18
+    assert store.calls[0]["top_k"] == FINAL_CONTEXT_CHUNKS
+    assert store.calls[0]["raw_k"] == RAW_RETRIEVAL_CANDIDATES
     assert mock_generate.call_args.kwargs.get("broad_mode") is False
     assert result.collection_mode is False
 
@@ -1036,8 +1120,8 @@ def test_specific_queries_do_not_trigger_broad_mode(question: str):
         ],
     )
 
-    assert store.calls[0]["top_k"] == 7
-    assert store.calls[0]["raw_k"] == 18
+    assert store.calls[0]["top_k"] == FINAL_CONTEXT_CHUNKS
+    assert store.calls[0]["raw_k"] == RAW_RETRIEVAL_CANDIDATES
     assert mock_generate.call_args.kwargs.get("broad_mode") is False
     assert result.broad_query is False
 
@@ -1811,4 +1895,35 @@ def test_diploma_fee_recovery_does_not_override_correct_groq_answer_with_differe
         )
 
     assert result.answer.strip() == correct_llm_answer
+
+
+@pytest.mark.parametrize(
+    "question",
+    ("hi", "Hi!", "hello", "hey", "good morning", "thanks", "thank you", "how are you"),
+)
+def test_greeting_query_detection(question: str):
+    assert is_greeting_query(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    (
+        "hi how do i enroll",
+        "what is the haircut policy",
+        "hello where is the registrar",
+    ),
+)
+def test_real_questions_are_not_greetings(question: str):
+    assert not is_greeting_query(question)
+
+
+def test_greeting_skips_retrieval_and_sources():
+    store = type("Store", (), {"chunk_count": 99, "search": lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not search"))})()
+    with patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store):
+        result = answer_qa_question("hi")
+    assert result.detected_intent == GREETING_QUESTION
+    assert result.answer == GREETING_ANSWER
+    assert result.sources == []
+    assert result.retrieved_chunks == []
+    assert result.confidence == "high"
 

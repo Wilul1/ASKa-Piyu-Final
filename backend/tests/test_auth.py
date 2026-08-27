@@ -32,6 +32,11 @@ def auth_client(monkeypatch) -> Generator[TestClient, None, None]:
 
     monkeypatch.setattr("app.services.auth.settings.auth_secret_key", "test-auth-secret")
     monkeypatch.setattr("app.services.auth.settings.auth_token_ttl_minutes", 60)
+    # Local .env may set campus gates; keep unit tests open unless a case
+    # explicitly re-enables invite/domain restrictions.
+    monkeypatch.setattr("app.routes.auth.settings.signup_invite_code", None)
+    monkeypatch.setattr("app.routes.auth.settings.signup_allowed_email_domains", None)
+    monkeypatch.setattr("app.routes.auth.settings.allow_public_signup", True)
     app.dependency_overrides[get_db_session] = override_get_db_session
 
     from app.services.auth_rate_limit import reset_auth_rate_limits
@@ -51,7 +56,6 @@ def signup_student(client: TestClient, email: str = "student@example.edu") -> di
             "email": email,
             "password": "correct horse battery staple1",
             "full_name": "Piyu Student",
-            "student_id": "2026-0001",
         },
     )
     assert response.status_code == 200
@@ -65,8 +69,23 @@ def test_successful_student_signup(auth_client):
     assert data["access_token"]
     assert data["user"]["email"] == "student@example.edu"
     assert data["user"]["role"] == "student"
+    assert data["user"]["email_verified"] is True
     assert "password" not in data["user"]
     assert "password_hash" not in data["user"]
+
+
+def test_resend_verification_when_already_verified(auth_client):
+    data = signup_student(auth_client, email="verify.me@gmail.com")
+    token = data["access_token"]
+    assert data["user"]["email_verified"] is True
+
+    resend = auth_client.post(
+        "/auth/resend-verification",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resend.status_code == 200
+    assert resend.json()["sent"] is False
+    assert "already verified" in resend.json()["message"].lower()
 
 
 def test_duplicate_email_rejected(auth_client):
@@ -179,7 +198,118 @@ def test_public_signup_cannot_create_faculty(auth_client):
     assert "student accounts only" in response.text
 
 
-def test_admin_can_create_faculty_account(auth_client):
+def test_office_can_create_faculty_account(auth_client):
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        from app.models.db_models import Office
+
+        office = Office(name="Test Office", service_category="General")
+        session.add(office)
+        session.flush()
+        staff = User(
+            email="office@example.edu",
+            password_hash=hash_password("office-password-1"),
+            full_name="Office Staff",
+            role="office",
+            office_id=office.id,
+        )
+        session.add(staff)
+        session.commit()
+        session.refresh(staff)
+        token = create_access_token(staff)
+        office_id = office.id
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass
+
+    response = auth_client.post(
+        "/auth/faculty-accounts",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "email": "faculty@example.edu",
+            "password": "faculty12345",
+            "full_name": "Faculty Member",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "faculty"
+    assert data["email"] == "faculty@example.edu"
+    assert data["office_id"] == office_id
+
+
+def test_office_can_create_office_staff_for_own_office(auth_client):
+    session_generator = app.dependency_overrides[get_db_session]()
+    session = next(session_generator)
+    try:
+        from app.models.db_models import Office
+
+        office = Office(name="OSA Office", service_category="Student Affairs")
+        other = Office(name="Other Office", service_category="Other")
+        session.add_all([office, other])
+        session.flush()
+        lead = User(
+            email="osa.lead@example.edu",
+            password_hash=hash_password("office-password-1"),
+            full_name="OSA Lead",
+            role="office",
+            office_id=office.id,
+        )
+        session.add(lead)
+        session.commit()
+        session.refresh(lead)
+        token = create_access_token(lead)
+        office_id = office.id
+        other_id = other.id
+    finally:
+        try:
+            next(session_generator)
+        except StopIteration:
+            pass
+
+    # Client cannot assign staff to a different office — always own office_id.
+    response = auth_client.post(
+        "/auth/office-accounts",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "email": "osa.clerk@example.edu",
+            "password": "office12345",
+            "full_name": "OSA Clerk",
+            "office_id": other_id,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "office"
+    assert data["email"] == "osa.clerk@example.edu"
+    assert data["office_id"] == office_id
+    assert data["office_name"] == "OSA Office"
+
+    listed = auth_client.get(
+        "/auth/users",
+        params={"role": "office"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listed.status_code == 200
+    emails = {item["email"] for item in listed.json()["items"]}
+    assert "osa.lead@example.edu" in emails
+    assert "osa.clerk@example.edu" in emails
+
+    login = auth_client.post(
+        "/auth/login",
+        json={"email": "osa.clerk@example.edu", "password": "office12345"},
+    )
+    assert login.status_code == 200
+    body = login.json()
+    assert body["user"]["role"] == "office"
+    assert body["user"]["office_id"] == office_id
+    assert body["user"]["office_name"] == "OSA Office"
+
+
+def test_admin_cannot_create_faculty_account(auth_client):
     session_generator = app.dependency_overrides[get_db_session]()
     session = next(session_generator)
     try:
@@ -203,15 +333,12 @@ def test_admin_can_create_faculty_account(auth_client):
         "/auth/faculty-accounts",
         headers={"Authorization": f"Bearer {token}"},
         json={
-            "email": "faculty@example.edu",
+            "email": "faculty2@example.edu",
             "password": "faculty12345",
             "full_name": "Faculty Member",
         },
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["role"] == "faculty"
-    assert data["email"] == "faculty@example.edu"
+    assert response.status_code == 403
 
 
 def test_login_rate_limit_returns_429(auth_client, monkeypatch):

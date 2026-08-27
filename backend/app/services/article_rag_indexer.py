@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -45,6 +46,38 @@ def _strip_charter_source_footer(text: str) -> str:
     if _EMBEDDED_METADATA_MARKER in cleaned:
         cleaned = cleaned.split(_EMBEDDED_METADATA_MARKER, 1)[0]
     return _CHARTER_SOURCE_FOOTER_RE.sub("", cleaned).rstrip()
+
+
+def _policy_appendix_from_extracted_metadata(content: str, visible_body: str) -> str:
+    """Keep policy that the generator stored only in EXTRACTED METADATA JSON.
+
+    The debug JSON must not be embedded, but ``content_sections`` often holds
+    the only copy of a sibling rule (for example Change/Rectification of Grades
+    nested under Submission of Grades).
+    """
+    raw_content = str(content or "")
+    if _EMBEDDED_METADATA_MARKER not in raw_content:
+        return ""
+    raw_json = raw_content.split(_EMBEDDED_METADATA_MARKER, 1)[1].strip()
+    try:
+        payload = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return ""
+    visible = (visible_body or "").casefold()
+    parts: list[str] = []
+    for section in payload.get("content_sections") or []:
+        if not isinstance(section, dict):
+            continue
+        heading = str(section.get("heading") or "").strip()
+        body = str(section.get("body") or "").strip()
+        if not body:
+            continue
+        if body.casefold().startswith("this article explains"):
+            continue
+        if body.casefold() in visible:
+            continue
+        parts.append(f"{heading}\n{body}".strip() if heading else body)
+    return "\n\n".join(parts).strip()
 
 
 class RagIndexOrphanError(RuntimeError):
@@ -177,12 +210,15 @@ def stamp_chunks_with_audience(chunks: list, audience: str) -> list:
 
 
 def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
+    visible = _strip_charter_source_footer(article.content or "")
+    appendix = _policy_appendix_from_extracted_metadata(article.content or "", visible)
     body = "\n\n".join(
         part
         for part in (
             article.title or "",
             article.summary or "",
-            _strip_charter_source_footer(article.content or ""),
+            visible,
+            appendix,
         )
         if (part or "").strip()
     ).strip()
@@ -423,12 +459,25 @@ def _reindex_faq_rows(session: Session, rows: list[PublishedArticle]) -> dict[st
     }
 
 
+def chroma_where_for_audience(user_role: str | None) -> dict[str, object] | None:
+    """Chroma pre-filter so faculty queries are not crowded out by student handbook.
+
+    Students keep an unfiltered vector search: missing/legacy audience tags are
+    treated as student-visible in ``filter_chunks_for_audience``. Faculty-only
+    pre-filter is safe because Faculty Manual chunks are stamped ``faculty``.
+    """
+    role = (user_role or "student").strip().lower()
+    if role != "faculty":
+        return None
+    return {"audience": {"$in": ["faculty", "both"]}}
+
+
 def filter_chunks_for_audience(chunks: list, user_role: str | None) -> list:
     """Filter retrieved chunks by account role.
 
     Missing/legacy audience tags are treated as ``student`` (not faculty) so
     unre-ingested Faculty Manual chunks do not leak to students. Re-ingest with
-    audience stamps before launch. Faculty see student + faculty + both.
+    audience stamps before launch. Faculty see faculty + both only (not student-only).
     Office/admin see everything.
     """
     role = (user_role or "student").strip().lower()
@@ -436,7 +485,7 @@ def filter_chunks_for_audience(chunks: list, user_role: str | None) -> list:
         return list(chunks)
 
     if role == "faculty":
-        allowed = {"both", "student", "faculty"}
+        allowed = {"both", "faculty"}
     else:
         allowed = {"both", "student"}
 

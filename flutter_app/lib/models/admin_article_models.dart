@@ -169,6 +169,7 @@ class AdminArticle {
         'document_type': (metadata['document_type'] ?? documentType).toString(),
       'publish_status': publish,
       'needs_review': needsReview || metadata['needs_review'] == true,
+      'audience': _normalizeAudience(audience),
       if (plannerBucket != null && plannerBucket.trim().isNotEmpty)
         'planner_bucket': plannerBucket.trim(),
     };

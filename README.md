@@ -4,7 +4,6 @@ Campus knowledge-base chatbot and ticketing (Flutter + FastAPI + PostgreSQL + Ch
 
 - Local setup: [SETUP.md](SETUP.md)
 - Production deploy: [DEPLOY.md](DEPLOY.md)
-- Teammate quickstart: [TEAMMATE_QUICKSTART.md](TEAMMATE_QUICKSTART.md)
 
 ## Quick local start
 

@@ -22,6 +22,42 @@ def _cleanup_all():
     cleanup_all_published_articles()
 
 
+def test_generate_candidates_does_not_call_llm_classifier(monkeypatch):
+    """Faculty-manual-sized previews must not Groq-classify every unit."""
+    def _fail_llm(*_args, **_kwargs):
+        raise AssertionError("article generation must not call Groq classification")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_taxonomy._llm_classification",
+        _fail_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_taxonomy.settings.groq_api_key",
+        "test-key",
+    )
+    preview = {
+        "document_type": "handbook_policy",
+        "knowledge_units": [
+            {
+                "unit_index": i,
+                "title": f"Faculty Official Time {i+1}",
+                "content": (
+                    "All faculty shall observe official time, teaching load, "
+                    "and submit daily time records to HRMO. " * 4
+                ),
+                "content_type": "policy",
+                "hierarchy_path": "Faculty Official Time",
+                "word_count": 40,
+                "status": "OK",
+                "metadata": {"document_type": "handbook_policy"},
+            }
+            for i in range(8)
+        ],
+    }
+    result = generate_candidates_from_preview(preview, filename="faculty-manual.pdf")
+    assert int(result.get("total_detected") or 0) >= 1
+
+
 _RECOMMENDABLE_TITLES = (
     "Admission Requirements",
     "Grading System",

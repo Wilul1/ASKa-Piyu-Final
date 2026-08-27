@@ -5,7 +5,7 @@ class AuthUser {
   final String role;
   final String? officeId;
   final String? officeName;
-  final String? studentId;
+  final bool emailVerified;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -16,7 +16,7 @@ class AuthUser {
     required this.role,
     required this.officeId,
     required this.officeName,
-    required this.studentId,
+    required this.emailVerified,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -29,9 +29,24 @@ class AuthUser {
       role: (json['role'] ?? 'student').toString(),
       officeId: _nullableString(json['office_id']),
       officeName: _nullableString(json['office_name']),
-      studentId: _nullableString(json['student_id']),
+      // Missing field (older backends) = treat as verified so we don't lock people out.
+      emailVerified: json['email_verified'] != false,
       createdAt: _parseDate(json['created_at']),
       updatedAt: _parseDate(json['updated_at']),
+    );
+  }
+
+  AuthUser copyWith({bool? emailVerified}) {
+    return AuthUser(
+      id: id,
+      email: email,
+      fullName: fullName,
+      role: role,
+      officeId: officeId,
+      officeName: officeName,
+      emailVerified: emailVerified ?? this.emailVerified,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
     );
   }
 }
@@ -76,7 +91,6 @@ class LoginRequest {
 class SignupRequest {
   final String fullName;
   final String email;
-  final String? studentId;
   final String password;
   final String role;
   final String? inviteCode;
@@ -84,7 +98,6 @@ class SignupRequest {
   const SignupRequest({
     required this.fullName,
     required this.email,
-    required this.studentId,
     required this.password,
     this.role = 'student',
     this.inviteCode,
@@ -95,7 +108,6 @@ class SignupRequest {
     return {
       'full_name': fullName.trim(),
       'email': email.trim(),
-      'student_id': role == 'student' ? studentId?.trim() : null,
       'password': password,
       'role': role,
       if (code != null && code.isNotEmpty) 'invite_code': code,

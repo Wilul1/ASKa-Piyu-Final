@@ -137,6 +137,152 @@ String safePreviewFilename({
   return 'aska_piyu_article_preview_${stem}_$bucket.txt';
 }
 
+String _safeFilenameStem(String value, {String fallback = 'articles'}) {
+  final stem = value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+      .replaceAll(RegExp(r'_+'), '_')
+      .replaceAll(RegExp(r'^_|_$'), '');
+  return stem.isEmpty ? fallback : stem;
+}
+
+/// One downloadable .txt with every generated article preview (not one file each).
+String safeAllPreviewsFilename({
+  String? sourceFilename,
+  String? bucketLabel,
+  int? count,
+}) {
+  final source = _safeFilenameStem(
+    (sourceFilename ?? '')
+        .replaceAll(RegExp(r'\.[A-Za-z0-9]+$'), '')
+        .trim(),
+    fallback: 'generated',
+  );
+  final bucket = (bucketLabel ?? '').trim().isEmpty
+      ? 'all'
+      : _safeFilenameStem(bucketLabel!, fallback: 'all');
+  final countPart = count == null ? '' : '_${count}_articles';
+  return 'aska_piyu_article_previews_${source}_${bucket}$countPart.txt';
+}
+
+class ArticlePreviewExportEntry {
+  const ArticlePreviewExportEntry({
+    required this.article,
+    required this.bucketLabel,
+    this.candidate,
+  });
+
+  final AdminArticle article;
+  final String bucketLabel;
+  final CandidateSummary? candidate;
+}
+
+/// Resolve the editable/preview article used for TXT export of one candidate.
+AdminArticle resolvePreviewArticleForExport({
+  required CandidateSummary candidate,
+  Map<String, AdminArticle> previewArticlesById = const {},
+  Map<String, AdminArticle> savedArticlesByPreviewId = const {},
+}) {
+  final previewId = candidate.id ?? '';
+  final saved =
+      previewId.isEmpty ? null : savedArticlesByPreviewId[previewId];
+  final preview =
+      previewId.isEmpty ? null : previewArticlesById[previewId];
+  var article = saved ?? preview ?? candidate.toPreviewArticle();
+  final matchedPublished = candidate.matchedExistingPublished;
+  final existingId = candidate.existingArticleId;
+  if (matchedPublished && existingId != null && existingId.isNotEmpty) {
+    article = AdminArticle(
+      id: existingId,
+      title: article.title,
+      category: article.category,
+      published: true,
+      summary: article.summary,
+      content: article.content,
+      office: article.office,
+      sourceFilename: article.sourceFilename,
+      metadata: {
+        ...article.metadata,
+        'existing_article_id': existingId,
+        'already_published': true,
+      },
+      displayContent: article.displayContent,
+    );
+  }
+  return article;
+}
+
+List<ArticlePreviewExportEntry> buildPreviewExportEntries({
+  required List<CandidateSummary> candidates,
+  Map<String, AdminArticle> previewArticlesById = const {},
+  Map<String, AdminArticle> savedArticlesByPreviewId = const {},
+  Set<String> discardedPreviewIds = const {},
+  String? bucketKey,
+  String? sectionTitle,
+}) {
+  final entries = <ArticlePreviewExportEntry>[];
+  for (final candidate in candidates) {
+    final previewId = candidate.id;
+    if (previewId != null &&
+        previewId.isNotEmpty &&
+        discardedPreviewIds.contains(previewId)) {
+      continue;
+    }
+    final bucketLabel = bucketLabelForExport(
+      candidate.finalBucket ?? candidate.plannerBucket ?? bucketKey,
+      fallback: sectionTitle,
+    );
+    entries.add(
+      ArticlePreviewExportEntry(
+        article: resolvePreviewArticleForExport(
+          candidate: candidate,
+          previewArticlesById: previewArticlesById,
+          savedArticlesByPreviewId: savedArticlesByPreviewId,
+        ),
+        bucketLabel: bucketLabel,
+        candidate: candidate,
+      ),
+    );
+  }
+  return entries;
+}
+
+/// Concatenate many article preview exports into one reviewable .txt file.
+String buildAllArticlePreviewsTxt({
+  required List<ArticlePreviewExportEntry> entries,
+  String? sourceFilename,
+  String? scopeLabel,
+}) {
+  if (entries.isEmpty) return '';
+  final buffer = StringBuffer();
+  final source = (sourceFilename ?? '').trim();
+  final scope = (scopeLabel ?? '').trim();
+  buffer.writeln('ASKa-Piyu generated article previews');
+  if (source.isNotEmpty) buffer.writeln('Source: $source');
+  if (scope.isNotEmpty) buffer.writeln('Scope: $scope');
+  buffer.writeln('Total articles: ${entries.length}');
+  buffer.writeln('=' * 64);
+
+  for (var i = 0; i < entries.length; i++) {
+    final entry = entries[i];
+    buffer.writeln();
+    buffer.writeln('ARTICLE ${i + 1} / ${entries.length}');
+    buffer.writeln('-' * 64);
+    buffer.writeln(
+      buildArticlePreviewTxt(
+        article: entry.article,
+        bucketLabel: entry.bucketLabel,
+        candidate: entry.candidate,
+        fallbackSourceFilename: sourceFilename,
+      ).trimRight(),
+    );
+    buffer.writeln();
+    buffer.writeln('=' * 64);
+  }
+
+  return buffer.toString().trimRight();
+}
+
 String buildArticlePreviewTxt({
   required AdminArticle article,
   required String bucketLabel,

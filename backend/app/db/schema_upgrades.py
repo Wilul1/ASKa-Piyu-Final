@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 ADDITIVE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS credentials_version INTEGER NOT NULL DEFAULT 0",
+    # DEFAULT TRUE backfills/grandfathers every account that already exists
+    # (created before email verification shipped). New signups explicitly
+    # pass email_verified=False in application code, overriding this default.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_code_hash VARCHAR(64)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_expires_at TIMESTAMPTZ",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_sent_at TIMESTAMPTZ",
     "ALTER TABLE office_aliases ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
 
     "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS source_document_id VARCHAR(36)",
@@ -76,6 +83,7 @@ ADDITIVE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     WHERE p.id = d.id AND d.rn > 1
     """,
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_published_articles_slug ON published_articles (slug)",
+    "ALTER TABLE ticket_replies ADD COLUMN IF NOT EXISTS is_internal BOOLEAN NOT NULL DEFAULT FALSE",
 )
 
 

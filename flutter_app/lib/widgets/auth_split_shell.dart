@@ -24,11 +24,13 @@ class AuthSplitShell extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.white,
+      resizeToAvoidBottomInset: true,
       body: isNarrow
           ? Column(
               children: [
                 _BrandPanel(
                   compact: true,
+                  keyboardOpen: false,
                   onBack: () => _goBack(context),
                 ),
                 Expanded(
@@ -45,6 +47,7 @@ class AuthSplitShell extends StatelessWidget {
                   flex: 5,
                   child: _BrandPanel(
                     compact: false,
+                    keyboardOpen: false,
                     onBack: () => _goBack(context),
                   ),
                 ),
@@ -71,18 +74,26 @@ class _FormPane extends StatelessWidget {
       color: Colors.white,
       child: LayoutBuilder(
         builder: (context, constraints) {
+          final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 48;
           return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            padding: EdgeInsets.symmetric(
+              horizontal: 28,
+              vertical: keyboardOpen ? 16 : 32,
+            ),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                minHeight: constraints.maxHeight - 64,
-                maxWidth: 420,
+                minHeight: keyboardOpen
+                    ? 0
+                    : (constraints.maxHeight - 64).clamp(0, double.infinity),
               ),
-              child: Align(
-                alignment: Alignment.center,
-                child: SizedBox(
-                  width: constraints.maxWidth.clamp(0, 420),
-                  child: form,
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Align(
+                    alignment:
+                        keyboardOpen ? Alignment.topCenter : Alignment.center,
+                    child: form,
+                  ),
                 ),
               ),
             ),
@@ -95,24 +106,27 @@ class _FormPane extends StatelessWidget {
 
 class _BrandPanel extends StatelessWidget {
   final bool compact;
+  final bool keyboardOpen;
   final VoidCallback onBack;
 
   const _BrandPanel({
     required this.compact,
+    required this.keyboardOpen,
     required this.onBack,
   });
 
   @override
   Widget build(BuildContext context) {
+    final logoSize = compact ? 56.0 : 160.0;
     final logo = Image.asset(
       'assets/lspu_logo.png',
-      width: compact ? 96 : 160,
-      height: compact ? 96 : 160,
+      width: logoSize,
+      height: logoSize,
       fit: BoxFit.contain,
       filterQuality: FilterQuality.high,
       errorBuilder: (_, __, ___) => Icon(
         Icons.account_balance_rounded,
-        size: compact ? 72 : 120,
+        size: compact ? 44 : 120,
         color: Colors.white,
       ),
     );
@@ -121,27 +135,29 @@ class _BrandPanel extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         logo,
-        SizedBox(height: compact ? 12 : 20),
-        Text(
-          'Laguna State',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: compact ? 18 : 26,
-            fontWeight: FontWeight.w700,
-            height: 1.2,
+        if (!compact) ...[
+          const SizedBox(height: 20),
+          Text(
+            'Laguna State',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: compact ? 18 : 26,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
           ),
-        ),
-        Text(
-          'Polytechnic University',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: compact ? 18 : 26,
-            fontWeight: FontWeight.w700,
-            height: 1.2,
+          Text(
+            'Polytechnic University',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: compact ? 18 : 26,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
           ),
-        ),
+        ],
       ],
     );
 
@@ -158,7 +174,7 @@ class _BrandPanel extends StatelessWidget {
               ),
             if (compact)
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 48, 20, 24),
+                padding: const EdgeInsets.fromLTRB(56, 10, 20, 10),
                 child: Center(child: title),
               )
             else

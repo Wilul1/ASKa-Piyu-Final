@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
+import '../screens/admin_abuse_page.dart';
 import '../screens/admin_management_pages.dart';
 import '../screens/admin_panel_page.dart';
-import '../screens/admin_generate_articles_page.dart';
 import '../screens/announcements_page.dart';
 import '../screens/chatbot_page.dart';
 import '../screens/knowledge_base_page.dart';
@@ -21,11 +21,15 @@ enum StudentNavItem {
   submitTicket,
   officeDashboard,
   officeAssignedTickets,
+  officeFaculty,
+  officeKnowledgeBase,
+  officeGenerateArticles,
   adminDashboard,
   adminAllTickets,
   adminKnowledgeBase,
   adminGenerateArticles,
   adminUsersRoles,
+  adminAbuseDetection,
   adminOffices,
   adminReports,
   announcements,
@@ -46,61 +50,53 @@ class AppSidebar extends StatelessWidget {
     final isOffice = role == 'office';
     final isAdmin = role == 'admin';
 
-    final items = <_SidebarData>[];
-    if (isOffice) {
-      items.addAll(const [
-        _SidebarData('Dashboard', Icons.dashboard_customize_rounded,
-            StudentNavItem.officeDashboard),
-        _SidebarData('Assigned Tickets', Icons.assignment_turned_in_rounded,
-            StudentNavItem.officeAssignedTickets),
-      ]);
-    } else if (isAdmin) {
-      items.addAll(const [
-        _SidebarData('Dashboard', Icons.dashboard_rounded,
-            StudentNavItem.adminDashboard),
-        _SidebarData(
-            'All Tickets', Icons.fact_check_rounded, StudentNavItem.adminAllTickets),
-        _SidebarData('Knowledge Base', Icons.library_books_rounded,
-            StudentNavItem.adminKnowledgeBase),
-        _SidebarData('Generate Articles', Icons.auto_awesome_rounded,
-            StudentNavItem.adminGenerateArticles),
-        _SidebarData('Announcements', Icons.campaign_rounded,
-            StudentNavItem.announcements),
-        _SidebarData('Users & Roles', Icons.manage_accounts_rounded,
-            StudentNavItem.adminUsersRoles),
-        _SidebarData(
-            'Offices', Icons.apartment_rounded, StudentNavItem.adminOffices),
-        _SidebarData(
-            'Reports', Icons.insights_rounded, StudentNavItem.adminReports),
-      ]);
-    } else {
-      // Guest + student: public/student support shell.
-      items.addAll(const [
-        _SidebarData('Home', Icons.home_rounded, StudentNavItem.home),
-        _SidebarData('Knowledge Base', Icons.menu_book_rounded,
-            StudentNavItem.knowledgeBase),
-        _SidebarData(
-            'Ask ASKa-Piyu', Icons.chat_bubble_rounded, StudentNavItem.chatbot),
-      ]);
-      if (isStudent) {
-        items.addAll(const [
-          _SidebarData(
-              'My Tickets', Icons.fact_check_rounded, StudentNavItem.myTickets),
-          _SidebarData('Submit Ticket', Icons.add_task_rounded,
-              StudentNavItem.submitTicket),
-          _SidebarData('Announcements', Icons.campaign_rounded,
-              StudentNavItem.announcements),
-          _SidebarData(
-              'Settings', Icons.settings_rounded, StudentNavItem.settings),
-        ]);
-      }
+    if (isAdmin) {
+      return _AdminDarkSidebar(
+        current: current,
+        userName: user?.fullName ?? 'ASKa Admin',
+        onNavigate: (item, label) => _navigate(context, item, label),
+        onLogout: () {
+          signOutToHome(context); // ignore: unawaited_futures
+        },
+      );
     }
 
-    final brandSubtitle = isOffice
-        ? 'Office workspace'
-        : isAdmin
-            ? 'Admin workspace'
-            : 'Student support';
+    if (isOffice) {
+      return _OfficeDarkSidebar(
+        current: current,
+        userName: user?.fullName ?? 'Office Staff',
+        officeName: user?.officeName ?? 'Campus Office',
+        onNavigate: (item, label) => _navigate(context, item, label),
+        onLogout: () {
+          signOutToHome(context); // ignore: unawaited_futures
+        },
+      );
+    }
+
+    final items = <_SidebarData>[];
+    // Guest + student/faculty: public support shell.
+    items.addAll(const [
+      _SidebarData('Home', Icons.home_rounded, StudentNavItem.home),
+      _SidebarData('Knowledge Base', Icons.menu_book_rounded,
+          StudentNavItem.knowledgeBase),
+      _SidebarData(
+          'Ask ASKa-Piyu', Icons.chat_bubble_rounded, StudentNavItem.chatbot),
+    ]);
+    if (isStudent) {
+      items.addAll(const [
+        _SidebarData(
+            'My Tickets', Icons.fact_check_rounded, StudentNavItem.myTickets),
+        _SidebarData('Submit Ticket', Icons.add_task_rounded,
+            StudentNavItem.submitTicket),
+        _SidebarData('Announcements', Icons.campaign_rounded,
+            StudentNavItem.announcements),
+        _SidebarData(
+            'Settings', Icons.settings_rounded, StudentNavItem.settings),
+      ]);
+    }
+
+    final brandSubtitle =
+        role == 'faculty' ? 'Faculty support' : 'Student support';
 
     return Container(
       decoration: const BoxDecoration(
@@ -192,13 +188,9 @@ class AppSidebar extends StatelessWidget {
                       label: 'Logout',
                       icon: Icons.logout_rounded,
                       selected: false,
+                      showIcon: true,
                       onTap: () {
-                        auth.logout(); // ignore: unawaited_futures
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(
-                              builder: (_) => const StudentHomePage()),
-                          (route) => false,
-                        );
+                        signOutToHome(context); // ignore: unawaited_futures
                       },
                     ),
                   ],
@@ -269,6 +261,25 @@ class AppSidebar extends StatelessWidget {
       return;
     }
 
+    if (item == StudentNavItem.officeFaculty) {
+      openOfficePage(
+        context,
+        builder: (_) => const OfficeFacultyAccountsPage(),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.officeKnowledgeBase ||
+        item == StudentNavItem.officeGenerateArticles) {
+      openOfficePage(
+        context,
+        builder: (_) => AdminPanelPage(
+          initialTab: item == StudentNavItem.officeGenerateArticles ? 1 : 0,
+        ),
+      );
+      return;
+    }
+
     if (item == StudentNavItem.adminDashboard) {
       openAdminPage(
         context,
@@ -285,18 +296,13 @@ class AppSidebar extends StatelessWidget {
       return;
     }
 
-    if (item == StudentNavItem.adminKnowledgeBase) {
+    if (item == StudentNavItem.adminKnowledgeBase ||
+        item == StudentNavItem.adminGenerateArticles) {
       openAdminPage(
         context,
-        builder: (_) => const AdminPanelPage(),
-      );
-      return;
-    }
-
-    if (item == StudentNavItem.adminGenerateArticles) {
-      openAdminPage(
-        context,
-        builder: (_) => const AdminGenerateArticlesPage(),
+        builder: (_) => AdminPanelPage(
+          initialTab: item == StudentNavItem.adminGenerateArticles ? 1 : 0,
+        ),
       );
       return;
     }
@@ -305,6 +311,14 @@ class AppSidebar extends StatelessWidget {
       openAdminPage(
         context,
         builder: (_) => const AdminUsersRolesPage(),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.adminAbuseDetection) {
+      openAdminPage(
+        context,
+        builder: (_) => const AdminAbuseDetectionPage(),
       );
       return;
     }
@@ -390,9 +404,6 @@ class _UserAccount extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.account_circle_rounded,
-              color: DesignTokens.maroon, size: 28),
-          const SizedBox(width: 9),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -432,12 +443,14 @@ class _SidebarItem extends StatelessWidget {
   final IconData icon;
   final bool selected;
   final VoidCallback? onTap;
+  final bool showIcon;
 
   const _SidebarItem({
     required this.label,
     required this.icon,
     required this.selected,
     this.onTap,
+    this.showIcon = false,
   });
 
   @override
@@ -465,20 +478,10 @@ class _SidebarItem extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? DesignTokens.maroon
-                        : DesignTokens.maroon.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: Icon(icon,
-                      color: selected ? Colors.white : DesignTokens.maroon,
-                      size: 19),
-                ),
-                const SizedBox(width: 10),
+                if (showIcon) ...[
+                  Icon(icon, size: 18, color: foreground),
+                  const SizedBox(width: 10),
+                ],
                 Expanded(
                   child: Text(
                     label,
@@ -504,4 +507,443 @@ class _SidebarData {
   final StudentNavItem item;
 
   const _SidebarData(this.label, this.icon, this.item);
+}
+
+class _AdminNavGroup {
+  final String title;
+  final List<_SidebarData> items;
+
+  const _AdminNavGroup(this.title, this.items);
+}
+
+class _AdminDarkSidebar extends StatelessWidget {
+  final StudentNavItem current;
+  final String userName;
+  final void Function(StudentNavItem item, String label) onNavigate;
+  final VoidCallback onLogout;
+
+  const _AdminDarkSidebar({
+    required this.current,
+    required this.userName,
+    required this.onNavigate,
+    required this.onLogout,
+  });
+
+  static const groups = <_AdminNavGroup>[
+    _AdminNavGroup('Support Management', [
+      _SidebarData(
+          'Dashboard', Icons.dashboard_rounded, StudentNavItem.adminDashboard),
+      _SidebarData(
+          'All Tickets', Icons.fact_check_rounded, StudentNavItem.adminAllTickets),
+      _SidebarData('Knowledge Base', Icons.library_books_rounded,
+          StudentNavItem.adminKnowledgeBase),
+      _SidebarData(
+          'Announcements', Icons.campaign_rounded, StudentNavItem.announcements),
+    ]),
+    _AdminNavGroup('User & Organization', [
+      _SidebarData('Users & Roles', Icons.manage_accounts_rounded,
+          StudentNavItem.adminUsersRoles),
+      _SidebarData('Abuse Detection', Icons.shield_rounded,
+          StudentNavItem.adminAbuseDetection),
+      _SidebarData(
+          'Offices', Icons.apartment_rounded, StudentNavItem.adminOffices),
+    ]),
+    _AdminNavGroup('Reports & Analytics', [
+      _SidebarData(
+          'Reports', Icons.insights_rounded, StudentNavItem.adminReports),
+    ]),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: DesignTokens.adminSidebarBg,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF7A1218),
+                      borderRadius:
+                          BorderRadius.circular(DesignTokens.adminRadius),
+                      border: Border.all(color: const Color(0xFF9A2A32)),
+                    ),
+                    padding: const EdgeInsets.all(6),
+                    child: Image.asset(
+                      'assets/logo.png',
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'ASKa-Piyu Admin Panel',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        height: 1.25,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(10, 4, 10, 16),
+                children: [
+                  for (final group in groups) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 14, 10, 8),
+                      child: Text(
+                        group.title.toUpperCase(),
+                        style: const TextStyle(
+                          color: DesignTokens.adminSidebarMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                    ),
+                    for (final item in group.items)
+                      _AdminSidebarItem(
+                        label: item.label,
+                        icon: item.icon,
+                        selected: current == item.item,
+                        onTap: () => onNavigate(item.item, item.label),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF6B1A20)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: const Color(0xFF7A1218),
+                    child: Text(
+                      userName.isEmpty
+                          ? 'A'
+                          : userName.trim()[0].toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          userName.isEmpty ? 'ASKa Admin' : userName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'Administrator',
+                          style: TextStyle(
+                            color: DesignTokens.adminSidebarMuted,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+              child: _AdminSidebarItem(
+                label: 'Logout',
+                icon: Icons.logout_rounded,
+                selected: false,
+                showIcon: true,
+                onTap: onLogout,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminSidebarItem extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback? onTap;
+  final bool showIcon;
+
+  const _AdminSidebarItem({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    this.onTap,
+    this.showIcon = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: selected ? DesignTokens.adminSidebarActive : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                if (showIcon) ...[
+                  Icon(
+                    icon,
+                    size: 18,
+                    color: selected
+                        ? Colors.white
+                        : DesignTokens.adminSidebarText,
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight:
+                          selected ? FontWeight.w800 : FontWeight.w600,
+                      color: selected
+                          ? Colors.white
+                          : DesignTokens.adminSidebarText,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _officeAvatarLabel(String officeName, String userName) {
+  final match = RegExp(r'\(([^)]+)\)\s*$').firstMatch(officeName.trim());
+  if (match != null) {
+    final abbr = match.group(1)!.trim();
+    if (abbr.isNotEmpty) {
+      return abbr.length <= 4
+          ? abbr.toUpperCase()
+          : abbr.substring(0, 4).toUpperCase();
+    }
+  }
+  final source =
+      userName.trim().isNotEmpty ? userName.trim() : officeName.trim();
+  if (source.isEmpty) return 'O';
+  final parts =
+      source.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return source.substring(0, source.length >= 2 ? 2 : 1).toUpperCase();
+}
+
+class _OfficeDarkSidebar extends StatelessWidget {
+  final StudentNavItem current;
+  final String userName;
+  final String officeName;
+  final void Function(StudentNavItem item, String label) onNavigate;
+  final VoidCallback onLogout;
+
+  const _OfficeDarkSidebar({
+    required this.current,
+    required this.userName,
+    required this.officeName,
+    required this.onNavigate,
+    required this.onLogout,
+  });
+
+  static const items = <_SidebarData>[
+    _SidebarData('Dashboard', Icons.dashboard_customize_rounded,
+        StudentNavItem.officeDashboard),
+    _SidebarData('Assigned Tickets', Icons.assignment_turned_in_rounded,
+        StudentNavItem.officeAssignedTickets),
+    _SidebarData(
+        'Account', Icons.manage_accounts_outlined, StudentNavItem.officeFaculty),
+    _SidebarData('Knowledge Base', Icons.library_books_rounded,
+        StudentNavItem.officeKnowledgeBase),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = _officeAvatarLabel(officeName, userName);
+    return Container(
+      color: DesignTokens.adminSidebarBg,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF7A1218),
+                      borderRadius:
+                          BorderRadius.circular(DesignTokens.adminRadius),
+                      border: Border.all(color: const Color(0xFF9A2A32)),
+                    ),
+                    padding: const EdgeInsets.all(6),
+                    child: Image.asset(
+                      'assets/logo.png',
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'ASKa-Piyu',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Office workspace',
+                          style: TextStyle(
+                            color: DesignTokens.adminSidebarMuted,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(10, 4, 10, 16),
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(10, 8, 10, 8),
+                    child: Text(
+                      'WORKSPACE',
+                      style: TextStyle(
+                        color: DesignTokens.adminSidebarMuted,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ),
+                  for (final item in items)
+                    _AdminSidebarItem(
+                      label: item.label,
+                      icon: item.icon,
+                      selected: current == item.item,
+                      onTap: () => onNavigate(item.item, item.label),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF6B1A20)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: const Color(0xFF7A1218),
+                    child: Text(
+                      avatar,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: avatar.length > 2 ? 9 : 12,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          officeName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                            height: 1.25,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          userName.isEmpty ? 'Office staff' : userName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: DesignTokens.adminSidebarMuted,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+              child: _AdminSidebarItem(
+                label: 'Logout',
+                icon: Icons.logout_rounded,
+                selected: false,
+                showIcon: true,
+                onTap: onLogout,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

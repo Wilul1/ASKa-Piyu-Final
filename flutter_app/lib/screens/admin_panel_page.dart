@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import '../auth/auth_state.dart';
@@ -12,10 +10,11 @@ import '../screens/login_page.dart';
 import '../screens/student_home.dart';
 import 'admin_generate_articles_page.dart';
 import 'admin_kb_workspace.dart';
+import 'office_scaffold.dart';
 import '../services/admin_article_service.dart';
 import '../services/api_client.dart';
-import '../services/extraction_preview_store.dart';
 import '../services/file_pick.dart';
+import '../services/kb_workspace_session.dart';
 import '../widgets/sidebar.dart';
 
 class _PipelineStage {
@@ -28,75 +27,112 @@ class _PipelineStage {
 }
 
 class AdminPanelPage extends StatefulWidget {
-  const AdminPanelPage({super.key});
+  const AdminPanelPage({
+    super.key,
+    this.initialTab = 0,
+    this.focusArticleId,
+  });
+
+  /// 0 = Documents (extract/index), 1 = Articles (generate/publish).
+  final int initialTab;
+  final String? focusArticleId;
 
   @override
   State<AdminPanelPage> createState() => _AdminPanelPageState();
 }
 
-class _AdminPanelPageState extends State<AdminPanelPage> {
+class _AdminPanelPageState extends State<AdminPanelPage>
+    with SingleTickerProviderStateMixin {
   static const String _adminKeyHeader = 'x-admin-key';
 
-  PickedAppFile? _selectedFile;
-  String? _selectedFileName;
   final TextEditingController _adminKeyController = TextEditingController();
   final TextEditingController _reviewController = TextEditingController();
   final TextEditingController _retrievalController = TextEditingController();
-  String _status = 'Choose a document to begin.';
-  String? _rawOcrText;
-  List<_PipelineStage> _pipelineStages = _defaultPipelineStages();
-  Map<String, dynamic>? _validationReport;
-  Map<String, dynamic>? _kbStatistics;
-  List<Map<String, dynamic>> _knowledgeUnits = [];
-  List<Map<String, dynamic>> _chunkPreview = [];
   List<Map<String, dynamic>> _retrievalResults = [];
-  bool _isBusy = false;
   bool _isRetrieving = false;
   bool _useLegacyAdminKey = false;
-  Map<String, dynamic>? _extractionPreview;
-  String? _extractedDocumentType;
-  String? _classificationReason;
   int _articleLibraryRefreshToken = 0;
-  int _selectedOutlineIndex = 0;
   int? _publishedArticleCount;
   int? _draftArticleCount;
-  int? _candidateHintCount;
+  KbWorkspaceSession? _session;
+  bool _sessionListenerAttached = false;
+  late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialTab.clamp(0, 1);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: initial);
     _adminKeyController.text = AppConfig.savedAdminKey ?? '';
-    _restoreLastExtraction();
     _loadLibraryCounts();
     _loadKbStatistics();
   }
 
-  void _restoreLastExtraction() {
-    final cached = AppConfig.lastExtractionPreview;
-    if (cached == null) return;
-    final previewRaw = cached['preview'];
-    if (previewRaw is! Map) return;
-    final preview = Map<String, dynamic>.from(previewRaw);
-    final units = preview['knowledge_units'];
-    _extractionPreview = preview;
-    _knowledgeUnits = _readMapList(units);
-    _selectedFileName =
-        cached['source_filename']?.toString() ?? _selectedFileName;
-    _extractedDocumentType = formatDocumentTypeLabel(
-          cached['detected_document_type'] ?? cached['document_type']) ??
-        _extractedDocumentType;
-    _classificationReason = formatClassificationReason(
-          cached['detected_document_type'] ?? cached['classification_reason']) ??
-        _classificationReason;
-    _validationReport = _readMap(preview['validation_report']);
-    _kbStatistics = _readMap(preview['kb_statistics']);
-    _chunkPreview = _readMapList(preview['chunk_preview']);
-    _candidateHintCount = _asInt(cached['knowledge_units_count']) ??
-        (_knowledgeUnits.isEmpty ? null : _knowledgeUnits.length);
-    final status = cached['status']?.toString();
-    if (status != null && status.isNotEmpty) {
-      _status = status;
+  @override
+  void dispose() {
+    _tabController.dispose();
+    if (_sessionListenerAttached) {
+      _session?.removeListener(_onSessionChanged);
     }
+    _adminKeyController.dispose();
+    _reviewController.dispose();
+    _retrievalController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final session = KbWorkspaceScope.of(context);
+    if (!identical(_session, session)) {
+      _session?.removeListener(_onSessionChanged);
+      _session = session;
+      _session!.addListener(_onSessionChanged);
+      _sessionListenerAttached = true;
+      _bootstrapSession(session);
+    }
+  }
+
+  void _bootstrapSession(KbWorkspaceSession session) {
+    if (!session.isBusy &&
+        session.extractionPreview == null &&
+        session.reviewText.trim().isEmpty) {
+      final cached = AppConfig.lastExtractionPreview;
+      if (cached != null) {
+        session.hydrateFromCachedPreview(cached);
+      }
+    }
+    _syncReviewController(session);
+    if (session.isBusy) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !session.isBusy) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              session.isExtracting
+                  ? 'Extraction is still running in the background.'
+                  : 'Indexing is still running in the background.',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      });
+    }
+  }
+
+  void _onSessionChanged() {
+    final session = _session;
+    if (session == null || !mounted) return;
+    _syncReviewController(session);
+    setState(() {});
+  }
+
+  void _syncReviewController(KbWorkspaceSession session) {
+    if (_reviewController.text == session.reviewText) return;
+    _reviewController.value = TextEditingValue(
+      text: session.reviewText,
+      selection: TextSelection.collapsed(offset: session.reviewText.length),
+    );
   }
 
   Future<void> _loadLibraryCounts() async {
@@ -126,38 +162,12 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       if (result.statusCode != 200 || !mounted) return;
       final decoded = result.json;
       if (decoded is Map) {
-        setState(() {
-          _kbStatistics = Map<String, dynamic>.from(decoded);
-        });
+        final session = KbWorkspaceScope.of(context);
+        session.setKbStatistics(Map<String, dynamic>.from(decoded));
       }
     } catch (_) {
       // Statistics are optional for the workspace header cards.
     }
-  }
-
-  int? _asInt(Object? value) {
-    if (value is int) return value;
-    return int.tryParse((value ?? '').toString());
-  }
-
-  @override
-  void dispose() {
-    _adminKeyController.dispose();
-    _reviewController.dispose();
-    _retrievalController.dispose();
-    super.dispose();
-  }
-
-  Map<String, dynamic> _buildExtractionPreview(Map<String, dynamic> data) {
-    return buildCompactExtractionPreview(data);
-  }
-
-  bool get _hasExtractionPreview {
-    final units = _extractionPreview?['knowledge_units'];
-    final hasUnits = units is List && units.isNotEmpty;
-    final v2 = _extractionPreview?['charter_v2_services'];
-    final hasV2 = v2 is List && v2.isNotEmpty;
-    return hasUnits || hasV2;
   }
 
   AdminArticleService _articleService() {
@@ -173,6 +183,18 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
 
   Future<void> _pickFile() async {
+    final session = KbWorkspaceScope.of(context);
+    if (session.isBusy) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Wait for the current extract/index job to finish before choosing another file.',
+          ),
+        ),
+      );
+      return;
+    }
     final picked = await pickAppFile(
       allowedExtensions: const [
         'pdf',
@@ -189,107 +211,47 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     if (picked == null) {
       return;
     }
-
-    setState(() {
-      _selectedFile = picked;
-      _selectedFileName = picked.name;
-      _status = 'Ready to extract ${picked.name}.';
-      _pipelineStages = _defaultPipelineStages();
-      _validationReport = null;
-      _kbStatistics = null;
-      _knowledgeUnits = [];
-      _chunkPreview = [];
-      _retrievalResults = [];
-      _rawOcrText = null;
-      _reviewController.clear();
-      _extractionPreview = null;
-      _extractedDocumentType = null;
-      _classificationReason = null;
-    });
+    session.setSelectedFile(picked);
   }
 
   Future<void> _extractPreview() async {
-    await _sendDocument(
-      path: '/admin/knowledge-base/extract',
-      onSuccess: (data) async {
-        final extracted = data['review_text'] ?? data['extracted_text'];
-        final rawText = data['raw_text'];
-        final documentType = formatDocumentTypeLabel(
-          data['detected_document_type'] ?? data['document_type'],
-        );
-        final classificationReason = formatClassificationReason(
-          data['detected_document_type'] ?? data['classification_reason'],
-        );
-        final knowledgeUnits = _readMapList(data['knowledge_units']);
-        final handoff = buildExtractionHandoffPackage(
-          extractResponse: data,
-          sourceFilename: _selectedFileName ??
-              data['source_filename']?.toString() ??
-              '',
-          status: 'Extraction preview is ready.',
-          classificationReason: classificationReason,
-        );
-        final preview = Map<String, dynamic>.from(handoff['preview'] as Map);
-        final saved = await AppConfig.saveLastExtractionPreview(handoff);
-        if (!mounted) return;
-        setState(() {
-          _reviewController.text = extracted is String
-              ? _cleanPreviewText(extracted)
-              : _prettyJson(data);
-          _rawOcrText =
-              rawText is String && rawText.trim().isNotEmpty ? rawText : null;
-          _pipelineStages = _readPipelineStages(data['pipeline_stages']);
-          _validationReport = _readMap(data['validation_report']);
-          _kbStatistics = _readMap(data['kb_statistics']);
-          _knowledgeUnits = knowledgeUnits;
-          _chunkPreview = _readMapList(data['chunk_preview']);
-          _extractionPreview = preview;
-          _extractedDocumentType = documentType;
-          _classificationReason = classificationReason;
-          _selectedOutlineIndex = 0;
-          _candidateHintCount =
-              knowledgeUnits.isEmpty ? null : knowledgeUnits.length;
-          _status = saved
-              ? 'Extraction preview is ready. Generate Articles can load this document.'
-              : 'Extraction preview is ready, but saving for Generate Articles failed (browser storage full). Try Reload after clearing site data, or re-extract a smaller document.';
-        });
-      },
+    final session = KbWorkspaceScope.of(context);
+    await session.runExtract(
+      setAdminHeader: _setAdminHeader,
+      authError: _adminAuthError,
+      requestError: _adminRequestError,
+      cleanPreviewText: _cleanPreviewText,
+      formatDocumentTypeLabel: formatDocumentTypeLabel,
+      formatClassificationReason: formatClassificationReason,
     );
   }
 
   Future<void> _saveToKnowledgeBase() async {
-    await _sendDocument(
-      path: '/admin/knowledge-base/ingest',
-      includeTitle: true,
-      onSuccess: (data) {
-        final chunks = data['chunks_indexed'];
-        final chunkPreview = _readMapList(data['chunk_preview']);
-        setState(() {
-          // Keep full review text; do not replace it with the truncated ingest preview.
-          _pipelineStages = _readPipelineStages(data['pipeline_stages']);
-          _validationReport = _readMap(data['validation_report']);
-          _kbStatistics = _readMap(data['kb_statistics']);
-          _knowledgeUnits = _readMapList(data['knowledge_units']);
-          _chunkPreview = chunkPreview;
-          _status =
-              'Knowledge units indexed for chatbot retrieval. Indexed ${chunks ?? 0} chunks.';
-          _loadKbStatistics();
-        });
+    final session = KbWorkspaceScope.of(context);
+    // Keep typed review edits (if any) on the session before ingest.
+    session.setReviewText(_reviewController.text);
+    await session.runIngest(
+      setAdminHeader: _setAdminHeader,
+      authError: _adminAuthError,
+      requestError: _adminRequestError,
+      onIndexed: () async {
+        await _loadKbStatistics();
       },
     );
   }
 
   Future<void> _runRetrievalTest() async {
+    final session = KbWorkspaceScope.of(context);
     final question = _retrievalController.text.trim();
     if (question.length < 3) {
-      setState(() => _status = 'Enter a retrieval test question first.');
+      session.setStatusMessage('Enter a retrieval test question first.');
       return;
     }
 
     setState(() {
       _isRetrieving = true;
-      _status = 'Running retrieval test...';
     });
+    session.setStatusMessage('Running retrieval test...');
 
     try {
       final headers = <String, String>{
@@ -311,18 +273,23 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       if (result.statusCode == 200) {
         setState(() {
           _retrievalResults = _readMapList(data['results']);
-          _kbStatistics = _readMap(data['kb_statistics']) ?? _kbStatistics;
-          _status =
-              'Retrieval test returned ${_retrievalResults.length} chunks.';
         });
+        final stats = _readMap(data['kb_statistics']);
+        if (stats != null) {
+          session.setKbStatistics(stats);
+        }
+        session.setStatusMessage(
+          'Retrieval test returned ${_retrievalResults.length} chunks.',
+        );
       } else {
-        setState(() =>
-            _status = _adminRequestError(result.statusCode, data['detail']));
+        session.setStatusMessage(
+          _adminRequestError(result.statusCode, data['detail']),
+        );
       }
     } on StateError catch (error) {
-      setState(() => _status = _adminAuthError(error.message));
+      session.setStatusMessage(_adminAuthError(error.message));
     } catch (error) {
-      setState(() => _status = 'Could not reach the backend.');
+      session.setStatusMessage('Could not reach the backend.');
     } finally {
       if (mounted) {
         setState(() => _isRetrieving = false);
@@ -330,100 +297,15 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     }
   }
 
-  Future<void> _sendDocument({
-    required String path,
-    required FutureOr<void> Function(Map<String, dynamic> data) onSuccess,
-    bool includeTitle = false,
-  }) async {
-    final file = _selectedFile;
-    if (file == null) {
-      setState(() => _status = 'Please choose a PDF or image first.');
-      return;
-    }
-
-    setState(() {
-      _isBusy = true;
-      _status = includeTitle
-          ? 'Indexing knowledge units for chatbot retrieval...'
-          : 'Extracting, cleaning, and structuring the document...';
-    });
-
-    try {
-      final fields = <String, String>{};
-      if (includeTitle) {
-        fields['title'] = file.name;
-        fields['reviewed_text'] = _reviewController.text.trim();
-        // Force Citizen's Charter PDFs into the service_procedure ingest path.
-        final lowerName = file.name.toLowerCase();
-        final detected = (_extractedDocumentType ?? '').trim().toLowerCase();
-        final normalizedName = lowerName
-            .replaceAll(RegExp(r'[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]'), '-');
-        if (normalizedName.contains('charter') ||
-            normalizedName.contains('-cc_') ||
-            normalizedName.contains('_cc_') ||
-            RegExp(r'(^|[^a-z0-9])cc[_-]').hasMatch(normalizedName) ||
-            normalizedName.contains('citizen') ||
-            detected.contains('charter') ||
-            detected.contains('procedure') ||
-            detected.contains('service')) {
-          fields['document_type'] = 'citizen_charter';
-        }
-      }
-
-      final headers = <String, String>{};
-      _setAdminHeader(headers);
-      final result = await ApiClient.multipart(
-        method: 'POST',
-        url: '${AppConfig.resolvedApiBase}$path',
-        headers: headers,
-        fields: fields.isEmpty ? null : fields,
-        files: [
-          http.MultipartFile.fromBytes(
-            'file',
-            file.bytes,
-            filename: file.name,
-          ),
-        ],
-      );
-
-      final responseText = result.body;
-      final decoded = result.json;
-      final data = decoded is Map<String, dynamic>
-          ? decoded
-          : <String, dynamic>{'response': decoded};
-
-      if (result.statusCode == 200) {
-        await onSuccess(data);
-      } else {
-        final detail = _adminRequestError(result.statusCode, data['detail']);
-        setState(() {
-          _status = detail;
-          _reviewController.text = responseText;
-        });
-      }
-    } on StateError catch (error) {
-      setState(() {
-        _status = _adminAuthError(error.message);
-        _reviewController.text = error.message;
-      });
-    } catch (error) {
-      setState(() {
-        _status = 'Could not reach the backend.';
-        _reviewController.text = error.toString();
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _isBusy = false);
-      }
-    }
-  }
+  // Extract/ingest run on [KbWorkspaceSession] so they survive page disposal.
 
   void _setAdminHeader(Map<String, String> headers) {
     final auth = AuthScope.of(context);
     final token = auth.accessToken;
     // Release builds never accept the shared X-Admin-Key path.
     if (!_useLegacyAdminKey || kReleaseMode) {
-      if (auth.role != 'admin') {
+      final role = auth.role;
+      if (role != 'admin' && role != 'office') {
         throw StateError('not_admin');
       }
       if (token == null || token.trim().isEmpty) {
@@ -443,15 +325,15 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
   String _adminAuthError(String message) {
     if (message == 'not_admin') {
-      return 'Only admin accounts can use Knowledge Base Admin tools.';
+      return 'Only admin or office accounts can use Knowledge Base tools.';
     }
     if (message == 'missing_admin_token') {
-      return 'Admin authorization failed. Please log in again as admin.';
+      return 'Authorization failed. Please log in again.';
     }
     if (message == 'missing_legacy_admin_key') {
-      return 'Admin authorization failed. Please log in again as admin.';
+      return 'Authorization failed. Please log in again as admin.';
     }
-    return 'Admin authorization failed. Please log in again as admin.';
+    return 'Authorization failed. Please log in again.';
   }
 
   String _adminRequestError(int? status, dynamic detail) {
@@ -459,10 +341,10 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       return 'Could not reach the backend.';
     }
     if (status == 403) {
-      return 'Only admin accounts can use Knowledge Base Admin tools.';
+      return 'Only admin or office accounts can use Knowledge Base tools.';
     }
     if (status == 401) {
-      return 'Admin authorization failed. Please log in again as admin.';
+      return 'Authorization failed. Please log in again.';
     }
     final text = detail?.toString().trim() ?? '';
     if (text.isNotEmpty) {
@@ -471,11 +353,6 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     return status == null
         ? 'Request failed.'
         : 'Request failed with status $status.';
-  }
-
-  String _prettyJson(Map<String, dynamic> data) {
-    const encoder = JsonEncoder.withIndent('  ');
-    return encoder.convert(data);
   }
 
   String _cleanPreviewText(String value) {
@@ -505,41 +382,50 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         .toList();
   }
 
-  static List<_PipelineStage> _defaultPipelineStages() {
-    return const [
-      _PipelineStage(label: 'OCR/PDF extraction', status: 'waiting'),
-      _PipelineStage(label: 'Automatic cleaning', status: 'waiting'),
-      _PipelineStage(label: 'LLM structuring', status: 'waiting'),
-      _PipelineStage(label: 'Admin review/edit', status: 'waiting'),
-      _PipelineStage(label: 'Index to ChromaDB', status: 'waiting'),
-    ];
-  }
-
-  List<_PipelineStage> _readPipelineStages(dynamic value) {
-    if (value is! List) {
-      return _defaultPipelineStages();
-    }
-
-    return value.map((item) {
-      if (item is! Map) {
-        return const _PipelineStage(label: 'Unknown step', status: 'waiting');
-      }
-      return _PipelineStage(
-        label: (item['label'] ?? '').toString(),
-        status: (item['status'] ?? 'waiting').toString(),
-        detail: item['detail']?.toString(),
-      );
-    }).toList();
-  }
-
   List<Widget> _buildDocumentsTab() {
+    final session = KbWorkspaceScope.of(context);
     return [
+      if (session.isBusy) ...[
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF8E8),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFE6C87A)),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  session.isExtracting
+                      ? 'Extraction is running. You can open other pages and return here — progress will still be here.'
+                      : 'Indexing is running. You can open other pages and return here — progress will still be here.',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: DesignTokens.maroon,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
       AdminKbWorkspace(
-        fileName: _selectedFileName,
-        fileSizeBytes: _selectedFile?.bytes.length,
-        isBusy: _isBusy,
-        status: _status,
-        pipelineStages: _pipelineStages
+        fileName: session.selectedFileName,
+        fileSizeBytes: session.selectedFile?.bytes.length,
+        isBusy: session.isBusy,
+        status: session.status,
+        pipelineStages: session.pipelineStages
             .map(
               (stage) => AdminPipelineStageView(
                 label: stage.label,
@@ -548,27 +434,69 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
               ),
             )
             .toList(),
-        knowledgeUnits: _knowledgeUnits,
-        validationReport: _validationReport,
-        kbStatistics: _kbStatistics,
-        reviewText: _reviewController.text,
-        rawOcrText: _rawOcrText,
-        documentType: _extractedDocumentType,
-        classificationReason: _classificationReason,
+        knowledgeUnits: session.knowledgeUnits,
+        validationReport: session.validationReport,
+        kbStatistics: session.kbStatistics,
+        reviewText: session.reviewText,
+        rawOcrText: session.rawOcrText,
+        documentType: session.extractedDocumentType,
+        classificationReason: session.classificationReason,
         publishedCount: _publishedArticleCount,
         draftCount: _draftArticleCount,
-        candidateHintCount: _candidateHintCount,
-        selectedOutlineIndex: _selectedOutlineIndex,
+        candidateHintCount: session.candidateHintCount,
+        selectedOutlineIndex: session.selectedOutlineIndex,
         onPickFile: _pickFile,
         onExtract: _extractPreview,
         onIngest: _saveToKnowledgeBase,
         onSelectOutline: (index) {
-          setState(() {
-            _selectedOutlineIndex = index;
-          });
+          session.setSelectedOutlineIndex(index);
         },
+        onOpenArticles: () => _tabController.animateTo(1),
       ),
     ];
+  }
+
+  Widget _buildTabBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: TabBar(
+        controller: _tabController,
+        labelColor: DesignTokens.maroon,
+        unselectedLabelColor: DesignTokens.muted,
+        indicatorColor: DesignTokens.maroon,
+        indicatorSize: TabBarIndicatorSize.tab,
+        labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        unselectedLabelStyle:
+            const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+        tabs: const [
+          Tab(text: 'Documents'),
+          Tab(text: 'Articles'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDocumentsScroll() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(4, 12, 4, 24),
+      children: _buildDocumentsTab(),
+    );
+  }
+
+  Widget _buildArticlesScroll() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(4, 12, 4, 24),
+      children: [
+        AdminGenerateArticlesPage(
+          embedded: true,
+          focusArticleId: widget.focusArticleId,
+        ),
+      ],
+    );
   }
 
   @override
@@ -576,7 +504,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     final auth = AuthScope.of(context);
     if (auth.isLoading) {
       return const Scaffold(
-        backgroundColor: DesignTokens.bgGrey,
+        backgroundColor: DesignTokens.adminSurface,
         body: Center(
           child: CircularProgressIndicator(color: DesignTokens.maroon),
         ),
@@ -585,25 +513,62 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     if (!auth.isAuthenticated) {
       return _AdminLoginRequired();
     }
-    if (auth.role != 'admin') {
+    if (auth.role != 'admin' && auth.role != 'office') {
       return const _AdminAccessDenied();
+    }
+
+    final isOffice = auth.role == 'office';
+    final navCurrent = isOffice
+        ? StudentNavItem.officeKnowledgeBase
+        : StudentNavItem.adminKnowledgeBase;
+
+    final tabbedBody = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildTabBar(),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildDocumentsScroll(),
+              _buildArticlesScroll(),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    if (isOffice) {
+      return OfficeScaffold(
+        current: StudentNavItem.officeKnowledgeBase,
+        title: 'Knowledge Base',
+        description:
+            'Extract campus documents for Ask, then generate and publish public articles.',
+        fillBody: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: tabbedBody,
+        ),
+      );
     }
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
         final body = ColoredBox(
-          color: DesignTokens.bgGrey,
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1180),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: _buildDocumentsTab(),
-                  ),
+          color: DesignTokens.adminSurface,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 18, 24, 16),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1180),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const _AdminHeader(),
+                    const SizedBox(height: 16),
+                    Expanded(child: tabbedBody),
+                  ],
                 ),
               ),
             ),
@@ -612,12 +577,12 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
         if (isWide) {
           return Scaffold(
-            backgroundColor: DesignTokens.bgGrey,
+            backgroundColor: DesignTokens.adminSurface,
             body: Row(
               children: [
-                const SizedBox(
-                  width: 200,
-                  child: AppSidebar(current: StudentNavItem.adminKnowledgeBase),
+                SizedBox(
+                  width: DesignTokens.adminSidebarWidth,
+                  child: AppSidebar(current: navCurrent),
                 ),
                 Expanded(child: body),
               ],
@@ -626,12 +591,13 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         }
 
         return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
-          drawer: const Drawer(
-            child: AppSidebar(current: StudentNavItem.adminKnowledgeBase),
+          backgroundColor: DesignTokens.adminSurface,
+          drawer: Drawer(
+            backgroundColor: DesignTokens.adminSidebarBg,
+            child: AppSidebar(current: navCurrent),
           ),
           appBar: AppBar(
-            title: const Text('Knowledge Base Admin'),
+            title: const Text('Knowledge Base'),
             backgroundColor: Colors.white,
             foregroundColor: DesignTokens.ink,
             elevation: 0.5,
@@ -687,11 +653,11 @@ class _AdminLoginRequired extends StatelessWidget {
 
         if (isWide) {
           return Scaffold(
-            backgroundColor: DesignTokens.bgGrey,
+            backgroundColor: DesignTokens.adminSurface,
             body: Row(
               children: [
                 const SizedBox(
-                  width: 220,
+                  width: DesignTokens.adminSidebarWidth,
                   child: AppSidebar(current: StudentNavItem.adminKnowledgeBase),
                 ),
                 Expanded(child: body),
@@ -701,8 +667,9 @@ class _AdminLoginRequired extends StatelessWidget {
         }
 
         return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
+          backgroundColor: DesignTokens.adminSurface,
           drawer: const Drawer(
+            backgroundColor: DesignTokens.adminSidebarBg,
             child: AppSidebar(current: StudentNavItem.adminKnowledgeBase),
           ),
           appBar: AppBar(title: const Text('Knowledge Base Admin')),
@@ -826,7 +793,7 @@ class _AdminHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Knowledge Base Admin',
+                'Knowledge Base',
                 style: TextStyle(
                     fontSize: 30,
                     fontWeight: FontWeight.w800,
@@ -834,7 +801,7 @@ class _AdminHeader extends StatelessWidget {
               ),
               SizedBox(height: 6),
               Text(
-                'Extract, review article candidates, and index documents.',
+                'Extract documents for Ask, then generate and publish public articles.',
                 style: TextStyle(
                     fontSize: 14, height: 1.45, color: Color(0xFF6C7785)),
               ),

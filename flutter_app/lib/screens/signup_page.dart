@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../models/auth_models.dart';
+import '../navigation/soft_page_route.dart';
 import '../widgets/auth_split_shell.dart';
 import 'login_page.dart';
 
@@ -26,10 +27,8 @@ class _SignupPageState extends State<SignupPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
-  final _studentIdCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
-  final _inviteCtrl = TextEditingController();
   bool _loading = false;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
@@ -39,10 +38,8 @@ class _SignupPageState extends State<SignupPage> {
   void dispose() {
     _nameCtrl.dispose();
     _emailCtrl.dispose();
-    _studentIdCtrl.dispose();
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
-    _inviteCtrl.dispose();
     super.dispose();
   }
 
@@ -56,10 +53,8 @@ class _SignupPageState extends State<SignupPage> {
       final user = await AuthScope.of(context).signup(SignupRequest(
         fullName: _nameCtrl.text,
         email: _emailCtrl.text,
-        studentId: _studentIdCtrl.text,
         password: _passwordCtrl.text,
         role: 'student',
-        inviteCode: _inviteCtrl.text,
       ));
       if (!mounted) return;
       redirectAfterAuth(
@@ -77,13 +72,12 @@ class _SignupPageState extends State<SignupPage> {
   }
 
   void _openLogin() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => LoginPage(
-          returnTo: widget.returnTo,
-          message: widget.message,
-          gateRole: widget.gateRole,
-        ),
+    softReplace(
+      context,
+      LoginPage(
+        returnTo: widget.returnTo,
+        message: widget.message,
+        gateRole: widget.gateRole,
       ),
     );
   }
@@ -97,12 +91,21 @@ class _SignupPageState extends State<SignupPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'CREATE ACCOUNT',
+              'SIGN UP',
               style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w900,
                 color: AuthSplitShell.maroon,
                 letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Use your real email (like Gmail). Create a password for ASKa-Piyu only — not your email password.',
+              style: TextStyle(
+                color: Color(0xFF6B7280),
+                height: 1.4,
+                fontSize: 13,
               ),
             ),
             if (widget.message != null) ...[
@@ -130,24 +133,7 @@ class _SignupPageState extends State<SignupPage> {
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.next,
               validator: _validateEmail,
-              decoration: authFieldDecoration('Email'),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _studentIdCtrl,
-              textInputAction: TextInputAction.next,
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Enter your student ID.'
-                  : null,
-              decoration: authFieldDecoration('Student ID'),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _inviteCtrl,
-              textInputAction: TextInputAction.next,
-              decoration: authFieldDecoration(
-                'Invite code (if required by campus)',
-              ),
+              decoration: authFieldDecoration('Email (e.g. your Gmail)'),
             ),
             const SizedBox(height: 12),
             TextFormField(
@@ -167,7 +153,7 @@ class _SignupPageState extends State<SignupPage> {
                 }
                 return null;
               },
-              decoration: authFieldDecoration('Password').copyWith(
+              decoration: authFieldDecoration('ASKa-Piyu password').copyWith(
                 suffixIcon: IconButton(
                   onPressed: () =>
                       setState(() => _obscurePassword = !_obscurePassword),
@@ -207,7 +193,7 @@ class _SignupPageState extends State<SignupPage> {
             ],
             const SizedBox(height: 20),
             AuthPrimaryButton(
-              label: 'CREATE ACCOUNT',
+              label: 'SIGN UP',
               loading: _loading,
               onPressed: _submit,
             ),
@@ -215,7 +201,7 @@ class _SignupPageState extends State<SignupPage> {
             const AuthOrDivider(text: 'Already have an account?'),
             const SizedBox(height: 16),
             AuthSecondaryButton(
-              label: 'SIGN IN',
+              label: 'LOGIN',
               onPressed: _loading ? null : _openLogin,
             ),
           ],

@@ -262,7 +262,11 @@ def _clean_page_lines(page_texts: list[str]) -> list[_Line]:
                 continue
             if _is_layout_header_footer(line):
                 continue
-            cleaned.extend(_Line(text=part, page=page_number) for part in _split_embedded_numbered_headings(line))
+            for numbered_part in _split_embedded_numbered_headings(line):
+                cleaned.extend(
+                    _Line(text=part, page=page_number)
+                    for part in _split_embedded_lettered_headings(numbered_part)
+                )
     return _merge_wrapped_heading_lines(cleaned)
 
 
@@ -316,6 +320,56 @@ def _split_embedded_numbered_headings(line: str) -> list[str]:
             parts.append(part)
     prefix = line[: markers[0]].strip()
     return ([prefix] if prefix else []) + parts
+
+
+_LETTERED_HEADING_START_RE = re.compile(r"[A-Z]\.\s+[A-Z]")
+_LETTERED_NEXT_MARKER_RE = re.compile(r"\s+(?:[A-Z]\.\s+[A-Z]|\d+\.\s+[A-Z])")
+
+
+def _split_embedded_lettered_headings(line: str) -> list[str]:
+    """Split `... exigency. C. Faculty I.D. and Uniform 1. Faculty is required` into heading lines."""
+    starts: list[int] = []
+    for match in _LETTERED_HEADING_START_RE.finditer(line):
+        start = match.start()
+        if not _is_lettered_heading_boundary(line, start):
+            continue
+        candidate = _lettered_heading_candidate_from(line, start)
+        if candidate and _lettered_section_heading(candidate):
+            starts.append(start)
+    if not starts:
+        return [line]
+
+    parts: list[str] = []
+    prefix = line[: starts[0]].strip()
+    if prefix:
+        parts.append(prefix)
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(line)
+        chunk = line[start:end].strip()
+        heading = _lettered_heading_candidate_from(chunk, 0) or chunk
+        remainder = chunk[len(heading) :].strip()
+        if heading:
+            parts.append(heading)
+        if remainder:
+            parts.append(remainder)
+    return parts or [line]
+
+
+def _is_lettered_heading_boundary(line: str, start: int) -> bool:
+    if start == 0:
+        return True
+    prev = line[:start].rstrip()
+    return bool(prev) and prev[-1] in ".!?"
+
+
+def _lettered_heading_candidate_from(line: str, start: int) -> str | None:
+    rest = line[start:].strip()
+    match = re.match(r"^[A-Z]\.\s+", rest)
+    if not match:
+        return None
+    next_marker = _LETTERED_NEXT_MARKER_RE.search(rest, match.end())
+    candidate = rest[: next_marker.start()] if next_marker else rest
+    return candidate.strip() or None
 
 
 def _merge_wrapped_heading_lines(lines: list[_Line]) -> list[_Line]:
@@ -991,6 +1045,10 @@ def _group_title(unit: HandbookKnowledgeUnit) -> str:
 
 
 def _parse_heading(line: str) -> dict[str, str] | None:
+    lettered = _lettered_section_heading(line)
+    if lettered:
+        return lettered
+
     if not _starts_with_hierarchy_marker(line) and (_is_table_style_row(line) or _is_continuation_clause(line)):
         return None
 
@@ -1033,6 +1091,7 @@ def _starts_with_hierarchy_marker(line: str) -> bool:
             line,
             flags=re.I,
         )
+        or re.match(r"^\s*[A-Z]\.\s+[A-Z]", line)
     )
 
 
@@ -1047,6 +1106,8 @@ def _front_matter_heading(line: str) -> dict[str, str] | None:
 def _major_heading(line: str) -> dict[str, str] | None:
     stripped = line.strip(" :-")
     if _is_table_style_row(stripped) or _is_continuation_clause(stripped):
+        return None
+    if re.match(r"^[A-Z]\.\s+\S", stripped):
         return None
     if not stripped or len(stripped.split()) > 8:
         return None
@@ -1067,10 +1128,60 @@ def _major_heading(line: str) -> dict[str, str] | None:
     return {"level": "major", "value": _title_case(stripped), "title": "", "inline_body": ""}
 
 
+def _lettered_section_heading(line: str) -> dict[str, str] | None:
+    """Parse outline headings like `B. Faculty Attendance and Absences` as sibling articles.
+
+    Faculty manuals use A./B./C. for peer sections. Without this, a keyword such as
+    "attendance" promoted B. to a chapter and swallowed C./D. into its body.
+    """
+    stripped = line.strip()
+    match = re.match(r"^([A-Z])\.\s+(.+)$", stripped)
+    if not match:
+        return None
+    letter, title = match.group(1), match.group(2).strip()
+    if title.endswith((".", ";", ",", ":")):
+        return None
+    if _is_table_style_row(title):
+        return None
+    words = title.split()
+    if not (2 <= len(words) <= 12):
+        return None
+    if not _is_title_like_heading(title):
+        return None
+    if re.match(r"^(?:If|When|For|The|This|These|Those|Any)\b", title):
+        return None
+    if re.search(r"\b(?:shall|must|should|may be)\b", title, flags=re.I):
+        return None
+    if not _looks_like_lettered_policy_title(title):
+        return None
+    return {
+        "level": "article",
+        "value": f"{letter}. {title}",
+        "title": "",
+        "inline_body": "",
+    }
+
+
+def _looks_like_lettered_policy_title(title: str) -> bool:
+    if re.search(r"\b(?:during|such as|including|the like)\b", title, flags=re.I):
+        return False
+    if _has_policy_topic_keyword(title):
+        return True
+    if re.search(
+        r"\b(?:faculty|teacher|staff|employee|workload|uniform|leave|scholarship|library|hiring|official time)\b",
+        title,
+        flags=re.I,
+    ):
+        return True
+    return 2 <= len(title.split()) <= 6 and _is_title_like_heading(title)
+
+
 def _policy_topic_heading(line: str) -> dict[str, str] | None:
     if re.match(r"^\s*[-*]", line):
         return None
     stripped = line.strip(" :-")
+    if re.match(r"^[A-Z]\.\s+\S", stripped):
+        return None
     if _is_table_style_row(stripped) or _is_continuation_clause(stripped):
         return None
     if PROGRAM_GROUP_RE.match(stripped) or _is_degree_program_line(stripped):

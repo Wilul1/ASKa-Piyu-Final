@@ -3,9 +3,11 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
+import '../app_route_observer.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
+import '../navigation/soft_page_route.dart';
 import '../services/api_client.dart';
 import '../widgets/public_site_header.dart';
 import 'chatbot_page.dart';
@@ -20,23 +22,53 @@ class StudentHomePage extends StatefulWidget {
   State<StudentHomePage> createState() => _StudentHomePageState();
 }
 
-class _StudentHomePageState extends State<StudentHomePage> {
+class _StudentHomePageState extends State<StudentHomePage>
+    with RouteAware {
   bool _loading = true;
+  bool _loadInFlight = false;
   String? _error;
   List<_LandingCategory> _categories = const [];
   List<_LandingArticle> _articles = const [];
   String _quickTab = 'Common topics';
-  bool _kbLoadStarted = false;
+  String? _lastAuthKey;
+  ModalRoute<dynamic>? _route;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_kbLoadStarted) return;
-    _kbLoadStarted = true;
+    final route = ModalRoute.of(context);
+    if (route != _route) {
+      appRouteObserver.unsubscribe(this);
+      _route = route;
+      if (route is PageRoute) {
+        appRouteObserver.subscribe(this, route);
+      }
+    }
+    // Reload when auth role changes (e.g. faculty login/logout) so public
+    // student KB is not stuck on an empty faculty-audience result set.
+    final auth = AuthScope.of(context);
+    final authKey = '${auth.isAuthenticated}:${auth.role ?? ''}';
+    if (_lastAuthKey != authKey) {
+      _lastAuthKey = authKey;
+      _loadPublicKb();
+    }
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    // Returning from admin / KB after publishing — refresh counts.
     _loadPublicKb();
   }
 
   Future<void> _loadPublicKb() async {
+    if (_loadInFlight) return;
+    _loadInFlight = true;
     setState(() {
       _loading = true;
       _error = null;
@@ -46,7 +78,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       final categoriesData =
           await _getJson('/kb/categories', headers: authHeaders);
       final articlesData =
-          await _getJson('/kb/articles?limit=12', headers: authHeaders);
+          await _getJson('/kb/articles?limit=100', headers: authHeaders);
       final categoryItems =
           categoriesData['items'] is List ? categoriesData['items'] as List : const [];
       final articleItems =
@@ -72,6 +104,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
         _error = 'Could not load published Knowledge Base content.';
         _loading = false;
       });
+    } finally {
+      _loadInFlight = false;
     }
   }
 
@@ -84,7 +118,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
       backgroundColor: Colors.white,
       body: Stack(
         children: [
-          CustomScrollView(
+          RefreshIndicator(
+            color: DesignTokens.maroon,
+            onRefresh: _loadPublicKb,
+            child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               const SliverToBoxAdapter(child: PublicSiteHeader()),
               SliverToBoxAdapter(child: _HeroSection(isNarrow: isNarrow)),
@@ -119,13 +157,29 @@ class _StudentHomePageState extends State<StudentHomePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Resources',
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w900,
-                              color: DesignTokens.ink,
-                            ),
+                          Row(
+                            children: [
+                              Text(
+                                'Resources',
+                                style: TextStyle(
+                                  fontSize: isNarrow ? 22 : 28,
+                                  fontWeight: FontWeight.w900,
+                                  color: DesignTokens.ink,
+                                ),
+                              ),
+                              const Spacer(),
+                              if (isNarrow && _categories.isNotEmpty)
+                                TextButton(
+                                  onPressed: () => softPush(
+                                    context,
+                                    const KnowledgeBasePage(),
+                                  ),
+                                  child: const Text(
+                                    'See all',
+                                    style: TextStyle(fontWeight: FontWeight.w800),
+                                  ),
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 18),
                           if (_loading)
@@ -139,20 +193,39 @@ class _StudentHomePageState extends State<StudentHomePage> {
                               style: const TextStyle(color: DesignTokens.muted),
                             )
                           else if (_categories.isEmpty)
-                            const Text(
-                              'No published Knowledge Base categories yet.',
-                              style: TextStyle(color: DesignTokens.muted),
+                            Text(
+                              AuthScope.of(context).role == 'faculty'
+                                  ? 'No faculty Knowledge Base articles published yet. Ask an admin to publish Faculty Manual topics for faculty.'
+                                  : 'No published Knowledge Base categories yet.',
+                              style: const TextStyle(color: DesignTokens.muted),
                             )
                           else
                             _ResourcesGrid(
                               categories: _categories,
                               isNarrow: isNarrow,
                             ),
+                          if (!_loading &&
+                              _error == null &&
+                              _categories.isNotEmpty &&
+                              !isNarrow) ...[
+                            const SizedBox(height: 14),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                onPressed: () => softPush(
+                                  context,
+                                  const KnowledgeBasePage(),
+                                ),
+                                icon: const Icon(Icons.menu_book_outlined),
+                                label: const Text('Browse all categories in Knowledge Base'),
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 42),
                           const Text(
                             'Quick links',
                             style: TextStyle(
-                              fontSize: 28,
+                              fontSize: 22,
                               fontWeight: FontWeight.w900,
                               color: DesignTokens.ink,
                             ),
@@ -174,13 +247,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
               ),
             ],
           ),
+          ),
           Positioned(
             right: 20,
             bottom: 20,
             child: _FloatingChatButton(
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ChatbotPage()),
-              ),
+              compact: isNarrow,
+              onTap: () => softPush(context, const ChatbotPage()),
             ),
           ),
         ],
@@ -209,11 +282,7 @@ class _HeroSectionState extends State<_HeroSection> {
 
   void _search() {
     final query = _searchCtrl.text.trim();
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => KnowledgeBasePage(initialQuery: query),
-      ),
-    );
+    softPush(context, KnowledgeBasePage(initialQuery: query));
   }
 
   @override
@@ -286,7 +355,9 @@ class _HeroSectionState extends State<_HeroSection> {
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      'Find student support articles, procedures, and answers for Laguna State Polytechnic University.',
+                      AuthScope.of(context).role == 'faculty'
+                          ? 'Find faculty support articles, procedures, and answers for Laguna State Polytechnic University.'
+                          : 'Find student support articles, procedures, and answers for Laguna State Polytechnic University.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.92),
@@ -426,16 +497,15 @@ class _ResourcesGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final columns = isNarrow
-        ? 1
+        ? 2
         : MediaQuery.sizeOf(context).width >= 1000
             ? 3
             : 2;
-    // Show up to 6 cards like the mock (2 rows x 3).
-    final shown = categories.take(6).toList();
+    final shown = categories;
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final gap = 16.0;
+        final gap = isNarrow ? 8.0 : 16.0;
         final cardWidth =
             (constraints.maxWidth - gap * (columns - 1)) / columns;
         return Wrap(
@@ -449,16 +519,13 @@ class _ResourcesGrid extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(14),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => KnowledgeBasePage(
-                        initialCategory: category.name,
-                      ),
-                    ),
+                  onTap: () => softPush(
+                    context,
+                    KnowledgeBasePage(initialCategory: category.name),
                   ),
                   child: Container(
-                    constraints: const BoxConstraints(minHeight: 128),
-                    padding: const EdgeInsets.all(20),
+                    constraints: BoxConstraints(minHeight: isNarrow ? 72 : 128),
+                    padding: EdgeInsets.all(isNarrow ? 12 : 20),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: const Color(0xFFE5E7EB)),
@@ -468,23 +535,23 @@ class _ResourcesGrid extends StatelessWidget {
                       children: [
                         Text(
                           category.name,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: DesignTokens.maroon,
                             fontWeight: FontWeight.w900,
-                            fontSize: 17,
+                            fontSize: isNarrow ? 14 : 17,
                           ),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 6),
                         Text(
                           category.articleCount > 0
-                              ? '${category.articleCount} published article${category.articleCount == 1 ? '' : 's'}'
-                              : 'Browse published support articles',
+                              ? '${category.articleCount} article${category.articleCount == 1 ? '' : 's'}'
+                              : 'Browse articles',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Color(0xFF4B5563),
                             height: 1.4,
-                            fontSize: 14,
+                            fontSize: isNarrow ? 12 : 14,
                           ),
                         ),
                       ],
@@ -654,11 +721,61 @@ class _QuickLinksSection extends StatelessWidget {
     );
 
     if (isNarrow) {
+      const shortLabels = {
+        'Common topics': 'Common topics',
+        'Role-based guides': 'Role-based',
+        'Additional resources': 'More',
+      };
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          sidebar,
-          const SizedBox(height: 14),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final tab in tabs) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Material(
+                      color: tab == selectedTab
+                          ? const Color(0xFFFCE8EA)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: () => onTabChanged(tab),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: tab == selectedTab
+                                  ? const Color(0xFFE8B4B8)
+                                  : const Color(0xFFE5E7EB),
+                            ),
+                          ),
+                          child: Text(
+                            shortLabels[tab] ?? tab,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                              color: tab == selectedTab
+                                  ? DesignTokens.maroon
+                                  : const Color(0xFF4B5563),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
           list,
         ],
       );
@@ -687,9 +804,7 @@ class _QuickLinkTile extends StatelessWidget {
       child: InkWell(
         onTap: () {
           if (item.openChat) {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const ChatbotPage()),
-            );
+            softPush(context, const ChatbotPage());
             return;
           }
           if (item.openTickets) {
@@ -699,17 +814,19 @@ class _QuickLinkTile extends StatelessWidget {
             );
             return;
           }
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => KnowledgeBasePage(
-                initialCategory: item.category,
-                initialQuery: item.query,
-              ),
+          softPush(
+            context,
+            KnowledgeBasePage(
+              initialCategory: item.category,
+              initialQuery: item.query,
             ),
           );
         },
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          padding: EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: MediaQuery.sizeOf(context).width < 880 ? 10 : 16,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -750,8 +867,9 @@ class _QuickLinkTile extends StatelessWidget {
 
 class _FloatingChatButton extends StatelessWidget {
   final VoidCallback onTap;
+  final bool compact;
 
-  const _FloatingChatButton({required this.onTap});
+  const _FloatingChatButton({required this.onTap, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -764,13 +882,13 @@ class _FloatingChatButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
+          padding: EdgeInsets.fromLTRB(8, 8, compact ? 14 : 20, 8),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 36,
-                height: 36,
+                width: compact ? 32 : 36,
+                height: compact ? 32 : 36,
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
@@ -783,8 +901,8 @@ class _FloatingChatButton extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              const Text(
-                'Chat with ASKa-Piyu',
+              Text(
+                compact ? 'Chat' : 'Chat with ASKa-Piyu',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,

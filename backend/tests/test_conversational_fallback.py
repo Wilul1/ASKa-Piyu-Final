@@ -61,7 +61,7 @@ class _Store:
         self.chunks = chunks
         self.chunk_count = len(chunks)
 
-    def search(self, question, *, top_k=None, raw_k=None):
+    def search(self, question, *, top_k=None, raw_k=None, user_role=None):
         return self.chunks
 
     def list_chunks(self):
@@ -383,3 +383,16 @@ def test_office_fallback_ranks_by_topic_overlap_not_hardcoded_service():
     )
     assert "registrar" in answer.casefold()
     assert "board secretary" not in answer.casefold()
+
+
+def test_fallback_accepts_legacy_context_kwargs_without_crashing():
+    clarify = format_conversational_fallback(
+        question="Can I shift to another BS program if I failed more than six units this semester?",
+        context="Shifting of Course. Students from other courses can shift...",
+        sources=[{"title": "Shifting of Course"}],
+        confidence="low",
+        style_hint="clarify",
+        reason="retrieval_evidence_weak",
+    )
+    assert "specific question" in clarify.lower() or "shifting" in clarify.lower()
+    assert clarify.strip()

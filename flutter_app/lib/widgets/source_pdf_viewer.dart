@@ -8,8 +8,13 @@ import '../design_tokens.dart';
 import '../services/api_client.dart';
 import 'source_pdf_embed.dart';
 
-/// Build an absolute API URL for a relative source_view_url, with optional page fragment.
-String resolveSourcePdfUrl(String? viewUrl, {int? page}) {
+/// Build an absolute API URL for a relative source URL, with optional page range.
+String resolveSourcePdfUrl(
+  String? viewUrl, {
+  int? page,
+  int? pageEnd,
+  String? section,
+}) {
   final raw = (viewUrl ?? '').trim();
   if (raw.isEmpty) return '';
   final base = AppConfig.resolvedApiBase;
@@ -17,23 +22,27 @@ String resolveSourcePdfUrl(String? viewUrl, {int? page}) {
       ? raw
       : (base.isEmpty ? raw : '$base$raw');
 
+  final withoutHash = url.split('#').first;
+  final uri = Uri.tryParse(withoutHash);
+  if (uri == null) return url;
+
+  final params = Map<String, String>.from(uri.queryParameters);
   if (page != null && page > 0) {
-    final withoutHash = url.split('#').first;
-    var next = withoutHash;
-    if (!RegExp(r'[?&]page=\d+').hasMatch(next)) {
-      final sep = next.contains('?') ? '&' : '?';
-      next = '$next${sep}page=$page';
-    }
-    url = '$next#page=$page';
-  } else if (!url.contains('#page=') &&
-      RegExp(r'[?&]page=(\d+)').hasMatch(url)) {
-    final match = RegExp(r'[?&]page=(\d+)').firstMatch(url);
-    final pageFromQuery = int.tryParse(match?.group(1) ?? '');
-    if (pageFromQuery != null && pageFromQuery > 0) {
-      url = '${url.split('#').first}#page=$pageFromQuery';
-    }
+    params.putIfAbsent('page', () => '$page');
   }
-  return url;
+  if (pageEnd != null && page != null && pageEnd > page) {
+    params['end'] = '$pageEnd';
+  }
+  final cleanedSection = (section ?? '').trim();
+  if (cleanedSection.isNotEmpty && uri.path.contains('/source/page/')) {
+    params.putIfAbsent('section', () => cleanedSection);
+  }
+
+  var next = uri.replace(queryParameters: params.isEmpty ? null : params).toString();
+  if (page != null && page > 0) {
+    next = '$next#page=$page';
+  }
+  return next;
 }
 
 Future<void> showSourcePdfViewer(
@@ -42,11 +51,23 @@ Future<void> showSourcePdfViewer(
   String? sourceLabel,
   String? sourceSection,
   int? page,
+  int? pageEnd,
   String? viewUrl,
   String? pageUrl,
 }) async {
-  final fullUrl = resolveSourcePdfUrl(viewUrl, page: page);
-  final pageOnlyUrl = resolveSourcePdfUrl(pageUrl, page: page);
+  final section = (sourceSection ?? '').trim();
+  final fullUrl = resolveSourcePdfUrl(
+    viewUrl,
+    page: page,
+    pageEnd: pageEnd,
+    section: section,
+  );
+  final pageOnlyUrl = resolveSourcePdfUrl(
+    pageUrl,
+    page: page,
+    pageEnd: pageEnd,
+    section: section,
+  );
   final embedUrl = pageOnlyUrl.isNotEmpty ? pageOnlyUrl : fullUrl;
 
   if (embedUrl.isEmpty) {
@@ -81,7 +102,6 @@ Future<void> showSourcePdfViewer(
     final contentType = (result.header('content-type') ?? '').toLowerCase();
     if (status == 401 || status == 403) {
       if (!context.mounted) return;
-      // 401: ApiClient + SessionExpiry already cleared the JWT and opened Login.
       if (status == 403) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -123,7 +143,11 @@ Future<void> showSourcePdfViewer(
   final sourceName = (sourceLabel ?? '').trim().isNotEmpty
       ? sourceLabel!.trim()
       : (title.trim().isEmpty ? 'Source document' : title.trim());
-  final sectionName = (sourceSection ?? '').trim();
+  final pageLabel = () {
+    if (page == null) return null;
+    if (pageEnd != null && pageEnd > page) return '$page–$pageEnd';
+    return '$page';
+  }();
 
   await showDialog<void>(
     context: context,
@@ -153,20 +177,22 @@ Future<void> showSourcePdfViewer(
                               color: DesignTokens.ink,
                             ),
                           ),
-                          if (sectionName.isNotEmpty) ...[
+                          if (section.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Text(
-                              'Section: $sectionName',
+                              'Section: $section',
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: DesignTokens.muted,
                               ),
                             ),
                           ],
-                          if (page != null) ...[
+                          if (pageLabel != null) ...[
                             const SizedBox(height: 2),
                             Text(
-                              'Page: $page',
+                              pageEnd != null && page != null && pageEnd > page
+                                  ? 'Pages: $pageLabel'
+                                  : 'Page: $pageLabel',
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: DesignTokens.muted,

@@ -4,6 +4,7 @@ Admin routes — knowledge base creation flow only.
 OCR / PDF extraction → clean → chunk → embeddings → ChromaDB
 """
 
+import asyncio
 import hmac
 import logging
 import mimetypes
@@ -215,17 +216,71 @@ def require_admin_key(
     authorization: str | None = Header(
         default=None,
         alias="authorization",
-        description="Bearer token for a logged-in admin account.",
+        description="Bearer token for a logged-in admin or office account.",
     ),
 ) -> str | None:
-    """Authorize admin access.
+    """Authorize KB editor access (admin or office).
 
-    Returns the admin user id when Bearer auth is used; ``None`` for API-key auth
+    Returns the user id when Bearer auth is used; ``None`` for API-key auth
     (no user actor is available for attribution).
 
     In production, shared X-Admin-Key auth is disabled unless
     ``ASKA_ALLOW_ADMIN_API_KEY=true``.
     """
+    from app.config import admin_api_key_auth_enabled
+
+    configured_key = settings.admin_api_key
+    if (
+        admin_api_key_auth_enabled()
+        and configured_key
+        and x_admin_key
+    ):
+        try:
+            key_ok = hmac.compare_digest(x_admin_key, configured_key)
+        except (TypeError, ValueError):
+            key_ok = False
+        if key_ok:
+            return None
+
+    if authorization and authorization.lower().startswith("bearer "):
+        return _require_kb_editor_bearer_token(authorization.split(" ", 1)[1].strip())
+
+    if x_admin_key and not admin_api_key_auth_enabled():
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Shared admin API key auth is disabled. "
+                "Log in with an admin or office account (Bearer token)."
+            ),
+        )
+
+    if not configured_key and not admin_api_key_auth_enabled():
+        raise HTTPException(
+            status_code=401,
+            detail="Admin authorization failed. Log in as admin or office staff.",
+        )
+
+    if not configured_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin API key is not configured. Log in as admin or set ASKA_ADMIN_API_KEY.",
+        )
+    raise HTTPException(status_code=401, detail="Invalid admin key.")
+
+
+def require_admin_only_key(
+    x_admin_key: str | None = Header(
+        default=None,
+        alias="x-admin-key",
+        description="Administrator API key. Must match ASKA_ADMIN_API_KEY when key auth is enabled.",
+    ),
+    authorization: str | None = Header(
+        default=None,
+        alias="authorization",
+        description="Bearer token for a logged-in admin account.",
+    ),
+) -> str | None:
+    """Authorize destructive admin-only KB operations (reset / full rebuild)."""
     from app.config import admin_api_key_auth_enabled
 
     configured_key = settings.admin_api_key
@@ -267,8 +322,30 @@ def require_admin_key(
     raise HTTPException(status_code=401, detail="Invalid admin key.")
 
 
+def _require_kb_editor_bearer_token(token: str) -> str:
+    """Allow admin or office staff to use extract / generate / article tools."""
+    user = _load_user_from_bearer(token)
+    role = str(user.role).strip().lower()
+    if role not in {"admin", "office"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin or office accounts can use Knowledge Base tools.",
+        )
+    return str(user.id)
+
+
 def _require_admin_bearer_token(token: str) -> str:
     """Same revoke/disable rules as get_current_user, plus role=admin."""
+    user = _load_user_from_bearer(token)
+    if str(user.role).strip().lower() != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin accounts can use Knowledge Base Admin tools.",
+        )
+    return str(user.id)
+
+
+def _load_user_from_bearer(token: str) -> User:
     try:
         payload = decode_access_token(token)
         session_factory = get_session_factory()
@@ -292,12 +369,7 @@ def _require_admin_bearer_token(token: str) -> str:
         token_cv_int = 0
     if token_cv_int != int(getattr(user, "credentials_version", 0) or 0):
         raise HTTPException(status_code=401, detail="Authentication token has been revoked.")
-    if str(user.role).strip().lower() != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Only admin accounts can use Knowledge Base Admin tools.",
-        )
-    return str(user.id)
+    return user
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -335,7 +407,9 @@ async def admin_extract_document(
     """
     content = await _read_upload(file)
     try:
-        result = extract_document_preview(
+        # OCR/structuring is CPU-bound; keep the event loop free for /health.
+        result = await asyncio.to_thread(
+            extract_document_preview,
             content,
             filename=file.filename,
             content_type=file.content_type,
@@ -417,7 +491,8 @@ async def admin_ingest_document(
     """
     content = await _read_upload(file)
     try:
-        result = ingest_document_into_knowledge_base(
+        result = await asyncio.to_thread(
+            ingest_document_into_knowledge_base,
             content,
             filename=file.filename,
             content_type=file.content_type,
@@ -496,7 +571,7 @@ async def admin_kb_statistics(_: None = Depends(require_admin_key)) -> Knowledge
     responses={500: {"model": ErrorResponse}},
     summary="[Admin] Reset and rebuild the ChromaDB knowledge base",
 )
-async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_key)) -> dict:
+async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_only_key)) -> dict:
     started = time.perf_counter()
     collection = settings.chroma_collection_name
     logger.info("Knowledge base rebuild requested: collection=%s", collection)
@@ -634,7 +709,7 @@ async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_key)) -> 
     summary="[Admin] Reset ChromaDB knowledge base collection",
 )
 async def admin_reset_chroma(
-    _: None = Depends(require_admin_key),
+    _: None = Depends(require_admin_only_key),
     allow_skip_documents: bool = Query(
         default=False,
         description=(
@@ -1040,7 +1115,7 @@ def admin_create_article(
             source_filename=payload.source_document,
             chunk_count=len(payload.chunk_ids or []) if payload.chunk_ids else None,
             published=bool(payload.publish_status),
-            audience=payload.audience or "student",
+            audience=_resolve_bulk_article_audience(payload),
             kb_origin="ticket_resolution" if payload.source_ticket_id else "document",
             source_ticket_id=payload.source_ticket_id,
         )
@@ -1206,7 +1281,11 @@ def admin_publish_article(
 
     from app.models.db_models import PublishedArticle
     from app.services.article_rag_indexer import index_published_article
-    from app.services.ticket_knowledge import sync_ticket_kb_status
+    from app.services.ticket_knowledge import (
+        TicketKnowledgeError,
+        assert_no_duplicate_published_topic,
+        sync_ticket_kb_status,
+    )
 
     session_factory = get_session_factory()
     session = session_factory()
@@ -1217,6 +1296,15 @@ def admin_publish_article(
         gate = _publish_gate_error(content=art.content)
         if gate:
             raise HTTPException(status_code=400, detail=gate)
+        if art.source_ticket_id or str(art.kb_origin or "") == "ticket_resolution":
+            try:
+                assert_no_duplicate_published_topic(
+                    session,
+                    title=art.title,
+                    exclude_article_id=art.id,
+                )
+            except TicketKnowledgeError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         # Commit published first so a later Chroma write cannot outlive an unpublished row.
         art.published = True
         art.published_at = datetime.now(timezone.utc)

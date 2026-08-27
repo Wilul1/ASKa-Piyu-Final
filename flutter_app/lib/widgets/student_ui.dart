@@ -6,27 +6,29 @@ class StudentPage extends StatelessWidget {
   final Widget child;
   final double maxWidth;
   final EdgeInsetsGeometry padding;
+  final bool scroll;
 
   const StudentPage({
     super.key,
     required this.child,
     this.maxWidth = 1180,
     this.padding = const EdgeInsets.fromLTRB(24, 22, 24, 28),
+    this.scroll = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: padding,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxWidth),
-            child: child,
-          ),
+    final content = Padding(
+      padding: padding,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: child,
         ),
       ),
     );
+    if (!scroll) return content;
+    return SingleChildScrollView(child: content);
   }
 }
 

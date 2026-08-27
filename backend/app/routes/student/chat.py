@@ -4,6 +4,7 @@ Student routes — question answering flow only.
 Delegates to the same QA pipeline as ``POST /qa/ask`` (filters + answer engine).
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -53,7 +54,8 @@ async def student_ask_question(
             {"role": item.role, "content": item.content}
             for item in (body.history or [])
         ]
-        result = answer_qa_question(
+        result = await asyncio.to_thread(
+            answer_qa_question,
             body.question,
             user_role=user_role,
             history=history,

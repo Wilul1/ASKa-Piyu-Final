@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../models/auth_models.dart';
+import '../navigation/soft_page_route.dart';
 import '../widgets/auth_split_shell.dart';
 import 'signup_page.dart';
 
@@ -73,14 +74,12 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   void _openSignup() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) =>
-            SignupPage(
-              returnTo: widget.returnTo,
-              message: widget.message,
-              gateRole: widget.gateRole,
-            ),
+    softReplace(
+      context,
+      SignupPage(
+        returnTo: widget.returnTo,
+        message: widget.message,
+        gateRole: widget.gateRole,
       ),
     );
   }
@@ -206,7 +205,7 @@ class _LoginPageState extends State<LoginPage> {
             const AuthOrDivider(text: "Don't have an account?"),
             const SizedBox(height: 18),
             AuthSecondaryButton(
-              label: 'CREATE ACCOUNT',
+              label: 'SIGN UP',
               onPressed: _loading ? null : _openSignup,
             ),
           ],

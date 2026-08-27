@@ -41,12 +41,16 @@ services:
       ASKA_CHROMA_PERSIST_DIR: /data/chroma
       ASKA_DOCUMENTS_PERSIST_DIR: /data/documents
       ASKA_TICKET_ATTACHMENTS_DIR: /data/ticket_attachments
+      ASKA_KB_MEDIA_DIR: /data/kb_media
     expose:
       - "8000"
     volumes:
       - aska_chroma:/data/chroma
       - aska_documents:/data/documents
       - aska_attachments:/data/ticket_attachments
+      - aska_kb_media:/data/kb_media
+      # Persist EasyOCR detection/recognition weights across recreates.
+      - aska_easyocr:/root/.EasyOCR
     # Alembic runs before uvicorn; give startup room before failing health.
     healthcheck:
       test:
@@ -81,3 +85,5 @@ volumes:
   aska_chroma:
   aska_documents:
   aska_attachments:
+  aska_kb_media:
+  aska_easyocr:

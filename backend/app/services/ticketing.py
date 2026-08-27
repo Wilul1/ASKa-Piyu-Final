@@ -10,8 +10,12 @@ from typing import Any
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from app.models.db_models import Office, Ticket, TicketReply, User
+from app.models.db_models import Office, OfficeAlias, Ticket, TicketReply, User
 from app.models.schemas import CreateTicketRequest, TicketAttachmentSchema, TicketSchema, UpdateTicketRequest
+from app.services.ticket_text_quality import (
+    validate_ticket_description,
+    validate_ticket_subject,
+)
 from app.services.knowledge_taxonomy import classify_question
 from app.services.ticket_audit import record_ticket_audit
 from app.services.ticket_notifications import notify_office_staff, notify_ticket_owner
@@ -52,7 +56,12 @@ def triage_ticket(question: str, description: str = "", *, session: Session | No
 
 def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -> TicketSchema:
     _require_role(actor, {"student", "faculty", "admin", "office"})
-    triage = triage_ticket(payload.original_question, payload.description, session=session)
+    try:
+        subject = validate_ticket_subject(payload.original_question)
+        description = validate_ticket_description(payload.description)
+    except ValueError as exc:
+        raise TicketValidationError(str(exc)) from exc
+    triage = triage_ticket(subject, description, session=session)
 
     owner = actor
     on_behalf_email = (getattr(payload, "on_behalf_of_email", None) or "").strip().lower()
@@ -72,7 +81,12 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
             raise TicketValidationError("Requester account was not found for on_behalf_of_email.")
 
     if payload.preferred_office_id or payload.preferred_office:
-        if payload.preferred_office_id:
+        # Students/faculty cannot override triage routing; office/admin may.
+        if actor.role in {"student", "faculty"}:
+            office_id, office_name = resolve_office_for_ticket(
+                session, triage["assigned_office"]
+            )
+        elif payload.preferred_office_id:
             office = session.get(Office, payload.preferred_office_id)
             if office is None:
                 raise TicketValidationError("Preferred office was not found.")
@@ -83,23 +97,14 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
         office_id, office_name = resolve_office_for_ticket(session, triage["assigned_office"])
 
     priority = triage["priority"]
-    if payload.preferred_priority:
-        # Requesters may suggest Low/Medium/High only — Urgent is staff-set.
-        if actor.role in {"student", "faculty"}:
-            if payload.preferred_priority == "Urgent":
-                raise TicketValidationError(
-                    "Only office staff or admins can set Urgent priority."
-                )
-            if payload.preferred_priority in {"Low", "Medium", "High"}:
-                priority = payload.preferred_priority
-        else:
-            priority = payload.preferred_priority
+    if payload.preferred_priority and actor.role not in {"student", "faculty"}:
+        priority = payload.preferred_priority
     now = _utc_now()
     ticket = Ticket(
         id=_ticket_id(),
         user_id=owner.id,
-        original_question=payload.original_question.strip(),
-        description=payload.description.strip(),
+        original_question=subject,
+        description=description,
         category=triage["category"],
         assigned_office_id=office_id,
         assigned_office=office_name,
@@ -121,7 +126,10 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
         old_value=None,
         new_value="Open",
     )
-    if payload.preferred_office_id or payload.preferred_office:
+    if (
+        actor.role not in {"student", "faculty"}
+        and (payload.preferred_office_id or payload.preferred_office)
+    ):
         record_ticket_audit(
             session,
             ticket_id=ticket.id,
@@ -141,7 +149,7 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
     )
     session.commit()
     session.refresh(ticket)
-    return _ticket_schema(session, ticket)
+    return _ticket_schema(session, ticket, viewer=actor)
 
 
 def list_tickets(
@@ -191,14 +199,14 @@ def list_tickets(
         query = query.filter(or_(*office_filters))
 
     tickets = query.order_by(Ticket.updated_at.desc()).all()
-    return [_ticket_schema(session, ticket) for ticket in tickets]
+    return [_ticket_schema(session, ticket, viewer=actor) for ticket in tickets]
 
 
 def get_ticket(session: Session, ticket_id: str, actor: User) -> TicketSchema:
     ticket = _load_ticket(session, ticket_id)
     if not _can_view(ticket, actor, session):
         raise TicketAccessError("You do not have access to this ticket.")
-    return _ticket_schema(session, ticket)
+    return _ticket_schema(session, ticket, viewer=actor)
 
 
 def update_ticket(
@@ -322,34 +330,50 @@ def update_ticket(
 
     session.commit()
     session.refresh(ticket)
-    return _ticket_schema(session, ticket)
+    return _ticket_schema(session, ticket, viewer=actor)
 
 
-def add_ticket_reply(session: Session, ticket_id: str, message: str, actor: User) -> TicketSchema:
+def add_ticket_reply(
+    session: Session,
+    ticket_id: str,
+    message: str,
+    actor: User,
+    *,
+    is_internal: bool = False,
+) -> TicketSchema:
     ticket = _load_ticket(session, ticket_id)
     if not _can_view(ticket, actor, session):
         raise TicketAccessError("You do not have access to this ticket.")
     if ticket.status == "Closed":
         raise TicketValidationError("Closed tickets do not accept new replies.")
-    if actor.role == "student" and ticket.status not in {"Open", "In Progress"}:
-        raise TicketValidationError(
-            "You can only reply while your ticket is Open or In Progress. "
-            "Ask the office to reopen it if you need more help."
-        )
+    if is_internal and actor.role not in {"admin", "office"}:
+        raise TicketAccessError("Only office staff or admin can post internal notes.")
+    if actor.role in {"student", "faculty"} and ticket.user_id == actor.id:
+        if ticket.status not in {"Open", "In Progress"}:
+            raise TicketValidationError(
+                "You can only reply while your ticket is Open or In Progress. "
+                "Ask the office to reopen it if you need more help."
+            )
 
     now = _utc_now()
+    cleaned = message.strip()
     reply = TicketReply(
         id=str(uuid.uuid4()),
         ticket_id=ticket.id,
         sender_id=actor.id,
         sender_role=actor.role,
         sender_name=actor.full_name,
-        message=message.strip(),
+        message=cleaned,
+        is_internal=bool(is_internal),
         created_at=now,
     )
     ticket.replies.append(reply)
     ticket.updated_at = now
-    if actor.role == "student" and ticket.status == "Resolved":
+    if (
+        not is_internal
+        and actor.role in {"student", "faculty"}
+        and ticket.status == "Resolved"
+    ):
         ticket.status = "In Progress"
         ticket.resolved_at = None
 
@@ -357,35 +381,36 @@ def add_ticket_reply(session: Session, ticket_id: str, message: str, actor: User
         session,
         ticket_id=ticket.id,
         actor=actor,
-        action="reply_added",
+        action="internal_note_added" if is_internal else "reply_added",
         field_name="reply",
         old_value=None,
-        new_value=_preview_text(message, limit=80),
+        new_value=_preview_text(cleaned, limit=80),
     )
 
-    preview = _preview_text(message)
-    if actor.role == "student":
-        notify_office_staff(
-            session,
-            ticket,
-            type="ticket_reply",
-            title=f"Student reply on {ticket.id}",
-            body=preview,
-            exclude_user_id=actor.id,
-        )
-    else:
-        notify_ticket_owner(
-            session,
-            ticket,
-            type="ticket_reply",
-            title=f"New reply on {ticket.id}",
-            body=preview,
-            exclude_user_id=actor.id,
-        )
+    preview = _preview_text(cleaned)
+    if not is_internal:
+        if actor.role in {"student", "faculty"}:
+            notify_office_staff(
+                session,
+                ticket,
+                type="ticket_reply",
+                title=f"Student reply on {ticket.id}",
+                body=preview,
+                exclude_user_id=actor.id,
+            )
+        else:
+            notify_ticket_owner(
+                session,
+                ticket,
+                type="ticket_reply",
+                title=f"New reply on {ticket.id}",
+                body=preview,
+                exclude_user_id=actor.id,
+            )
 
     session.commit()
     session.refresh(ticket)
-    return _ticket_schema(session, ticket)
+    return _ticket_schema(session, ticket, viewer=actor)
 
 
 def ticket_statistics(session: Session, actor: User) -> dict[str, Any]:
@@ -449,12 +474,42 @@ def create_office(
     return office
 
 
+def delete_office(session: Session, office_id: str) -> None:
+    office = session.get(Office, office_id)
+    if office is None:
+        raise TicketNotFoundError("Office was not found.")
+
+    staff_count = session.query(User).filter(User.office_id == office.id).count()
+    ticket_count = session.query(Ticket).filter(Ticket.assigned_office_id == office.id).count()
+    if staff_count > 0 or ticket_count > 0:
+        raise TicketValidationError(
+            "Remove staff accounts and reassign tickets before deleting this office."
+        )
+
+    # Aliases reference offices; clear them before deleting the office row.
+    session.query(OfficeAlias).filter(OfficeAlias.office_id == office.id).delete(
+        synchronize_session=False
+    )
+    session.delete(office)
+    session.commit()
+
+
 def list_offices(session: Session) -> list[Office]:
     return session.query(Office).order_by(Office.name.asc()).all()
 
 
-def _ticket_schema(session: Session, ticket: Ticket) -> TicketSchema:
+def _ticket_schema(
+    session: Session,
+    ticket: Ticket,
+    viewer: User | None = None,
+) -> TicketSchema:
     replies = sorted(ticket.replies or [], key=lambda item: item.created_at)
+    hide_internal = viewer is not None and viewer.role in {"student", "faculty"}
+    visible_replies = [
+        reply
+        for reply in replies
+        if not (hide_internal and bool(getattr(reply, "is_internal", False)))
+    ]
     messages = [
         {
             "id": reply.id,
@@ -464,12 +519,13 @@ def _ticket_schema(session: Session, ticket: Ticket) -> TicketSchema:
             "sender_name": reply.sender_name,
             "message": reply.message,
             "created_at": _iso(reply.created_at),
+            "is_internal": bool(getattr(reply, "is_internal", False)),
         }
-        for reply in replies
+        for reply in visible_replies
     ]
     latest_preview = None
-    if replies:
-        latest_preview = _preview_text(replies[-1].message)
+    if visible_replies:
+        latest_preview = _preview_text(visible_replies[-1].message)
     user = ticket.user
     if user is None:
         user = session.get(User, ticket.user_id)
@@ -509,7 +565,7 @@ def _ticket_schema(session: Session, ticket: Ticket) -> TicketSchema:
         resolved_at=_iso(ticket.resolved_at) if ticket.resolved_at else None,
         closed_at=_iso(ticket.closed_at) if ticket.closed_at else None,
         latest_reply_preview=latest_preview,
-        replies_count=len(replies),
+        replies_count=len(visible_replies),
         messages=messages,
         attachments=[
             TicketAttachmentSchema(

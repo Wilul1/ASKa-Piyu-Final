@@ -198,7 +198,7 @@ class AdminArticleService {
     String saveMode = 'preview_only',
   }) async {
     final body = <String, dynamic>{
-      'preview': preview,
+      'preview': _slimPreviewForGeneration(preview),
       if (filename != null && filename.isNotEmpty) 'filename': filename,
       if (maxCandidates != null && maxCandidates > 0)
         'max_candidates': maxCandidates,
@@ -208,6 +208,9 @@ class AdminArticleService {
       method: 'POST',
       path: '/admin/kb/articles/generate-preview',
       body: body,
+      // Handbooks with many units (e.g. Faculty Manual ~80) need more than
+      // the default 60s API timeout used by lighter admin calls.
+      timeout: const Duration(minutes: 20),
     );
     if (data is! Map) {
       throw AdminArticleRequestException(
@@ -245,6 +248,7 @@ class AdminArticleService {
       files: [
         http.MultipartFile.fromBytes('file', bytes, filename: filename),
       ],
+      timeout: const Duration(minutes: 20),
     );
     if (data is! Map) {
       throw AdminArticleRequestException(
@@ -278,6 +282,7 @@ class AdminArticleService {
     Map<String, dynamic>? body,
     Map<String, String>? fields,
     List<http.MultipartFile>? files,
+    Duration timeout = ApiClient.defaultTimeout,
   }) async {
     final url = apiBase.isEmpty ? path : '$apiBase$path';
     final headers = <String, String>{};
@@ -295,6 +300,7 @@ class AdminArticleService {
         headers: headers,
         fields: fields,
         files: files,
+        timeout: timeout,
       );
     } else {
       result = await ApiClient.send(
@@ -302,6 +308,7 @@ class AdminArticleService {
         url: url,
         headers: headers,
         jsonBody: body,
+        timeout: timeout,
       );
     }
 
@@ -360,4 +367,19 @@ class AdminArticleService {
     if (text.isNotEmpty) return text;
     return status == null ? 'Request failed.' : 'Request failed with status $status.';
   }
+}
+
+Map<String, dynamic> _slimPreviewForGeneration(Map<String, dynamic> preview) {
+  final copy = Map<String, dynamic>.from(preview);
+  final units = copy['knowledge_units'];
+  final v2 = copy['charter_v2_services'];
+  final hasUnits = units is List && units.isNotEmpty;
+  final hasV2 = v2 is List && v2.isNotEmpty;
+  if (!hasUnits && !hasV2) return copy;
+  // Units already carry article text. Drop duplicate 120k review blobs so
+  // generate-preview does not stall uploading a huge JSON body.
+  copy.remove('review_text');
+  copy.remove('cleaned_text');
+  copy.remove('extracted_text');
+  return copy;
 }

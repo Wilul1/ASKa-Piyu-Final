@@ -11,6 +11,9 @@ class AdminScaffold extends StatelessWidget {
   final String title;
   final String description;
   final Widget child;
+  final List<Widget>? actions;
+  /// When true, child fills the body (for split-pane ticket console).
+  final bool fillBody;
 
   const AdminScaffold({
     super.key,
@@ -18,6 +21,8 @@ class AdminScaffold extends StatelessWidget {
     required this.title,
     required this.description,
     required this.child,
+    this.actions,
+    this.fillBody = false,
   });
 
   @override
@@ -25,7 +30,7 @@ class AdminScaffold extends StatelessWidget {
     final auth = AuthScope.of(context);
     if (auth.role != 'admin') {
       return Scaffold(
-        backgroundColor: DesignTokens.bgGrey,
+        backgroundColor: DesignTokens.adminSurface,
         appBar: AppBar(title: Text(title)),
         body: Center(
           child: ConstrainedBox(
@@ -34,12 +39,6 @@ class AdminScaffold extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const StudentIconBox(
-                    icon: Icons.admin_panel_settings_rounded,
-                    color: DesignTokens.maroon,
-                    size: 52,
-                  ),
-                  const SizedBox(height: 14),
                   const StudentSectionTitle(
                     title: 'Admin access required',
                     subtitle:
@@ -69,40 +68,119 @@ class AdminScaffold extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
-        final content = StudentPage(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              StudentPanel(
-                child: Row(
-                  children: [
-                    const StudentIconBox(
-                      icon: Icons.admin_panel_settings_rounded,
-                      color: DesignTokens.maroon,
-                      size: 52,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: StudentSectionTitle(
-                        title: title,
-                        subtitle: description,
+        final Widget content;
+        if (fillBody) {
+          content = ColoredBox(
+            color: DesignTokens.adminSurface,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    isWide ? 20 : 14,
+                    isWide ? 16 : 12,
+                    isWide ? 20 : 14,
+                    10,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                color: DesignTokens.ink,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              description,
+                              style: const TextStyle(
+                                color: DesignTokens.muted,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
+                      if (actions != null) ...actions!,
+                    ],
+                  ),
+                ),
+                Expanded(child: child),
+              ],
+            ),
+          );
+        } else {
+          content = ColoredBox(
+            color: DesignTokens.adminSurface,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1240),
+                child: ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    isWide ? 28 : 18,
+                    isWide ? 28 : 16,
+                    isWide ? 28 : 18,
+                    32,
+                  ),
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                style: const TextStyle(
+                                  color: DesignTokens.ink,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.15,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                description,
+                                style: const TextStyle(
+                                  color: DesignTokens.muted,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (actions != null) ...actions!,
+                      ],
                     ),
+                    const SizedBox(height: 22),
+                    child,
                   ],
                 ),
               ),
-              const SizedBox(height: 18),
-              child,
-            ],
-          ),
-        );
+            ),
+          );
+        }
 
         if (isWide) {
           return Scaffold(
-            backgroundColor: DesignTokens.bgGrey,
+            backgroundColor: DesignTokens.adminSurface,
             body: Row(
               children: [
-                SizedBox(width: 220, child: AppSidebar(current: current)),
+                SizedBox(
+                  width: DesignTokens.adminSidebarWidth,
+                  child: AppSidebar(current: current),
+                ),
                 Expanded(child: content),
               ],
             ),
@@ -110,9 +188,18 @@ class AdminScaffold extends StatelessWidget {
         }
 
         return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
-          drawer: Drawer(child: AppSidebar(current: current)),
-          appBar: AppBar(title: Text(title)),
+          backgroundColor: DesignTokens.adminSurface,
+          drawer: Drawer(
+            backgroundColor: DesignTokens.adminSidebarBg,
+            child: AppSidebar(current: current),
+          ),
+          appBar: AppBar(
+            title: Text(title),
+            backgroundColor: Colors.white,
+            foregroundColor: DesignTokens.ink,
+            elevation: 0,
+            scrolledUnderElevation: 0.5,
+          ),
           body: content,
         );
       },

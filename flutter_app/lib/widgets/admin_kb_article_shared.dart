@@ -1181,6 +1181,42 @@ class _GeneratedCandidateGroupSectionState
             ),
           ),
           children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton(
+                  onPressed: () async {
+                    final entries = buildPreviewExportEntries(
+                      candidates: widget.items,
+                      previewArticlesById: widget.previewArticlesById,
+                      savedArticlesByPreviewId: widget.savedArticlesByPreviewId,
+                      discardedPreviewIds: widget.discardedPreviewIds,
+                      bucketKey: widget.bucketKey,
+                      sectionTitle: widget.title,
+                    );
+                    if (entries.isEmpty) {
+                      showKbSnackBar(context, 'No articles in this section to download.');
+                      return;
+                    }
+                    await downloadAllArticlePreviewsTxt(
+                      entries: entries,
+                      fallbackSourceFilename: widget.fallbackSourceFilename,
+                      scopeLabel: widget.title,
+                      bucketLabel: widget.bucketKey,
+                    );
+                    if (!context.mounted) return;
+                    showKbSnackBar(
+                      context,
+                      'Downloaded ${entries.length} ${widget.title} articles as one .txt',
+                    );
+                  },
+                  child: Text('Download Section TXT (${widget.items.length})'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             if (_supportsSelection) ...[
               Wrap(
                 spacing: 8,

@@ -2,7 +2,7 @@
 
 This guide gets the project running on a new machine from GitHub: what to install, how to configure it, and how to start the backend + Flutter app.
 
-**Short path for teammates:** see [`TEAMMATE_QUICKSTART.md`](TEAMMATE_QUICKSTART.md) (Docker Postgres + checklist).
+For production hosting, see [`DEPLOY.md`](DEPLOY.md).
 
 ---
 
@@ -72,9 +72,10 @@ Folder layout you should see:
 ASKa-piyu/
 ├── backend/          ← FastAPI + Chroma + Postgres
 ├── flutter_app/      ← Flutter UI
+├── scripts/          ← Postgres start, Flutter web build, backup
 ├── run_project.bat   ← Windows launcher (after setup)
 ├── SETUP.md          ← this file
-└── PROJECT_MEMORY.md ← architecture notes (optional reading)
+└── DEPLOY.md         ← production / Azure VM deploy
 ```
 
 ---
@@ -402,22 +403,21 @@ Share this file + the GitHub clone URL with your groupmate; they create their ow
 
 ## 12. Self-improving knowledge (ticket → FAQ → chatbot)
 
-ASKa-Piyu can grow without developer re-indexing when offices resolve tickets and admins publish FAQs.
+ASKa-Piyu can grow without developer re-indexing when offices resolve tickets and publish FAQs.
 
 ### Production workflow (pilot)
 
 1. Student/faculty asks the chatbot; if unanswered, they submit a ticket.
 2. Office staff resolve the ticket with an approved answer.
-3. On a **Resolved/Closed** ticket, office/admin clicks **Convert to Knowledge Base** and saves a **draft** FAQ (title, audience, body).
-4. Admin opens Article Library and **publishes** the draft.
-5. Publish indexes the FAQ into **Chroma** automatically. The next similar question can be answered by the chatbot.
-6. Unpublish removes the FAQ from Chroma.
+3. On a **Resolved/Closed** ticket, office clicks **Convert to Knowledge Base** and chooses **Publish now** (or Save draft, then Publish).
+4. Publish indexes the FAQ into **Chroma** automatically and lists it in the public Knowledge Base. The next similar question can be answered by the chatbot.
+5. Unpublish (from Article Library) removes the FAQ from Chroma and the public KB.
 
 ### Roles
 
 | Role | Can convert ticket → draft | Can publish to public KB + Chroma | Retrieval audience |
 |------|----------------------------|-----------------------------------|--------------------|
-| Office | Assigned tickets only | No | Full corpus (support) |
+| Office | Assigned tickets only | Yes (own converted FAQs / KB tools) | Full corpus (support) |
 | Admin | Yes | Yes | Full corpus |
 | Student | No | No | `student` + `both` (+ legacy) |
 | Faculty | No | No | `faculty` + `both` (+ legacy) |
@@ -440,7 +440,7 @@ Public signup supports **student** accounts only. Faculty/office/admin accounts 
 - Bind the API to `0.0.0.0` behind HTTPS; never commit `.env` secrets.
 - Set `ASKA_KB_REBUILD_DOCUMENT_PATHS` to the real handbook/charter PDF paths before relying on Chroma reset in production.
 - If publish returns a RAG indexing error after the article was marked published, Library shows **RAG stale** — use **Reindex chatbot** (or fix Chroma disk/permissions and retry).
-- Pilot SOP: thesis team acts as admin publishers; offices resolve + convert drafts. After university adoption, designated office publishers may be granted admin publish rights separately.
+- Pilot SOP: offices resolve tickets and publish FAQs themselves. Admin remains available for system setup, bulk document ingest, and Chroma rebuild.
 
 ---
 
@@ -448,9 +448,9 @@ Public signup supports **student** accounts only. Faculty/office/admin accounts 
 
 | File | Contents |
 |------|----------|
+| `DEPLOY.md` | Production / Azure VM + Docker HTTPS |
 | `backend/README.md` | API flows, ingest, tests |
 | `backend/.env.example` | All env vars with placeholders |
-| `PROJECT_MEMORY.md` | Architecture and completed features |
 | `flutter_app/README.md` | Minimal Flutter notes |
 
 If something fails after following this guide, send your groupmate: Python version, `flutter doctor` summary, and the exact error from the backend terminal (redact secrets).

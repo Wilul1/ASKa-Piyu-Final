@@ -34,9 +34,14 @@ def _auth_secret() -> bytes:
     return settings.auth_secret_key.encode("utf-8")
 
 
-def create_access_token(user: User) -> str:
+def create_access_token(user: User, *, remember_me: bool = False) -> str:
     issued_at = datetime.now(timezone.utc)
-    expires_at = issued_at + timedelta(minutes=settings.auth_token_ttl_minutes)
+    ttl_minutes = (
+        settings.auth_remember_token_ttl_minutes
+        if remember_me
+        else settings.auth_token_ttl_minutes
+    )
+    expires_at = issued_at + timedelta(minutes=ttl_minutes)
     header = {"alg": _TOKEN_ALGORITHM, "typ": "JWT"}
     payload = {
         "sub": user.id,
@@ -133,6 +138,24 @@ def get_optional_user(
     if token_cv_int != int(getattr(user, "credentials_version", 0) or 0):
         return None
     return user
+
+
+def require_verified_email_for_tickets(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Students/faculty must verify email before ticket APIs.
+
+    Office and admin accounts are staff-provisioned and skip this gate.
+    """
+    role = (current_user.role or "").strip().lower()
+    if role in ("student", "faculty") and not bool(
+        getattr(current_user, "email_verified", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Verify your email before submitting or viewing tickets.",
+        )
+    return current_user
 
 
 def require_admin_user(current_user: User = Depends(get_current_user)) -> User:

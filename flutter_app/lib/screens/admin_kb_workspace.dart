@@ -63,7 +63,6 @@ class AdminKbWorkspace extends StatelessWidget {
     required this.onExtract,
     required this.onIngest,
     required this.onSelectOutline,
-    this.onOpenArticles,
   });
 
   final String? fileName;
@@ -86,7 +85,14 @@ class AdminKbWorkspace extends StatelessWidget {
   final VoidCallback onExtract;
   final VoidCallback onIngest;
   final ValueChanged<int> onSelectOutline;
-  final VoidCallback? onOpenArticles;
+
+  bool get _hasExtractionResult {
+    final extractionText = buildFullExtractionText(
+      reviewText: reviewText,
+      knowledgeUnits: knowledgeUnits,
+    );
+    return extractionText.trim().isNotEmpty;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -131,54 +137,20 @@ class AdminKbWorkspace extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 14),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final wide = constraints.maxWidth >= 980;
-            final extraction = _FullExtractionPanel(
-              text: extractionText,
-              downloadText: downloadText,
-              fileName: fileName,
-              unitCount: knowledgeUnits.length,
-            );
-            final side = Column(
-              children: [
-                _DocumentDetailsCard(
-                  fileName: fileName,
-                  documentType: cleanDocumentType,
-                  classificationReason: classificationReason,
-                  validationReport: validationReport,
-                  knowledgeUnitCount: knowledgeUnits.length,
-                  kbStatistics: kbStatistics,
-                ),
-                const SizedBox(height: 12),
-                _GenerateArticlesShortcut(onOpenArticles: onOpenArticles),
-              ],
-            );
-
-            if (wide) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(flex: 74, child: extraction),
-                  const SizedBox(width: 14),
-                  Expanded(flex: 26, child: side),
-                ],
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                extraction,
-                const SizedBox(height: 14),
-                side,
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 14),
-        _KnowledgeUnitsReviewPanel(
-          knowledgeUnits: knowledgeUnits,
+        if (knowledgeUnits.isNotEmpty || _hasExtractionResult)
+          _ValidationSummaryRow(
+            knowledgeUnitCount: knowledgeUnits.length,
+            validationReport: validationReport,
+          ),
+        if (knowledgeUnits.isNotEmpty || _hasExtractionResult)
+          const SizedBox(height: 10),
+        _FullExtractionPanel(
+          text: extractionText,
+          downloadText: downloadText,
           fileName: fileName,
+          unitCount: knowledgeUnits.length,
+          collapsible: _hasExtractionResult,
+          initiallyExpanded: !_hasExtractionResult,
         ),
       ],
     );
@@ -229,7 +201,7 @@ class _WorkspaceHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Documents',
+          'Extract & Index',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,
@@ -238,7 +210,7 @@ class _WorkspaceHeader extends StatelessWidget {
         ),
         SizedBox(height: 6),
         Text(
-          'Extract and index document content for Ask ASKa-Piyu retrieval. Then open Articles to publish student-facing FAQs.',
+          'Upload a document, extract content for Ask ASKa-Piyu, and index it for chatbot retrieval.',
           style: TextStyle(
             fontSize: 14,
             height: 1.45,
@@ -533,18 +505,67 @@ class _ProcessingStageCard extends StatelessWidget {
   }
 }
 
+class _ValidationSummaryRow extends StatelessWidget {
+  const _ValidationSummaryRow({
+    required this.knowledgeUnitCount,
+    required this.validationReport,
+  });
+
+  final int knowledgeUnitCount;
+  final Map<String, dynamic>? validationReport;
+
+  @override
+  Widget build(BuildContext context) {
+    final quality = (validationReport?['status'] ?? '—').toString().trim();
+    final parts = <String>[
+      if (quality.isNotEmpty && quality != '—') quality,
+      if (knowledgeUnitCount > 0) '$knowledgeUnitCount units',
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: parts
+          .map(
+            (label) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: DesignTokens.border),
+              ),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: DesignTokens.muted,
+                ),
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
 class _FullExtractionPanel extends StatefulWidget {
   const _FullExtractionPanel({
     required this.text,
     required this.downloadText,
     required this.fileName,
     required this.unitCount,
+    this.collapsible = false,
+    this.initiallyExpanded = true,
   });
 
   final String text;
   final String downloadText;
   final String? fileName;
   final int unitCount;
+  final bool collapsible;
+  final bool initiallyExpanded;
 
   @override
   State<_FullExtractionPanel> createState() => _FullExtractionPanelState();
@@ -569,300 +590,214 @@ class _FullExtractionPanelState extends State<_FullExtractionPanel> {
   Widget build(BuildContext context) {
     final viewportHeight = MediaQuery.sizeOf(context).height;
     final previewHeight = math.max(420.0, math.min(580.0, viewportHeight * 0.55));
+    final body = _buildPreviewBody(context, previewHeight);
 
-    return _SoftCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Full Extraction Result',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: DesignTokens.maroon,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      widget.unitCount > 0
-                          ? 'Cleaned preview on screen. Download .txt exports all ${widget.unitCount} knowledge units in one file.'
-                          : 'Cleaned document preview. Scroll inside this panel to review long extractions.',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        height: 1.4,
-                        color: DesignTokens.muted,
-                      ),
-                    ),
-                  ],
-                ),
+    if (!widget.collapsible) {
+      return _SoftCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Full Extraction Result',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: DesignTokens.maroon,
               ),
-              const SizedBox(width: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  AdminSecondaryButton(
-                    label: 'Copy',
-                    minWidth: 88,
-                    onPressed: widget.text.isEmpty
-                        ? null
-                        : () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: widget.text),
-                            );
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Extraction result copied'),
-                                duration: Duration(seconds: 2),
-                              ),
-                            );
-                          },
-                  ),
-                  AdminSecondaryButton(
-                    label: 'Download .txt',
-                    minWidth: 128,
-                    onPressed: widget.downloadText.isEmpty
-                        ? null
-                        : () {
-                            _downloadExtractionTxt(
-                              widget.downloadText,
-                              widget.fileName,
-                              suffix: widget.unitCount > 0
-                                  ? 'units'
-                                  : 'extraction',
-                            );
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  widget.unitCount > 0
-                                      ? 'Downloaded all ${widget.unitCount} units as one .txt'
-                                      : 'Extraction downloaded as .txt',
-                                ),
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
-                          },
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            height: previewHeight,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE5EAF1)),
-              ),
-              child: widget.text.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'No extraction result yet.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: DesignTokens.ink,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
-                            SizedBox(height: 8),
-                            Text(
-                              'Upload or select a document, then click Extract & Structure.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: DesignTokens.muted,
-                                height: 1.5,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  : NotificationListener<ScrollNotification>(
-                      onNotification: (_) => true,
-                      child: Scrollbar(
-                        controller: _scrollController,
-                        thumbVisibility: true,
-                        child: SingleChildScrollView(
-                          controller: _scrollController,
-                          primary: false,
-                          physics: const ClampingScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-                          child: SelectableText(
-                            widget.text,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 13.5,
-                              height: 1.65,
-                              color: DesignTokens.ink,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DocumentDetailsCard extends StatelessWidget {
-  const _DocumentDetailsCard({
-    required this.fileName,
-    required this.documentType,
-    required this.classificationReason,
-    required this.validationReport,
-    required this.knowledgeUnitCount,
-    required this.kbStatistics,
-  });
-
-  final String? fileName;
-  final String? documentType;
-  final String? classificationReason;
-  final Map<String, dynamic>? validationReport;
-  final int knowledgeUnitCount;
-  final Map<String, dynamic>? kbStatistics;
-
-  @override
-  Widget build(BuildContext context) {
-    final quality = (validationReport?['status'] ?? '—').toString();
-    final chunks = kbStatistics?['total_chunks_indexed'];
-    final rows = <MapEntry<String, String>>[
-      MapEntry(
-        'Source file',
-        (fileName == null || fileName!.trim().isEmpty)
-            ? 'Not selected'
-            : fileName!.trim(),
-      ),
-      MapEntry(
-        'Document type',
-        (documentType == null || documentType!.trim().isEmpty)
-            ? 'Not specified'
-            : documentType!,
-      ),
-      MapEntry('Knowledge units', '$knowledgeUnitCount'),
-      MapEntry('Validation', quality),
-      MapEntry('Indexed chunks', chunks == null ? '—' : '$chunks'),
-    ];
-    if (classificationReason != null &&
-        classificationReason!.trim().isNotEmpty) {
-      rows.add(MapEntry('Classification', classificationReason!.trim()));
+            const SizedBox(height: 4),
+            Text(
+              widget.unitCount > 0
+                  ? 'Cleaned preview on screen. Download .txt exports all ${widget.unitCount} knowledge units in one file.'
+                  : 'Cleaned document preview. Scroll inside this panel to review long extractions.',
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: DesignTokens.muted,
+              ),
+            ),
+            const SizedBox(height: 14),
+            body,
+          ],
+        ),
+      );
     }
 
     return _SoftCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Document Details',
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: widget.initiallyExpanded,
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          title: const Text(
+            'Full extraction preview',
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: FontWeight.w800,
               color: DesignTokens.maroon,
             ),
           ),
-          const SizedBox(height: 12),
-          ...rows.map(
-            (row) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    row.key,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: DesignTokens.muted,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    row.value,
-                    softWrap: true,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: DesignTokens.ink,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GenerateArticlesShortcut extends StatelessWidget {
-  const _GenerateArticlesShortcut({this.onOpenArticles});
-
-  final VoidCallback? onOpenArticles;
-
-  @override
-  Widget build(BuildContext context) {
-    return _SoftCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Next: generate public articles from this extraction.',
-            style: TextStyle(
+          subtitle: Text(
+            widget.unitCount > 0
+                ? 'Collapsed by default. Download exports all ${widget.unitCount} knowledge units.'
+                : 'Expand to review the cleaned extraction text.',
+            style: const TextStyle(
               fontSize: 12,
-              height: 1.4,
+              height: 1.35,
               color: DesignTokens.muted,
             ),
           ),
-          const SizedBox(height: 12),
-          AdminSecondaryButton(
-            label: 'Continue to Articles',
-            expand: true,
-            onPressed: onOpenArticles,
-          ),
-        ],
+          children: [body],
+        ),
       ),
+    );
+  }
+
+  Widget _buildPreviewBody(BuildContext context, double previewHeight) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              AdminSecondaryButton(
+                label: 'Copy',
+                minWidth: 88,
+                onPressed: widget.text.isEmpty
+                    ? null
+                    : () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: widget.text),
+                        );
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Extraction result copied'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      },
+              ),
+              AdminSecondaryButton(
+                label: 'Download .txt',
+                minWidth: 128,
+                onPressed: widget.downloadText.isEmpty
+                    ? null
+                    : () {
+                        _downloadExtractionTxt(
+                          widget.downloadText,
+                          widget.fileName,
+                          suffix:
+                              widget.unitCount > 0 ? 'units' : 'extraction',
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              widget.unitCount > 0
+                                  ? 'Downloaded all ${widget.unitCount} units as one .txt'
+                                  : 'Extraction downloaded as .txt',
+                            ),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      },
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          height: previewHeight,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE5EAF1)),
+            ),
+            child: widget.text.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'No extraction result yet.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: DesignTokens.ink,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'Upload or select a document, then click Extract & Structure.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: DesignTokens.muted,
+                              height: 1.5,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : NotificationListener<ScrollNotification>(
+                    onNotification: (_) => true,
+                    child: Scrollbar(
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _scrollController,
+                        primary: false,
+                        physics: const ClampingScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                        child: SelectableText(
+                          widget.text,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 13.5,
+                            height: 1.65,
+                            color: DesignTokens.ink,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _KnowledgeUnitsReviewPanel extends StatefulWidget {
-  const _KnowledgeUnitsReviewPanel({
+/// Knowledge units grid for review inside Review & Publish.
+class KbKnowledgeUnitsReviewPanel extends StatefulWidget {
+  const KbKnowledgeUnitsReviewPanel({
+    super.key,
     required this.knowledgeUnits,
     required this.fileName,
+    this.borderless = false,
   });
 
   final List<Map<String, dynamic>> knowledgeUnits;
   final String? fileName;
+  final bool borderless;
 
   @override
-  State<_KnowledgeUnitsReviewPanel> createState() =>
-      _KnowledgeUnitsReviewPanelState();
+  State<KbKnowledgeUnitsReviewPanel> createState() =>
+      _KbKnowledgeUnitsReviewPanelState();
 }
 
-class _KnowledgeUnitsReviewPanelState extends State<_KnowledgeUnitsReviewPanel> {
+class _KbKnowledgeUnitsReviewPanelState
+    extends State<KbKnowledgeUnitsReviewPanel> {
   late final ScrollController _scrollController;
 
   @override
@@ -882,25 +817,29 @@ class _KnowledgeUnitsReviewPanelState extends State<_KnowledgeUnitsReviewPanel> 
     final units = widget.knowledgeUnits;
     final listHeight = math.min(420.0, math.max(240.0, units.isEmpty ? 180.0 : 360.0));
 
-    return _SoftCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Knowledge Units (${units.length})',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: DesignTokens.maroon,
-                      ),
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.borderless
+                        ? 'Step 1 — Knowledge units (${units.length})'
+                        : 'Knowledge Units (${units.length})',
+                    style: TextStyle(
+                      fontSize: widget.borderless ? 14 : 16,
+                      fontWeight: FontWeight.w800,
+                      color: widget.borderless
+                          ? DesignTokens.ink
+                          : DesignTokens.maroon,
                     ),
+                  ),
+                  if (!widget.borderless) ...[
                     const SizedBox(height: 4),
                     const Text(
                       'Review extracted units used for chatbot indexing. Download exports every unit into one .txt.',
@@ -911,105 +850,108 @@ class _KnowledgeUnitsReviewPanelState extends State<_KnowledgeUnitsReviewPanel> 
                       ),
                     ),
                   ],
-                ),
+                ],
               ),
-              const SizedBox(width: 10),
-              AdminSecondaryButton(
-                label: 'Download units .txt',
-                minWidth: 148,
-                onPressed: units.isEmpty
-                    ? null
-                    : () {
-                        final text = buildKnowledgeUnitsExtractionTxt(
-                          knowledgeUnits: units,
-                          sourceFilename: widget.fileName,
-                        );
-                        _downloadExtractionTxt(
-                          text,
-                          widget.fileName,
-                          suffix: 'units',
-                        );
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Downloaded all ${units.length} units as one .txt',
-                            ),
-                            duration: const Duration(seconds: 2),
+            ),
+            const SizedBox(width: 10),
+            AdminSecondaryButton(
+              label: 'Download units .txt',
+              minWidth: 148,
+              onPressed: units.isEmpty
+                  ? null
+                  : () {
+                      final text = buildKnowledgeUnitsExtractionTxt(
+                        knowledgeUnits: units,
+                        sourceFilename: widget.fileName,
+                      );
+                      _downloadExtractionTxt(
+                        text,
+                        widget.fileName,
+                        suffix: 'units',
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Downloaded all ${units.length} units as one .txt',
                           ),
-                        );
-                      },
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: listHeight,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xFFFBFCFD),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: DesignTokens.border),
-              ),
-              child: units.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(20),
-                        child: Text(
-                          'No knowledge units yet. Run Extract & Structure to populate this list.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: DesignTokens.muted,
-                            height: 1.45,
-                          ),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: listHeight,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFFFBFCFD),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: DesignTokens.border),
+            ),
+            child: units.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text(
+                        'No knowledge units yet. Run Extract & Structure to populate this list.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: DesignTokens.muted,
+                          height: 1.45,
                         ),
                       ),
-                    )
-                  : NotificationListener<ScrollNotification>(
-                      onNotification: (_) => true,
-                      child: Scrollbar(
-                        controller: _scrollController,
-                        thumbVisibility: true,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final wide = constraints.maxWidth >= 900;
-                            if (!wide) {
-                              return ListView.separated(
-                                controller: _scrollController,
-                                primary: false,
-                                physics: const ClampingScrollPhysics(),
-                                padding: const EdgeInsets.all(10),
-                                itemCount: units.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(height: 8),
-                                itemBuilder: (context, index) =>
-                                    _KnowledgeUnitTile(unit: units[index]),
-                              );
-                            }
-                            return GridView.builder(
+                    ),
+                  )
+                : NotificationListener<ScrollNotification>(
+                    onNotification: (_) => true,
+                    child: Scrollbar(
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final wide = constraints.maxWidth >= 900;
+                          if (!wide) {
+                            return ListView.separated(
                               controller: _scrollController,
                               primary: false,
                               physics: const ClampingScrollPhysics(),
                               padding: const EdgeInsets.all(10),
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 10,
-                                crossAxisSpacing: 10,
-                                childAspectRatio: 2.4,
-                              ),
                               itemCount: units.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 8),
                               itemBuilder: (context, index) =>
                                   _KnowledgeUnitTile(unit: units[index]),
                             );
-                          },
-                        ),
+                          }
+                          return GridView.builder(
+                            controller: _scrollController,
+                            primary: false,
+                            physics: const ClampingScrollPhysics(),
+                            padding: const EdgeInsets.all(10),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              mainAxisSpacing: 10,
+                              crossAxisSpacing: 10,
+                              childAspectRatio: 2.4,
+                            ),
+                            itemCount: units.length,
+                            itemBuilder: (context, index) =>
+                                _KnowledgeUnitTile(unit: units[index]),
+                          );
+                        },
                       ),
                     ),
-            ),
+                  ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
+
+    if (widget.borderless) return content;
+    return _SoftCard(child: content);
   }
 }
 

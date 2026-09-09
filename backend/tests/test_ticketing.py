@@ -69,6 +69,7 @@ def _seed_offices_and_users(session: Session) -> None:
         full_name="Piyu Student",
         role="student",
         student_id="2026-0001",
+        email_verified=True,
     )
     other_student = User(
         email="student2@aska.local",
@@ -76,6 +77,7 @@ def _seed_offices_and_users(session: Session) -> None:
         full_name="Other Student",
         role="student",
         student_id="2026-0002",
+        email_verified=True,
     )
     ict_staff = User(
         email="ict@aska.local",
@@ -102,6 +104,7 @@ def _seed_offices_and_users(session: Session) -> None:
         password_hash=hash_password("faculty123"),
         full_name="Faculty Member",
         role="faculty",
+        email_verified=True,
     )
     session.add_all([student, other_student, ict_staff, registrar_staff, admin, faculty])
     session.commit()

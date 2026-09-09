@@ -62,6 +62,7 @@ class _SignupPageState extends State<SignupPage> {
         user.role,
         widget.returnTo,
         gateRole: widget.gateRole,
+        emailVerified: user.emailVerified,
       );
     } catch (error) {
       if (!mounted) return;
@@ -101,7 +102,7 @@ class _SignupPageState extends State<SignupPage> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Use your real email (like Gmail). Create a password for ASKa-Piyu only — not your email password.',
+              'Use your real email (like Gmail). We will send a 6-digit code to verify it before you can submit tickets. Create a password for ASKa-Piyu only — not your email password.',
               style: TextStyle(
                 color: Color(0xFF6B7280),
                 height: 1.4,

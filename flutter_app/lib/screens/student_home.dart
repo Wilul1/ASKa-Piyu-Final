@@ -811,6 +811,8 @@ class _QuickLinkTile extends StatelessWidget {
             openProtectedPage(
               context,
               builder: (_) => const MyTicketsPage(),
+              requireVerifiedEmail: true,
+              message: emailVerifyRequiredMessage,
             );
             return;
           }

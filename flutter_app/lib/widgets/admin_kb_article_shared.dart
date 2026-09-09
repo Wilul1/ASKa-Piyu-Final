@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
 import '../services/admin_article_service.dart';
@@ -621,7 +622,7 @@ Future<dynamic> showAdminArticleEditDialog({
     barrierDismissible: false,
     builder: (dialogContext) {
       if (isPreview || isPreviewCandidateId(article.id)) {
-        return _AdminArticleEditDialogBody(
+        return AdminArticleEditor(
           article: article,
           service: service,
           isPreview: true,
@@ -657,7 +658,7 @@ Future<dynamic> showAdminArticleEditDialog({
           }
 
           final loaded = snapshot.data ?? article;
-          return _AdminArticleEditDialogBody(
+          return AdminArticleEditor(
             article: loaded,
             service: service,
             isPreview: false,
@@ -669,25 +670,27 @@ Future<dynamic> showAdminArticleEditDialog({
   );
 }
 
-class _AdminArticleEditDialogBody extends StatefulWidget {
-  const _AdminArticleEditDialogBody({
+class AdminArticleEditor extends StatefulWidget {
+  const AdminArticleEditor({
+    super.key,
     required this.article,
     required this.service,
     this.isPreview = false,
     this.asReviewDraft = false,
+    this.fullscreen = false,
   });
 
   final AdminArticle article;
   final AdminArticleService service;
   final bool isPreview;
   final bool asReviewDraft;
+  final bool fullscreen;
 
   @override
-  State<_AdminArticleEditDialogBody> createState() =>
-      _AdminArticleEditDialogBodyState();
+  State<AdminArticleEditor> createState() => _AdminArticleEditorState();
 }
 
-class _AdminArticleEditDialogBodyState extends State<_AdminArticleEditDialogBody> {
+class _AdminArticleEditorState extends State<AdminArticleEditor> {
   late final TextEditingController titleController =
       TextEditingController(text: widget.article.title);
   late final TextEditingController categoryController =
@@ -789,165 +792,211 @@ class _AdminArticleEditDialogBodyState extends State<_AdminArticleEditDialogBody
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildFormFields() {
     final article = widget.article;
-    return AlertDialog(
-      title: Text(widget.asReviewDraft ? 'Edit as Review Draft' : 'Edit Article'),
-      content: SizedBox(
-        width: 720,
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              if (widget.asReviewDraft) ...[
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Manual review draft — not auto-recommended. Save as draft, then publish from Drafts after placeholders are removed.',
-                    style: TextStyle(fontSize: 12, color: DesignTokens.muted, height: 1.4),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: 'Title'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: categoryController,
-                decoration: const InputDecoration(labelText: 'Category'),
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                value: audience,
-                decoration: const InputDecoration(labelText: 'Audience'),
-                items: const [
-                  DropdownMenuItem(value: 'student', child: Text('Student')),
-                  DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
-                  DropdownMenuItem(value: 'both', child: Text('Both')),
-                ],
-                onChanged: saving
-                    ? null
-                    : (value) {
-                        if (value == null) return;
-                        setState(() => audience = value);
-                      },
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: summaryController,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: 'Summary'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: contentController,
-                minLines: 8,
-                maxLines: 14,
-                decoration: const InputDecoration(
-                  labelText: 'Article Content',
-                  helperText: 'Student-friendly formatted content shown in the knowledge base.',
-                ),
-              ),
-              if ((article.officialSourceExcerpt ?? '').trim().isNotEmpty) ...[
-                const SizedBox(height: 12),
-                OfficialSourceExcerptPanel(
-                  excerpt: article.officialSourceExcerpt!,
-                ),
-              ],
-              const SizedBox(height: 10),
-              TextField(
-                controller: officeController,
-                decoration: const InputDecoration(labelText: 'Office'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: sourceController,
-                decoration: const InputDecoration(labelText: 'Source filename'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: sourceSectionController,
-                decoration: const InputDecoration(labelText: 'Source section'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: articleTypeController,
-                decoration: const InputDecoration(
-                  labelText: 'Article type',
-                  helperText: 'e.g. procedure, policy, information',
-                ),
-              ),
-            ],
+    return Column(
+      children: [
+        if (widget.asReviewDraft) ...[
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Manual review draft — not auto-recommended. Save as draft, then publish from Drafts after placeholders are removed.',
+              style: TextStyle(fontSize: 12, color: DesignTokens.muted, height: 1.4),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        TextField(
+          controller: titleController,
+          decoration: const InputDecoration(labelText: 'Title'),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: categoryController,
+          decoration: const InputDecoration(labelText: 'Category'),
+        ),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<String>(
+          value: audience,
+          decoration: const InputDecoration(labelText: 'Audience'),
+          items: const [
+            DropdownMenuItem(value: 'student', child: Text('Student')),
+            DropdownMenuItem(value: 'faculty', child: Text('Faculty')),
+            DropdownMenuItem(value: 'both', child: Text('Both')),
+          ],
+          onChanged: saving
+              ? null
+              : (value) {
+                  if (value == null) return;
+                  setState(() => audience = value);
+                },
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: summaryController,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(labelText: 'Summary'),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: contentController,
+          minLines: 8,
+          maxLines: 14,
+          decoration: const InputDecoration(
+            labelText: 'Article Content',
+            helperText: 'Student-friendly formatted content shown in the knowledge base.',
           ),
         ),
-      ),
-      actions: [
+        if ((article.officialSourceExcerpt ?? '').trim().isNotEmpty) ...[
+          const SizedBox(height: 12),
+          OfficialSourceExcerptPanel(
+            excerpt: article.officialSourceExcerpt!,
+          ),
+        ],
+        const SizedBox(height: 10),
+        TextField(
+          controller: officeController,
+          decoration: const InputDecoration(labelText: 'Office'),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: sourceController,
+          decoration: const InputDecoration(labelText: 'Source filename'),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: sourceSectionController,
+          decoration: const InputDecoration(labelText: 'Source section'),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: articleTypeController,
+          decoration: const InputDecoration(
+            labelText: 'Article type',
+            helperText: 'e.g. procedure, policy, information',
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildActionButtons(BuildContext context) {
+    final article = widget.article;
+    final isAdmin = AuthScope.of(context).role == 'admin';
+    return [
+      if (!widget.fullscreen)
         TextButton(
           onPressed: saving ? null : () => Navigator.of(context).pop(false),
           child: const Text('Cancel'),
         ),
-        if (!widget.isPreview && !article.published && !widget.asReviewDraft)
-          TextButton(
-            onPressed: saving
-                ? null
-                : () async {
-                    try {
-                      await widget.service.publishArticle(article.id);
-                      if (context.mounted) Navigator.of(context).pop(true);
-                    } catch (error) {
-                      if (context.mounted) showKbSnackBar(context, error.toString());
-                    }
-                  },
-            child: const Text('Publish'),
-          ),
-        if (!widget.isPreview && article.published)
-          TextButton(
-            onPressed: saving
-                ? null
-                : () async {
-                    try {
-                      await widget.service.unpublishArticle(article.id);
-                      if (context.mounted) Navigator.of(context).pop(true);
-                    } catch (error) {
-                      if (context.mounted) showKbSnackBar(context, error.toString());
-                    }
-                  },
-            child: const Text('Unpublish'),
-          ),
-        if (!widget.isPreview)
-          TextButton(
-            onPressed: saving
-                ? null
-                : () async {
-                    try {
-                      await widget.service.deleteArticle(article.id);
-                      if (context.mounted) Navigator.of(context).pop(true);
-                    } catch (error) {
-                      if (context.mounted) showKbSnackBar(context, error.toString());
-                    }
-                  },
-            child: Text('Delete', style: TextStyle(color: Colors.red.shade700)),
-          ),
-        ElevatedButton(
-          onPressed: saving ? null : save,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: DesignTokens.maroon,
-            foregroundColor: Colors.white,
-          ),
-          child: saving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                )
-              : Text(widget.asReviewDraft && widget.isPreview
-                  ? 'Apply Corrections'
-                  : 'Save Changes'),
+      if (!widget.isPreview && !article.published && !widget.asReviewDraft)
+        TextButton(
+          onPressed: saving
+              ? null
+              : () async {
+                  try {
+                    await widget.service.publishArticle(article.id);
+                    if (context.mounted) Navigator.of(context).pop(true);
+                  } catch (error) {
+                    if (context.mounted) showKbSnackBar(context, error.toString());
+                  }
+                },
+          child: const Text('Publish'),
         ),
-      ],
+      if (!widget.isPreview && article.published)
+        TextButton(
+          onPressed: saving
+              ? null
+              : () async {
+                  try {
+                    await widget.service.unpublishArticle(article.id);
+                    if (context.mounted) Navigator.of(context).pop(true);
+                  } catch (error) {
+                    if (context.mounted) showKbSnackBar(context, error.toString());
+                  }
+                },
+          child: const Text('Unpublish'),
+        ),
+      if (!widget.isPreview && isAdmin)
+        TextButton(
+          onPressed: saving
+              ? null
+              : () async {
+                  try {
+                    await widget.service.deleteArticle(article.id);
+                    if (context.mounted) Navigator.of(context).pop(true);
+                  } catch (error) {
+                    if (context.mounted) showKbSnackBar(context, error.toString());
+                  }
+                },
+          child: Text('Delete', style: TextStyle(color: Colors.red.shade700)),
+        ),
+      ElevatedButton(
+        onPressed: saving ? null : save,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: DesignTokens.maroon,
+          foregroundColor: Colors.white,
+        ),
+        child: saving
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+            : Text(widget.asReviewDraft && widget.isPreview
+                ? 'Apply Corrections'
+                : 'Save Changes'),
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.asReviewDraft ? 'Edit as Review Draft' : 'Edit Article';
+
+    if (widget.fullscreen) {
+      return Scaffold(
+        backgroundColor: DesignTokens.adminSurface,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          foregroundColor: DesignTokens.ink,
+          elevation: 0,
+          title: Text(title),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: _buildFormFields(),
+            ),
+          ),
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: _buildActionButtons(context),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: 720,
+        child: SingleChildScrollView(
+          child: _buildFormFields(),
+        ),
+      ),
+      actions: _buildActionButtons(context),
     );
   }
 }

@@ -713,7 +713,7 @@ def _semantic_article_search(
     search_k = min(max(limit + offset + 30, 60), 100)
     expanded_query = _kb_search_query(q)
     chunks = store.search(expanded_query, top_k=search_k, raw_k=search_k)
-    chunks = _relevant_retrieved_chunks(chunks)
+    chunks = _relevant_retrieved_chunks(chunks, query=q)
     if category and category.strip():
         category_key = _normalize(category)
         chunks = [
@@ -977,12 +977,46 @@ def _search_suggestions(query: str) -> list[str]:
     return ["Programs & Curricular Offerings", "Academic Policies", "Student Services"]
 
 
-def _relevant_retrieved_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+def _relevant_retrieved_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    query: str | None = None,
+) -> list[RetrievedChunk]:
     if not chunks:
         return []
     top_score = max(float(chunk.relevance_score or 0) for chunk in chunks)
     cutoff = max(0.2, top_score - 0.45)
-    return [chunk for chunk in chunks if float(chunk.relevance_score or 0) >= cutoff]
+    return [
+        chunk
+        for chunk in chunks
+        if float(chunk.relevance_score or 0) >= cutoff
+        or _chunk_metadata_strongly_matches_query(chunk, query)
+    ]
+
+
+def _chunk_metadata_strongly_matches_query(chunk: RetrievedChunk, query: str | None) -> bool:
+    normalized_query = _normalize_ascii(query or "")
+    if not normalized_query:
+        return False
+    metadata = dict(chunk.metadata or {})
+    metadata_text = _normalize_ascii(
+        " ".join(
+            [
+                str(metadata.get("section") or ""),
+                str(metadata.get("subcategory") or ""),
+                str(metadata.get("article") or ""),
+                str(metadata.get("chapter") or ""),
+                str(metadata.get("title") or ""),
+                str(metadata.get("keywords") or ""),
+            ]
+        )
+    )
+    if normalized_query in metadata_text:
+        return True
+    query_terms = _meaningful_search_terms(normalized_query)
+    if len(query_terms) < 2:
+        return False
+    return query_terms.issubset(_meaningful_search_terms(metadata_text))
 
 
 def _group_retrieved_chunks(chunks: list[RetrievedChunk], *, query: str | None = None) -> list[dict[str, Any]]:

@@ -120,6 +120,8 @@ class PublicSiteHeader extends StatelessWidget {
                         context,
                         builder: (_) => const MyTicketsPage(),
                         replace: _onPublicPeerPage,
+                        requireVerifiedEmail: true,
+                        message: emailVerifyRequiredMessage,
                       );
                     },
                   ),
@@ -332,6 +334,8 @@ class PublicSiteHeader extends StatelessWidget {
                             context,
                             builder: (_) => const MyTicketsPage(),
                             replace: _onPublicPeerPage,
+                            requireVerifiedEmail: true,
+                            message: emailVerifyRequiredMessage,
                           );
                         },
                       ),

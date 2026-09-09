@@ -1,10 +1,10 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../models/auth_models.dart';
 import '../navigation/soft_page_route.dart';
+import '../services/local_store.dart';
 import '../widgets/auth_split_shell.dart';
 import 'signup_page.dart';
 
@@ -32,8 +32,7 @@ class _LoginPageState extends State<LoginPage> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _loading = false;
-  // Web: default off so JWT stays in sessionStorage (smaller XSS window).
-  bool _rememberMe = !kIsWeb;
+  bool _rememberMe = false;
   bool _obscurePassword = true;
   String? _error;
 
@@ -55,15 +54,18 @@ class _LoginPageState extends State<LoginPage> {
         LoginRequest(
           email: _emailCtrl.text,
           password: _passwordCtrl.text,
+          rememberMe: _rememberMe,
         ),
         rememberMe: _rememberMe,
       );
+      await LocalStore.setRememberMePreference(_rememberMe);
       if (!mounted) return;
       redirectAfterAuth(
         context,
         user.role,
         widget.returnTo,
         gateRole: widget.gateRole,
+        emailVerified: user.emailVerified,
       );
     } catch (error) {
       if (!mounted) return;

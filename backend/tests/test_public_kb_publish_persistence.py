@@ -144,7 +144,19 @@ def test_published_match_section_title_without_filename():
     _cleanup()
 
 
-def test_publish_writes_published_true_visible_on_public_kb():
+def test_publish_writes_published_true_visible_on_public_kb(monkeypatch):
+    def _fake_index_published_article(session, article):
+        article.rag_indexed = True
+        article.rag_document_id = f"faq:{article.id}"
+        article.chunk_count = 1
+        session.add(article)
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.index_published_article",
+        _fake_index_published_article,
+    )
+
     _cleanup()
     create = client.post(
         "/admin/kb/articles",

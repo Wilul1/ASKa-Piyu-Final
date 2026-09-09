@@ -363,6 +363,67 @@ def get_ticket_kb_article(session: Session, *, ticket_id: str, actor: User) -> d
     return article_link_payload(article)
 
 
+def check_ticket_kb_duplicate(
+    session: Session,
+    *,
+    ticket_id: str,
+    actor: User,
+    title: str,
+) -> dict[str, Any]:
+    ticket = _load_ticket(session, ticket_id)
+    _assert_can_convert(actor, ticket)
+    cleaned_title = _clean_title(title)
+    existing_article_id = None
+    existing = (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .one_or_none()
+    )
+    if existing is not None:
+        existing_article_id = existing.id
+    duplicate = find_duplicate_published_topic(
+        session,
+        title=cleaned_title,
+        exclude_article_id=existing_article_id,
+    )
+    if duplicate is None:
+        return {
+            "has_duplicate": False,
+            "title": None,
+            "article_id": None,
+            "slug": None,
+            "message": None,
+        }
+    return {
+        "has_duplicate": True,
+        "title": duplicate.title,
+        "article_id": duplicate.id,
+        "slug": duplicate.slug,
+        "message": (
+            f'A published article already covers this topic: "{duplicate.title}". '
+            "Point the student to the Knowledge Base instead of publishing a duplicate."
+        ),
+    }
+
+
+def save_ticket_kb_image(
+    session: Session,
+    *,
+    ticket_id: str,
+    actor: User,
+    filename: str,
+    content: bytes,
+) -> dict[str, Any]:
+    ticket = _load_ticket(session, ticket_id)
+    _assert_can_convert(actor, ticket)
+    if ticket.status not in {"Resolved", "Closed"}:
+        raise TicketKnowledgeError("Only Resolved or Closed tickets can receive knowledge-base images.")
+
+    from app.services.kb_media import save_kb_image
+
+    return save_kb_image(filename=filename, content=content)
+
+
 def article_link_payload(article: PublishedArticle) -> dict[str, Any]:
     return {
         "article_id": article.id,
@@ -466,14 +527,57 @@ def _redact_pii(text: str) -> str:
 
 
 def _default_article_content(ticket: Ticket, resolution: str) -> str:
+    """Build student-facing FAQ body from a resolved ticket.
+
+    The article title already carries the question, so the body is the answer
+    (plus optional ticket details) — not ``## Question`` / ``## Answer`` labels.
+    """
     question = _redact_pii((ticket.original_question or "").strip())
     description = _redact_pii((ticket.description or "").strip())
     answer = _redact_pii((resolution or "").strip())
-    parts = [f"## Question\n\n{question}"]
-    if description and description.casefold() != question.casefold():
-        parts.append(f"## Additional details\n\n{description}")
-    parts.append(f"## Answer\n\n{answer}")
+    parts: list[str] = []
+    if answer:
+        parts.append(answer)
+    if (
+        description
+        and description.casefold() != question.casefold()
+        and description.casefold() != answer.casefold()
+    ):
+        parts.append(description)
+    if not parts and question:
+        parts.append(question)
     return "\n\n".join(parts)
+
+
+_TICKET_FAQ_SCAFFOLD_HEADING = re.compile(
+    r"^##\s*(Question|Answer|Additional details)\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_ticket_faq_scaffolding(content: str, *, title: str | None = None) -> str:
+    """Remove ticket→FAQ markdown headings from stored or displayed article body.
+
+    Optionally drops a leading paragraph that only repeats the article title
+    (leftover from the old ``## Question`` block).
+    """
+    text = (content or "").replace("\r\n", "\n").replace("\r", "\n")
+    kept: list[str] = []
+    for line in text.splitlines():
+        if _TICKET_FAQ_SCAFFOLD_HEADING.match(line.strip()):
+            continue
+        kept.append(line)
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    if not text:
+        return ""
+
+    title_norm = re.sub(r"\s+", " ", (title or "").strip()).casefold().rstrip("?")
+    if title_norm:
+        paragraphs = re.split(r"\n\s*\n", text, maxsplit=1)
+        lead = re.sub(r"\s+", " ", paragraphs[0]).strip().casefold().rstrip("?")
+        if lead == title_norm and len(paragraphs) > 1:
+            text = paragraphs[1].strip()
+    return text
 
 
 def _clean_title(value: str) -> str:

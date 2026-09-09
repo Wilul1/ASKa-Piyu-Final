@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../models/auth_models.dart';
@@ -12,7 +11,7 @@ class AuthController extends ChangeNotifier {
   AuthUser? _currentUser;
   String? _accessToken;
   bool _isLoading = false;
-  bool _rememberMe = !kIsWeb;
+  bool _rememberMe = false;
 
   AuthUser? get currentUser => _currentUser;
   String? get accessToken => _accessToken;
@@ -26,7 +25,7 @@ class AuthController extends ChangeNotifier {
     if (token == null) {
       _accessToken = null;
       _currentUser = null;
-      _rememberMe = !kIsWeb;
+      _rememberMe = LocalStore.getRememberMePreference();
       notifyListeners();
       return;
     }
@@ -74,7 +73,7 @@ class AuthController extends ChangeNotifier {
 
   Future<AuthUser> login(
     LoginRequest payload, {
-    bool rememberMe = true,
+    bool rememberMe = false,
   }) async {
     _rememberMe = rememberMe;
     final response = await _service.login(payload);

@@ -537,6 +537,14 @@ class TicketKbDuplicateCheckResponse(BaseModel):
     message: str | None = None
 
 
+class TicketKbImageUploadResponse(BaseModel):
+    media_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    url: str
+
+
 class CreateTicketRequest(BaseModel):
     original_question: str = Field(..., min_length=3, max_length=2000)
     description: str = Field("", max_length=4000)
@@ -735,6 +743,7 @@ class CreateOfficeAccountRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=1, max_length=256)
+    remember_me: bool = False
 
     @field_validator("email")
     @classmethod
@@ -890,6 +899,7 @@ class AdminPublishedArticleSchema(BaseModel):
     source_ticket_id: str | None = None
     resolution_summary: str | None = None
     published_by_user_id: str | None = None
+    created_by_user_id: str | None = None
     rag_indexed: bool = False
     rag_document_id: str | None = None
 

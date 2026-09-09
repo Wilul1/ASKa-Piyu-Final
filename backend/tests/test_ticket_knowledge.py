@@ -147,6 +147,10 @@ def test_convert_ticket_creates_draft_faq(session: Session):
     assert payload["kb_origin"] == "ticket_resolution"
     assert payload["source_ticket_id"] == ticket.id
     assert "Certificate of Registration" in (payload["content"] or "")
+    content = payload["content"] or ""
+    assert "## Question" not in content
+    assert "## Answer" not in content
+    assert "## Additional details" not in content
 
     session.refresh(ticket)
     assert ticket.kb_conversion_status == "draft"
@@ -155,6 +159,39 @@ def test_convert_ticket_creates_draft_faq(session: Session):
     article = session.get(PublishedArticle, payload["article_id"])
     assert article is not None
     assert article.published is False
+
+
+def test_default_ticket_faq_body_is_answer_first_without_scaffold_headings():
+    from types import SimpleNamespace
+
+    from app.services.ticket_knowledge import (
+        _default_article_content,
+        strip_ticket_faq_scaffolding,
+    )
+
+    ticket = SimpleNamespace(
+        original_question="How do I request an excuse slip?",
+        description="I was absent for two days due to illness.",
+    )
+    body = _default_article_content(
+        ticket,  # type: ignore[arg-type]
+        "Submit a medical certificate and excuse slip form to OSAS within three days.",
+    )
+    assert body.startswith("Submit a medical certificate")
+    assert "I was absent for two days due to illness." in body
+    assert "## Question" not in body
+    assert "## Answer" not in body
+
+    legacy = (
+        "## Question\n\nHow do I request an excuse slip?\n\n"
+        "## Answer\n\nSubmit a medical certificate to OSAS."
+    )
+    cleaned = strip_ticket_faq_scaffolding(
+        legacy, title="How do I request an excuse slip?"
+    )
+    assert "## Question" not in cleaned
+    assert "## Answer" not in cleaned
+    assert cleaned == "Submit a medical certificate to OSAS."
 
 
 def test_convert_blocks_duplicate_of_published_pdf_article(session: Session):

@@ -391,8 +391,32 @@ def test_admin_endpoint_wrong_header_returns_401():
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
+@patch(
+    "app.routes.admin.knowledge_base._reingest_configured_documents_after_reset",
+    return_value={
+        "skipped": False,
+        "documents_reingested": 0,
+        "document_reingest_failed": 0,
+        "document_reingest_errors": [],
+    },
+)
+@patch(
+    "app.services.article_rag_indexer.reindex_published_faq_articles",
+    return_value={
+        "faq_reindexed": 0,
+        "faq_reindex_failed": 0,
+        "faq_reindex_errors": [],
+        "published_article_count": 0,
+    },
+)
+@patch("app.services.article_rag_indexer.clear_all_article_rag_flags", return_value=0)
 @patch("app.routes.admin.knowledge_base.get_knowledge_base_store")
-def test_admin_endpoint_correct_header_is_allowed(mock_get_store):
+def test_admin_endpoint_correct_header_is_allowed(
+    mock_get_store,
+    _mock_clear_flags,
+    _mock_reindex_faqs,
+    _mock_reingest_documents,
+):
     mock_get_store.return_value.reset_collection.return_value = {
         "collection": "aska_knowledge_base",
         "vectors_removed": 0,
@@ -406,8 +430,33 @@ def test_admin_endpoint_correct_header_is_allowed(mock_get_store):
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "")
+@patch(
+    "app.routes.admin.knowledge_base._reingest_configured_documents_after_reset",
+    return_value={
+        "skipped": False,
+        "documents_reingested": 0,
+        "document_reingest_failed": 0,
+        "document_reingest_errors": [],
+    },
+)
+@patch(
+    "app.services.article_rag_indexer.reindex_published_faq_articles",
+    return_value={
+        "faq_reindexed": 0,
+        "faq_reindex_failed": 0,
+        "faq_reindex_errors": [],
+        "published_article_count": 0,
+    },
+)
+@patch("app.services.article_rag_indexer.clear_all_article_rag_flags", return_value=0)
 @patch("app.routes.admin.knowledge_base.get_knowledge_base_store")
-def test_admin_endpoint_accepts_admin_bearer_token(mock_get_store, admin_auth_client):
+def test_admin_endpoint_accepts_admin_bearer_token(
+    mock_get_store,
+    _mock_clear_flags,
+    _mock_reindex_faqs,
+    _mock_reingest_documents,
+    admin_auth_client,
+):
     auth_client, session_factory = admin_auth_client
     token = _admin_bearer_token(session_factory, role="admin")
     mock_get_store.return_value.reset_collection.return_value = {
@@ -454,7 +503,10 @@ def test_admin_openapi_documents_x_admin_key_header():
     header = next(param for param in operation["parameters"] if param["in"] == "header")
 
     assert header["name"] == "x-admin-key"
-    assert header["description"] == "Administrator API key. Must match ASKA_ADMIN_API_KEY."
+    assert (
+        header["description"]
+        == "Administrator API key. Must match ASKA_ADMIN_API_KEY when key auth is enabled."
+    )
 
 
 @patch("app.routes.student.chat.answer_qa_question")
@@ -604,12 +656,25 @@ def test_qa_ask_endpoint_defaults_to_student_response(mock_answer):
     assert "retrieved_chunks" not in data
 
 
-def test_qa_ask_requires_auth():
+@patch("app.routes.qa.answer_qa_question")
+def test_qa_ask_allows_guest_as_student(mock_answer):
+    from app.services.qa.question_answering import QAResult
+
+    mock_answer.return_value = QAResult(
+        answer="Students should submit an excuse slip and medical certificate.",
+        sources=[],
+        confidence="medium",
+        retrieved_chunks=[],
+        fallback_used=False,
+    )
+
     response = client.post(
         "/qa/ask",
         json={"question": "I was absent due to illness. What should I do?"},
     )
-    assert response.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["answer"]
+    assert mock_answer.call_args.kwargs.get("user_role") == "student"
 
 
 @patch("app.routes.qa.answer_qa_question")

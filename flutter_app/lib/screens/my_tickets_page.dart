@@ -336,6 +336,20 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       );
     }
 
+    final role = auth.role;
+    if (role == 'office' || role == 'admin') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        redirectAfterAuth(context, role!, null);
+      });
+      return const Scaffold(
+        backgroundColor: DesignTokens.bgGrey,
+        body: Center(
+          child: CircularProgressIndicator(color: DesignTokens.maroon),
+        ),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;

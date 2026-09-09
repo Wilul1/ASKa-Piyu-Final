@@ -1,5 +1,18 @@
 /// Helpers for grouping extracted knowledge units into document outline sections.
 
+/// Live KB session context for compact generate UI (avoids duplicate metadata).
+class KbSessionDisplayContext {
+  const KbSessionDisplayContext({
+    this.fileName,
+    this.documentType,
+    this.knowledgeUnitCount = 0,
+  });
+
+  final String? fileName;
+  final String? documentType;
+  final int knowledgeUnitCount;
+}
+
 class DocumentOutlineSection {
   const DocumentOutlineSection({
     required this.title,

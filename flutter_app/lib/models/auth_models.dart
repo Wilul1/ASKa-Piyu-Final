@@ -77,13 +77,19 @@ class AuthResponse {
 class LoginRequest {
   final String email;
   final String password;
+  final bool rememberMe;
 
-  const LoginRequest({required this.email, required this.password});
+  const LoginRequest({
+    required this.email,
+    required this.password,
+    this.rememberMe = false,
+  });
 
   Map<String, dynamic> toJson() {
     return {
       'email': email.trim(),
       'password': password,
+      'remember_me': rememberMe,
     };
   }
 }

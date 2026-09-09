@@ -69,7 +69,7 @@ class GroqAnswerError(RuntimeError):
 
 
 def normalize_chat_history(history: list[Any] | None) -> list[dict[str, str]]:
-    """Keep recent user/assistant turns only, oldest first."""
+    """Keep recent user/assistant messages only, oldest first."""
     if not history:
         return []
     cleaned: list[dict[str, str]] = []
@@ -84,9 +84,6 @@ def normalize_chat_history(history: list[Any] | None) -> list[dict[str, str]]:
             continue
         if len(content) > MAX_HISTORY_CHARS:
             content = content[: MAX_HISTORY_CHARS - 1].rstrip() + "…"
-        # Drop consecutive same-role turns (blocks injected assistant spam).
-        if cleaned and cleaned[-1]["role"] == role:
-            continue
         cleaned.append({"role": role, "content": content})
     while cleaned and cleaned[0]["role"] != "user":
         cleaned.pop(0)

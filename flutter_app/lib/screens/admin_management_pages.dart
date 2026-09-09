@@ -1,9 +1,7 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import '../auth/auth_navigation.dart';
@@ -11,15 +9,11 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../services/api_client.dart';
 import '../services/download_file.dart';
-import '../services/file_pick.dart';
-import '../services/kb_compose_helpers.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
-import 'admin_panel_page.dart';
+import 'admin_generate_articles_page.dart';
 import 'admin_scaffold.dart';
 import 'login_page.dart';
-
-part 'staff_ticket_console.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -125,7 +119,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           const _AdminNotice(
             icon: Icons.admin_panel_settings_rounded,
             message:
-                'Use All Tickets, Knowledge Base, Announcements, Users & Roles, Offices, and Reports from the sidebar.',
+                'Use All Tickets, Knowledge Base, Generate Articles, Announcements, Users & Roles, Offices, and Reports from the sidebar.',
           ),
         ],
       ),
@@ -148,6 +142,8 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
   bool _loading = false;
   String? _error;
   late String _statusFilter;
+  String _priorityFilter = 'All';
+  String _officeFilter = 'All';
   bool _requestedInitialLoad = false;
 
   @override
@@ -229,17 +225,13 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
 
   Future<_AdminTicketEntry> _replyToTicket(
     _AdminTicketEntry ticket,
-    String message, {
-    bool isInternal = false,
-  }) async {
+    String message,
+  ) async {
     final result = await ApiClient.send(
       method: 'POST',
       url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies',
       headers: {...AuthScope.of(context).ticketHeaders()},
-      jsonBody: {
-        'message': message,
-        'is_internal': isInternal,
-      },
+      jsonBody: {'message': message},
     );
     final data = _decodeObject(result.body);
     final statusCode = result.statusCode;
@@ -269,8 +261,7 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
         ticket: ticket,
         offices: _officeOptions(includeAll: false),
         onUpdate: (payload) => _patchTicket(ticket, payload),
-        onReply: (message, {bool isInternal = false}) =>
-            _replyToTicket(ticket, message, isInternal: isInternal),
+        onReply: (message) => _replyToTicket(ticket, message),
       ),
     );
   }
@@ -281,8 +272,8 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
         .where((ticket) => ticket.matches(
               _searchCtrl.text,
               _statusFilter,
-              'All',
-              'All',
+              _priorityFilter,
+              _officeFilter,
             ))
         .toList();
 
@@ -290,25 +281,45 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
       current: StudentNavItem.adminAllTickets,
       title: 'All Tickets',
       description:
-          'Review and reply to campus support tickets across offices.',
-      fillBody: true,
-      child: _StaffTicketConsole(
-        tickets: _tickets,
-        filteredTickets: filteredTickets,
-        searchCtrl: _searchCtrl,
-        statusFilter: _statusFilter,
-        onStatusChanged: (value) => setState(() => _statusFilter = value),
-        loading: _loading,
-        error: _error,
-        onRefresh: _loadTickets,
-        officeOptions: _officeOptions(includeAll: false),
-        allowReassignment: true,
-        listTitle: 'All Tickets',
-        replyHint: 'Write a reply…',
-        onUpdate: _patchTicket,
-        onReply: _replyToTicket,
-        onTicketChanged: _replaceTicket,
-        onOpenNarrowDetails: _openTicketDetails,
+          'Review all student support tickets across offices and statuses.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 3),
+          if (_error != null)
+            _AdminNotice(
+              icon: Icons.info_outline_rounded,
+              message: _error!,
+            ),
+          _AdminTicketSummary(tickets: _tickets),
+          const SizedBox(height: 16),
+          _AdminTicketFilters(
+            searchCtrl: _searchCtrl,
+            statusFilter: _statusFilter,
+            priorityFilter: _priorityFilter,
+            officeFilter: _officeFilter,
+            officeOptions: _officeOptions(),
+            onStatusChanged: (value) => setState(() => _statusFilter = value),
+            onPriorityChanged: (value) =>
+                setState(() => _priorityFilter = value),
+            onOfficeChanged: (value) => setState(() => _officeFilter = value),
+            onRefresh: _loadTickets,
+            isRefreshing: _loading,
+          ),
+          const SizedBox(height: 16),
+          if (_loading && _tickets.isEmpty)
+            const _AdminTicketState(
+              icon: Icons.sync_rounded,
+              title: 'Loading tickets',
+              message: 'Fetching the admin ticket queue.',
+            )
+          else
+            _AdminTicketList(
+              tickets: filteredTickets,
+              hasAnyTickets: _tickets.isNotEmpty,
+              onTicketTap: _openTicketDetails,
+            ),
+        ],
       ),
     );
   }
@@ -544,6 +555,7 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
   bool _loading = false;
   String? _error;
   late String _statusFilter;
+  String _priorityFilter = 'All';
   bool _requestedInitialLoad = false;
 
   @override
@@ -619,17 +631,13 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
 
   Future<_AdminTicketEntry> _replyToTicket(
     _AdminTicketEntry ticket,
-    String message, {
-    bool isInternal = false,
-  }) async {
+    String message,
+  ) async {
     final result = await ApiClient.send(
       method: 'POST',
       url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies',
       headers: {...AuthScope.of(context).ticketHeaders()},
-      jsonBody: {
-        'message': message,
-        'is_internal': isInternal,
-      },
+      jsonBody: {'message': message},
     );
     final data = _decodeObject(result.body);
     final statusCode = result.statusCode;
@@ -659,11 +667,10 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
         ticket: ticket,
         offices: const [],
         controlsTitle: 'Office controls',
-        replyHint: 'Write a reply…',
+        replyHint: 'Write an office reply',
         allowReassignment: false,
         onUpdate: (payload) => _patchTicket(ticket, payload),
-        onReply: (message, {bool isInternal = false}) =>
-            _replyToTicket(ticket, message, isInternal: isInternal),
+        onReply: (message) => _replyToTicket(ticket, message),
       ),
     );
   }
@@ -676,7 +683,7 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
         .where((ticket) => ticket.matches(
               _searchCtrl.text,
               _statusFilter,
-              'All',
+              _priorityFilter,
               'All',
             ))
         .toList();
@@ -685,596 +692,41 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
       current: StudentNavItem.officeAssignedTickets,
       title: 'Assigned Tickets',
       description: 'Manage tickets routed to $officeName.',
-      fillBody: true,
-      child: _StaffTicketConsole(
-        tickets: _tickets,
-        filteredTickets: filteredTickets,
-        searchCtrl: _searchCtrl,
-        statusFilter: _statusFilter,
-        onStatusChanged: (value) => setState(() => _statusFilter = value),
-        loading: _loading,
-        error: _error,
-        onRefresh: _loadTickets,
-        officeOptions: const [],
-        allowReassignment: false,
-        listTitle: 'Assigned Tickets',
-        replyHint: 'Write a reply…',
-        onUpdate: _patchTicket,
-        onReply: _replyToTicket,
-        onTicketChanged: _replaceTicket,
-        onOpenNarrowDetails: _openTicketDetails,
-      ),
-    );
-  }
-
-}
-
-class OfficeFacultyAccountsPage extends StatefulWidget {
-  const OfficeFacultyAccountsPage({super.key});
-
-  @override
-  State<OfficeFacultyAccountsPage> createState() =>
-      _OfficeFacultyAccountsPageState();
-}
-
-class _OfficeFacultyAccountsPageState extends State<OfficeFacultyAccountsPage> {
-  final List<_AdminUserEntry> _staff = [];
-  final List<_AdminUserEntry> _faculty = [];
-  final _staffFormKey = GlobalKey<FormState>();
-  final _facultyFormKey = GlobalKey<FormState>();
-  final _staffNameCtrl = TextEditingController();
-  final _staffEmailCtrl = TextEditingController();
-  final _staffPasswordCtrl = TextEditingController();
-  final _facultyNameCtrl = TextEditingController();
-  final _facultyEmailCtrl = TextEditingController();
-  final _facultyPasswordCtrl = TextEditingController();
-  bool _loading = false;
-  bool _creatingStaff = false;
-  bool _creatingFaculty = false;
-  bool _showStaffCreate = false;
-  bool _showFacultyCreate = false;
-  String? _error;
-  String? _staffFormError;
-  String? _facultyFormError;
-  bool _requestedInitialLoad = false;
-
-  @override
-  void dispose() {
-    _staffNameCtrl.dispose();
-    _staffEmailCtrl.dispose();
-    _staffPasswordCtrl.dispose();
-    _facultyNameCtrl.dispose();
-    _facultyEmailCtrl.dispose();
-    _facultyPasswordCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final auth = AuthScope.of(context);
-    if (auth.role == 'office' && !_requestedInitialLoad) {
-      _requestedInitialLoad = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _load();
-      });
-    }
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final users = await _loadAdminUsers(context);
-      if (!mounted) return;
-      setState(() {
-        _staff
-          ..clear()
-          ..addAll(users.where((user) => user.role == 'office'));
-        _faculty
-          ..clear()
-          ..addAll(users.where((user) => user.role == 'faculty'));
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _error = _friendlyError(error));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _submitCreateStaff() async {
-    if (!(_staffFormKey.currentState?.validate() ?? false)) return;
-    setState(() {
-      _creatingStaff = true;
-      _staffFormError = null;
-    });
-    try {
-      final created = await _createOfficeStaffAccountRequest(
-        context,
-        fullName: _staffNameCtrl.text.trim(),
-        email: _staffEmailCtrl.text.trim(),
-        password: _staffPasswordCtrl.text,
-      );
-      if (!mounted) return;
-      _staffNameCtrl.clear();
-      _staffEmailCtrl.clear();
-      _staffPasswordCtrl.clear();
-      setState(() => _showStaffCreate = false);
-      await _load();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Office staff login created for ${created.email}. '
-            'They will open this office workspace on sign-in.',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _staffFormError = _friendlyError(error));
-    } finally {
-      if (mounted) setState(() => _creatingStaff = false);
-    }
-  }
-
-  Future<void> _submitCreateFaculty() async {
-    if (!(_facultyFormKey.currentState?.validate() ?? false)) return;
-    setState(() {
-      _creatingFaculty = true;
-      _facultyFormError = null;
-    });
-    try {
-      final created = await _createFacultyAccountRequest(
-        context,
-        fullName: _facultyNameCtrl.text.trim(),
-        email: _facultyEmailCtrl.text.trim(),
-        password: _facultyPasswordCtrl.text,
-      );
-      if (!mounted) return;
-      _facultyNameCtrl.clear();
-      _facultyEmailCtrl.clear();
-      _facultyPasswordCtrl.clear();
-      setState(() => _showFacultyCreate = false);
-      await _load();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Faculty login created for ${created.email}. Share the temporary password securely.',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _facultyFormError = _friendlyError(error));
-    } finally {
-      if (mounted) setState(() => _creatingFaculty = false);
-    }
-  }
-
-  String _initials(String name) {
-    final parts =
-        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return 'S';
-    if (parts.length == 1) {
-      return parts.first.substring(0, parts.first.length >= 2 ? 2 : 1).toUpperCase();
-    }
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-
-  Widget _accountCard({
-    required String title,
-    required String subtitle,
-    required String addLabel,
-    required bool showCreate,
-    required VoidCallback onToggleCreate,
-    required Widget? createForm,
-    required List<_AdminUserEntry> users,
-    required String emptyTitle,
-    required String emptyBody,
-    required String roleBadge,
-    required String currentUserEmail,
-  }) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: DesignTokens.border),
-      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: DesignTokens.ink,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 17,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: DesignTokens.muted.withValues(alpha: 0.95),
-                        fontSize: 13,
-                        height: 1.35,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              ElevatedButton(
-                onPressed: _loading ? null : onToggleCreate,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: DesignTokens.maroon,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                ),
-                child: Text(showCreate ? 'Close form' : addLabel),
-              ),
-            ],
-          ),
-          if (showCreate && createForm != null) ...[
-            const SizedBox(height: 18),
-            createForm,
-          ],
-          const SizedBox(height: 18),
-          if (!_loading && users.isEmpty && !showCreate)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 36),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFCFCFD),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: DesignTokens.border),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    emptyTitle,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                      color: DesignTokens.ink,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    emptyBody,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: DesignTokens.muted,
-                      height: 1.4,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: onToggleCreate,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: DesignTokens.maroon,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: Text(addLabel),
-                  ),
-                ],
-              ),
-            )
-          else if (users.isNotEmpty)
-            ...users.map((user) {
-              final isYou =
-                  user.email.trim().toLowerCase() == currentUserEmail;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: DesignTokens.border),
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor:
-                          DesignTokens.maroon.withValues(alpha: 0.12),
-                      child: Text(
-                        _initials(user.fullName),
-                        style: const TextStyle(
-                          color: DesignTokens.maroon,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            user.fullName,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: DesignTokens.ink,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            user.email,
-                            style: const TextStyle(
-                              color: DesignTokens.muted,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (isYou) ...[
-                      Container(
-                        margin: const EdgeInsets.only(right: 8),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: DesignTokens.maroon.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: DesignTokens.maroon.withValues(alpha: 0.25),
-                          ),
-                        ),
-                        child: const Text(
-                          'You',
-                          style: TextStyle(
-                            color: DesignTokens.maroon,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                    ],
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: DesignTokens.border),
-                      ),
-                      child: Text(
-                        roleBadge,
-                        style: const TextStyle(
-                          color: DesignTokens.muted,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-        ],
-      ),
-    );
-  }
-
-  Widget _createForm({
-    required GlobalKey<FormState> formKey,
-    required String title,
-    required TextEditingController nameCtrl,
-    required TextEditingController emailCtrl,
-    required TextEditingController passwordCtrl,
-    required String? formError,
-    required bool creating,
-    required VoidCallback onSubmit,
-    required String submitLabel,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: Form(
-        key: formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Full name',
-                border: OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.white,
-              ),
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Enter a name.'
-                  : null,
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: emailCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                border: OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.white,
-              ),
-              validator: (value) {
-                final text = value?.trim() ?? '';
-                if (text.isEmpty) return 'Enter an email.';
-                if (!text.contains('@')) return 'Enter a valid email.';
-                return null;
-              },
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: passwordCtrl,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Temporary password',
-                helperText:
-                    'At least 10 characters, with a letter and a number.',
-                border: OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.white,
-              ),
-              validator: (value) {
-                final text = value ?? '';
-                if (text.length < 10) return 'Use at least 10 characters.';
-                if (!RegExp(r'[A-Za-z]').hasMatch(text) ||
-                    !RegExp(r'\d').hasMatch(text)) {
-                  return 'Include a letter and a number.';
-                }
-                return null;
-              },
-            ),
-            if (formError != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                formError,
-                style: const TextStyle(
-                  color: Color(0xFFB91C1C),
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton(
-                onPressed: creating ? null : onSubmit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: DesignTokens.maroon,
-                  foregroundColor: Colors.white,
-                ),
-                child: Text(creating ? 'Creating…' : submitLabel),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final auth = AuthScope.of(context);
-    final officeName = auth.currentUser?.officeName ?? 'your office';
-    final currentEmail =
-        (auth.currentUser?.email ?? '').trim().toLowerCase();
-    return OfficeScaffold(
-      current: StudentNavItem.officeFaculty,
-      title: 'Account',
-      description:
-          'Monitor and manage office staff and faculty logins for $officeName.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_loading) const LinearProgressIndicator(minHeight: 3),
-          if (_error != null) _AdminNotice(message: _error!),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: _loading ? null : _load,
-              child: const Text('Refresh'),
-            ),
-          ),
-          _accountCard(
-            title:
-                '${_staff.length} office staff login${_staff.length == 1 ? '' : 's'}',
-            subtitle:
-                'Staff sign in and go straight to the $officeName office workspace (tickets, KB, Add to KB).',
-            addLabel: 'Add staff',
-            showCreate: _showStaffCreate,
-            onToggleCreate: () => setState(() {
-              _showStaffCreate = !_showStaffCreate;
-              _staffFormError = null;
-              if (_showStaffCreate) _showFacultyCreate = false;
-            }),
-            createForm: _createForm(
-              formKey: _staffFormKey,
-              title: 'New office staff login',
-              nameCtrl: _staffNameCtrl,
-              emailCtrl: _staffEmailCtrl,
-              passwordCtrl: _staffPasswordCtrl,
-              formError: _staffFormError,
-              creating: _creatingStaff,
-              onSubmit: _submitCreateStaff,
-              submitLabel: 'Create staff login',
-            ),
-            users: _staff,
-            emptyTitle: 'No other staff yet',
-            emptyBody:
-                'Create a staff login so another OSA/office worker can manage assigned tickets without sharing this account.',
-            roleBadge: 'Office staff',
-            currentUserEmail: currentEmail,
+          if (_error != null)
+            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
+          _AdminTicketSummary(tickets: _tickets),
+          const SizedBox(height: 16),
+          _AdminTicketFilters(
+            searchCtrl: _searchCtrl,
+            statusFilter: _statusFilter,
+            priorityFilter: _priorityFilter,
+            officeFilter: 'All',
+            officeOptions: const ['All'],
+            showOfficeFilter: false,
+            onStatusChanged: (value) => setState(() => _statusFilter = value),
+            onPriorityChanged: (value) =>
+                setState(() => _priorityFilter = value),
+            onOfficeChanged: (_) {},
+            onRefresh: _loadTickets,
+            isRefreshing: _loading,
           ),
           const SizedBox(height: 16),
-          _accountCard(
-            title:
-                '${_faculty.length} faculty login${_faculty.length == 1 ? '' : 's'}',
-            subtitle:
-                'Faculty accounts can sign in and use faculty Knowledge Base tools. They do not open the office ticket console.',
-            addLabel: 'Add faculty',
-            showCreate: _showFacultyCreate,
-            onToggleCreate: () => setState(() {
-              _showFacultyCreate = !_showFacultyCreate;
-              _facultyFormError = null;
-              if (_showFacultyCreate) _showStaffCreate = false;
-            }),
-            createForm: _createForm(
-              formKey: _facultyFormKey,
-              title: 'New faculty login',
-              nameCtrl: _facultyNameCtrl,
-              emailCtrl: _facultyEmailCtrl,
-              passwordCtrl: _facultyPasswordCtrl,
-              formError: _facultyFormError,
-              creating: _creatingFaculty,
-              onSubmit: _submitCreateFaculty,
-              submitLabel: 'Create faculty login',
+          if (_loading && _tickets.isEmpty)
+            const _AdminTicketState(
+              icon: Icons.sync_rounded,
+              title: 'Loading tickets',
+              message: 'Fetching assigned tickets.',
+            )
+          else
+            _AdminTicketList(
+              tickets: filteredTickets,
+              hasAnyTickets: _tickets.isNotEmpty,
+              onTicketTap: _openTicketDetails,
             ),
-            users: _faculty,
-            emptyTitle: 'No faculty accounts yet',
-            emptyBody:
-                'Create a login so faculty can access campus support tools for your office.',
-            roleBadge: 'Faculty',
-            currentUserEmail: currentEmail,
-          ),
         ],
       ),
     );
@@ -1616,6 +1068,36 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
     );
   }
 
+  Future<bool> _confirmAction({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    Color? confirmColor,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: confirmColor ?? DesignTokens.maroon,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
   Future<void> _createOfficeAccount(_AdminOfficeEntry office) async {
     final created = await showDialog<_AdminUserEntry>(
       context: context,
@@ -1630,6 +1112,54 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Office account created for ${created.email}')),
     );
+  }
+
+  Future<void> _deleteOffice(_AdminOfficeEntry office) async {
+    final confirmed = await _confirmAction(
+      title: 'Delete office?',
+      message:
+          'Delete ${office.name}? Remove all staff accounts and reassign tickets first. This action cannot be undone.',
+      confirmLabel: 'Delete',
+      confirmColor: const Color(0xFFB91C1C),
+    );
+    if (!confirmed) return;
+    try {
+      await _deleteOfficeRequest(context, officeId: office.id);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Office deleted: ${office.name}')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_friendlyError(error))),
+      );
+    }
+  }
+
+  Future<void> _deleteOfficeAccount(_AdminUserEntry user) async {
+    final confirmed = await _confirmAction(
+      title: 'Remove staff account?',
+      message:
+          'Delete ${user.fullName} (${user.email})? This removes the office login and the user will need to be added again later.',
+      confirmLabel: 'Delete',
+      confirmColor: const Color(0xFFB91C1C),
+    );
+    if (!confirmed) return;
+    try {
+      await _deleteOfficeAccountRequest(context, userId: user.id);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Staff account removed: ${user.email}')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_friendlyError(error))),
+      );
+    }
   }
 
   int _staffCount(_AdminOfficeEntry office) {
@@ -1654,6 +1184,9 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filteredOffices;
+    final stats = _stats;
+    final totalStaff = _officeUsers.length;
+    final openTickets = stats?.open ?? 0;
     return AdminScaffold(
       current: StudentNavItem.adminOffices,
       title: 'Offices',
@@ -1671,31 +1204,71 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
               children: [
                 Row(
                   children: [
+                    const StudentIconBox(
+                      icon: Icons.apartment_rounded,
+                      color: DesignTokens.maroon,
+                      size: 48,
+                    ),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: StudentSectionTitle(
                         title: 'Campus offices',
                         subtitle:
-                            '${_offices.length} office${_offices.length == 1 ? '' : 's'} · ${_officeUsers.length} staff login${_officeUsers.length == 1 ? '' : 's'}',
+                            'Create routing offices, assign staff logins, and review ticket load.',
                       ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _loading ? null : _load,
-                      icon: const Icon(Icons.refresh_rounded, size: 18),
-                      label: const Text('Refresh'),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.end,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _loading ? null : _load,
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('Refresh'),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: _loading ? null : _createOffice,
+                          icon: const Icon(Icons.add_business_rounded, size: 18),
+                          label: const Text('Add office'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: DesignTokens.maroon,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      onPressed: _loading ? null : _createOffice,
-                      icon: const Icon(Icons.add_business_rounded, size: 18),
-                      label: const Text('Add office'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: DesignTokens.maroon,
-                        foregroundColor: Colors.white,
+                  ],
+                ),
+                const SizedBox(height: 16),
+                StudentResponsiveWrap(
+                  columns: 3,
+                  spacing: 12,
+                  children: [
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                        'Offices',
+                        _offices.length.toString(),
+                        Icons.apartment_rounded,
+                      ),
+                    ),
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                        'Staff logins',
+                        totalStaff.toString(),
+                        Icons.badge_rounded,
+                      ),
+                    ),
+                    _AdminMetricCard(
+                      data: _AdminMetricData(
+                        'Open tickets',
+                        openTickets.toString(),
+                        Icons.mark_email_unread_rounded,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 TextField(
                   controller: _searchCtrl,
                   onChanged: (_) => setState(() {}),
@@ -1711,16 +1284,76 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
                             },
                             icon: const Icon(Icons.clear_rounded),
                           ),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 14,
+                    ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: DesignTokens.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: DesignTokens.border),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(
+                        color: DesignTokens.maroon,
+                        width: 1.4,
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 14),
                 if (!_loading && filtered.isEmpty)
-                  const Text(
-                    'No offices found. Add an office or seed accounts.',
-                    style: TextStyle(color: DesignTokens.muted),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 28,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFCFCFD),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: DesignTokens.border),
+                    ),
+                    child: Column(
+                      children: [
+                        StudentIconBox(
+                          icon: Icons.apartment_outlined,
+                          color: DesignTokens.maroon,
+                          size: 54,
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'No offices found',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: DesignTokens.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Add a new campus office or clear the search filter.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: DesignTokens.muted),
+                        ),
+                        const SizedBox(height: 14),
+                        ElevatedButton.icon(
+                          onPressed: _createOffice,
+                          icon: const Icon(Icons.add_business_rounded, size: 18),
+                          label: const Text('Add office'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: DesignTokens.maroon,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
                   )
                 else
                   ...filtered.map((office) {
@@ -1733,6 +1366,8 @@ class _AdminOfficesPageState extends State<AdminOfficesPage> {
                       ticketCount: _ticketCount(office),
                       staff: staff,
                       onCreateAccount: () => _createOfficeAccount(office),
+                      onDeleteOffice: () => _deleteOffice(office),
+                      onDeleteStaff: (user) => _deleteOfficeAccount(user),
                     );
                   }),
               ],
@@ -2196,6 +1831,8 @@ class _AdminOfficeTile extends StatelessWidget {
   final int ticketCount;
   final List<_AdminUserEntry> staff;
   final VoidCallback onCreateAccount;
+  final VoidCallback onDeleteOffice;
+  final ValueChanged<_AdminUserEntry> onDeleteStaff;
 
   const _AdminOfficeTile({
     required this.office,
@@ -2203,17 +1840,24 @@ class _AdminOfficeTile extends StatelessWidget {
     required this.ticketCount,
     required this.staff,
     required this.onCreateAccount,
+    required this.onDeleteOffice,
+    required this.onDeleteStaff,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFFFF), Color(0xFFF9FAFB)],
+        ),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: DesignTokens.border),
+        boxShadow: DesignTokens.softShadow(0.05),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2230,13 +1874,37 @@ class _AdminOfficeTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      office.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                        color: DesignTokens.ink,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            office.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              color: DesignTokens.ink,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFDF2F8),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '$ticketCount ticket${ticketCount == 1 ? '' : 's'}',
+                            style: const TextStyle(
+                              color: Color(0xFF9F1239),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -2244,20 +1912,58 @@ class _AdminOfficeTile extends StatelessWidget {
                         if ((office.serviceCategory ?? '').trim().isNotEmpty)
                           office.serviceCategory!.trim(),
                         '$staffCount staff login${staffCount == 1 ? '' : 's'}',
-                        '$ticketCount ticket${ticketCount == 1 ? '' : 's'}',
                       ].join(' · '),
                       style: const TextStyle(
                         color: DesignTokens.muted,
                         fontSize: 13,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _OfficeBadge(
+                          icon: Icons.badge_rounded,
+                          label:
+                              '$staffCount staff${staffCount == 1 ? '' : 's'}',
+                        ),
+                        _OfficeBadge(
+                          icon: Icons.confirmation_number_rounded,
+                          label:
+                              '$ticketCount ticket${ticketCount == 1 ? '' : 's'}',
+                        ),
+                        if ((office.serviceCategory ?? '').trim().isNotEmpty)
+                          _OfficeBadge(
+                            icon: Icons.sell_outlined,
+                            label: office.serviceCategory!.trim(),
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
               TextButton.icon(
                 onPressed: onCreateAccount,
                 icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
                 label: const Text('Add staff'),
+              ),
+              TextButton.icon(
+                onPressed: onDeleteOffice,
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                label: const Text('Delete office'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFB91C1C),
+                ),
               ),
             ],
           ),
@@ -2265,28 +1971,122 @@ class _AdminOfficeTile extends StatelessWidget {
             const SizedBox(height: 12),
             const Divider(height: 1),
             const SizedBox(height: 10),
-            ...staff.map(
-              (user) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    const Icon(Icons.badge_outlined,
-                        size: 16, color: DesignTokens.muted),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${user.fullName} · ${user.email}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: DesignTokens.ink,
-                        ),
-                      ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: staff
+                  .map(
+                    (user) => _OfficeStaffChip(
+                      user: user,
+                      onDelete: () => onDeleteStaff(user),
                     ),
-                  ],
-                ),
+                  )
+                  .toList(),
+            ),
+          ] else ...[
+            const SizedBox(height: 12),
+            Text(
+              'No office staff accounts yet.',
+              style: TextStyle(
+                color: DesignTokens.muted.withValues(alpha: 0.85),
+                fontSize: 13,
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _OfficeBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _OfficeBadge({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: DesignTokens.maroon),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: DesignTokens.ink,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfficeStaffChip extends StatelessWidget {
+  final _AdminUserEntry user;
+  final VoidCallback onDelete;
+
+  const _OfficeStaffChip({required this.user, required this.onDelete});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.badge_outlined, size: 16, color: DesignTokens.muted),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                user.fullName,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: DesignTokens.ink,
+                ),
+              ),
+              Text(
+                user.email,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: DesignTokens.muted,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            padding: EdgeInsets.zero,
+            tooltip: 'Remove staff account',
+            onPressed: onDelete,
+            icon: const Icon(
+              Icons.close_rounded,
+              size: 16,
+              color: Color(0xFFB91C1C),
+            ),
+          ),
         ],
       ),
     );
@@ -2698,7 +2498,6 @@ class OfficeScaffold extends StatelessWidget {
   final String title;
   final String description;
   final Widget child;
-  final bool fillBody;
 
   const OfficeScaffold({
     super.key,
@@ -2706,7 +2505,6 @@ class OfficeScaffold extends StatelessWidget {
     required this.title,
     required this.description,
     required this.child,
-    this.fillBody = false,
   });
 
   @override
@@ -2723,6 +2521,12 @@ class OfficeScaffold extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  const StudentIconBox(
+                    icon: Icons.business_center_rounded,
+                    color: DesignTokens.maroon,
+                    size: 52,
+                  ),
+                  const SizedBox(height: 14),
                   const StudentSectionTitle(
                     title: 'Office access required',
                     subtitle:
@@ -2752,64 +2556,33 @@ class OfficeScaffold extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
-        final Widget content;
-        if (fillBody) {
-          content = ColoredBox(
-            color: DesignTokens.bgGrey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    isWide ? 20 : 14,
-                    isWide ? 16 : 12,
-                    isWide ? 20 : 14,
-                    10,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: DesignTokens.ink,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                        ),
+        final content = StudentPage(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              StudentPanel(
+                child: Row(
+                  children: [
+                    const StudentIconBox(
+                      icon: Icons.business_center_rounded,
+                      color: DesignTokens.maroon,
+                      size: 52,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: StudentSectionTitle(
+                        title: title,
+                        subtitle: description,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        description,
-                        style: const TextStyle(
-                          color: DesignTokens.muted,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                Expanded(child: child),
-              ],
-            ),
-          );
-        } else {
-          content = StudentPage(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                StudentPanel(
-                  child: StudentSectionTitle(
-                    title: title,
-                    subtitle: description,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                child,
-              ],
-            ),
-          );
-        }
+              ),
+              const SizedBox(height: 18),
+              child,
+            ],
+          ),
+        );
 
         if (isWide) {
           return Scaffold(
@@ -2844,26 +2617,36 @@ class _AdminMetricCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return StudentInkCard(
       onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Text(
-            data.value,
-            style: const TextStyle(
-              color: DesignTokens.ink,
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
+          StudentIconBox(icon: data.icon, color: DesignTokens.maroon, size: 44),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  data.value,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  data.label,
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            data.label,
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+          if (onTap != null)
+            const Icon(Icons.chevron_right_rounded, color: DesignTokens.muted),
         ],
       ),
     );
@@ -3160,14 +2943,14 @@ class _AdminFilterDropdown extends StatelessWidget {
   final String label;
   final String value;
   final List<String> values;
-  final IconData? icon;
+  final IconData icon;
   final ValueChanged<String> onChanged;
 
   const _AdminFilterDropdown({
     required this.label,
     required this.value,
     required this.values,
-    this.icon,
+    required this.icon,
     required this.onChanged,
   });
 
@@ -3176,7 +2959,7 @@ class _AdminFilterDropdown extends StatelessWidget {
     return DropdownButtonFormField<String>(
       value: values.contains(value) ? value : values.first,
       isExpanded: true,
-      decoration: _adminInputDecoration(hintText: label),
+      decoration: _adminInputDecoration(hintText: label, icon: icon),
       items: values
           .map((item) => DropdownMenuItem(value: item, child: Text(item)))
           .toList(),
@@ -3371,10 +3154,7 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
   final bool allowReassignment;
   final Future<_AdminTicketEntry> Function(Map<String, dynamic> payload)
       onUpdate;
-  final Future<_AdminTicketEntry> Function(
-    String message, {
-    bool isInternal,
-  }) onReply;
+  final Future<_AdminTicketEntry> Function(String message) onReply;
 
   const _AdminTicketDetailsDialog({
     required this.ticket,
@@ -3437,6 +3217,12 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const StudentIconBox(
+                    icon: Icons.confirmation_num_outlined,
+                    color: DesignTokens.maroon,
+                    size: 42,
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3462,9 +3248,10 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       ],
                     ),
                   ),
-                  TextButton(
+                  IconButton(
+                    tooltip: 'Close',
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Close'),
+                    icon: const Icon(Icons.close_rounded),
                   ),
                 ],
               ),
@@ -3532,8 +3319,8 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                                       onPressed: () {
                                         openAdminPage(
                                           context,
-                                          builder: (_) => AdminPanelPage(
-                                            initialTab: 1,
+                                          builder: (_) =>
+                                              AdminGenerateArticlesPage(
                                             focusArticleId: _ticket.kbArticleId,
                                           ),
                                         );
@@ -3634,13 +3421,21 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                           const SizedBox(height: 12),
                           Align(
                             alignment: Alignment.centerRight,
-                            child: ElevatedButton(
+                            child: ElevatedButton.icon(
                               onPressed: _saving ? null : _saveChanges,
+                              icon: _saving
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.save_rounded, size: 18),
+                              label: const Text('Save changes'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: DesignTokens.maroon,
                                 foregroundColor: Colors.white,
                               ),
-                              child: Text(_saving ? 'Saving…' : 'Save changes'),
                             ),
                           ),
                         ],
@@ -3666,59 +3461,6 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                     const SizedBox(height: 12),
                     _AdminConversationTimeline(messages: _ticket.messages),
                     const SizedBox(height: 16),
-                    _AdminSectionTitle(
-                      'Attachments (${_ticket.attachments.length})',
-                    ),
-                    const SizedBox(height: 8),
-                    if (_ticket.attachments.isEmpty)
-                      const Text(
-                        'No files yet. Use Attach below to add PDF or images.',
-                        style: TextStyle(
-                          color: DesignTokens.muted,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 12,
-                        ),
-                      )
-                    else
-                      ..._ticket.attachments.map(
-                        (file) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: InkWell(
-                            onTap: () => _downloadAttachment(file),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  file.isImage
-                                      ? Icons.image
-                                      : Icons.picture_as_pdf,
-                                  size: 18,
-                                  color: DesignTokens.maroon,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    file.originalFilename,
-                                    style: const TextStyle(
-                                      color: DesignTokens.maroon,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                                const Text(
-                                  'Download',
-                                  style: TextStyle(
-                                    color: DesignTokens.maroon,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 16),
                     _AdminSectionTitle('Reply'),
                     const SizedBox(height: 8),
                     TextField(
@@ -3727,35 +3469,21 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       maxLines: 5,
                       decoration: _adminInputDecoration(
                         hintText: widget.replyHint,
+                        icon: Icons.reply_rounded,
                       ),
                     ),
                     const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        TextButton.icon(
-                          onPressed: _saving
-                              ? null
-                              : () => _pickAttachment(imagesOnly: true),
-                          icon: const Icon(Icons.image, size: 18),
-                          label: const Text('Image'),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: ElevatedButton.icon(
+                        onPressed: _saving ? null : _sendReply,
+                        icon: const Icon(Icons.send_rounded, size: 18),
+                        label: const Text('Send reply'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: DesignTokens.maroon,
+                          foregroundColor: Colors.white,
                         ),
-                        TextButton.icon(
-                          onPressed: _saving
-                              ? null
-                              : () => _pickAttachment(imagesOnly: false),
-                          icon: const Icon(Icons.attach_file, size: 18),
-                          label: const Text('File'),
-                        ),
-                        const Spacer(),
-                        ElevatedButton(
-                          onPressed: _saving ? null : _sendReply,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: DesignTokens.maroon,
-                            foregroundColor: Colors.white,
-                          ),
-                          child: const Text('Send reply'),
-                        ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
@@ -3813,89 +3541,6 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
       setState(() => _error = _friendlyError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _pickAttachment({required bool imagesOnly}) async {
-    if (_ticket.status == 'Closed') {
-      setState(() => _error = 'Closed tickets do not accept attachments.');
-      return;
-    }
-    try {
-      final picked = await pickAppFile(
-        allowedExtensions: imagesOnly
-            ? const ['png', 'jpg', 'jpeg', 'gif', 'webp']
-            : const ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
-        dialogTitle:
-            imagesOnly ? 'Attach image' : 'Attach file (PDF or image)',
-      );
-      if (picked == null || !mounted) return;
-      if (picked.bytes.length > 10 * 1024 * 1024) {
-        setState(() => _error = 'Attachment must be 10 MB or smaller.');
-        return;
-      }
-      setState(() {
-        _saving = true;
-        _error = null;
-      });
-      final result = await ApiClient.multipart(
-        method: 'POST',
-        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}/attachments',
-        headers: AuthScope.of(context).ticketHeaders(),
-        files: [
-          http.MultipartFile.fromBytes(
-            'file',
-            picked.bytes,
-            filename: picked.name,
-          ),
-        ],
-      );
-      if (result.statusCode < 200 || result.statusCode >= 300) {
-        final data = _decodeObject(result.body);
-        throw StateError(_extractError(data, 'Attachment upload failed.'));
-      }
-      final refresh = await ApiClient.send(
-        method: 'GET',
-        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}',
-        headers: AuthScope.of(context).ticketHeaders(),
-      );
-      final data = _decodeObject(refresh.body);
-      if (refresh.statusCode < 200 || refresh.statusCode >= 300) {
-        throw StateError(_extractError(data, 'Could not refresh ticket.'));
-      }
-      final updated = _AdminTicketEntry.fromJson(data);
-      setState(() => _ticket = updated);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Attached ${picked.name}')),
-      );
-    } catch (error) {
-      if (mounted) setState(() => _error = _friendlyError(error));
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _downloadAttachment(_AdminTicketAttachment file) async {
-    try {
-      final result = await ApiClient.send(
-        method: 'GET',
-        url: '${AppConfig.resolvedApiBase}${file.downloadUrl}',
-        headers: AuthScope.of(context).ticketHeaders(),
-        asBytes: true,
-      );
-      if (!result.ok) {
-        throw StateError('Could not download file.');
-      }
-      await downloadBytesFile(
-        filename: file.originalFilename,
-        bytes: result.bytes,
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_friendlyError(error))),
-      );
     }
   }
 
@@ -4039,7 +3684,6 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
           confidenceScore: _ticket.confidenceScore,
           sourceFromChatbot: _ticket.sourceFromChatbot,
           messages: _ticket.messages,
-          attachments: _ticket.attachments,
           kbArticleId: articleId.isEmpty ? _ticket.kbArticleId : articleId,
           kbConversionStatus: status,
         );
@@ -4101,12 +3745,15 @@ class _AdminDetailGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final details = [
-      _AdminDetailData('Student', ticket.userName),
-      _AdminDetailData('Email', ticket.userEmail ?? '-'),
-      _AdminDetailData('Category', ticket.category),
-      _AdminDetailData('Assigned office', ticket.assignedOffice),
-      _AdminDetailData('Created', _adminFormatFullDate(ticket.createdAt)),
-      _AdminDetailData('Updated', _adminFormatFullDate(ticket.updatedAt)),
+      _AdminDetailData('Student', ticket.userName, Icons.person_outline_rounded),
+      _AdminDetailData('Email', ticket.userEmail ?? '-', Icons.email_outlined),
+      _AdminDetailData('Category', ticket.category, Icons.category_outlined),
+      _AdminDetailData(
+          'Assigned office', ticket.assignedOffice, Icons.apartment_rounded),
+      _AdminDetailData('Created', _adminFormatFullDate(ticket.createdAt),
+          Icons.event_available_outlined),
+      _AdminDetailData(
+          'Updated', _adminFormatFullDate(ticket.updatedAt), Icons.update_rounded),
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -4122,24 +3769,36 @@ class _AdminDetailGrid extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: DesignTokens.border),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        Text(
-                          detail.label,
-                          style: const TextStyle(
-                            color: DesignTokens.muted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        StudentIconBox(
+                          icon: detail.icon,
+                          color: DesignTokens.maroon,
+                          size: 34,
                         ),
-                        const SizedBox(height: 3),
-                        Text(
-                          detail.value,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: DesignTokens.ink,
-                            fontWeight: FontWeight.w800,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                detail.label,
+                                style: const TextStyle(
+                                  color: DesignTokens.muted,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                detail.value,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: DesignTokens.ink,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -4155,8 +3814,9 @@ class _AdminDetailGrid extends StatelessWidget {
 class _AdminDetailData {
   final String label;
   final String value;
+  final IconData icon;
 
-  const _AdminDetailData(this.label, this.value);
+  const _AdminDetailData(this.label, this.value, this.icon);
 }
 
 class _AdminConversationTimeline extends StatelessWidget {
@@ -4207,9 +3867,17 @@ class _AdminMessageBubble extends StatelessWidget {
           children: [
             Row(
               children: [
+                Icon(
+                  isStudent
+                      ? Icons.person_outline_rounded
+                      : Icons.admin_panel_settings_rounded,
+                  color: accent,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '${message.senderName} · ${_adminTitleCase(message.senderRole)}',
+                    '${message.senderName} - ${_adminTitleCase(message.senderRole)}',
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: accent,
@@ -4229,26 +3897,10 @@ class _AdminMessageBubble extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 9),
-            _AdminFormattedText(message.message),
-            if (message.isInternal) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: DesignTokens.maroon.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Text(
-                  'Internal note',
-                  style: TextStyle(
-                    color: DesignTokens.maroon,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
+            Text(
+              message.message,
+              style: const TextStyle(color: DesignTokens.ink, height: 1.45),
+            ),
           ],
         ),
       ),
@@ -4335,7 +3987,7 @@ class _AdminStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _adminStatusColor(status);
-    return _AdminChip(label: status, color: color);
+    return _AdminChip(label: status, icon: Icons.circle_rounded, color: color);
   }
 }
 
@@ -4349,6 +4001,7 @@ class _AdminPriorityChip extends StatelessWidget {
     final color = _adminPriorityColor(priority);
     return _AdminChip(
       label: priority,
+      icon: Icons.priority_high_rounded,
       color: color,
     );
   }
@@ -4356,10 +4009,12 @@ class _AdminPriorityChip extends StatelessWidget {
 
 class _AdminChip extends StatelessWidget {
   final String label;
+  final IconData icon;
   final Color color;
 
   const _AdminChip({
     required this.label,
+    required this.icon,
     required this.color,
   });
 
@@ -4372,13 +4027,20 @@ class _AdminChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: color.withValues(alpha: 0.28)),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4416,10 +4078,10 @@ class _AdminPlaceholderPanel extends StatelessWidget {
 }
 
 class _AdminNotice extends StatelessWidget {
-  final IconData? icon;
+  final IconData icon;
   final String message;
 
-  const _AdminNotice({this.icon, required this.message});
+  const _AdminNotice({required this.icon, required this.message});
 
   @override
   Widget build(BuildContext context) {
@@ -4427,69 +4089,25 @@ class _AdminNotice extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 14),
       child: StudentPanel(
         shadow: false,
-        child: Text(
-          message,
-          style: const TextStyle(
-            color: DesignTokens.muted,
-            height: 1.35,
-            fontWeight: FontWeight.w700,
-          ),
+        child: Row(
+          children: [
+            Icon(icon, color: DesignTokens.maroon),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: DesignTokens.muted,
+                  height: 1.35,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
-}
-
-class _AdminFormattedText extends StatelessWidget {
-  final String text;
-
-  const _AdminFormattedText(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text.rich(
-      TextSpan(
-        style: const TextStyle(color: DesignTokens.ink, height: 1.45),
-        children: _parseFormattedSpans(text),
-      ),
-    );
-  }
-}
-
-List<InlineSpan> _parseFormattedSpans(String input) {
-  if (input.isEmpty) return const [TextSpan(text: '')];
-  final pattern = RegExp(
-    r'\*\*(.+?)\*\*|_(.+?)_|<u>(.+?)</u>',
-    dotAll: true,
-  );
-  final spans = <InlineSpan>[];
-  var start = 0;
-  for (final match in pattern.allMatches(input)) {
-    if (match.start > start) {
-      spans.add(TextSpan(text: input.substring(start, match.start)));
-    }
-    if (match.group(1) != null) {
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: const TextStyle(fontWeight: FontWeight.w800),
-      ));
-    } else if (match.group(2) != null) {
-      spans.add(TextSpan(
-        text: match.group(2),
-        style: const TextStyle(fontStyle: FontStyle.italic),
-      ));
-    } else if (match.group(3) != null) {
-      spans.add(TextSpan(
-        text: match.group(3),
-        style: const TextStyle(decoration: TextDecoration.underline),
-      ));
-    }
-    start = match.end;
-  }
-  if (start < input.length) {
-    spans.add(TextSpan(text: input.substring(start)));
-  }
-  return spans;
 }
 
 class _AdminMetricData {
@@ -4510,7 +4128,6 @@ class _AdminTicketMessage {
   final String senderName;
   final String message;
   final DateTime createdAt;
-  final bool isInternal;
 
   const _AdminTicketMessage({
     required this.id,
@@ -4520,7 +4137,6 @@ class _AdminTicketMessage {
     required this.senderName,
     required this.message,
     required this.createdAt,
-    this.isInternal = false,
   });
 
   factory _AdminTicketMessage.fromJson(Map<String, dynamic> json) {
@@ -4532,43 +4148,8 @@ class _AdminTicketMessage {
       senderName: (json['sender_name'] ?? 'Office').toString(),
       message: (json['message'] ?? '').toString(),
       createdAt: _adminParseDate(json['created_at']),
-      isInternal: json['is_internal'] == true,
     );
   }
-}
-
-class _AdminTicketAttachment {
-  final String id;
-  final String ticketId;
-  final String originalFilename;
-  final String contentType;
-  final int sizeBytes;
-  final String downloadUrl;
-  final DateTime createdAt;
-
-  const _AdminTicketAttachment({
-    required this.id,
-    required this.ticketId,
-    required this.originalFilename,
-    required this.contentType,
-    required this.sizeBytes,
-    required this.downloadUrl,
-    required this.createdAt,
-  });
-
-  factory _AdminTicketAttachment.fromJson(Map<String, dynamic> json) {
-    return _AdminTicketAttachment(
-      id: (json['id'] ?? '').toString(),
-      ticketId: (json['ticket_id'] ?? '').toString(),
-      originalFilename: (json['original_filename'] ?? 'file').toString(),
-      contentType: (json['content_type'] ?? '').toString(),
-      sizeBytes: int.tryParse((json['size_bytes'] ?? '0').toString()) ?? 0,
-      downloadUrl: (json['download_url'] ?? '').toString(),
-      createdAt: _adminParseDate(json['created_at']),
-    );
-  }
-
-  bool get isImage => contentType.toLowerCase().startsWith('image/');
 }
 
 class _AdminTicketEntry {
@@ -4589,7 +4170,6 @@ class _AdminTicketEntry {
   final double? confidenceScore;
   final bool sourceFromChatbot;
   final List<_AdminTicketMessage> messages;
-  final List<_AdminTicketAttachment> attachments;
   final String? kbArticleId;
   final String kbConversionStatus;
 
@@ -4611,7 +4191,6 @@ class _AdminTicketEntry {
     required this.confidenceScore,
     required this.sourceFromChatbot,
     required this.messages,
-    this.attachments = const [],
     this.kbArticleId,
     this.kbConversionStatus = 'none',
   });
@@ -4619,9 +4198,6 @@ class _AdminTicketEntry {
   factory _AdminTicketEntry.fromJson(Map<String, dynamic> json) {
     final rawMessages =
         json['messages'] is List ? json['messages'] as List : const <dynamic>[];
-    final rawAttachments = json['attachments'] is List
-        ? json['attachments'] as List
-        : const <dynamic>[];
     return _AdminTicketEntry(
       id: (json['ticket_id'] ?? json['id'] ?? '').toString(),
       userId: (json['user_id'] ?? '').toString(),
@@ -4644,11 +4220,6 @@ class _AdminTicketEntry {
           .whereType<Map>()
           .map((item) =>
               _AdminTicketMessage.fromJson(Map<String, dynamic>.from(item)))
-          .toList(),
-      attachments: rawAttachments
-          .whereType<Map>()
-          .map((item) =>
-              _AdminTicketAttachment.fromJson(Map<String, dynamic>.from(item)))
           .toList(),
       kbArticleId: _nullableAdminString(json['kb_article_id']),
       kbConversionStatus:
@@ -4874,28 +4445,20 @@ Future<_AdminUserEntry> _createOfficeAccountRequest(
   return _AdminUserEntry.fromJson(data);
 }
 
-Future<_AdminUserEntry> _createOfficeStaffAccountRequest(
+Future<void> _deleteOfficeAccountRequest(
   BuildContext context, {
-  required String fullName,
-  required String email,
-  required String password,
+  required String userId,
 }) async {
   final result = await ApiClient.send(
-    method: 'POST',
-    url: '${AppConfig.resolvedApiBase}/auth/office-accounts',
+    method: 'DELETE',
+    url: '${AppConfig.resolvedApiBase}/auth/users/$userId',
     headers: {...AuthScope.of(context).ticketHeaders()},
-    jsonBody: {
-      'full_name': fullName,
-      'email': email,
-      'password': password,
-    },
   );
   final data = _decodeObject(result.body);
   final statusCode = result.statusCode;
   if (statusCode < 200 || statusCode >= 300) {
-    throw StateError(_extractError(data, 'Could not create office staff login.'));
+    throw StateError(_extractError(data, 'Could not delete office account.'));
   }
-  return _AdminUserEntry.fromJson(data);
 }
 
 Future<_AdminUserEntry> _createFacultyAccountRequest(
@@ -4945,6 +4508,22 @@ Future<_AdminOfficeEntry> _createOfficeRequest(
     throw StateError(_extractError(data, 'Could not create office.'));
   }
   return _AdminOfficeEntry.fromJson(data);
+}
+
+Future<void> _deleteOfficeRequest(
+  BuildContext context, {
+  required String officeId,
+}) async {
+  final result = await ApiClient.send(
+    method: 'DELETE',
+    url: '${AppConfig.resolvedApiBase}/tickets/offices/$officeId',
+    headers: {...AuthScope.of(context).ticketHeaders()},
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not delete office.'));
+  }
 }
 
 class _AdminUserEntry {
@@ -5066,10 +4645,11 @@ int _readInt(Object? value) {
 
 InputDecoration _adminInputDecoration({
   required String hintText,
-  IconData? icon,
+  required IconData icon,
 }) {
   return InputDecoration(
     hintText: hintText,
+    prefixIcon: Icon(icon, size: 20),
     filled: true,
     fillColor: Colors.white,
     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),

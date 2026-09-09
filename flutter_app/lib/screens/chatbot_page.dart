@@ -309,6 +309,8 @@ class _ChatbotPageState extends State<ChatbotPage> {
     openProtectedPage(
       context,
       builder: (_) => MyTicketsPage(initialTab: 1, initialQuestion: question),
+      requireVerifiedEmail: true,
+      message: emailVerifyRequiredMessage,
     );
   }
 

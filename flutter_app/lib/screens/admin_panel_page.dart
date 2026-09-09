@@ -9,6 +9,7 @@ import '../design_tokens.dart';
 import '../screens/login_page.dart';
 import '../screens/student_home.dart';
 import 'admin_generate_articles_page.dart';
+import 'admin_kb_review_publish_section.dart';
 import 'admin_kb_workspace.dart';
 import 'office_scaffold.dart';
 import '../services/admin_article_service.dart';
@@ -41,8 +42,7 @@ class AdminPanelPage extends StatefulWidget {
   State<AdminPanelPage> createState() => _AdminPanelPageState();
 }
 
-class _AdminPanelPageState extends State<AdminPanelPage>
-    with SingleTickerProviderStateMixin {
+class _AdminPanelPageState extends State<AdminPanelPage> {
   static const String _adminKeyHeader = 'x-admin-key';
 
   final TextEditingController _adminKeyController = TextEditingController();
@@ -56,21 +56,40 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   int? _draftArticleCount;
   KbWorkspaceSession? _session;
   bool _sessionListenerAttached = false;
-  late final TabController _tabController;
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _articlesSectionKey = GlobalKey();
+  int _scrollToArticlesAttempts = 0;
 
   @override
   void initState() {
     super.initState();
-    final initial = widget.initialTab.clamp(0, 1);
-    _tabController = TabController(length: 2, vsync: this, initialIndex: initial);
     _adminKeyController.text = AppConfig.savedAdminKey ?? '';
     _loadLibraryCounts();
     _loadKbStatistics();
+    if (widget.initialTab == 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToArticles());
+    }
+  }
+
+  void _scrollToArticles() {
+    if (_scrollToArticlesAttempts > 8) return;
+    _scrollToArticlesAttempts += 1;
+    final target = _articlesSectionKey.currentContext;
+    if (target == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToArticles());
+      return;
+    }
+    Scrollable.ensureVisible(
+      target,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeInOut,
+      alignment: 0.05,
+    );
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _scrollController.dispose();
     if (_sessionListenerAttached) {
       _session?.removeListener(_onSessionChanged);
     }
@@ -382,7 +401,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         .toList();
   }
 
-  List<Widget> _buildDocumentsTab() {
+  List<Widget> _buildExtractTab() {
     final session = KbWorkspaceScope.of(context);
     return [
       if (session.isBusy) ...[
@@ -451,50 +470,31 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         onSelectOutline: (index) {
           session.setSelectedOutlineIndex(index);
         },
-        onOpenArticles: () => _tabController.animateTo(1),
       ),
     ];
   }
 
-  Widget _buildTabBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        labelColor: DesignTokens.maroon,
-        unselectedLabelColor: DesignTokens.muted,
-        indicatorColor: DesignTokens.maroon,
-        indicatorSize: TabBarIndicatorSize.tab,
-        labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-        unselectedLabelStyle:
-            const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-        tabs: const [
-          Tab(text: 'Documents'),
-          Tab(text: 'Articles'),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDocumentsScroll() {
+  Widget _buildUnifiedBody() {
+    final session = KbWorkspaceScope.of(context);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(4, 12, 4, 24),
-      children: _buildDocumentsTab(),
-    );
-  }
-
-  Widget _buildArticlesScroll() {
-    return ListView(
+      controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(4, 12, 4, 24),
       children: [
-        AdminGenerateArticlesPage(
-          embedded: true,
-          focusArticleId: widget.focusArticleId,
+        ..._buildExtractTab(),
+        const SizedBox(height: 20),
+        KeyedSubtree(
+          key: _articlesSectionKey,
+          child: KbReviewAndPublishSection(
+            knowledgeUnits: session.knowledgeUnits,
+            fileName: session.selectedFileName,
+            documentType: session.extractedDocumentType,
+            focusArticleId: widget.focusArticleId,
+            onLibraryRefresh: () {
+              setState(() => _articleLibraryRefreshToken++);
+            },
+          ),
         ),
+        const SizedBox(height: 18),
       ],
     );
   }
@@ -522,21 +522,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         ? StudentNavItem.officeKnowledgeBase
         : StudentNavItem.adminKnowledgeBase;
 
-    final tabbedBody = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildTabBar(),
-        Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              _buildDocumentsScroll(),
-              _buildArticlesScroll(),
-            ],
-          ),
-        ),
-      ],
-    );
+    final scrollBody = _buildUnifiedBody();
 
     if (isOffice) {
       return OfficeScaffold(
@@ -547,7 +533,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         fillBody: true,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-          child: tabbedBody,
+          child: scrollBody,
         ),
       );
     }
@@ -567,7 +553,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                   children: [
                     const _AdminHeader(),
                     const SizedBox(height: 16),
-                    Expanded(child: tabbedBody),
+                    Expanded(child: scrollBody),
                   ],
                 ),
               ),

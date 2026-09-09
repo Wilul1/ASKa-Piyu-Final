@@ -77,6 +77,40 @@ def user_to_schema(user: User) -> UserSchema:
     )
 
 
+def _maybe_send_verification_on_login(session: Session, user: User) -> None:
+    """Issue + send a code when an unverified student/faculty logs in.
+
+    Respects the resend cooldown so a signup-then-immediate-login does not
+    double-send. Failures are logged; login still succeeds.
+    """
+    role = (user.role or "").strip().lower()
+    if role not in ("student", "faculty"):
+        return
+    if bool(getattr(user, "email_verified", False)):
+        return
+
+    sent_at = getattr(user, "email_verification_sent_at", None)
+    cooldown = int(getattr(settings, "email_verification_resend_cooldown_seconds", 60) or 60)
+    if sent_at is not None:
+        age = (utc_now() - _as_utc(sent_at)).total_seconds()
+        if age < cooldown:
+            return
+
+    code = _issue_verification_code(user)
+    session.add(user)
+    session.commit()
+    sent = send_verification_email(
+        to_email=user.email,
+        full_name=user.full_name,
+        code=code,
+    )
+    if not sent:
+        logger.warning(
+            "Login succeeded but verification email was not sent for %s",
+            user.email,
+        )
+
+
 def _issue_verification_code(user: User) -> str:
     """Generate + persist a fresh code on the given (already-attached) user.
 
@@ -175,17 +209,16 @@ def signup(
             detail="Unable to create an account with that email.",
         )
 
-    # Email verification (Resend codes) is optional infrastructure kept in the
-    # codebase, but not required for campus use until a real sending domain
-    # is configured. Students sign up with their real personal email + an
-    # ASKa-only password; the account is usable immediately.
+    # Students must verify email (6-digit code) before tickets work.
+    # Ask + public Knowledge Base stay usable without verification.
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
         full_name=payload.full_name,
         role="student",
-        email_verified=True,
+        email_verified=False,
     )
+    code = _issue_verification_code(user)
     session.add(user)
     try:
         session.commit()
@@ -205,6 +238,17 @@ def signup(
         user_id=user.id,
         user_agent=request.headers.get("user-agent"),
     )
+
+    sent = send_verification_email(
+        to_email=user.email,
+        full_name=user.full_name,
+        code=code,
+    )
+    if not sent:
+        logger.warning(
+            "Signup succeeded but verification email was not sent for %s",
+            user.email,
+        )
 
     return AuthResponse(access_token=create_access_token(user), user=user_to_schema(user))
 
@@ -251,7 +295,14 @@ def login(
         user_agent=ua,
     )
 
-    return AuthResponse(access_token=create_access_token(user), user=user_to_schema(user))
+    # Login of an unverified student should still get a code (signup send can
+    # fail, or the account was created before sending was live).
+    _maybe_send_verification_on_login(session, user)
+
+    return AuthResponse(
+        access_token=create_access_token(user, remember_me=payload.remember_me),
+        user=user_to_schema(user),
+    )
 
 
 @router.get("/me", response_model=UserSchema)

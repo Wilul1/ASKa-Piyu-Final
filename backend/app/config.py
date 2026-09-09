@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     auth_secret_key: str | None = None
     # Shorter default reduces stolen-token window (no server-side revoke list).
     auth_token_ttl_minutes: int = 60 * 8
+    # Login with remember_me=true — keep signed in up to 7 days on trusted devices.
+    auth_remember_token_ttl_minutes: int = 60 * 24 * 7
     chunk_max_chars: int = 1200
     chunk_overlap: int = 150
     # Local sentence-embedding model for Chroma retrieval (multilingual: handles
@@ -110,9 +112,17 @@ class Settings(BaseSettings):
     # When set, public signup requires a matching invite_code in the request body.
     signup_invite_code: str | None = None
 
-    # --- Email verification (Resend) ---
-    # Sending API key from https://resend.com/api-keys. None = verification
-    # emails are skipped (signup still succeeds; account stays unverified).
+    # --- Email verification ---
+    # Prefer Gmail SMTP when configured (works without a custom domain; can send
+    # to any recipient). Fall back to Resend API if SMTP is unset.
+    # Gmail: enable 2FA → App Password → set these three:
+    smtp_host: str | None = None  # e.g. smtp.gmail.com
+    smtp_port: int = 587
+    smtp_username: str | None = None  # e.g. askapiyu@gmail.com
+    smtp_password: str | None = None  # 16-char App Password (not account password)
+    smtp_from_email: str | None = None  # defaults to smtp_username
+    smtp_use_tls: bool = True
+    # Resend (needs verified domain for non-owner recipients)
     resend_api_key: str | None = None
     resend_from_email: str = "ASKa-Piyu <onboarding@resend.dev>"
     email_verification_code_ttl_minutes: int = 30

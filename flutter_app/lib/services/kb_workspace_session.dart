@@ -184,7 +184,7 @@ class KbWorkspaceSession extends ChangeNotifier {
         selectedOutlineIndex = 0;
         candidateHintCount = units.isEmpty ? null : units.length;
         status = saved
-            ? 'Extraction preview is ready. Generate Articles can load this document.'
+            ? 'Extraction preview is ready. Ready to generate article previews below.'
             : 'Extraction preview is ready, but saving for Generate Articles failed (browser storage full). Try Reload after clearing site data, or re-extract a smaller document.';
       },
     );

@@ -15,6 +15,7 @@ class LocalStore {
   LocalStore._();
 
   static const _secureTokenKey = 'aska_access_token';
+  static const _rememberMePrefKey = 'aska_remember_me_pref';
 
   static SharedPreferences? _prefs;
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
@@ -72,6 +73,15 @@ class LocalStore {
     }
     final value = (await _secure.read(key: _secureTokenKey))?.trim();
     return value != null && value.isNotEmpty;
+  }
+
+  /// User's last Remember me choice on the sign-in form (defaults to false).
+  static bool getRememberMePreference() {
+    return instance.getBool(_rememberMePrefKey) ?? false;
+  }
+
+  static Future<void> setRememberMePreference(bool value) {
+    return instance.setBool(_rememberMePrefKey, value);
   }
 
   static Future<bool> setString(String key, String value) async {

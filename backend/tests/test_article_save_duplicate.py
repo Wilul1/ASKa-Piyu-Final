@@ -20,7 +20,19 @@ def _cleanup_all():
 
 
 
-def test_create_article_reports_similar_article_conflict():
+def test_create_article_reports_similar_article_conflict(monkeypatch):
+    def _fake_index_published_article(session, article):
+        article.rag_indexed = True
+        article.rag_document_id = f"faq:{article.id}"
+        article.chunk_count = 1
+        session.add(article)
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.index_published_article",
+        _fake_index_published_article,
+    )
+
     _cleanup_all()
     session = get_session_factory()()
     try:

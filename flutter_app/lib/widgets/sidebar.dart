@@ -7,6 +7,7 @@ import '../screens/admin_management_pages.dart';
 import '../screens/admin_panel_page.dart';
 import '../screens/announcements_page.dart';
 import '../screens/chatbot_page.dart';
+import '../screens/knowledge_articles_page.dart';
 import '../screens/knowledge_base_page.dart';
 import '../screens/login_page.dart';
 import '../screens/settings_page.dart';
@@ -23,10 +24,12 @@ enum StudentNavItem {
   officeAssignedTickets,
   officeFaculty,
   officeKnowledgeBase,
+  officeKnowledgeArticles,
   officeGenerateArticles,
   adminDashboard,
   adminAllTickets,
   adminKnowledgeBase,
+  adminKnowledgeArticles,
   adminGenerateArticles,
   adminUsersRoles,
   adminAbuseDetection,
@@ -233,6 +236,8 @@ class AppSidebar extends StatelessWidget {
       openProtectedPage(
         context,
         builder: (_) => const MyTicketsPage(),
+        requireVerifiedEmail: true,
+        message: emailVerifyRequiredMessage,
       );
       return;
     }
@@ -241,6 +246,8 @@ class AppSidebar extends StatelessWidget {
       openProtectedPage(
         context,
         builder: (_) => const MyTicketsPage(initialTab: 1),
+        requireVerifiedEmail: true,
+        message: emailVerifyRequiredMessage,
       );
       return;
     }
@@ -280,6 +287,14 @@ class AppSidebar extends StatelessWidget {
       return;
     }
 
+    if (item == StudentNavItem.officeKnowledgeArticles) {
+      openOfficePage(
+        context,
+        builder: (_) => const KnowledgeArticlesPage(),
+      );
+      return;
+    }
+
     if (item == StudentNavItem.adminDashboard) {
       openAdminPage(
         context,
@@ -303,6 +318,14 @@ class AppSidebar extends StatelessWidget {
         builder: (_) => AdminPanelPage(
           initialTab: item == StudentNavItem.adminGenerateArticles ? 1 : 0,
         ),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.adminKnowledgeArticles) {
+      openAdminPage(
+        context,
+        builder: (_) => const KnowledgeArticlesPage(),
       );
       return;
     }
@@ -537,6 +560,8 @@ class _AdminDarkSidebar extends StatelessWidget {
           'All Tickets', Icons.fact_check_rounded, StudentNavItem.adminAllTickets),
       _SidebarData('Knowledge Base', Icons.library_books_rounded,
           StudentNavItem.adminKnowledgeBase),
+      _SidebarData('Knowledge Article', Icons.article_outlined,
+          StudentNavItem.adminKnowledgeArticles),
       _SidebarData(
           'Announcements', Icons.campaign_rounded, StudentNavItem.announcements),
     ]),
@@ -796,6 +821,8 @@ class _OfficeDarkSidebar extends StatelessWidget {
         'Account', Icons.manage_accounts_outlined, StudentNavItem.officeFaculty),
     _SidebarData('Knowledge Base', Icons.library_books_rounded,
         StudentNavItem.officeKnowledgeBase),
+    _SidebarData('Knowledge Article', Icons.article_outlined,
+        StudentNavItem.officeKnowledgeArticles),
   ];
 
   @override

@@ -21,6 +21,10 @@ class AdminGenerateArticlesPage extends StatefulWidget {
     super.key,
     this.focusArticleId,
     this.embedded = false,
+    this.embeddedCompact = false,
+    this.showArticleLibrary = true,
+    this.liveSessionContext,
+    this.onLibraryRefresh,
   });
 
   /// When set, expands Article Library and highlights this article.
@@ -28,6 +32,18 @@ class AdminGenerateArticlesPage extends StatefulWidget {
 
   /// When true, render body content only (used inside Knowledge Base tabs).
   final bool embedded;
+
+  /// Slim generate UI inside Review & Publish (no duplicate metadata card).
+  final bool embeddedCompact;
+
+  /// When false, Article Library is rendered by the parent KB page.
+  final bool showArticleLibrary;
+
+  /// Live extraction context from the KB session (filename, type, unit count).
+  final KbSessionDisplayContext? liveSessionContext;
+
+  /// Notifies parent to refresh Article Library when embedded without library.
+  final VoidCallback? onLibraryRefresh;
 
   @override
   State<AdminGenerateArticlesPage> createState() =>
@@ -238,6 +254,7 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
 
   Future<void> _onGeneratedArticlesChanged() async {
     setState(() => _articleLibraryRefreshToken++);
+    widget.onLibraryRefresh?.call();
   }
 
   void _onPreviewUpdated(String previewId, AdminArticle article) {
@@ -263,7 +280,7 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _GenerateArticlesExtractionSummary(
+        _GenerateArticlesSourcePanel(
           sourceFilename: _sourceFilename,
           documentType: _detectedDocumentType,
           documentProfile: _documentProfile,
@@ -272,17 +289,16 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
           hasCharterV2Services: _hasCharterV2Services,
           status: _extractionStatus,
           hasExtractionPreview: _hasExtractionPreview,
-          onReload: _loadLastExtraction,
-        ),
-        const SizedBox(height: 14),
-        _GenerateArticlesControls(
+          hasCandidates: _candidateGenerationResult != null,
           recommendedPreviewLimitController: _recommendedPreviewLimitController,
           isBusy: _isGeneratingCandidates,
-          hasExtractionPreview: _hasExtractionPreview,
+          onReload: _loadLastExtraction,
           onGenerate: _generateArticleCandidates,
+          compact: widget.embeddedCompact,
+          liveSessionContext: widget.liveSessionContext,
         ),
         if (_candidateGenerationResult != null) ...[
-          const SizedBox(height: 16),
+          SizedBox(height: widget.embeddedCompact ? 12 : 16),
           _GenerateArticlesSummary(generation: _candidateGenerationResult!),
           const SizedBox(height: 14),
           GenerateArticlesReviewSection(
@@ -298,29 +314,15 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
             fallbackSourceFilename: _sourceFilename,
             extractionPreview: _extractionPreview,
           ),
-        ] else ...[
-          const SizedBox(height: 16),
-          StudentPanel(
-            shadow: false,
-            child: Text(
-              _hasExtractionPreview
-                  ? 'No article candidates generated yet. Click Generate Article Candidates to create unsaved previews.'
-                  : 'No extracted document found. Please run Extract & Structure first.',
-              style: const TextStyle(
-                fontSize: 13,
-                color: DesignTokens.muted,
-                height: 1.45,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+        ],
+        if (widget.showArticleLibrary) ...[
+          const SizedBox(height: 18),
+          AdminKbArticleLibrarySection(
+            setAdminHeader: _setAdminHeader,
+            refreshToken: _articleLibraryRefreshToken,
+            focusArticleId: widget.focusArticleId,
           ),
         ],
-        const SizedBox(height: 18),
-        AdminKbArticleLibrarySection(
-          setAdminHeader: _setAdminHeader,
-          refreshToken: _articleLibraryRefreshToken,
-          focusArticleId: widget.focusArticleId,
-        ),
       ],
     );
 
@@ -352,8 +354,8 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
   }
 }
 
-class _GenerateArticlesExtractionSummary extends StatelessWidget {
-  const _GenerateArticlesExtractionSummary({
+class _GenerateArticlesSourcePanel extends StatelessWidget {
+  const _GenerateArticlesSourcePanel({
     required this.sourceFilename,
     required this.documentType,
     required this.documentProfile,
@@ -362,7 +364,13 @@ class _GenerateArticlesExtractionSummary extends StatelessWidget {
     required this.hasCharterV2Services,
     required this.status,
     required this.hasExtractionPreview,
+    required this.hasCandidates,
+    required this.recommendedPreviewLimitController,
+    required this.isBusy,
     required this.onReload,
+    required this.onGenerate,
+    this.compact = false,
+    this.liveSessionContext,
   });
 
   final String? sourceFilename;
@@ -373,20 +381,43 @@ class _GenerateArticlesExtractionSummary extends StatelessWidget {
   final bool hasCharterV2Services;
   final String status;
   final bool hasExtractionPreview;
+  final bool hasCandidates;
+  final TextEditingController recommendedPreviewLimitController;
+  final bool isBusy;
   final VoidCallback onReload;
+  final VoidCallback onGenerate;
+  final bool compact;
+  final KbSessionDisplayContext? liveSessionContext;
+
+  String? get _compactContextLine {
+    final live = liveSessionContext;
+    if (live == null) return null;
+    final parts = <String>[
+      if (live.fileName?.trim().isNotEmpty == true) live.fileName!.trim(),
+      if (live.knowledgeUnitCount > 0) '${live.knowledgeUnitCount} units',
+      if (live.documentType?.trim().isNotEmpty == true) live.documentType!.trim(),
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
 
   @override
   Widget build(BuildContext context) {
-    return StudentPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    final emptyHint = hasExtractionPreview
+        ? 'No article candidates generated yet. Click Generate Article Candidates to create unsaved previews.'
+        : 'No extracted document found. Please run Extract & Structure first.';
+    final showLiveContext = compact && _compactContextLine != null;
+
+    final panelBody = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!compact)
           const StudentSectionTitle(
-            title: 'Selected Extracted Document',
+            title: 'Generate Article Candidates',
             subtitle:
-                'Uses the most recent successful Extract & Structure result from Documents.',
+                'Uses the most recent Extract & Structure result from Documents. Create unsaved previews from planner blueprints; review buckets below determine priority.',
           ),
-          const SizedBox(height: 12),
+        if (!compact) const SizedBox(height: 12),
+        if (!compact)
           Wrap(
             spacing: 12,
             runSpacing: 8,
@@ -422,7 +453,19 @@ class _GenerateArticlesExtractionSummary extends StatelessWidget {
               ),
             ],
           ),
+        if (showLiveContext) ...[
+          Text(
+            _compactContextLine!,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: DesignTokens.muted,
+              height: 1.4,
+            ),
+          ),
           const SizedBox(height: 10),
+        ],
+        if (!compact) ...[
           Row(
             children: [
               Expanded(
@@ -437,95 +480,103 @@ class _GenerateArticlesExtractionSummary extends StatelessWidget {
               ),
               TextButton(
                 onPressed: onReload,
-                child: const Text('Reload from Documents'),
                 style: TextButton.styleFrom(
                   foregroundColor: DesignTokens.maroon,
+                ),
+                child: const Text('Reload from Documents'),
+              ),
+            ],
+          ),
+          const Divider(height: 28),
+        ] else if (!showLiveContext) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  status,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: DesignTokens.muted,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: onReload,
+                style: TextButton.styleFrom(
+                  foregroundColor: DesignTokens.maroon,
+                ),
+                child: const Text('Reload'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            height: 48,
+            child: ElevatedButton(
+              onPressed: isBusy || !hasExtractionPreview ? null : onGenerate,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: DesignTokens.maroon,
+                foregroundColor: Colors.white,
+              ),
+              child: isBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Text('Generate Article Candidates'),
+            ),
+          ),
+        ),
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text(
+              'Advanced developer options',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: DesignTokens.muted,
+              ),
+            ),
+            children: [
+              TextField(
+                controller: recommendedPreviewLimitController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Recommended preview limit',
+                  helperText:
+                      'Optional dev-only cap on the Recommended bucket. Leave blank to generate all planner buckets.',
                 ),
               ),
             ],
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GenerateArticlesControls extends StatelessWidget {
-  const _GenerateArticlesControls({
-    required this.recommendedPreviewLimitController,
-    required this.isBusy,
-    required this.hasExtractionPreview,
-    required this.onGenerate,
-  });
-
-  final TextEditingController recommendedPreviewLimitController;
-  final bool isBusy;
-  final bool hasExtractionPreview;
-  final VoidCallback onGenerate;
-
-  @override
-  Widget build(BuildContext context) {
-    return StudentPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const StudentSectionTitle(
-            title: 'Generate Article Candidates',
-            subtitle:
-                'Create unsaved article candidate previews from planner blueprints. Review buckets below determine priority.',
-          ),
-          const SizedBox(height: 14),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: SizedBox(
-              height: 48,
-              child: ElevatedButton(
-                onPressed: isBusy || !hasExtractionPreview ? null : onGenerate,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: DesignTokens.maroon,
-                  foregroundColor: Colors.white,
-                ),
-                child: isBusy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('Generate Article Candidates'),
-              ),
-            ),
-          ),
-          Theme(
-            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: const Text(
-                'Advanced developer options',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: DesignTokens.muted,
-                ),
-              ),
-              children: [
-                TextField(
-                  controller: recommendedPreviewLimitController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Recommended preview limit',
-                    helperText:
-                        'Optional dev-only cap on the Recommended bucket. Leave blank to generate all planner buckets.',
-                  ),
-                ),
-              ],
+        ),
+        if (!hasCandidates) ...[
+          const SizedBox(height: 8),
+          Text(
+            emptyHint,
+            style: const TextStyle(
+              fontSize: 13,
+              color: DesignTokens.muted,
+              height: 1.45,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
-      ),
+      ],
     );
+
+    if (compact) return panelBody;
+    return StudentPanel(child: panelBody);
   }
 }
 

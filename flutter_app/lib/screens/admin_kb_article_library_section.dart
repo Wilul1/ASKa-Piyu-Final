@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
+import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
 import '../services/admin_article_service.dart';
@@ -55,11 +56,22 @@ class AdminKbArticleLibrarySection extends StatefulWidget {
     required this.setAdminHeader,
     this.refreshToken = 0,
     this.focusArticleId,
+    this.sectionAnchorKey,
+    this.openOnLoad = false,
+    this.autoOpenEditor = true,
+    this.standalone = false,
   });
 
   final void Function(Map<String, String> headers) setAdminHeader;
   final int refreshToken;
   final String? focusArticleId;
+  final GlobalKey? sectionAnchorKey;
+  /// Expand and load immediately (e.g. when navigating from office dashboard).
+  final bool openOnLoad;
+  /// When [focusArticleId] is set, open the edit dialog after load.
+  final bool autoOpenEditor;
+  /// Full-page mode (no collapsible section header).
+  final bool standalone;
 
   @override
   State<AdminKbArticleLibrarySection> createState() =>
@@ -90,6 +102,44 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
   bool _ragStaleOnly = false;
   final Set<String> _selectedIds = {};
   String? _focusedArticleId;
+  bool _autoOpenedFocus = false;
+
+  void _scrollSectionIntoView() {
+    final anchor = widget.sectionAnchorKey?.currentContext;
+    if (anchor == null) return;
+    Scrollable.ensureVisible(
+      anchor,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeInOut,
+      alignment: 0.08,
+    );
+  }
+
+  Future<void> _maybeOpenFocusedArticle() async {
+    if (!widget.autoOpenEditor || _autoOpenedFocus) return;
+    final focusId = (_focusedArticleId ?? '').trim();
+    if (focusId.isEmpty) return;
+    AdminArticle? article;
+    for (final candidate in _articles) {
+      if (candidate.id == focusId) {
+        article = candidate;
+        break;
+      }
+    }
+    if (article == null || !mounted) return;
+    _autoOpenedFocus = true;
+    _scrollSectionIntoView();
+    final saved = await showAdminArticleEditDialog(
+      context: context,
+      article: article,
+      service: _service,
+    );
+    if (!mounted) return;
+    if (saved == true) {
+      showKbSnackBar(context, 'Article updated.');
+      await _loadArticles();
+    }
+  }
 
   void _applyFocus(String focusId) {
     _expanded = true;
@@ -110,10 +160,23 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
   void initState() {
     super.initState();
     final focusId = (widget.focusArticleId ?? '').trim();
-    if (focusId.isNotEmpty) {
+    if (widget.standalone) {
+      _expanded = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadArticles();
+      });
+    } else if (focusId.isNotEmpty) {
       _applyFocus(focusId);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadArticles();
+      });
+    } else if (widget.openOnLoad) {
+      _expanded = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _loadArticles();
+          _scrollSectionIntoView();
+        }
       });
     }
   }
@@ -153,6 +216,18 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
           (id) => !articles.any((article) => article.id == id),
         );
       });
+      if ((_focusedArticleId ?? '').trim().isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _scrollSectionIntoView();
+            _maybeOpenFocusedArticle();
+          }
+        });
+      } else if (widget.openOnLoad) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _scrollSectionIntoView();
+        });
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = _formatLoadError(error));
@@ -504,33 +579,13 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final filtered = _filteredArticles;
-    final selectedCount = _selectedIds.length;
-    final selectableIds = filtered.map((article) => article.id).toList();
-
-    return KbAdminPanel(
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          tilePadding: EdgeInsets.zero,
-          childrenPadding: const EdgeInsets.only(top: 12),
-          title: const Text(
-            'Article Library',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-          ),
-          subtitle: const Text(
-            'Filter, publish, unpublish, or delete saved articles. Unpublished articles stay as drafts and leave the public Knowledge Base.',
-            style: TextStyle(fontSize: 12, color: DesignTokens.muted),
-          ),
-          onExpansionChanged: (expanded) {
-            setState(() => _expanded = expanded);
-            if (expanded && !_loadedOnce) {
-              _loadArticles();
-            }
-          },
-          children: [
+  List<Widget> _libraryBodyChildren({
+    required List<AdminArticle> filtered,
+    required int selectedCount,
+    required List<String> selectableIds,
+    required bool isOffice,
+  }) {
+    return [
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -703,7 +758,9 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
             else if (filtered.isEmpty)
               Text(
                 _articles.isEmpty
-                    ? 'No saved articles yet. Generate candidates from an extracted document above.'
+                    ? (widget.standalone
+                        ? 'No saved articles yet. Publish from a resolved ticket or generate articles in Knowledge Base.'
+                        : 'No saved articles yet. Generate candidates from an extracted document above.')
                     : 'No articles match this filter.',
                 style: const TextStyle(color: DesignTokens.muted, height: 1.5),
               )
@@ -731,12 +788,66 @@ class _AdminKbArticleLibrarySectionState extends State<AdminKbArticleLibrarySect
                     onPublish: () => _publish(article),
                     onUnpublish: () => _unpublish(article),
                     onReindex: article.ragStale ? () => _reindex(article) : null,
-                    onDelete: () => _delete(article),
+                    onDelete: isOffice ? null : () => _delete(article),
                   ),
                 ),
               ),
-          ],
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filteredArticles;
+    final selectedCount = _selectedIds.length;
+    final selectableIds = filtered.map((article) => article.id).toList();
+    final isOffice = AuthScope.of(context).role == 'office';
+    final bodyChildren = _libraryBodyChildren(
+      filtered: filtered,
+      selectedCount: selectedCount,
+      selectableIds: selectableIds,
+      isOffice: isOffice,
+    );
+
+    if (widget.standalone) {
+      return KeyedSubtree(
+        key: widget.sectionAnchorKey,
+        child: KbAdminPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: bodyChildren,
+          ),
         ),
+      );
+    }
+
+    return KeyedSubtree(
+      key: widget.sectionAnchorKey,
+      child: KbAdminPanel(
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: _expanded,
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: const EdgeInsets.only(top: 12),
+          title: Text(
+            isOffice ? 'Your office articles' : 'Article Library',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          ),
+          subtitle: Text(
+            isOffice
+                ? 'Published and draft articles for your office. Edit updates go live in the Knowledge Base and chatbot.'
+                : 'Filter, publish, unpublish, or delete saved articles. Unpublished articles stay as drafts and leave the public Knowledge Base.',
+            style: const TextStyle(fontSize: 12, color: DesignTokens.muted),
+          ),
+          onExpansionChanged: (expanded) {
+            setState(() => _expanded = expanded);
+            if (expanded && !_loadedOnce) {
+              _loadArticles();
+            }
+          },
+          children: bodyChildren,
+        ),
+      ),
       ),
     );
   }

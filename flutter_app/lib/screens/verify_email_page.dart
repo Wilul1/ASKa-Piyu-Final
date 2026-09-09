@@ -111,6 +111,15 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                 fontSize: 13,
               ),
             ),
+            const SizedBox(height: 8),
+            const Text(
+              'If it is not in Inbox, check Spam or Promotions, then tap “Report not spam” so future codes land in Inbox.',
+              style: TextStyle(
+                color: Color(0xFF9CA3AF),
+                height: 1.35,
+                fontSize: 12,
+              ),
+            ),
             const SizedBox(height: 22),
             TextFormField(
               controller: _codeCtrl,

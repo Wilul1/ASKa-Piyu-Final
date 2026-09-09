@@ -265,6 +265,90 @@ def test_convert_publish_sets_publisher_and_filters_kb(e2e_client):
         assert ticket.kb_conversion_status == "draft"
 
 
+def test_ticket_kb_duplicate_check_endpoint(e2e_client):
+    client, session_factory, _store = e2e_client
+    office_headers = _auth("user-office", session_factory)
+    student_headers = _auth("user-student", session_factory)
+
+    with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        session.add(
+            PublishedArticle(
+                id="article-duplicate-topic",
+                title="Faculty teaching load",
+                slug="faculty-teaching-load",
+                category="Faculty Policies",
+                content="Published article body for the same topic.",
+                published=True,
+                published_at=now,
+                audience="faculty",
+            )
+        )
+        session.commit()
+
+    duplicate = client.get(
+        "/tickets/TKT-E2E-001/kb-duplicate-check?title=Faculty%20teaching%20load",
+        headers=office_headers,
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    body = duplicate.json()
+    assert body["has_duplicate"] is True
+    assert body["article_id"] == "article-duplicate-topic"
+    assert body["title"] == "Faculty teaching load"
+    assert "already covers this topic" in body["message"]
+
+    novel = client.get(
+        "/tickets/TKT-E2E-001/kb-duplicate-check?title=Novel%20Faculty%20Clearance%20Topic",
+        headers=office_headers,
+    )
+    assert novel.status_code == 200, novel.text
+    assert novel.json()["has_duplicate"] is False
+
+    student_denied = client.get(
+        "/tickets/TKT-E2E-001/kb-duplicate-check?title=Faculty%20teaching%20load",
+        headers=student_headers,
+    )
+    assert student_denied.status_code == 403
+
+
+def test_ticket_kb_image_upload_endpoint(e2e_client, tmp_path, monkeypatch):
+    client, session_factory, _store = e2e_client
+    office_headers = _auth("user-office", session_factory)
+    student_headers = _auth("user-student", session_factory)
+    monkeypatch.setattr(
+        "app.services.kb_media.settings.kb_media_dir",
+        str(tmp_path / "kb-media"),
+    )
+
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+        b"\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
+        b"\xe2!\xbc3"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    uploaded = client.post(
+        "/tickets/TKT-E2E-001/kb-images",
+        headers=office_headers,
+        files={"file": ("diagram.png", png_bytes, "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    body = uploaded.json()
+    assert body["content_type"] == "image/png"
+    assert body["url"].startswith("/kb/media/")
+    assert body["filename"].endswith("_diagram.png")
+
+    student_denied = client.post(
+        "/tickets/TKT-E2E-001/kb-images",
+        headers=student_headers,
+        files={"file": ("diagram.png", png_bytes, "image/png")},
+    )
+    assert student_denied.status_code == 403
+
+
 def test_publish_fail_closed_when_chroma_add_fails(e2e_client):
     client, session_factory, store = e2e_client
     office_headers = _auth("user-office", session_factory)

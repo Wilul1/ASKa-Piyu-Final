@@ -5,6 +5,7 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/auth_models.dart';
 import '../widgets/public_site_header.dart';
+import 'verify_email_page.dart';
 
 /// Account settings: slim left nav (Account only) + row-based account panel.
 class SettingsPage extends StatelessWidget {
@@ -234,11 +235,20 @@ class _AccountPanel extends StatelessWidget {
             ),
             _AccountValueRow(
               label: 'Email verification',
-              value: user.emailVerified ? 'Verified' : 'Pending',
+              value: user.emailVerified ? 'Verified' : 'Pending — tap to verify',
               valueColor: user.emailVerified
                   ? const Color(0xFF15803D)
                   : const Color(0xFFB45309),
               isLast: true,
+              onTap: user.emailVerified
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const VerifyEmailPage(),
+                        ),
+                      );
+                    },
             ),
           ],
         ),
@@ -287,17 +297,19 @@ class _AccountValueRow extends StatelessWidget {
   final String value;
   final Color? valueColor;
   final bool isLast;
+  final VoidCallback? onTap;
 
   const _AccountValueRow({
     required this.label,
     required this.value,
     this.valueColor,
     this.isLast = false,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final row = Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
@@ -328,8 +340,21 @@ class _AccountValueRow extends StatelessWidget {
               ),
             ),
           ),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: DesignTokens.muted,
+              size: 20,
+            ),
+          ],
         ],
       ),
+    );
+    if (onTap == null) return row;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(onTap: onTap, child: row),
     );
   }
 }

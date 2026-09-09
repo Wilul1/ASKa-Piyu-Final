@@ -14,7 +14,7 @@ from app.db.session import get_session_factory
 from app.models.db_models import PublishedArticle, utc_now
 from app.services.chroma_store import get_knowledge_base_store
 from app.services.text_cleaner import split_into_chunks
-from app.services.ticket_knowledge import sync_ticket_kb_status
+from app.services.ticket_knowledge import strip_ticket_faq_scaffolding, sync_ticket_kb_status
 
 
 logger = logging.getLogger(__name__)
@@ -210,7 +210,10 @@ def stamp_chunks_with_audience(chunks: list, audience: str) -> list:
 
 
 def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
-    visible = _strip_charter_source_footer(article.content or "")
+    raw_content = article.content or ""
+    if (article.kb_origin or "") == "ticket_resolution":
+        raw_content = strip_ticket_faq_scaffolding(raw_content, title=article.title)
+    visible = _strip_charter_source_footer(raw_content)
     appendix = _policy_appendix_from_extracted_metadata(article.content or "", visible)
     body = "\n\n".join(
         part

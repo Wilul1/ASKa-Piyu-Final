@@ -30,6 +30,7 @@ def test_ticket_foundation_models_can_persist_relationships():
             student_id="2026-0001",
         )
         ticket = Ticket(
+            id="TK-20260909-DBTEST",
             user=user,
             original_question="How can I request a copy of my TOR?",
             description="I need it for scholarship application.",

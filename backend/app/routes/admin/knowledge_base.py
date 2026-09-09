@@ -372,6 +372,32 @@ def _load_user_from_bearer(token: str) -> User:
     return user
 
 
+def _kb_editor_actor(session, admin_actor_id: str | None):
+    from app.services.article_access import load_kb_editor_actor
+
+    return load_kb_editor_actor(session, admin_actor_id)
+
+
+def _assert_article_access(session, art, admin_actor_id: str | None) -> None:
+    from app.services.article_access import (
+        assert_kb_editor_may_access_article,
+        load_kb_editor_actor,
+    )
+
+    actor = load_kb_editor_actor(session, admin_actor_id)
+    assert_kb_editor_may_access_article(session, actor, art)
+
+
+def _assert_article_delete_allowed(admin_actor_id: str | None, session) -> None:
+    from app.services.article_access import (
+        assert_kb_editor_may_delete_article,
+        load_kb_editor_actor,
+    )
+
+    actor = load_kb_editor_actor(session, admin_actor_id)
+    assert_kb_editor_may_delete_article(actor)
+
+
 async def _read_upload(file: UploadFile) -> bytes:
     content = await file.read()
     if len(content) > settings.max_upload_bytes:
@@ -983,15 +1009,20 @@ def _clear_rag_flags_after_chroma_wipe() -> dict[str, Any]:
 
 
 @kb_tools_router.get("/articles", response_model=list[AdminPublishedArticleSchema])
-def admin_list_articles(_: None = Depends(require_admin_key)) -> list[AdminPublishedArticleSchema]:
+def admin_list_articles(
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> list[AdminPublishedArticleSchema]:
     from app.models.db_models import PublishedArticle
+    from app.services.article_access import filter_articles_for_office_actor
 
     session_factory = get_session_factory()
     session = session_factory()
     try:
-        results = []
-        for art in session.query(PublishedArticle).order_by(PublishedArticle.created_at.desc()).all():
-            results.append(_admin_article_schema(art))
+        actor = _kb_editor_actor(session, admin_actor_id)
+        query = session.query(PublishedArticle).order_by(PublishedArticle.created_at.desc())
+        if actor is not None and str(actor.role).strip().lower() == "office":
+            query = filter_articles_for_office_actor(session, actor, query)
+        results = [_admin_article_schema(art) for art in query.all()]
         return results
     finally:
         session.close()
@@ -1017,10 +1048,12 @@ def admin_create_article(
     session_factory = get_session_factory()
     session = session_factory()
     try:
+        actor = _kb_editor_actor(session, admin_actor_id)
         if payload.update_existing_id:
             art = session.get(PublishedArticle, payload.update_existing_id)
             if art is None:
                 raise HTTPException(status_code=404, detail="Article not found")
+            _assert_article_access(session, art, admin_actor_id)
             # Protect public visibility: content updates must not silently unpublish.
             if bool(art.published) and not bool(payload.publish_status):
                 raise HTTPException(
@@ -1039,7 +1072,12 @@ def admin_create_article(
             art.category = payload.category
             art.summary = payload.summary
             art.content = payload.content
-            art.office = payload.office
+            if actor is not None and str(actor.role).strip().lower() == "office":
+                from app.services.article_access import office_article_office_name
+
+                art.office = office_article_office_name(actor) or art.office
+            else:
+                art.office = payload.office
             art.source_filename = payload.source_document
             if payload.audience is not None:
                 art.audience = payload.audience
@@ -1103,6 +1141,12 @@ def admin_create_article(
 
         from app.services.ticket_knowledge import ensure_unique_article_slug
 
+        office_name = payload.office
+        if actor is not None and str(actor.role).strip().lower() == "office":
+            from app.services.article_access import office_article_office_name
+
+            office_name = office_article_office_name(actor) or office_name
+
         art = PublishedArticle(
             title=payload.title,
             slug=ensure_unique_article_slug(session, payload.title),
@@ -1111,7 +1155,7 @@ def admin_create_article(
             path=None,
             summary=payload.summary,
             content=payload.content,
-            office=payload.office,
+            office=office_name,
             source_filename=payload.source_document,
             chunk_count=len(payload.chunk_ids or []) if payload.chunk_ids else None,
             published=bool(payload.publish_status),
@@ -1119,6 +1163,8 @@ def admin_create_article(
             kb_origin="ticket_resolution" if payload.source_ticket_id else "document",
             source_ticket_id=payload.source_ticket_id,
         )
+        if admin_actor_id:
+            art.created_by_user_id = admin_actor_id
         try:
             from app.services.article_content_formatter import extract_embedded_article_metadata
             from app.services.document_storage import find_source_document_by_filename, get_source_document
@@ -1163,7 +1209,10 @@ def admin_create_article(
 
 
 @kb_tools_router.get("/articles/{article_id}", response_model=AdminPublishedArticleSchema)
-def admin_get_article(article_id: str, _: None = Depends(require_admin_key)) -> AdminPublishedArticleSchema:
+def admin_get_article(
+    article_id: str,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> AdminPublishedArticleSchema:
     from app.models.db_models import PublishedArticle
     session_factory = get_session_factory()
     session = session_factory()
@@ -1171,6 +1220,7 @@ def admin_get_article(article_id: str, _: None = Depends(require_admin_key)) -> 
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
         return _admin_article_schema(art)
     finally:
         session.close()
@@ -1197,6 +1247,7 @@ def admin_update_article(
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
         updates = payload.model_dump(exclude_unset=True)
         if "source_document" in updates:
             updates["source_filename"] = updates.pop("source_document")
@@ -1233,6 +1284,11 @@ def admin_update_article(
             updates["slug"] = ensure_unique_article_slug(
                 session, str(updates["title"]), exclude_id=art.id
             )
+        actor = _kb_editor_actor(session, admin_actor_id)
+        if actor is not None and str(actor.role).strip().lower() == "office":
+            from app.services.article_access import office_article_office_name
+
+            updates["office"] = office_article_office_name(actor) or art.office
         for field, value in updates.items():
             if hasattr(art, field):
                 setattr(art, field, value)
@@ -1293,6 +1349,7 @@ def admin_publish_article(
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
         gate = _publish_gate_error(content=art.content)
         if gate:
             raise HTTPException(status_code=400, detail=gate)
@@ -1341,7 +1398,7 @@ def admin_publish_article(
 @kb_tools_router.post("/articles/{article_id}/reindex")
 def admin_reindex_article(
     article_id: str,
-    _: None = Depends(require_admin_key),
+    admin_actor_id: str | None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     """Re-index a published article into Chroma (fixes RAG-stale FAQs)."""
     from app.models.db_models import PublishedArticle
@@ -1356,6 +1413,7 @@ def admin_reindex_article(
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
         if not art.published:
             raise HTTPException(
                 status_code=400,
@@ -1389,14 +1447,26 @@ def admin_reindex_article(
     "/articles/reindex-stale",
     summary="[Admin] Re-index all published FAQs missing from Chroma",
 )
-def admin_reindex_stale_articles(_: None = Depends(require_admin_key)) -> dict[str, Any]:
+def admin_reindex_stale_articles(
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> dict[str, Any]:
     """One-click recovery for RAG-stale published articles after rebuild/reset issues."""
-    from app.services.article_rag_indexer import reindex_stale_published_faq_articles
+    from app.models.db_models import PublishedArticle
+    from app.services.article_access import filter_articles_for_office_actor
+    from app.services.article_rag_indexer import _reindex_faq_rows
 
     session_factory = get_session_factory()
     session = session_factory()
     try:
-        summary = reindex_stale_published_faq_articles(session)
+        actor = _kb_editor_actor(session, admin_actor_id)
+        query = session.query(PublishedArticle).filter(
+            PublishedArticle.published.is_(True),
+            PublishedArticle.rag_indexed.is_(False),
+        )
+        if actor is not None and str(actor.role).strip().lower() == "office":
+            query = filter_articles_for_office_actor(session, actor, query)
+        rows = query.order_by(PublishedArticle.updated_at.desc()).all()
+        summary = _reindex_faq_rows(session, rows)
         failed = int(summary.get("faq_reindex_failed") or 0)
         return {
             "success": failed == 0,
@@ -1415,7 +1485,10 @@ def admin_reindex_stale_articles(_: None = Depends(require_admin_key)) -> dict[s
 
 
 @kb_tools_router.post("/articles/{article_id}/unpublish")
-def admin_unpublish_article(article_id: str, _: None = Depends(require_admin_key)) -> dict[str, Any]:
+def admin_unpublish_article(
+    article_id: str,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> dict[str, Any]:
     from app.models.db_models import PublishedArticle
     from app.services.article_rag_indexer import best_effort_remove_faq_document
     from app.services.ticket_knowledge import sync_ticket_kb_status
@@ -1426,6 +1499,7 @@ def admin_unpublish_article(article_id: str, _: None = Depends(require_admin_key
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
         # Commit unpublished first so Chroma leftovers cannot answer after a PG rollback.
         art.published = False
         art.published_at = None
@@ -1447,16 +1521,21 @@ def admin_unpublish_article(article_id: str, _: None = Depends(require_admin_key
 
 
 @kb_tools_router.delete("/articles/{article_id}")
-def admin_delete_article(article_id: str, _: None = Depends(require_admin_key)) -> dict[str, Any]:
+def admin_delete_article(
+    article_id: str,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> dict[str, Any]:
     from app.models.db_models import PublishedArticle
     from app.services.article_rag_indexer import best_effort_remove_faq_document
 
     session_factory = get_session_factory()
     session = session_factory()
     try:
+        _assert_article_delete_allowed(admin_actor_id, session)
         art = session.get(PublishedArticle, article_id)
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
         if art.source_ticket_id:
             from app.models.db_models import Ticket
 
@@ -1481,9 +1560,14 @@ def admin_delete_article(article_id: str, _: None = Depends(require_admin_key)) 
 )
 def admin_bulk_save_draft(
     payload: AdminBulkArticlesRequest,
-    _: None = Depends(require_admin_key),
+    admin_actor_id: str | None = Depends(require_admin_key),
 ) -> AdminBulkArticlesResponse:
-    return _bulk_persist_articles(payload, publish=False)
+    return _bulk_persist_articles(
+        payload,
+        publish=False,
+        published_by_user_id=admin_actor_id,
+        admin_actor_id=admin_actor_id,
+    )
 
 
 @kb_tools_router.post(
@@ -1499,6 +1583,7 @@ def admin_bulk_publish(
         payload,
         publish=True,
         published_by_user_id=admin_actor_id,
+        admin_actor_id=admin_actor_id,
     )
 
 
@@ -1509,7 +1594,7 @@ def admin_bulk_publish(
 )
 def admin_bulk_unpublish(
     payload: AdminBulkIdsRequest,
-    _: None = Depends(require_admin_key),
+    admin_actor_id: str | None = Depends(require_admin_key),
 ) -> AdminBulkArticlesResponse:
     from app.models.db_models import PublishedArticle
     from app.services.article_rag_indexer import best_effort_remove_faq_document
@@ -1542,6 +1627,7 @@ def admin_bulk_unpublish(
                 )
                 continue
             try:
+                _assert_article_access(session, art, admin_actor_id)
                 art.published = False
                 art.published_at = None
                 art.rag_indexed = False
@@ -1623,10 +1709,12 @@ def _bulk_persist_articles(
     *,
     publish: bool,
     published_by_user_id: str | None = None,
+    admin_actor_id: str | None = None,
 ) -> AdminBulkArticlesResponse:
     from datetime import datetime, timezone
 
     from app.models.db_models import PublishedArticle
+    from app.services.article_access import office_article_office_name
     from app.services.article_rag_indexer import index_published_article
     from app.services.ticket_knowledge import sync_ticket_kb_status
 
@@ -1634,6 +1722,7 @@ def _bulk_persist_articles(
     session_factory = get_session_factory()
     session = session_factory()
     try:
+        actor = _kb_editor_actor(session, admin_actor_id)
         for item in payload.articles:
             preview_id = item.preview_id
             bucket = _normalize_planner_bucket(item.planner_bucket)
@@ -1683,6 +1772,20 @@ def _bulk_persist_articles(
                             )
                         )
                         continue
+                    try:
+                        _assert_article_access(session, art, admin_actor_id)
+                    except HTTPException as exc:
+                        results.append(
+                            AdminBulkArticleResultItem(
+                                preview_id=preview_id,
+                                success=False,
+                                id=art.id,
+                                title=art.title,
+                                error=str(exc.detail),
+                                code="forbidden",
+                            )
+                        )
+                        continue
                     # Never silently unpublish via bulk save-draft. Use /unpublish.
                     if bool(art.published) and not publish:
                         results.append(
@@ -1713,7 +1816,9 @@ def _bulk_persist_articles(
                         art.summary = item.summary
                     if item.content is not None:
                         art.content = item.content
-                    if item.office is not None:
+                    if actor is not None and str(actor.role).strip().lower() == "office":
+                        art.office = office_article_office_name(actor) or art.office
+                    elif item.office is not None:
                         art.office = item.office
                     if item.source_document is not None:
                         art.source_filename = item.source_document
@@ -1804,6 +1909,10 @@ def _bulk_persist_articles(
 
                 from app.services.ticket_knowledge import ensure_unique_article_slug
 
+                office_name = item.office
+                if actor is not None and str(actor.role).strip().lower() == "office":
+                    office_name = office_article_office_name(actor) or office_name
+
                 art = PublishedArticle(
                     title=title,
                     slug=ensure_unique_article_slug(session, title),
@@ -1812,13 +1921,15 @@ def _bulk_persist_articles(
                     path=None,
                     summary=item.summary,
                     content=item.content,
-                    office=item.office,
+                    office=office_name,
                     source_filename=item.source_document,
                     chunk_count=None,
                     published=publish,
                     rag_indexed=False,
                     audience=_resolve_bulk_article_audience(item),
                 )
+                if published_by_user_id:
+                    art.created_by_user_id = published_by_user_id
                 if publish:
                     art.published_at = datetime.now(timezone.utc)
                     if published_by_user_id:
@@ -2069,6 +2180,7 @@ def _admin_article_schema(art) -> AdminPublishedArticleSchema:
         source_ticket_id=getattr(art, "source_ticket_id", None),
         resolution_summary=getattr(art, "resolution_summary", None),
         published_by_user_id=getattr(art, "published_by_user_id", None),
+        created_by_user_id=getattr(art, "created_by_user_id", None),
         rag_indexed=bool(getattr(art, "rag_indexed", False)),
         rag_document_id=getattr(art, "rag_document_id", None),
     )

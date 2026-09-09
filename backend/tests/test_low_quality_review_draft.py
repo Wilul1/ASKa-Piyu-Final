@@ -23,6 +23,12 @@ def _cleanup_all():
     cleanup_all_published_articles()
 
 
+def _fake_index_published_article(session, article):
+    article.rag_indexed = True
+    article.rag_document_id = f"faq:{article.id}"
+    article.chunk_count = 1
+    session.add(article)
+    return 1
 
 
 def test_low_quality_direct_publish_is_blocked():
@@ -67,7 +73,11 @@ def test_low_quality_direct_publish_is_blocked():
         session.close()
 
 
-def test_low_quality_can_save_as_draft_after_manual_edit():
+def test_low_quality_can_save_as_draft_after_manual_edit(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.index_published_article",
+        _fake_index_published_article,
+    )
     _cleanup_all()
     corrected = (
         "Overview\nRoutine medical and dental services for students.\n\n"

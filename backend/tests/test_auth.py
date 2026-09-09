@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.session import get_db_session, initialize_database
 from app.main import app
 from app.models.db_models import Office, Ticket, TicketReply, User
-from app.services.auth import create_access_token
+from app.services.auth import create_access_token, decode_access_token
 from app.services.passwords import hash_password
 
 
@@ -37,6 +37,8 @@ def auth_client(monkeypatch) -> Generator[TestClient, None, None]:
     monkeypatch.setattr("app.routes.auth.settings.signup_invite_code", None)
     monkeypatch.setattr("app.routes.auth.settings.signup_allowed_email_domains", None)
     monkeypatch.setattr("app.routes.auth.settings.allow_public_signup", True)
+    monkeypatch.setattr("app.routes.auth.generate_verification_code", lambda: "123456")
+    monkeypatch.setattr("app.routes.auth.send_verification_email", lambda **kwargs: True)
     app.dependency_overrides[get_db_session] = override_get_db_session
 
     from app.services.auth_rate_limit import reset_auth_rate_limits
@@ -49,7 +51,12 @@ def auth_client(monkeypatch) -> Generator[TestClient, None, None]:
         app.dependency_overrides.clear()
 
 
-def signup_student(client: TestClient, email: str = "student@example.edu") -> dict:
+def signup_student(
+    client: TestClient,
+    email: str = "student@example.edu",
+    *,
+    verify: bool = True,
+) -> dict:
     response = client.post(
         "/auth/signup",
         json={
@@ -59,19 +66,54 @@ def signup_student(client: TestClient, email: str = "student@example.edu") -> di
         },
     )
     assert response.status_code == 200
-    return response.json()
+    data = response.json()
+    if not verify:
+        return data
+    verified = client.post(
+        "/auth/verify-email",
+        headers={"Authorization": f"Bearer {data['access_token']}"},
+        json={"code": "123456"},
+    )
+    assert verified.status_code == 200
+    return verified.json()
 
 
 def test_successful_student_signup(auth_client):
-    data = signup_student(auth_client)
+    data = signup_student(auth_client, verify=False)
 
     assert data["token_type"] == "bearer"
     assert data["access_token"]
     assert data["user"]["email"] == "student@example.edu"
     assert data["user"]["role"] == "student"
-    assert data["user"]["email_verified"] is True
+    assert data["user"]["email_verified"] is False
     assert "password" not in data["user"]
     assert "password_hash" not in data["user"]
+
+
+def test_login_unverified_student_stays_unverified(auth_client):
+    signup_student(auth_client, email="unverified.login@gmail.com", verify=False)
+
+    login = auth_client.post(
+        "/auth/login",
+        json={
+            "email": "unverified.login@gmail.com",
+            "password": "correct horse battery staple1",
+        },
+    )
+    assert login.status_code == 200
+    assert login.json()["user"]["email_verified"] is False
+
+
+def test_student_can_verify_email_with_code(auth_client):
+    data = signup_student(auth_client, email="needs.verify@gmail.com", verify=False)
+    assert data["user"]["email_verified"] is False
+    verified = auth_client.post(
+        "/auth/verify-email",
+        headers={"Authorization": f"Bearer {data['access_token']}"},
+        json={"code": "123456"},
+    )
+    assert verified.status_code == 200
+    assert verified.json()["user"]["email_verified"] is True
 
 
 def test_resend_verification_when_already_verified(auth_client):
@@ -86,6 +128,35 @@ def test_resend_verification_when_already_verified(auth_client):
     assert resend.status_code == 200
     assert resend.json()["sent"] is False
     assert "already verified" in resend.json()["message"].lower()
+
+
+def test_unverified_student_cannot_create_ticket(auth_client):
+    data = signup_student(auth_client, email="ticket.block@gmail.com", verify=False)
+    token = data["access_token"]
+    ticket_payload = {
+        "original_question": "Where do I get an excuse slip?",
+        "description": "I need an excuse slip for my class absence this week.",
+    }
+    blocked = auth_client.post(
+        "/tickets",
+        headers={"Authorization": f"Bearer {token}"},
+        json=ticket_payload,
+    )
+    assert blocked.status_code == 403
+    assert "verify" in blocked.json()["detail"].lower()
+
+    verified = auth_client.post(
+        "/auth/verify-email",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"code": "123456"},
+    )
+    assert verified.status_code == 200
+    after = auth_client.post(
+        "/tickets",
+        headers={"Authorization": f"Bearer {verified.json()['access_token']}"},
+        json=ticket_payload,
+    )
+    assert after.status_code != 403
 
 
 def test_duplicate_email_rejected(auth_client):
@@ -373,6 +444,36 @@ def test_successful_login(auth_client):
     data = response.json()
     assert data["access_token"]
     assert data["user"]["email"] == "student@example.edu"
+
+
+def test_login_remember_me_uses_longer_token_ttl(auth_client, monkeypatch):
+    monkeypatch.setattr("app.services.auth.settings.auth_token_ttl_minutes", 60)
+    monkeypatch.setattr("app.services.auth.settings.auth_remember_token_ttl_minutes", 60 * 24 * 7)
+    signup_student(auth_client)
+
+    short = auth_client.post(
+        "/auth/login",
+        json={
+            "email": "student@example.edu",
+            "password": "correct horse battery staple1",
+            "remember_me": False,
+        },
+    )
+    remembered = auth_client.post(
+        "/auth/login",
+        json={
+            "email": "student@example.edu",
+            "password": "correct horse battery staple1",
+            "remember_me": True,
+        },
+    )
+
+    assert short.status_code == 200
+    assert remembered.status_code == 200
+
+    short_exp = decode_access_token(short.json()["access_token"])["exp"]
+    remembered_exp = decode_access_token(remembered.json()["access_token"])["exp"]
+    assert remembered_exp - short_exp >= (60 * 24 * 7 - 60) * 60
 
 
 def test_wrong_password_rejected(auth_client):

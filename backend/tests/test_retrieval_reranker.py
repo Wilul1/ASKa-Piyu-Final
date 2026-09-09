@@ -1149,20 +1149,35 @@ def test_maximum_residence_query_ranks_residence_rule_first():
     assert ranked[0] == "Maximum Residence Rule"
 
 
-def test_tor_cost_query_expands_to_per_page_peso_amounts():
+def test_tor_cost_query_expands_without_peso_amounts():
     prepared = prepare_retrieval_query("How much does a transcript of records cost?")
     expanded = prepared.expanded_query.casefold()
-    assert "p75" in expanded or "75.00" in expanded
     assert "transcript of records" in expanded
+    assert "per page" in expanded
+    assert "p75" not in expanded
+    assert "75.00" not in expanded
+    assert "p150" not in expanded
 
 
-def test_tuition_refund_query_expands_to_seventy_five_percent():
+def test_tuition_refund_query_expands_without_percent_values():
     prepared = prepare_retrieval_query(
         "If I withdraw after paying enrollment fees, how much of my tuition is refunded?"
     )
     expanded = prepared.expanded_query.casefold()
-    assert "seventy-five percent" in expanded or "75%" in expanded
     assert "refunding of fees" in expanded
+    assert "seventy-five percent" not in expanded
+    assert "fifty percent" not in expanded
+    assert "75%" not in expanded
+    assert "50%" not in expanded
+
+
+def test_maximum_residence_query_expands_without_duration_literal():
+    prepared = prepare_retrieval_query("What is the maximum residence rule?")
+    expanded = prepared.expanded_query.casefold()
+    assert "maximum residence rule" in expanded
+    assert "actual residence" in expanded
+    assert "1.5" not in expanded
+    assert "times the normal length" not in expanded
 
 
 def test_dean_instruction_load_and_campaign_questions_are_faculty_restricted():

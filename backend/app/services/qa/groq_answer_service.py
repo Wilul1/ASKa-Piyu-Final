@@ -40,6 +40,13 @@ Answering style (required for every question):
 - Prefer explicit school-policy language such as the exact office, rule, threshold, fee, timeline, condition, or consequence stated in the retrieved document.
 - When helpful, naturally name the source document in the sentence itself (for example, "The LSPU Student Handbook states..." or "The Citizen's Charter lists..."), especially for policy and fee questions.
 
+Grounding limits (never break these):
+- Do not state an order, priority, sequence, or prerequisite between requirements unless a retrieved section explicitly defines it. If asked which requirement comes or fails first and no section ranks them, say the documents do not rank them, then explain each requirement on its own.
+- Do not explain one topic with a section written about a different topic. A section applies only to the process its own heading names; if no retrieved section covers what was asked, say so instead of applying a neighbouring section's rules to it.
+- When a question bundles several topics, answer each topic from its own retrieved section and say plainly which topics the documents do not cover.
+- Prefer naming the responsible office over guessing a rule when the context is silent.
+- If asked which of two disagreeing sources to follow, do not pick a winner unless a retrieved section says which document governs. Report what each source says and send the user to the office that owns the process.
+
 If a retrieved title, path, metadata, or content provides policy rules, service details, fees, processing times, who may avail, requirements, steps, conditions, standards, thresholds, consequences, edition/year, or vision statements related to the question, answer using those exact details.
 Quote concrete values from context when asked (amounts in pesos, minutes/hours/days, office names, document lists, edition/year, vision wording).
 If the documents do not directly define a term, say that briefly, then summarize what the related section says.
@@ -98,6 +105,7 @@ def generate_groq_answer(
     context: str,
     broad_mode: bool = False,
     history: list[Any] | None = None,
+    grounding_notes: str | None = None,
 ) -> str:
     if not settings.groq_api_key:
         raise GroqAnswerError("Groq API key is not configured.")
@@ -107,6 +115,7 @@ def generate_groq_answer(
         context=context,
         broad_mode=broad_mode,
         history=history,
+        grounding_notes=grounding_notes,
     )
     logger.debug("Groq QA context for question %r:\n%s", question.strip(), context)
     logger.debug("Groq QA final messages for question %r: %r", question.strip(), messages)
@@ -198,6 +207,7 @@ def build_groq_messages(
     context: str,
     broad_mode: bool = False,
     history: list[Any] | None = None,
+    grounding_notes: str | None = None,
 ) -> list[dict[str, str]]:
     system_prompt = ASKA_PIYU_SYSTEM_PROMPT
     if broad_mode:
@@ -209,13 +219,24 @@ def build_groq_messages(
     messages.append(
         {
             "role": "user",
-            "content": _build_user_prompt(question=question, context=context, broad_mode=broad_mode),
+            "content": _build_user_prompt(
+                question=question,
+                context=context,
+                broad_mode=broad_mode,
+                grounding_notes=grounding_notes,
+            ),
         }
     )
     return messages
 
 
-def _build_user_prompt(*, question: str, context: str, broad_mode: bool = False) -> str:
+def _build_user_prompt(
+    *,
+    question: str,
+    context: str,
+    broad_mode: bool = False,
+    grounding_notes: str | None = None,
+) -> str:
     broad_check = ""
     if broad_mode:
         broad_check = (
@@ -224,6 +245,10 @@ def _build_user_prompt(*, question: str, context: str, broad_mode: bool = False)
             "- Use all relevant retrieved chunks, remove duplicates, and avoid inventing items not present in context.\n"
             "- If only a partial list is supported by the context, state that briefly.\n"
         )
+    scoped_check = ""
+    notes = (grounding_notes or "").strip()
+    if notes:
+        scoped_check = f"This question needs extra care:\n{notes}\n\n"
     return (
         "Retrieved context:\n\n"
         f"{context}\n\n"
@@ -236,8 +261,8 @@ def _build_user_prompt(*, question: str, context: str, broad_mode: bool = False)
         "- When the question mentions faculty, teaching load, faculty grading, or faculty duties, prefer Faculty Manual details over Student Handbook course-load or grade-change sections.\n"
         "- Summarize actual policy content from chunk text; do not reply with only a heading or breadcrumb path.\n"
         "- When the question asks how much / how long / which office / who may avail / what documents, extract the exact matching values from context.\n"
-        "- Copy refund percentages, unit thresholds, and peso amounts exactly as written (for example 75%, not 80%).\n"
-        "- Honorable dismissal petitions are filed with the Registrar, not the Dean, unless the retrieved context explicitly says otherwise.\n"
+        "- Copy percentages, unit thresholds, durations, and peso amounts exactly as written in the context; never round, adjust, or recall a different value.\n"
+        "- Name an office only when a retrieved section names it for that process. If no section names one, say the context does not identify the office.\n"
         "- Make the reply sound grounded in LSPU policy: name the office, rule, threshold, fee, or document instead of using vague phrases like 'proper office' or 'required documents'.\n"
         "- When one document clearly anchors the answer, it is good to mention that document naturally in the sentence.\n"
         "- If the section explains the concept through policy details, give a short student-friendly explanation grounded in those details.\n"
@@ -246,6 +271,8 @@ def _build_user_prompt(*, question: str, context: str, broad_mode: bool = False)
         "- Use bullet points for thresholds, requirements, procedures, fees, and lists.\n"
         f"{broad_check}"
         "- Do not include Source or Sources lines in the answer text.\n"
+        "- Do not invent an order, priority, or prerequisite between requirements that the context does not state.\n"
         "- Use the insufficient-information response only when no retrieved details answer the question.\n\n"
+        f"{scoped_check}"
         f"Question: {question.strip()}"
     )

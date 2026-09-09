@@ -484,6 +484,7 @@ class KnowledgeBaseStore:
         top_k: int | None = None,
         raw_k: int | None = None,
         user_role: str | None = None,
+        ablation: Any | None = None,
     ) -> list[RetrievedChunk]:
         from app.services.article_rag_indexer import chroma_where_for_audience
         from app.services.retrieval_reranker import prepare_retrieval_query, rerank_chunks
@@ -494,7 +495,7 @@ class KnowledgeBaseStore:
 
         candidate_k = raw_k or max(k, 10)
         candidate_k = max(k, candidate_k)
-        prepared_query = prepare_retrieval_query(query.strip())
+        prepared_query = prepare_retrieval_query(query.strip(), ablation=ablation)
         query_kwargs: dict[str, Any] = {
             "query_texts": [prepared_query.expanded_query],
             "n_results": min(candidate_k, self._collection.count()),
@@ -549,7 +550,7 @@ class KnowledgeBaseStore:
                     metadata=dict(meta),
                 )
             )
-        return rerank_chunks(prepared_query.expanded_query, chunks)[:k]
+        return rerank_chunks(prepared_query.expanded_query, chunks, ablation=ablation)[:k]
 
 
 @lru_cache(maxsize=1)

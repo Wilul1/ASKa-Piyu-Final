@@ -67,6 +67,104 @@ _VP_QUERY = re.compile(
 )
 
 
+def short_topic_matches_retrieval(
+    question: str,
+    chunks: list[RetrievedChunk] | None,
+    *,
+    min_similarity: float = 0.8,
+    max_chunks: int = 3,
+) -> bool:
+    """True when a short topic query closely matches a retrieved article/section title.
+
+    Used so title-like Ask queries (e.g. ``excuse slip``, ``teaching load``) answer
+    from the matching FAQ instead of being treated as vague clarification prompts.
+    Not tied to any single campus topic.
+    """
+    return query_matches_retrieval_title(
+        question,
+        chunks,
+        min_similarity=min_similarity,
+        max_chunks=max_chunks,
+        max_query_words=6,
+    )
+
+
+def query_matches_retrieval_title(
+    question: str,
+    chunks: list[RetrievedChunk] | None,
+    *,
+    min_similarity: float = 0.8,
+    max_chunks: int = 3,
+    max_query_words: int | None = None,
+) -> bool:
+    """True when the question aligns with a retrieved chunk title/section.
+
+    Handles both bare topics (``excuse slip``) and fuller questions whose
+    distinctive title tokens appear in the query (``Who are the administrative
+    officials?`` → title ``Administrative Officials``).
+    """
+    text = re.sub(r"\s+", " ", (question or "").strip())
+    if not text or not chunks:
+        return False
+    if max_query_words is not None and len(text.split()) > max_query_words:
+        return False
+
+    from app.services.retrieval_reranker import (
+        GENERIC_INTENT_TOKENS,
+        _normalize,
+        _phrase_title_similarity,
+    )
+
+    phrase = _normalize(text).strip("?.! ").strip()
+    if len(phrase) < 3:
+        return False
+
+    for chunk in chunks[:max_chunks]:
+        title = _section_title(chunk)
+        if not title:
+            continue
+        title_norm = _normalize(title)
+        if not title_norm:
+            continue
+        if _phrase_title_similarity(phrase, title_norm) >= min_similarity:
+            return True
+        # "Who are the administrative officials?" ↔ title "Administrative Officials"
+        if len(title_norm) >= 8 and title_norm in phrase:
+            return True
+        # Acronyms in titles: "Issuance of Transcript of Records (TOR)" ↔ query "TOR"
+        for acronym in re.findall(r"\(([a-z0-9]{2,6})\)", title_norm):
+            if re.search(rf"\b{re.escape(acronym)}\b", phrase):
+                return True
+        title_tokens = [
+            token
+            for token in re.findall(r"[a-z0-9]+", title_norm)
+            if len(token) >= 4 and token not in GENERIC_INTENT_TOKENS
+        ]
+        if title_tokens and all(_title_token_in_query(token, phrase) for token in title_tokens):
+            return True
+        # Partial title hits: a distinctive topic word (≥6 chars) from the title
+        # appears in the question (e.g. "Issuance of Diploma" ↔ "...fee for a diploma").
+        strong_hits = [
+            token
+            for token in title_tokens
+            if len(token) >= 6 and _title_token_in_query(token, phrase)
+        ]
+        if strong_hits:
+            return True
+    return False
+
+
+def _title_token_in_query(token: str, query: str) -> bool:
+    if token in query:
+        return True
+    # Light stemming so "validation" matches "validate" / "validated".
+    stems = {token}
+    for suffix in ("ation", "tion", "ing", "ed", "es", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            stems.add(token[: -len(suffix)])
+    return any(stem in query for stem in stems if len(stem) >= 4)
+
+
 def detect_fallback_intent(question: str, chunks: list[RetrievedChunk] | None = None) -> FallbackIntent:
     text = (question or "").strip()
     if not text:
@@ -89,6 +187,17 @@ def detect_fallback_intent(question: str, chunks: list[RetrievedChunk] | None = 
             if re.search(r"\b(?:how do|how can|how to|steps to|procedure for)\b", text, re.I):
                 return "service"
     if len(text.split()) <= 4 and not re.search(r"[.?]", text):
+        # Short noun phrases that already match a retrieved title are topic lookups,
+        # not vague chat. Answer from the FAQ/policy body instead of asking "which part?".
+        if short_topic_matches_retrieval(text, chunks):
+            top = chunks[0] if chunks else None
+            if (
+                top is not None
+                and is_service_procedure_chunk(top)
+                and not is_artifact_or_requirement_form_chunk(top)
+            ):
+                return "service"
+            return "policy"
         return "clarification"
     return "policy"
 

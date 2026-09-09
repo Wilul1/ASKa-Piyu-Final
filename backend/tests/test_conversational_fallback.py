@@ -87,6 +87,52 @@ def test_detect_fallback_intent():
     assert detect_fallback_intent("officials") == "clarification"
 
 
+def test_short_topic_queries_answer_when_title_matches_not_clarify():
+    """Short noun phrases that match a retrieved title are topic lookups, not vague chat."""
+    excuse = _chunk(
+        "How do I get an excuse slip if I missed class because I was sick",
+        "Submit a medical certificate and excuse slip form to OSAS within three days.",
+        article_type="faq",
+    )
+    moral = _chunk(
+        "Certificate of Good Moral Character",
+        "Request a Certificate of Good Moral Character from the Guidance Office with requirements.",
+        article_type="faq",
+    )
+    load = _chunk(
+        "Teaching Load Assignment",
+        "Faculty teaching load is assigned by the department chair according to the Faculty Manual.",
+        document_type="faculty_manual",
+        article_type="policy",
+    )
+
+    assert detect_fallback_intent("excuse slip", [excuse]) == "policy"
+    assert detect_fallback_intent("good moral", [moral]) == "policy"
+    assert detect_fallback_intent("teaching load", [load]) == "policy"
+    # Still vague when nothing title-matches.
+    assert detect_fallback_intent("excuse slip", [moral]) == "clarification"
+    assert detect_fallback_intent("officials") == "clarification"
+    assert detect_fallback_intent("help") == "clarification"
+
+    answer = format_conversational_fallback(
+        "excuse slip",
+        [excuse],
+        [{"title": excuse.metadata["source_section"]}],
+        confidence="medium",
+    )
+    assert "I can help with related topics" not in answer
+    assert "OSAS" in answer or "excuse slip" in answer.casefold()
+
+    moral_answer = format_conversational_fallback(
+        "good moral",
+        [moral],
+        [{"title": moral.metadata["source_section"]}],
+        confidence="medium",
+    )
+    assert "I can help with related topics" not in moral_answer
+    assert "good moral" in moral_answer.casefold() or "guidance" in moral_answer.casefold()
+
+
 def test_format_president_only_not_full_list():
     answer = format_conversational_fallback(
         "Who is the university president?",

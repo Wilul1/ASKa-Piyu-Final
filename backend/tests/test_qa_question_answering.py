@@ -1148,6 +1148,82 @@ def test_qa_groq_failure_returns_graceful_response_with_debug_chunks():
 
 
 @pytest.mark.parametrize(
+    ("question", "title", "body_needle"),
+    [
+        (
+            "excuse slip",
+            "How do I get an excuse slip if I missed class because I was sick",
+            "medical certificate",
+        ),
+        (
+            "good moral",
+            "Certificate of Good Moral Character",
+            "Guidance Office",
+        ),
+        (
+            "student id",
+            "Student ID Validation",
+            "Certificate of Registration",
+        ),
+    ],
+)
+def test_short_topic_query_answers_matching_faq_instead_of_clarifying(
+    question: str, title: str, body_needle: str
+):
+    """Bare topic phrases should use the title-matched FAQ, not 'which part do you need?'."""
+    store = FakeStore(
+        [
+            chunk(
+                title,
+                f"{body_needle}: follow the campus procedure described in this article.",
+                score=0.88,
+                reasons=["boost_exact_service_title:topic", "attendance_policy_match"],
+            )
+        ]
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=GroqAnswerError("Groq answer generation timed out."),
+        ),
+    ):
+        result = answer_qa_question(question)
+
+    assert "I can help with related topics" not in result.answer
+    assert "which part do you need" not in result.answer.casefold()
+    assert body_needle.casefold() in result.answer.casefold()
+
+
+def test_short_topic_query_still_clarifies_when_titles_do_not_match():
+    store = FakeStore(
+        [
+            chunk(
+                "Certificate of Good Moral Character",
+                "Request good moral from Guidance.",
+                score=0.7,
+                reasons=["semantic_similarity"],
+            )
+        ]
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=GroqAnswerError("Groq answer generation timed out."),
+        ),
+    ):
+        result = answer_qa_question("excuse slip")
+
+    # No title match for excuse slip → keep clarification / weak-evidence behavior.
+    assert (
+        "I can help with related topics" in result.answer
+        or "more specific question" in result.answer.casefold()
+        or "good moral" in result.answer.casefold()
+    )
+
+
+@pytest.mark.parametrize(
     ("error_message", "fallback_reason"),
     [
         ("Groq answer generation failed: 429 rate_limit_exceeded", "rate_limited"),

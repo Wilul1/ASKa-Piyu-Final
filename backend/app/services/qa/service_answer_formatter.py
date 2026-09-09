@@ -687,9 +687,8 @@ def _steps_from_metadata(metadata: dict[str, Any]) -> list[str]:
         if client and not _PLACEHOLDER.match(client):
             output.append(client.rstrip("."))
         if agency and not _PLACEHOLDER.match(agency) and agency != client:
-            # Phrase agency action as a student-facing process beat.
-            if not agency.lower().startswith(("osas", "the ", "office")):
-                agency = f"OSAS / office: {agency}"
+            # The office is whatever the charter names. When it names none, the
+            # step is reported without one rather than attributed to a guess.
             output.append(agency.rstrip("."))
     return output
 
@@ -710,9 +709,8 @@ def _steps_from_text(text: str) -> list[str]:
             agency = _clean_value(agency_match.group(1))
             if agency and not _PLACEHOLDER.match(agency) and agency != client:
                 if re.search(r"(?i)\bcheck|verify|evaluate|release|issue|accept\b", agency):
-                    # Prefer office-natural phrasing when agency names are missing.
-                    if not re.search(r"(?i)\b(osas|office|registrar|cashier|clinic)\b", agency):
-                        agency = f"OSAS {agency[0].lower()}{agency[1:]}" if agency else agency
+                    # Reported as the charter wrote it; no office is supplied
+                    # when the document did not name one.
                     output.append(agency.rstrip("."))
     if output:
         return output

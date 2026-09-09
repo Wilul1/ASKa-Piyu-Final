@@ -252,6 +252,38 @@ class PreparedRetrievalQuery:
     matched_expansion_rules: list[str]
 
 
+@dataclass(frozen=True)
+class RetrievalAblation:
+    """Benchmark-only retrieval switches. Production callers leave this unset."""
+
+    disable_query_expansion: bool = False
+    disable_expansion_rules: frozenset[str] = frozenset()
+    disable_named_service_boosts: bool = False
+
+
+# Title/service-card boosts isolated for ablation mode D. General domain/keyword
+# overlap boosts are intentionally left on so this mode is not "embeddings only".
+_NAMED_SERVICE_BOOST_REASON_PREFIXES: tuple[str, ...] = (
+    "boost_exact_service_title",
+    "boost_near_exact_service_title",
+    "boost_service_title_similarity",
+    "boost_tor_service_title",
+    "boost_diploma_service_title",
+    "boost_primary_enrollment_service_title",
+    "boost_identity_service_title",
+    "boost_honorable_dismissal_title",
+    "boost_maximum_residence_rule",
+    "boost_leave_of_absence_title",
+    "boost_enrollment_office_responsibility_title",
+    "boost_tor_per_page_fee_text",
+    "boost_office_query_title_token_overlap",
+)
+
+
+def _named_service_boosts_enabled(ablation: RetrievalAblation | None) -> bool:
+    return not (ablation and ablation.disable_named_service_boosts)
+
+
 QUERY_EXPANSION_RULES = (
     QueryExpansionRule(
         name="lspu_historical_development_built",
@@ -399,8 +431,6 @@ QUERY_EXPANSION_RULES = (
             "issuance of transcript of records",
             "registrar",
             "per page",
-            "P75.00/page",
-            "P150/page",
             "undergraduate",
             "graduate",
             "certification",
@@ -412,7 +442,6 @@ QUERY_EXPANSION_RULES = (
         trigger_terms=("maximum residence", "residence rule", "maximum residency"),
         expansion_terms=(
             "maximum residence rule",
-            "1.5 times the normal length",
             "actual residence",
         ),
     ),
@@ -421,8 +450,6 @@ QUERY_EXPANSION_RULES = (
         trigger_terms=("refund", "tuition refund", "withdraw after paying", "refunded"),
         expansion_terms=(
             "refunding of fees",
-            "seventy-five percent (75%)",
-            "fifty percent (50%)",
             "opening of classes",
             "honorable dismissal",
             "leave of absence",
@@ -459,7 +486,6 @@ QUERY_EXPANSION_RULES = (
             "registrar",
             "citizen charter",
             "fees",
-            "P100",
         ),
         blocked_terms=("comprehensive examination", "examination schedule"),
     ),
@@ -524,7 +550,6 @@ QUERY_EXPANSION_RULES = (
             "rectification of grades",
             "academic council",
             "faculty manual",
-            "twenty-five percent",
             "submission of grades",
         ),
     ),
@@ -636,89 +661,98 @@ def expand_query(query: str) -> str:
     return prepare_retrieval_query(query).expanded_query
 
 
-def prepare_retrieval_query(query: str) -> PreparedRetrievalQuery:
+def prepare_retrieval_query(
+    query: str,
+    *,
+    ablation: RetrievalAblation | None = None,
+) -> PreparedRetrievalQuery:
     """Normalize natural student phrasing while preserving the original query."""
     original = _repair_common_query_typos(query.strip())
     normalized = _normalize(original)
     expansions: list[str] = []
     matched_rules: list[str] = []
+    disabled_rules = ablation.disable_expansion_rules if ablation else frozenset()
+    skip_all_expansion = bool(ablation and ablation.disable_query_expansion)
 
-    for rule in QUERY_EXPANSION_RULES:
-        if _rule_matches(normalized, rule):
-            expansions.extend(rule.expansion_terms)
-            matched_rules.append(rule.name)
+    if not skip_all_expansion:
+        for rule in QUERY_EXPANSION_RULES:
+            if rule.name in disabled_rules:
+                continue
+            if _rule_matches(normalized, rule):
+                expansions.extend(rule.expansion_terms)
+                matched_rules.append(rule.name)
 
-    if _matches(normalized, r"\bfail(?:ed|ing)?\b", r"\bmany subjects?\b", r"\bcontinue (?:my )?course\b") and not _is_shifting_query(
-        normalized
-    ):
-        expansions.extend(ACADEMIC_TERMS)
-    if "probation" in normalized:
-        expansions.extend(("scholastic delinquency", "retention policy", "warning", "probation"))
-    if _is_academic_dismissal_query(normalized):
-        expansions.extend(("retention policy", "academic dismissal", "scholastic delinquency"))
-    if _is_honorable_dismissal_query(normalized):
-        expansions.extend(("honorable dismissal", "voluntary withdrawal", "registrar"))
-    if _is_identity_document_query(normalized):
-        expansions.extend(
-            (
-                "id validation",
-                "processing of student id",
-                "student identification card",
-                "citizen charter",
-                "office of the student affairs and services",
+        if _matches(normalized, r"\bfail(?:ed|ing)?\b", r"\bmany subjects?\b", r"\bcontinue (?:my )?course\b") and not _is_shifting_query(
+            normalized
+        ):
+            expansions.extend(ACADEMIC_TERMS)
+        if "probation" in normalized:
+            expansions.extend(("scholastic delinquency", "retention policy", "warning", "probation"))
+        if _is_academic_dismissal_query(normalized):
+            expansions.extend(("retention policy", "academic dismissal", "scholastic delinquency"))
+        if _is_honorable_dismissal_query(normalized):
+            expansions.extend(("honorable dismissal", "voluntary withdrawal", "registrar"))
+        if _is_identity_document_query(normalized):
+            expansions.extend(
+                (
+                    "id validation",
+                    "processing of student id",
+                    "student identification card",
+                    "citizen charter",
+                    "office of the student affairs and services",
+                )
             )
-        )
-    if _is_leave_of_absence_query(normalized):
-        expansions.extend(
-            (
-                "leave of absence",
-                "loa",
-                "registrar",
-                "written request",
-                "academic policies",
+        if _is_leave_of_absence_query(normalized):
+            expansions.extend(
+                (
+                    "leave of absence",
+                    "loa",
+                    "registrar",
+                    "written request",
+                    "academic policies",
+                )
             )
-        )
-    elif _matches(normalized, r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b"):
-        expansions.extend(ATTENDANCE_TERMS)
-    if _is_shifting_query(normalized):
-        expansions.extend(("shifting of course", "registrar", "shifting form", "admission requirements"))
-    if _matches(normalized, r"\bundergraduate\b", r"\bbachelor\b", r"\bbs\b", r"\bb\.s\.\b") and not _is_shifting_query(
-        normalized
-    ):
-        expansions.extend(("undergraduate programs", "curricular offerings", "bachelor", "BS"))
-    if _matches(normalized, r"\bgraduate\b", r"\bmaster\b", r"\bdoctorate\b", r"\bphd\b", r"\bma\b", r"\bms\b"):
-        expansions.extend(("graduate studies", "master", "doctorate", "PhD", "MA", "MS"))
-    if _matches(normalized, r"\bcollege\b.*\bprogram", r"\bcampus(?:es)?\b.*\boffer", r"\boffer(?:ed|s)?\b.*\bprogram"):
-        expansions.extend(PROGRAM_TERMS)
-    if _is_teaching_load_query(normalized):
-        expansions.extend(TEACHING_LOAD_TERMS)
-        expansions.append("faculty manual")
-    if _is_academic_freedom_query(normalized):
-        expansions.extend(ACADEMIC_FREEDOM_TERMS)
-        expansions.append("faculty manual")
-    if _is_maximum_residence_query(normalized):
-        expansions.extend(("maximum residence rule", "1.5 times the normal length", "actual residence"))
-    if _is_tuition_refund_query(normalized):
-        expansions.extend(
-            (
-                "refunding of fees",
-                "seventy-five percent (75%)",
-                "fifty percent (50%)",
-                "opening of classes",
+        elif _matches(normalized, r"\babsen[tc]\b", r"\billness\b", r"\bexcuse\b", r"\bmedical\b"):
+            expansions.extend(ATTENDANCE_TERMS)
+        if _is_shifting_query(normalized):
+            expansions.extend(("shifting of course", "registrar", "shifting form", "admission requirements"))
+        if _matches(normalized, r"\bundergraduate\b", r"\bbachelor\b", r"\bbs\b", r"\bb\.s\.\b") and not _is_shifting_query(
+            normalized
+        ):
+            expansions.extend(("undergraduate programs", "curricular offerings", "bachelor", "BS"))
+        if _matches(normalized, r"\bgraduate\b", r"\bmaster\b", r"\bdoctorate\b", r"\bphd\b", r"\bma\b", r"\bms\b"):
+            expansions.extend(("graduate studies", "master", "doctorate", "PhD", "MA", "MS"))
+        if _matches(normalized, r"\bcollege\b.*\bprogram", r"\bcampus(?:es)?\b.*\boffer", r"\boffer(?:ed|s)?\b.*\bprogram"):
+            expansions.extend(PROGRAM_TERMS)
+        if _is_teaching_load_query(normalized):
+            expansions.extend(TEACHING_LOAD_TERMS)
+            expansions.append("faculty manual")
+        if _is_academic_freedom_query(normalized):
+            expansions.extend(ACADEMIC_FREEDOM_TERMS)
+            expansions.append("faculty manual")
+        if _is_maximum_residence_query(normalized):
+            expansions.extend(("maximum residence rule", "actual residence"))
+        if _is_tuition_refund_query(normalized):
+            expansions.extend(
+                (
+                    "refunding of fees",
+                    "opening of classes",
+                )
             )
-        )
-    if _is_faculty_grade_change_query(normalized):
-        expansions.extend(FACULTY_GRADE_CHANGE_TERMS)
-        expansions.append("faculty manual")
-    elif _is_faculty_grading_query(normalized):
-        expansions.extend(FACULTY_GRADING_TERMS)
-        expansions.append("faculty manual")
-    if _is_faculty_responsibilities_query(normalized):
-        expansions.extend(FACULTY_RESPONSIBILITY_TERMS)
-        expansions.append("faculty manual")
+        if _is_faculty_grade_change_query(normalized):
+            expansions.extend(FACULTY_GRADE_CHANGE_TERMS)
+            expansions.append("faculty manual")
+        elif _is_faculty_grading_query(normalized):
+            expansions.extend(FACULTY_GRADING_TERMS)
+            expansions.append("faculty manual")
+        if _is_faculty_responsibilities_query(normalized):
+            expansions.extend(FACULTY_RESPONSIBILITY_TERMS)
+            expansions.append("faculty manual")
 
     unique = _dedupe(expansions)
-    normalized_for_retrieval = _normalize_student_phrasing(normalized, unique)
+    normalized_for_retrieval = (
+        normalized if skip_all_expansion else _normalize_student_phrasing(normalized, unique)
+    )
     expanded = _dedupe([original, normalized_for_retrieval, *unique])
     return PreparedRetrievalQuery(
         original_query=original,
@@ -754,12 +788,18 @@ def _apply_heuristic_delta_cap(original: float, score: float, reasons: list[str]
     return original + clamped_delta
 
 
-def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[RetrievedChunk]:
+def rerank_chunks(
+    query: str,
+    chunks: Iterable[RetrievedChunk],
+    *,
+    ablation: RetrievalAblation | None = None,
+) -> list[RetrievedChunk]:
     normalized_query = _normalize(query)
     profile = _query_profile(normalized_query)
     intent_phrases = _intent_phrases(normalized_query)
     citation_ready_cache: dict[str, bool] = {}
     reranked: list[RetrievedChunk] = []
+    named_boosts = _named_service_boosts_enabled(ablation)
 
     for chunk in chunks:
         original = chunk.original_score if chunk.original_score is not None else chunk.relevance_score
@@ -789,7 +829,8 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         metadata_content_type = _normalize(str(metadata.get("content_type") or ""))
 
         score += _keyword_overlap_boost(normalized_query, normalized_title_path, reasons)
-        score += _service_title_similarity_boost(intent_phrases, normalized_title_path, reasons)
+        if named_boosts:
+            score += _service_title_similarity_boost(intent_phrases, normalized_title_path, reasons)
         score += _distinctive_term_boost(
             normalized_query,
             normalized_title_path,
@@ -841,7 +882,7 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if profile["honorable"] and _contains_any(normalized_content, HONORABLE_TERMS):
             score += 0.28
             reasons.append("honorable_dismissal_match")
-            if "honorable dismissal" in normalized_title_path:
+            if named_boosts and "honorable dismissal" in normalized_title_path:
                 score += 0.35
                 reasons.append("boost_honorable_dismissal_title")
             if _contains_any(normalized_title_path, ("dropping of subjects", "drop a course")):
@@ -850,8 +891,12 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if profile.get("residence") and _contains_any(
             normalized_title_path, ("maximum residence", "residence rule")
         ):
-            score += 0.5
-            reasons.append("boost_maximum_residence_rule")
+            if named_boosts:
+                score += 0.5
+                reasons.append("boost_maximum_residence_rule")
+            else:
+                score += 0.18
+                reasons.append("residence_policy_match")
         if profile.get("refund") and _contains_any(
             normalized_content, ("refunding of fees", "seventy-five percent", "75%", "opening of classes")
         ):
@@ -866,9 +911,12 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
             score += 0.28
             reasons.append("attendance_policy_match")
         if profile.get("leave_of_absence"):
-            if _contains_any(normalized_title_path, ("leave of absence",)):
+            if named_boosts and _contains_any(normalized_title_path, ("leave of absence",)):
                 score += 0.55
                 reasons.append("boost_leave_of_absence_title")
+            elif _contains_any(normalized_title_path, ("leave of absence",)):
+                score += 0.2
+                reasons.append("leave_of_absence_match")
             if _contains_any(normalized_title_path, ("attendance", "excuse slip")):
                 score -= 0.45
                 reasons.append("penalty_attendance_for_leave_of_absence_query")
@@ -876,7 +924,7 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
             score += 0.24
             reasons.append("enrollment_procedure_match")
             # Prefer the Enrollment service card over Assessment of Fees.
-            if _title_is_primary_enrollment_service(normalized_title_path):
+            if named_boosts and _title_is_primary_enrollment_service(normalized_title_path):
                 score += 0.45
                 reasons.append("boost_primary_enrollment_service_title")
             if _contains_any(normalized_title_path, FEE_ASSESSMENT_TERMS) and not _title_is_primary_enrollment_service(
@@ -885,22 +933,24 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
                 score -= 0.35
                 reasons.append("penalty_fee_assessment_for_enrollment_query")
         if profile["office_responsibility"]:
-            score += _office_responsibility_boost(
-                normalized_query=normalized_query,
-                normalized_title_path=normalized_title_path,
-                metadata=metadata,
-                reasons=reasons,
-            )
+            if named_boosts:
+                score += _office_responsibility_boost(
+                    normalized_query=normalized_query,
+                    normalized_title_path=normalized_title_path,
+                    metadata=metadata,
+                    reasons=reasons,
+                )
         if profile["records"] and _contains_any(normalized_content, RECORD_TERMS):
             score += 0.28
             reasons.append("student_records_match")
-        score += _fee_service_boost(
-            normalized_query=normalized_query,
-            normalized_title_path=normalized_title_path,
-            normalized_content=normalized_content,
-            metadata=metadata,
-            reasons=reasons,
-        )
+        if named_boosts:
+            score += _fee_service_boost(
+                normalized_query=normalized_query,
+                normalized_title_path=normalized_title_path,
+                normalized_content=normalized_content,
+                metadata=metadata,
+                reasons=reasons,
+            )
         if profile["counseling"] and _contains_any(normalized_content, COUNSELING_TERMS):
             score += 0.26
             reasons.append("office_service_match")
@@ -922,12 +972,13 @@ def rerank_chunks(query: str, chunks: Iterable[RetrievedChunk]) -> list[Retrieve
         if profile["campus_offer"] and _contains_any(normalized_content, ("all campuses", "campuses: all", "campus: all")):
             score += 0.2
             reasons.append("campus_availability_match")
-        score += _identity_document_service_boost(
-            profile=profile,
-            normalized_title_path=normalized_title_path,
-            metadata=metadata,
-            reasons=reasons,
-        )
+        if named_boosts:
+            score += _identity_document_service_boost(
+                profile=profile,
+                normalized_title_path=normalized_title_path,
+                metadata=metadata,
+                reasons=reasons,
+            )
         score += _service_vs_form_boost(
             profile=profile,
             normalized_query=normalized_query,
@@ -2326,6 +2377,13 @@ def _normalize(text: str) -> str:
     cleaned = (text or "").lower()
     cleaned = re.sub(r"[-_/]+", " ", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _normalize_ascii(text: str) -> str:
+    """Lowercase + strip accents/punctuation for noisy student query cleanup."""
+    normalized = _normalize(text).replace("ñ", "n")
+    normalized = re.sub(r"[^a-z0-9.]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:

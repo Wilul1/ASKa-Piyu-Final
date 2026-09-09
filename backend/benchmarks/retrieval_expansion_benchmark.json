@@ -1,0 +1,292 @@
+{
+  "version": "phase2a-v1",
+  "description": "Retrieval-only expansion-rule benchmark. Expected sections were taken from the live Chroma index (750 chunks) and known-good Phase-1 regression probes — not invented from memory.",
+  "cases": [
+    {
+      "id": "excuse_slip_howto",
+      "query": "How do I get an excuse slip if I missed class because I was sick?",
+      "expected_titles": [
+        "How do I get an excuse slip if I missed class because I was sick",
+        "Policy"
+      ],
+      "acceptable_titles": ["Appendix J", "Rule XVI"],
+      "expected_article_substrings": ["Article 8 > Attendance", "excuse slip"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["attendance_excuse_slip"],
+      "notes": "Live index returns Attendance Policy / FAQ excuse-slip article / Appendix J. Phase-1 regression kept the FAQ article in selected context."
+    },
+    {
+      "id": "attendance_medical_certificate",
+      "query": "I was absent due to illness. Do I need a medical certificate for attendance?",
+      "expected_titles": ["Policy"],
+      "acceptable_titles": [
+        "How do I get an excuse slip if I missed class because I was sick",
+        "Appendix J",
+        "Rule XVI"
+      ],
+      "expected_article_substrings": ["Article 8 > Attendance"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["attendance_excuse_slip"],
+      "notes": "Attendance Policy (Article 8) is the handbook rule for illness absences; excuse-slip FAQ and Appendix J are related forms."
+    },
+    {
+      "id": "copy_of_grades",
+      "query": "How do I request a copy of grades?",
+      "expected_titles": [
+        "Issuance of Copy of Documents Requested by Clients",
+        "Copy of Grades (COG)"
+      ],
+      "acceptable_titles": [
+        "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents"
+      ],
+      "expected_article_substrings": ["Copy of Grades", "copy of documents"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["tor_fees_and_certifications", "student_records_tor"],
+      "notes": "Phase-1 regression selected Issuance of Copy of Documents first. Live probe also surfaces Copy of Grades (COG) under Retention and the TOR charter card."
+    },
+    {
+      "id": "tor_howto",
+      "query": "How do I request a transcript of records?",
+      "expected_titles": [
+        "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents"
+      ],
+      "acceptable_titles": ["Crediting of Subjects", "Authentication of Documents"],
+      "expected_article_substrings": ["Transcript of Records"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["student_records_tor", "tor_fees_and_certifications"],
+      "notes": "Citizen's Charter TOR issuance card is the indexed service section for TOR requests."
+    },
+    {
+      "id": "tor_fees",
+      "query": "How much are the fees for a transcript of records?",
+      "expected_titles": [
+        "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents"
+      ],
+      "acceptable_titles": [],
+      "expected_article_substrings": ["Transcript of Records"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["tor_fees_and_certifications", "student_records_tor"],
+      "notes": "Fee amount lives on the TOR charter service card metadata/text in the live index."
+    },
+    {
+      "id": "refund_policy",
+      "query": "If I withdraw after paying enrollment fees, how much of my tuition is refunded?",
+      "expected_titles": ["Refunding of Fees"],
+      "acceptable_titles": ["Withdrawal Policy", "Registration"],
+      "expected_article_substrings": ["Refunding of Fees", "Article 3 > Registration"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["tuition_fee_refund"],
+      "notes": "Live index ranks Refunding of Fees (Article 3 > Registration > Sec. 3) first for this phrasing."
+    },
+    {
+      "id": "incomplete_inc",
+      "query": "What happens if I get an incomplete (INC) grade?",
+      "expected_titles": ["Policies for INC"],
+      "acceptable_titles": [
+        "No Final Examination",
+        "Failure to comply with certain requirements",
+        "Grading Policy"
+      ],
+      "expected_article_substrings": ["Policies for INC", "Article 7 > Grading System"],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "notes": "Live index places INC grading sections under Article 7; Policies for INC is the dedicated section."
+    },
+    {
+      "id": "scholastic_delinquency",
+      "query": "What happens if I fail many of my subjects?",
+      "expected_titles": ["Scholastic Delinquency"],
+      "acceptable_titles": ["Dismissal", "Dropped", "Warning"],
+      "expected_article_substrings": ["Scholastic Delinquency", "Article 5 > Retention"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["scholastic_delinquency_failed_units"],
+      "notes": "Live probe for fail-units phrasing ranks Scholastic Delinquency first."
+    },
+    {
+      "id": "retention_policy",
+      "query": "What is the retention policy?",
+      "expected_titles": ["Compliance", "Good Moral", "Monitoring"],
+      "acceptable_titles": [
+        "Minimum Final Grade for any Non-board Program",
+        "Scholastic Delinquency"
+      ],
+      "expected_article_substrings": ["Article 5 > Retention Policies"],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "notes": "Live index returns multiple Article 5 Retention Policies subsections for the generic retention query."
+    },
+    {
+      "id": "maximum_residence",
+      "query": "What is the maximum residence rule?",
+      "expected_titles": ["Maximum Residence Rule"],
+      "acceptable_titles": ["Residence Requirements and Time Limit"],
+      "expected_article_substrings": ["Article 11 > Maximum Residence Rule"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["maximum_residence_rule"],
+      "notes": "Live index ranks Maximum Residence Rule (Article 11) first."
+    },
+    {
+      "id": "honorable_dismissal",
+      "query": "Where do I file a petition for honorable dismissal?",
+      "expected_titles": ["Honorable Dismissal"],
+      "acceptable_titles": ["Undergraduate Honorable Dismissal"],
+      "expected_article_substrings": ["Article 12 > Honorable Dismissal"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["honorable_dismissal_petition"],
+      "notes": "Expected section is Article 12 Honorable Dismissal. Withdrawal Guidelines (Article 9) often ranks nearby and is NOT an acceptable substitute for this ask."
+    },
+    {
+      "id": "withdrawal",
+      "query": "How do I withdraw from the university?",
+      "expected_titles": ["Withdrawal Policy", "Withdrawal Guidelines"],
+      "acceptable_titles": ["Withdrawal Conditions"],
+      "expected_article_substrings": ["Article 9 > Withdrawal from the University"],
+      "depends_on_expansion_rule": false,
+      "related_rules": ["tuition_fee_refund"],
+      "notes": "Live index ranks Article 9 Withdrawal Policy/Guidelines for withdrawal phrasing."
+    },
+    {
+      "id": "ojt_deployment",
+      "query": "What do I need for OJT deployment?",
+      "expected_titles": ["Deployment of OJT"],
+      "acceptable_titles": ["Host Training Establishment (HTE)"],
+      "expected_article_substrings": ["Deployment of OJT", "Host Training Establishment"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["ojt_deployment"],
+      "notes": "Live index ranks Deployment of OJT first for OJT deployment phrasing."
+    },
+    {
+      "id": "good_moral_certificate",
+      "query": "How do I get a good moral certificate?",
+      "expected_titles": [
+        "Issuance of Good Moral Certificate (Undergraduate)",
+        "Issuance of Good Moral Certificate (Transferee)"
+      ],
+      "acceptable_titles": ["Good Moral"],
+      "expected_article_substrings": ["Good Moral Certificate", "good moral"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["good_moral_certificate"],
+      "notes": "Charter issuance cards are the service sections; Retention 'Good Moral' is a related but different Article 5 policy."
+    },
+    {
+      "id": "student_records_tor_short",
+      "query": "TOR",
+      "expected_titles": [
+        "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents"
+      ],
+      "acceptable_titles": ["Crediting of Subjects"],
+      "expected_article_substrings": ["Transcript of Records"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["student_records_tor", "tor_fees_and_certifications"],
+      "notes": "Short form depends on expansion to recover the TOR charter card."
+    },
+    {
+      "id": "simple_no_expansion_inc_policies",
+      "query": "Policies for INC",
+      "expected_titles": ["Policies for INC"],
+      "acceptable_titles": [
+        "No Final Examination",
+        "Failure to comply with certain requirements"
+      ],
+      "expected_article_substrings": ["Policies for INC"],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "notes": "Near-literal section title; semantic retrieval alone should suffice."
+    },
+    {
+      "id": "simple_no_expansion_maximum_residence_title",
+      "query": "Maximum Residence Rule",
+      "expected_titles": ["Maximum Residence Rule"],
+      "acceptable_titles": [],
+      "expected_article_substrings": ["Maximum Residence Rule"],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "notes": "Exact section title query; expansion should be unnecessary."
+    },
+    {
+      "id": "simple_no_expansion_deployment_title",
+      "query": "Deployment of OJT",
+      "expected_titles": ["Deployment of OJT"],
+      "acceptable_titles": ["Host Training Establishment (HTE)"],
+      "expected_article_substrings": ["Deployment of OJT"],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "notes": "Exact service title query."
+    },
+    {
+      "id": "out_of_scope_weather",
+      "query": "What is the weather in Manila today?",
+      "expected_titles": [],
+      "acceptable_titles": [],
+      "expected_article_substrings": [],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "out_of_scope": true,
+      "notes": "No campus document should be required; used to watch for accidental expansion hits into handbook sections."
+    },
+    {
+      "id": "out_of_scope_celebrity",
+      "query": "Who won the latest NBA finals?",
+      "expected_titles": [],
+      "acceptable_titles": [],
+      "expected_article_substrings": [],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "out_of_scope": true,
+      "notes": "Out-of-scope sports question."
+    },
+    {
+      "id": "out_of_scope_recipe",
+      "query": "How do I bake chocolate chip cookies?",
+      "expected_titles": [],
+      "acceptable_titles": [],
+      "expected_article_substrings": [],
+      "depends_on_expansion_rule": false,
+      "related_rules": [],
+      "out_of_scope": true,
+      "notes": "Out-of-scope cooking question."
+    },
+    {
+      "id": "false_positive_risk_absent_work",
+      "query": "I was absent from work because of illness. What should I do?",
+      "expected_titles": [],
+      "acceptable_titles": [],
+      "expected_article_substrings": [],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["attendance_excuse_slip"],
+      "out_of_scope": true,
+      "notes": "Generic workplace phrasing that may falsely trigger campus attendance expansion. Expect no required campus section; used for false-positive analysis."
+    },
+    {
+      "id": "false_positive_risk_president",
+      "query": "Who is the president of the Philippines?",
+      "expected_titles": [],
+      "acceptable_titles": [],
+      "expected_article_substrings": [],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["administrative_officials_president"],
+      "out_of_scope": true,
+      "notes": "External president question; rule has blocked_terms, but still useful for false-positive checks against LSPU president sections."
+    },
+    {
+      "id": "enrollment_howto",
+      "query": "How do I enroll as a continuing student?",
+      "expected_titles": ["Enrollment"],
+      "acceptable_titles": ["Registration", "Assessment of Fees"],
+      "expected_article_substrings": ["Enrollment", "Registration"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["enrollment_procedure"],
+      "notes": "Enrollment charter/service card is the intended section; Assessment of Fees is a common near-miss."
+    },
+    {
+      "id": "dropping_subject",
+      "query": "How much does it cost to drop a subject?",
+      "expected_titles": ["Dropping of Subjects", "Dropping"],
+      "acceptable_titles": [],
+      "expected_article_substrings": ["Dropping"],
+      "depends_on_expansion_rule": true,
+      "related_rules": ["dropping_of_subjects"],
+      "notes": "From existing rag_benchmark.py known-answer set; charter dropping fee should win."
+    }
+  ]
+}

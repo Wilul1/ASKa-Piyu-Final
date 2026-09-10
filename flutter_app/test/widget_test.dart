@@ -12,19 +12,25 @@ void main() {
   testWidgets('student home shows ASKa-Piyu entry points',
       (WidgetTester tester) async {
     await tester.pumpWidget(const MyApp());
+    await tester.pump(); // settle initial auth load frame
 
-    expect(find.text('Welcome back'), findsOneWidget);
-    expect(find.text('Public support center'), findsOneWidget);
-    expect(find.text('Ask ASKa-Piyu'), findsWidgets);
-    expect(find.text('Knowledge Base'), findsWidgets);
+    expect(find.text('Welcome to ASKa-Piyu'), findsOneWidget);
+    expect(find.text('Search'), findsOneWidget);
+    // Floating chat CTA uses full or compact label by viewport width.
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            (widget.data == 'Chat with ASKa-Piyu' || widget.data == 'Chat'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Knowledge Base'), findsWidgets);
     expect(find.text('Admin Dashboard'), findsNothing);
     expect(find.text('Office Dashboard'), findsNothing);
     expect(find.text('Assigned Tickets'), findsNothing);
     expect(find.text('All Tickets'), findsNothing);
-    expect(find.text('Knowledge Base Admin'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
-    expect(find.text('Offices'), findsNothing);
-    expect(find.text('Reports / Statistics'), findsNothing);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
   });
@@ -37,14 +43,12 @@ void main() {
     expect(find.text('Knowledge Base'), findsOneWidget);
     expect(find.text('Ask ASKa-Piyu'), findsOneWidget);
     expect(find.text('Login'), findsOneWidget);
-    expect(find.text('Admin Dashboard'), findsNothing);
-    expect(find.text('Office Dashboard'), findsNothing);
+    expect(find.text('Dashboard'), findsNothing);
     expect(find.text('Assigned Tickets'), findsNothing);
     expect(find.text('All Tickets'), findsNothing);
-    expect(find.text('Knowledge Base Admin'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
     expect(find.text('Offices'), findsNothing);
-    expect(find.text('Reports / Statistics'), findsNothing);
+    expect(find.text('Reports'), findsNothing);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
     expect(find.text('Logout'), findsNothing);
@@ -59,33 +63,35 @@ void main() {
     expect(find.text('My Tickets'), findsOneWidget);
     expect(find.text('Submit Ticket'), findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
-    expect(find.text('Admin Dashboard'), findsNothing);
-    expect(find.text('Office Dashboard'), findsNothing);
-    expect(find.text('Assigned Tickets'), findsNothing);
+    expect(find.text('Student support'), findsOneWidget);
     expect(find.text('All Tickets'), findsNothing);
-    expect(find.text('Knowledge Base Admin'), findsNothing);
+    expect(find.text('Assigned Tickets'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
     expect(find.text('Offices'), findsNothing);
-    expect(find.text('Reports / Statistics'), findsNothing);
+    expect(find.text('Reports'), findsNothing);
   });
 
   testWidgets('admin sidebar shows admin tools without student tickets',
       (WidgetTester tester) async {
-    final controller = await _authenticatedController(' Admin ');
+    await tester.binding.setSurfaceSize(const Size(400, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final controller = await _authenticatedController('admin');
 
     await tester.pumpWidget(_sidebarHarness(controller));
 
-    expect(find.text('Admin Dashboard'), findsOneWidget);
+    expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('All Tickets'), findsOneWidget);
-    expect(find.text('Knowledge Base Admin'), findsOneWidget);
+    expect(find.text('Knowledge Base'), findsOneWidget);
+    expect(find.text('Knowledge Article'), findsOneWidget);
     expect(find.text('Users & Roles'), findsOneWidget);
     expect(find.text('Offices'), findsOneWidget);
-    expect(find.text('Reports / Statistics'), findsOneWidget);
+    expect(find.text('Reports'), findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
-    expect(find.text('Office Dashboard'), findsNothing);
     expect(find.text('Assigned Tickets'), findsNothing);
+    expect(find.text('Account'), findsNothing);
   });
 
   testWidgets('office sidebar shows office tools without student or admin pages',
@@ -94,28 +100,34 @@ void main() {
 
     await tester.pumpWidget(_sidebarHarness(controller));
 
-    expect(find.text('Office Dashboard'), findsOneWidget);
+    expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('Assigned Tickets'), findsOneWidget);
+    expect(find.text('Account'), findsOneWidget);
+    expect(find.text('Knowledge Base'), findsOneWidget);
+    expect(find.text('Knowledge Article'), findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
-    expect(find.text('Admin Dashboard'), findsNothing);
     expect(find.text('All Tickets'), findsNothing);
-    expect(find.text('Knowledge Base Admin'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
     expect(find.text('Offices'), findsNothing);
-    expect(find.text('Reports / Statistics'), findsNothing);
+    expect(find.text('Reports'), findsNothing);
   });
 
-  testWidgets('home support label follows the authenticated role',
+  testWidgets('sidebar brand subtitle follows student and faculty roles',
       (WidgetTester tester) async {
     final studentController = await _authenticatedController('student');
-    await tester.pumpWidget(_homeHarness(studentController));
-    expect(find.text('Student support center'), findsOneWidget);
+    await tester.pumpWidget(_sidebarHarness(studentController));
+    expect(find.text('Student support'), findsOneWidget);
 
-    final adminController = await _authenticatedController('admin');
-    await tester.pumpWidget(_homeHarness(adminController));
-    expect(find.text('Admin workspace'), findsOneWidget);
+    final facultyController = await _authenticatedController('faculty');
+    await tester.pumpWidget(_sidebarHarness(facultyController));
+    expect(find.text('Faculty support'), findsOneWidget);
+
+    // Public landing stays the same brand welcome for authenticated students.
+    await tester.pumpWidget(_homeHarness(studentController));
+    await tester.pump();
+    expect(find.text('Welcome to ASKa-Piyu'), findsOneWidget);
   });
 }
 
@@ -124,7 +136,8 @@ Widget _sidebarHarness(AuthController controller) {
     controller: controller,
     child: const MaterialApp(
       home: Scaffold(
-        body: SizedBox(width: 260, child: AppSidebar()),
+        // Tall viewport so lazy ListView sidebars build every nav item.
+        body: SizedBox(width: 280, height: 1600, child: AppSidebar()),
       ),
     ),
   );

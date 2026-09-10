@@ -35,7 +35,14 @@ void main() {
     expect(source.contains('Index to Knowledge Base'), isFalse);
 
     final panel = File('lib/screens/admin_panel_page.dart').readAsStringSync();
-    expect(panel, contains('Knowledge units indexed for chatbot retrieval.'));
+    expect(panel, contains('Index for Chatbot Retrieval'));
+    expect(
+      panel,
+      contains(
+        'This indexes extracted knowledge units into ChromaDB for Ask ASKa-Piyu retrieval and citation grounding. It does not publish articles to the public Knowledge Base.',
+      ),
+    );
+    expect(panel.contains('Index to Knowledge Base'), isFalse);
   });
 
   test('Admin workspace centers Full Extraction Result as main panel', () {
@@ -50,11 +57,11 @@ void main() {
       ),
     );
     expect(source, contains('_ProcessingStatusRow'));
-    expect(source, contains('Expanded(flex: 74'));
-    expect(source, contains('Expanded(flex: 26'));
+    expect(source, contains('_FullExtractionPanel'));
     expect(source, contains('thumbVisibility: true'));
     expect(source, contains('NotificationListener<ScrollNotification>'));
-    // Knowledge Units must sit below extraction, not beside it.
+    // Extraction is the primary review surface; units review is a separate panel,
+    // not a side-by-side peer with brittle flex ratios.
     expect(source.contains('Expanded(flex: 28, child: units)'), isFalse);
     expect(source.contains('class _WorkspaceTabs'), isFalse);
     expect(source.contains('Color(0xFF111827)'), isFalse);

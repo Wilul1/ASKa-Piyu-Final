@@ -28,10 +28,14 @@ void main() {
     final login = File('lib/screens/login_page.dart').readAsStringSync();
     final sidebar = File('lib/widgets/sidebar.dart').readAsStringSync();
 
-    expect(kb.contains("label: const Text('Search')"), isFalse);
+    // Public Search CTAs use text labels, not icon-labeled buttons.
     expect(kb, contains("child: const Text('Search')"));
-    expect(home, contains("child: const Text('Search')"));
-    expect(login, contains("Text(_loading ? 'Logging in...' : 'Login')"));
+    expect(kb.contains("label: const Text('Search')"), isFalse);
+    expect(home, contains("'Search'"));
+    expect(home.contains('Icons.search'), isFalse);
+
+    // Login entry points stay text-labeled.
+    expect(login, contains("label: 'LOGIN'"));
     expect(login.contains('Icons.login_rounded'), isFalse);
     expect(sidebar, contains("child: const Text('Login')"));
     expect(sidebar.contains('Icons.login_rounded'), isFalse);

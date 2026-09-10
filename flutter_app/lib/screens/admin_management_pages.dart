@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import '../auth/auth_navigation.dart';
@@ -9,11 +11,15 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../services/api_client.dart';
 import '../services/download_file.dart';
+import '../services/file_pick.dart';
+import '../services/kb_compose_helpers.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
 import 'admin_generate_articles_page.dart';
 import 'admin_scaffold.dart';
 import 'login_page.dart';
+
+part 'staff_ticket_console.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -727,6 +733,578 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
               hasAnyTickets: _tickets.isNotEmpty,
               onTicketTap: _openTicketDetails,
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class OfficeFacultyAccountsPage extends StatefulWidget {
+  const OfficeFacultyAccountsPage({super.key});
+
+  @override
+  State<OfficeFacultyAccountsPage> createState() =>
+      _OfficeFacultyAccountsPageState();
+}
+
+class _OfficeFacultyAccountsPageState extends State<OfficeFacultyAccountsPage> {
+  final List<_AdminUserEntry> _staff = [];
+  final List<_AdminUserEntry> _faculty = [];
+  final _staffFormKey = GlobalKey<FormState>();
+  final _facultyFormKey = GlobalKey<FormState>();
+  final _staffNameCtrl = TextEditingController();
+  final _staffEmailCtrl = TextEditingController();
+  final _staffPasswordCtrl = TextEditingController();
+  final _facultyNameCtrl = TextEditingController();
+  final _facultyEmailCtrl = TextEditingController();
+  final _facultyPasswordCtrl = TextEditingController();
+  bool _loading = false;
+  bool _creatingStaff = false;
+  bool _creatingFaculty = false;
+  bool _showStaffCreate = false;
+  bool _showFacultyCreate = false;
+  String? _error;
+  String? _staffFormError;
+  String? _facultyFormError;
+  bool _requestedInitialLoad = false;
+
+  @override
+  void dispose() {
+    _staffNameCtrl.dispose();
+    _staffEmailCtrl.dispose();
+    _staffPasswordCtrl.dispose();
+    _facultyNameCtrl.dispose();
+    _facultyEmailCtrl.dispose();
+    _facultyPasswordCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = AuthScope.of(context);
+    if (auth.role == 'office' && !_requestedInitialLoad) {
+      _requestedInitialLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load();
+      });
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final users = await _loadAdminUsers(context);
+      if (!mounted) return;
+      setState(() {
+        _staff
+          ..clear()
+          ..addAll(users.where((user) => user.role == 'office'));
+        _faculty
+          ..clear()
+          ..addAll(users.where((user) => user.role == 'faculty'));
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _submitCreateStaff() async {
+    if (!(_staffFormKey.currentState?.validate() ?? false)) return;
+    setState(() {
+      _creatingStaff = true;
+      _staffFormError = null;
+    });
+    try {
+      final created = await _createOfficeStaffAccountRequest(
+        context,
+        fullName: _staffNameCtrl.text.trim(),
+        email: _staffEmailCtrl.text.trim(),
+        password: _staffPasswordCtrl.text,
+      );
+      if (!mounted) return;
+      _staffNameCtrl.clear();
+      _staffEmailCtrl.clear();
+      _staffPasswordCtrl.clear();
+      setState(() => _showStaffCreate = false);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Office staff login created for ${created.email}. '
+            'They will open this office workspace on sign-in.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _staffFormError = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _creatingStaff = false);
+    }
+  }
+
+  Future<void> _submitCreateFaculty() async {
+    if (!(_facultyFormKey.currentState?.validate() ?? false)) return;
+    setState(() {
+      _creatingFaculty = true;
+      _facultyFormError = null;
+    });
+    try {
+      final created = await _createFacultyAccountRequest(
+        context,
+        fullName: _facultyNameCtrl.text.trim(),
+        email: _facultyEmailCtrl.text.trim(),
+        password: _facultyPasswordCtrl.text,
+      );
+      if (!mounted) return;
+      _facultyNameCtrl.clear();
+      _facultyEmailCtrl.clear();
+      _facultyPasswordCtrl.clear();
+      setState(() => _showFacultyCreate = false);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Faculty login created for ${created.email}. Share the temporary password securely.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _facultyFormError = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _creatingFaculty = false);
+    }
+  }
+
+  String _initials(String name) {
+    final parts =
+        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return 'S';
+    if (parts.length == 1) {
+      return parts.first.substring(0, parts.first.length >= 2 ? 2 : 1).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  Widget _accountCard({
+    required String title,
+    required String subtitle,
+    required String addLabel,
+    required bool showCreate,
+    required VoidCallback onToggleCreate,
+    required Widget? createForm,
+    required List<_AdminUserEntry> users,
+    required String emptyTitle,
+    required String emptyBody,
+    required String roleBadge,
+    required String currentUserEmail,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: DesignTokens.ink,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 17,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: DesignTokens.muted.withValues(alpha: 0.95),
+                        fontSize: 13,
+                        height: 1.35,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ElevatedButton(
+                onPressed: _loading ? null : onToggleCreate,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: DesignTokens.maroon,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+                child: Text(showCreate ? 'Close form' : addLabel),
+              ),
+            ],
+          ),
+          if (showCreate && createForm != null) ...[
+            const SizedBox(height: 18),
+            createForm,
+          ],
+          const SizedBox(height: 18),
+          if (!_loading && users.isEmpty && !showCreate)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 36),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFCFCFD),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: DesignTokens.border),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    emptyTitle,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                      color: DesignTokens.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    emptyBody,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      height: 1.4,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: onToggleCreate,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: DesignTokens.maroon,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: Text(addLabel),
+                  ),
+                ],
+              ),
+            )
+          else if (users.isNotEmpty)
+            ...users.map((user) {
+              final isYou =
+                  user.email.trim().toLowerCase() == currentUserEmail;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: DesignTokens.border),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor:
+                          DesignTokens.maroon.withValues(alpha: 0.12),
+                      child: Text(
+                        _initials(user.fullName),
+                        style: const TextStyle(
+                          color: DesignTokens.maroon,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.fullName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: DesignTokens.ink,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            user.email,
+                            style: const TextStyle(
+                              color: DesignTokens.muted,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isYou) ...[
+                      Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: DesignTokens.maroon.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: DesignTokens.maroon.withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: const Text(
+                          'You',
+                          style: TextStyle(
+                            color: DesignTokens.maroon,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: DesignTokens.border),
+                      ),
+                      child: Text(
+                        roleBadge,
+                        style: const TextStyle(
+                          color: DesignTokens.muted,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _createForm({
+    required GlobalKey<FormState> formKey,
+    required String title,
+    required TextEditingController nameCtrl,
+    required TextEditingController emailCtrl,
+    required TextEditingController passwordCtrl,
+    required String? formError,
+    required bool creating,
+    required VoidCallback onSubmit,
+    required String submitLabel,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Form(
+        key: formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Full name',
+                border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              validator: (value) => (value == null || value.trim().isEmpty)
+                  ? 'Enter a name.'
+                  : null,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: emailCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              validator: (value) {
+                final text = value?.trim() ?? '';
+                if (text.isEmpty) return 'Enter an email.';
+                if (!text.contains('@')) return 'Enter a valid email.';
+                return null;
+              },
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: passwordCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Temporary password',
+                helperText:
+                    'At least 10 characters, with a letter and a number.',
+                border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              validator: (value) {
+                final text = value ?? '';
+                if (text.length < 10) return 'Use at least 10 characters.';
+                if (!RegExp(r'[A-Za-z]').hasMatch(text) ||
+                    !RegExp(r'\d').hasMatch(text)) {
+                  return 'Include a letter and a number.';
+                }
+                return null;
+              },
+            ),
+            if (formError != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                formError,
+                style: const TextStyle(
+                  color: Color(0xFFB91C1C),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton(
+                onPressed: creating ? null : onSubmit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: DesignTokens.maroon,
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(creating ? 'CreatingΓÇª' : submitLabel),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = AuthScope.of(context);
+    final officeName = auth.currentUser?.officeName ?? 'your office';
+    final currentEmail =
+        (auth.currentUser?.email ?? '').trim().toLowerCase();
+    return OfficeScaffold(
+      current: StudentNavItem.officeFaculty,
+      title: 'Account',
+      description:
+          'Monitor and manage office staff and faculty logins for $officeName.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 3),
+          if (_error != null) _AdminNotice(message: _error!),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _loading ? null : _load,
+              child: const Text('Refresh'),
+            ),
+          ),
+          _accountCard(
+            title:
+                '${_staff.length} office staff login${_staff.length == 1 ? '' : 's'}',
+            subtitle:
+                'Staff sign in and go straight to the $officeName office workspace (tickets, KB, Add to KB).',
+            addLabel: 'Add staff',
+            showCreate: _showStaffCreate,
+            onToggleCreate: () => setState(() {
+              _showStaffCreate = !_showStaffCreate;
+              _staffFormError = null;
+              if (_showStaffCreate) _showFacultyCreate = false;
+            }),
+            createForm: _createForm(
+              formKey: _staffFormKey,
+              title: 'New office staff login',
+              nameCtrl: _staffNameCtrl,
+              emailCtrl: _staffEmailCtrl,
+              passwordCtrl: _staffPasswordCtrl,
+              formError: _staffFormError,
+              creating: _creatingStaff,
+              onSubmit: _submitCreateStaff,
+              submitLabel: 'Create staff login',
+            ),
+            users: _staff,
+            emptyTitle: 'No other staff yet',
+            emptyBody:
+                'Create a staff login so another OSA/office worker can manage assigned tickets without sharing this account.',
+            roleBadge: 'Office staff',
+            currentUserEmail: currentEmail,
+          ),
+          const SizedBox(height: 16),
+          _accountCard(
+            title:
+                '${_faculty.length} faculty login${_faculty.length == 1 ? '' : 's'}',
+            subtitle:
+                'Faculty accounts can sign in and use faculty Knowledge Base tools. They do not open the office ticket console.',
+            addLabel: 'Add faculty',
+            showCreate: _showFacultyCreate,
+            onToggleCreate: () => setState(() {
+              _showFacultyCreate = !_showFacultyCreate;
+              _facultyFormError = null;
+              if (_showFacultyCreate) _showStaffCreate = false;
+            }),
+            createForm: _createForm(
+              formKey: _facultyFormKey,
+              title: 'New faculty login',
+              nameCtrl: _facultyNameCtrl,
+              emailCtrl: _facultyEmailCtrl,
+              passwordCtrl: _facultyPasswordCtrl,
+              formError: _facultyFormError,
+              creating: _creatingFaculty,
+              onSubmit: _submitCreateFaculty,
+              submitLabel: 'Create faculty login',
+            ),
+            users: _faculty,
+            emptyTitle: 'No faculty accounts yet',
+            emptyBody:
+                'Create a login so faculty can access campus support tools for your office.',
+            roleBadge: 'Faculty',
+            currentUserEmail: currentEmail,
+          ),
         ],
       ),
     );
@@ -2943,14 +3521,14 @@ class _AdminFilterDropdown extends StatelessWidget {
   final String label;
   final String value;
   final List<String> values;
-  final IconData icon;
+  final IconData? icon;
   final ValueChanged<String> onChanged;
 
   const _AdminFilterDropdown({
     required this.label,
     required this.value,
     required this.values,
-    required this.icon,
+    this.icon,
     required this.onChanged,
   });
 
@@ -4078,33 +4656,43 @@ class _AdminPlaceholderPanel extends StatelessWidget {
 }
 
 class _AdminNotice extends StatelessWidget {
-  final IconData icon;
+  final IconData? icon;
   final String message;
 
-  const _AdminNotice({required this.icon, required this.message});
+  const _AdminNotice({this.icon, required this.message});
 
   @override
   Widget build(BuildContext context) {
+    final leading = icon;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: StudentPanel(
         shadow: false,
-        child: Row(
-          children: [
-            Icon(icon, color: DesignTokens.maroon),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
+        child: leading == null
+            ? Text(
                 message,
                 style: const TextStyle(
                   color: DesignTokens.muted,
                   height: 1.35,
                   fontWeight: FontWeight.w700,
                 ),
+              )
+            : Row(
+                children: [
+                  Icon(leading, color: DesignTokens.maroon),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      message,
+                      style: const TextStyle(
+                        color: DesignTokens.muted,
+                        height: 1.35,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -4128,6 +4716,7 @@ class _AdminTicketMessage {
   final String senderName;
   final String message;
   final DateTime createdAt;
+  final bool isInternal;
 
   const _AdminTicketMessage({
     required this.id,
@@ -4137,6 +4726,7 @@ class _AdminTicketMessage {
     required this.senderName,
     required this.message,
     required this.createdAt,
+    this.isInternal = false,
   });
 
   factory _AdminTicketMessage.fromJson(Map<String, dynamic> json) {
@@ -4148,6 +4738,7 @@ class _AdminTicketMessage {
       senderName: (json['sender_name'] ?? 'Office').toString(),
       message: (json['message'] ?? '').toString(),
       createdAt: _adminParseDate(json['created_at']),
+      isInternal: json['is_internal'] == true,
     );
   }
 }
@@ -4170,6 +4761,7 @@ class _AdminTicketEntry {
   final double? confidenceScore;
   final bool sourceFromChatbot;
   final List<_AdminTicketMessage> messages;
+  final List<_AdminTicketAttachment> attachments;
   final String? kbArticleId;
   final String kbConversionStatus;
 
@@ -4191,6 +4783,7 @@ class _AdminTicketEntry {
     required this.confidenceScore,
     required this.sourceFromChatbot,
     required this.messages,
+    this.attachments = const [],
     this.kbArticleId,
     this.kbConversionStatus = 'none',
   });
@@ -4198,6 +4791,9 @@ class _AdminTicketEntry {
   factory _AdminTicketEntry.fromJson(Map<String, dynamic> json) {
     final rawMessages =
         json['messages'] is List ? json['messages'] as List : const <dynamic>[];
+    final rawAttachments = json['attachments'] is List
+        ? json['attachments'] as List
+        : const <dynamic>[];
     return _AdminTicketEntry(
       id: (json['ticket_id'] ?? json['id'] ?? '').toString(),
       userId: (json['user_id'] ?? '').toString(),
@@ -4220,6 +4816,11 @@ class _AdminTicketEntry {
           .whereType<Map>()
           .map((item) =>
               _AdminTicketMessage.fromJson(Map<String, dynamic>.from(item)))
+          .toList(),
+      attachments: rawAttachments
+          .whereType<Map>()
+          .map((item) =>
+              _AdminTicketAttachment.fromJson(Map<String, dynamic>.from(item)))
           .toList(),
       kbArticleId: _nullableAdminString(json['kb_article_id']),
       kbConversionStatus:
@@ -4250,6 +4851,40 @@ class _AdminTicketEntry {
         officeFilter == 'All' || assignedOffice == officeFilter;
     return matchesQuery && matchesStatus && matchesPriority && matchesOffice;
   }
+}
+
+class _AdminTicketAttachment {
+  final String id;
+  final String ticketId;
+  final String originalFilename;
+  final String contentType;
+  final int sizeBytes;
+  final String downloadUrl;
+  final DateTime createdAt;
+
+  const _AdminTicketAttachment({
+    required this.id,
+    required this.ticketId,
+    required this.originalFilename,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.downloadUrl,
+    required this.createdAt,
+  });
+
+  factory _AdminTicketAttachment.fromJson(Map<String, dynamic> json) {
+    return _AdminTicketAttachment(
+      id: (json['id'] ?? '').toString(),
+      ticketId: (json['ticket_id'] ?? '').toString(),
+      originalFilename: (json['original_filename'] ?? 'file').toString(),
+      contentType: (json['content_type'] ?? '').toString(),
+      sizeBytes: int.tryParse((json['size_bytes'] ?? '0').toString()) ?? 0,
+      downloadUrl: (json['download_url'] ?? '').toString(),
+      createdAt: _adminParseDate(json['created_at']),
+    );
+  }
+
+  bool get isImage => contentType.toLowerCase().startsWith('image/');
 }
 
 class _TicketStats {
@@ -4417,6 +5052,32 @@ Future<List<_AdminOfficeEntry>> _loadAdminOffices(BuildContext context) async {
       .whereType<Map>()
       .map((item) => _AdminOfficeEntry.fromJson(Map<String, dynamic>.from(item)))
       .toList();
+}
+
+Future<_AdminUserEntry> _createOfficeStaffAccountRequest(
+  BuildContext context, {
+  required String fullName,
+  required String email,
+  required String password,
+}) async {
+  final result = await ApiClient.send(
+    method: 'POST',
+    url: '${AppConfig.resolvedApiBase}/auth/office-accounts',
+    headers: {...AuthScope.of(context).ticketHeaders()},
+    jsonBody: {
+      'full_name': fullName,
+      'email': email,
+      'password': password,
+    },
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(
+      _extractError(data, 'Could not create office staff login.'),
+    );
+  }
+  return _AdminUserEntry.fromJson(data);
 }
 
 Future<_AdminUserEntry> _createOfficeAccountRequest(
@@ -4645,11 +5306,11 @@ int _readInt(Object? value) {
 
 InputDecoration _adminInputDecoration({
   required String hintText,
-  required IconData icon,
+  IconData? icon,
 }) {
   return InputDecoration(
     hintText: hintText,
-    prefixIcon: Icon(icon, size: 20),
+    prefixIcon: icon == null ? null : Icon(icon, size: 20),
     filled: true,
     fillColor: Colors.white,
     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),

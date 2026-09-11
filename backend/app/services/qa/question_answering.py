@@ -616,8 +616,10 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
         return cleaned
 
     # Explicit / short topic-setting turns must not inherit the prior topic.
+    # Expand short taxonomy labels (e.g. TOR) to their canonical service phrase
+    # so retrieval targets the KB service, not an unrelated acronym collision.
     if _is_topic_setting_turn(cleaned):
-        return cleaned
+        return _canonical_service_retrieval_phrase(cleaned) or cleaned
 
     last_user, last_assistant = _last_history_turns(history)
     if not last_user and not last_assistant:
@@ -675,7 +677,8 @@ def resolve_turn_active_topic(question: str, history: list[Any] | None) -> str:
             or len(_content_tokens(cleaned)) >= 2
             or _is_known_service_label(cleaned)
         ):
-            return cleaned[:240]
+            # Prefer canonical taxonomy phrasing for grounding/identity matching.
+            return (_canonical_service_retrieval_phrase(cleaned) or cleaned)[:240]
     return resolve_active_topic(history, fallback_user=cleaned)
 
 
@@ -698,7 +701,8 @@ def resolve_active_topic(history: list[Any] | None, *, fallback_user: str = "") 
             or len(tokens) >= 2
             or (len(tokens) == 1 and _is_known_service_label(content))
         ):
-            return content.strip()[:240]
+            canonical = _canonical_service_retrieval_phrase(content)
+            return (canonical or content.strip())[:240]
     return (fallback_user or "").strip()[:240]
 
 
@@ -825,6 +829,43 @@ def _is_known_service_label(text: str) -> bool:
     if " " not in normalized and normalized in singles:
         return True
     return False
+
+
+def _canonical_service_retrieval_phrase(text: str) -> str | None:
+    """Map a short/acronym topic label to its taxonomy subcategory retrieval phrase.
+
+    Derived only from knowledge-base taxonomy metadata (subcategory names +
+    keywords). Exact keyword/name matches win so labels like ``TOR`` resolve to
+    Transcript of Records rather than unrelated ``Terms of Reference`` hits.
+    """
+    residual = _strip_topic_setting_wrapper(text)
+    normalized = re.sub(r"\s+", " ", residual.casefold()).strip(" ?.!,;:\"'")
+    normalized = re.sub(r"^(?:the|my|a|an|our)\s+", "", normalized).strip()
+    if not normalized:
+        return None
+
+    exact_keyword: str | None = None
+    exact_name: str | None = None
+    for cat in load_taxonomy():
+        for sub in cat.subcategories:
+            name_cf = sub.name.casefold().strip()
+            if normalized == name_cf:
+                exact_name = sub.name
+            for keyword in sub.keywords:
+                kw_cf = keyword.casefold().strip()
+                if normalized == kw_cf:
+                    # Keep both canonical service title and the matched label.
+                    exact_keyword = f"{sub.name} ({keyword})"
+                    break
+            if exact_keyword:
+                break
+        if exact_keyword:
+            break
+    if exact_keyword:
+        return exact_keyword
+    if exact_name:
+        return exact_name
+    return None
 
 
 _GENERIC_TOPIC_TOKENS = frozenset(

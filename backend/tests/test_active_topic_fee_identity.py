@@ -197,9 +197,29 @@ def test_switch_back_to_good_moral_for_requirements():
 
 def test_topic_setting_turn_does_not_inherit_prior_topic():
     history = _history(("How do I drop a subject?", "Dropping"))
-    assert resolve_followup_question("Now tell me about TOR.", history) == "Now tell me about TOR."
-    assert resolve_followup_question("TOR", history) == "TOR"
+    # Short TOR expands via taxonomy to Transcript of Records (not prior Dropping).
+    resolved = resolve_followup_question("Now tell me about TOR.", history)
+    assert "drop" not in resolved.casefold()
+    assert "transcript" in resolved.casefold() or "tor" in resolved.casefold()
+    assert resolve_followup_question("TOR", history).casefold().startswith("transcript") or "tor" in resolve_followup_question("TOR", history).casefold()
     assert "drop" not in resolve_followup_question("Clearance", history).casefold()
+
+
+def test_tor_short_label_canonicalizes_to_transcript_of_records():
+    from app.services.qa.question_answering import _canonical_service_retrieval_phrase
+
+    phrase = _canonical_service_retrieval_phrase("Now tell me about TOR.")
+    assert phrase is not None
+    assert "transcript" in phrase.casefold()
+    assert "terms of reference" not in phrase.casefold()
+    active = resolve_active_topic(
+        _history(
+            ("How do I drop a subject?", "Dropping"),
+            ("Now tell me about TOR.", "About TOR"),
+        )
+    )
+    assert "transcript" in active.casefold()
+    assert "drop" not in active.casefold()
 
 
 @pytest.mark.parametrize(

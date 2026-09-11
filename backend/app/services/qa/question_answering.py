@@ -1667,7 +1667,9 @@ def _title_topic_overlap(title: str, topic_tokens: set[str]) -> int:
     title_n = _normalize(title)
     if not title_n or not topic_tokens:
         return 0
-    return sum(1 for token in topic_tokens if token in title_n)
+    # Whole-token match only — avoid "certificate" ⊂ "certifications".
+    title_words = set(re.findall(r"[a-z0-9]+", title_n))
+    return sum(1 for token in topic_tokens if token in title_words)
 
 
 def _recover_factual_charter_answer(
@@ -1746,7 +1748,8 @@ def _recover_factual_charter_answer(
                 )
             )
             if topic_tokens and _title_topic_overlap(title, topic_tokens) == 0:
-                if not any(token in fee_blob for token in topic_tokens):
+                fee_words = set(re.findall(r"[a-z0-9]+", fee_blob))
+                if not any(token in fee_words for token in topic_tokens):
                     continue
             raw_fee = (
                 _meta_text(metadata, "total_fees")

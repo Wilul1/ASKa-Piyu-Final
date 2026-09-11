@@ -1718,7 +1718,10 @@ def _fee_service_boost(
                 "long", "take", "please", "tell",
             }
         }
-        if topic_tokens and not any(token in normalized_title_path for token in topic_tokens):
+        if topic_tokens and not any(
+            token in set(re.findall(r"[a-z0-9]+", normalized_title_path))
+            for token in topic_tokens
+        ):
             return boost
         boost += 0.35
         reasons.append("boost_chunk_with_total_fees")
@@ -1736,7 +1739,10 @@ def _fee_service_boost(
                 "long", "take", "please", "tell",
             }
         }
-        if topic_tokens and not any(token in normalized_title_path for token in topic_tokens):
+        if topic_tokens and not any(
+            token in set(re.findall(r"[a-z0-9]+", normalized_title_path))
+            for token in topic_tokens
+        ):
             return boost
         boost += 0.2
         reasons.append("boost_charter_fee_metadata")

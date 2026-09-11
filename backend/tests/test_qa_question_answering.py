@@ -2081,6 +2081,47 @@ def test_should_prefer_recovered_factual_does_not_force_override_when_sources_la
     )
 
 
+def test_fee_recovery_does_not_borrow_tor_fees_via_certificate_substring():
+    """Whole-token overlap only — 'certificate' must not match 'Certifications'."""
+    from app.services.chroma_store import RetrievedChunk
+    from app.services.qa.question_answering import _recover_factual_charter_answer
+
+    tor = RetrievedChunk(
+        document_id="doc-1",
+        title="Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV",
+        source_filename="charter.pdf",
+        chunk_index=0,
+        text="Fees Undergraduate: P75.00/page",
+        relevance_score=0.99,
+        metadata={
+            "source_section": (
+                "Issuance of Transcript of Records/Transfer Credentials/"
+                "Certifications/CAV/Authenticated Documents"
+            ),
+            "total_fees": "Undergraduate: P75.00/page; Second copy of diploma: P100.00",
+            "document_type": "citizen_charter_service",
+        },
+    )
+    good_moral = RetrievedChunk(
+        document_id="doc-1",
+        title="Issuance of Good Moral Certificate (Undergraduate)",
+        source_filename="charter.pdf",
+        chunk_index=1,
+        text="Issuance of Good Moral Certificate. No fee listed.",
+        relevance_score=0.6,
+        metadata={
+            "source_section": "Issuance of Good Moral Certificate (Undergraduate)",
+            "document_type": "citizen_charter_service",
+        },
+    )
+    recovered = _recover_factual_charter_answer(
+        "How much does it cost? regarding How do I get a Good Moral Certificate?",
+        [tor, good_moral],
+        sources=[{"title": "Citizen Charter", "path": "charter.pdf"}],
+    )
+    assert recovered is None
+
+
 def test_fee_usable_rejects_none_placeholder_values():
     from app.services.qa.question_answering import _fee_usable_for_question
 
@@ -2100,3 +2141,4 @@ def test_fee_usable_rejects_none_placeholder_values():
         )
         is None
     )
+

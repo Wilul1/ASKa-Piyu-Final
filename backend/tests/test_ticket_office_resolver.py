@@ -104,6 +104,7 @@ def test_portal_login_triage_routes_to_icts_not_accounting():
 def test_fee_refund_still_routes_to_accounting_unit():
     session = _session_with_offices(
         "Accounting Unit",
+        "Cashier Unit",
         "Information and Communications Technology Services (ICTS)",
         "Office of Student Affairs (OSA)",
         "Registrar's Office",
@@ -116,5 +117,67 @@ def test_fee_refund_still_routes_to_accounting_unit():
         )
         assert result["assigned_office"] == "Accounting Unit"
         assert result["priority"] != "High"
+    finally:
+        session.close()
+
+
+def test_payment_posting_routes_to_cashier_or_finance():
+    session = _session_with_offices(
+        "Accounting Unit",
+        "Cashier Unit",
+        "Information and Communications Technology Services (ICTS)",
+        "Office of Student Affairs (OSA)",
+    )
+    try:
+        result = triage_ticket(
+            "My tuition payment was posted incorrectly",
+            "OR number posted to the wrong assessment; billing needs correction.",
+            session=session,
+        )
+        office = result["assigned_office"]
+        assert "OSA" not in office and "Student Affairs" not in office, result
+        assert "Cashier" in office or "Accounting" in office, result
+    finally:
+        session.close()
+
+
+def test_miscellaneous_billing_routes_to_finance_not_osa():
+    """BUG-R3: generic fee/billing concerns must not fall to OSA."""
+    from app.services.knowledge_taxonomy import load_taxonomy
+
+    load_taxonomy.cache_clear()
+    session = _session_with_offices(
+        "Accounting Unit",
+        "Cashier Unit",
+        "Information and Communications Technology Services (ICTS)",
+        "Office of Student Affairs (OSA)",
+    )
+    try:
+        result = triage_ticket(
+            "ASKA-REGRESSION I have a question about miscellaneous fee billing",
+            "Fee/billing concern about an unexpected miscellaneous charge on my statement of account.",
+            session=session,
+        )
+        office = result["assigned_office"]
+        assert "OSA" not in office and "Student Affairs" not in office, result
+        assert "Cashier" in office or "Accounting" in office, result
+    finally:
+        session.close()
+
+
+def test_student_activity_still_routes_to_osa():
+    session = _session_with_offices(
+        "Accounting Unit",
+        "Cashier Unit",
+        "Information and Communications Technology Services (ICTS)",
+        "Office of Student Affairs (OSA)",
+    )
+    try:
+        result = triage_ticket(
+            "I want to join a student organization campus activity",
+            "Looking for accredited student organization activity guidelines this semester.",
+            session=session,
+        )
+        assert "Student Affairs" in result["assigned_office"] or "OSA" in result["assigned_office"]
     finally:
         session.close()

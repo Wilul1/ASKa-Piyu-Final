@@ -285,94 +285,107 @@ def _format_office_or_detail_answer(
     sources: list[dict[str, Any]] | None,
 ) -> str:
     """Short factual answer from metadata/text when Groq is unavailable."""
+    from app.services.qa.question_answering import (
+        _fee_answer_title,
+        _fee_topic_tokens,
+        _fee_usable_for_question,
+        _service_matches_active_topic,
+    )
+
     normalized = re.sub(r"\s+", " ", (question or "").casefold()).strip()
+    topic_tokens = _fee_topic_tokens(normalized)
+    asks_fee = bool(re.search(r"\b(?:how much|fee|fees|cost)\b", normalized))
+    if asks_fee and not topic_tokens:
+        return ""
     ranked = sorted(
         chunks,
         key=lambda chunk: _office_detail_rank(chunk, normalized),
     )
-    chunk = ranked[0]
-    metadata = chunk.metadata or {}
-    office = str(
-        metadata.get("office")
-        or metadata.get("responsible_office")
-        or metadata.get("office_or_division")
-        or ""
-    ).strip()
-    if not office:
-        match = re.search(
-            r"(?im)^(?:Office\s*/\s*Division|Office)\s*[:\-]?\s*(.+)$",
-            chunk.text or "",
-        )
-        if match:
-            office = match.group(1).strip()
-    title = str(
-        metadata.get("source_section")
-        or metadata.get("canonical_topic")
-        or metadata.get("title")
-        or chunk.title
-        or "this service"
-    ).strip()
-    source_label = _handbook_source_label(chunk, sources)
-
-    asks_fee = bool(re.search(r"\b(?:how much|fee|fees|cost)\b", normalized))
-    asks_office = bool(
-        re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized)
-    )
-
-    if re.search(r"\b(?:who may|who can avail|who can)\b", normalized):
-        who = str(metadata.get("who_may_avail") or "").strip()
-        if not who:
+    for chunk in ranked:
+        metadata = chunk.metadata or {}
+        office = str(
+            metadata.get("office")
+            or metadata.get("responsible_office")
+            or metadata.get("office_or_division")
+            or ""
+        ).strip()
+        if not office:
             match = re.search(
-                r"(?im)^(?:Who May Avail(?: of the Service)?|Clientele)\s*[:\-]?\s*(.+)$",
+                r"(?im)^(?:Office\s*/\s*Division|Office)\s*[:\-]?\s*(.+)$",
                 chunk.text or "",
             )
             if match:
-                who = match.group(1).strip()
-        if who:
-            return f"{who} may avail of {title}, according to the {source_label}."
-    if re.search(r"\b(?:how long|processing time)\b", normalized):
-        time_value = str(metadata.get("total_processing_time") or "").strip()
-        if not time_value:
-            match = re.search(r"(?im)^Total Processing Time\s*[:\-]?\s*(.+)$", chunk.text or "")
-            if match:
-                time_value = match.group(1).strip()
-        if time_value:
-            return f"The total processing time for {title} is {time_value} ({source_label})."
+                office = match.group(1).strip()
+        title = str(
+            metadata.get("source_section")
+            or metadata.get("canonical_topic")
+            or metadata.get("title")
+            or chunk.title
+            or "this service"
+        ).strip()
+        if topic_tokens and not _service_matches_active_topic(title, topic_tokens):
+            if asks_fee or re.search(
+                r"\b(?:how long|processing time|what documents|requirements?)\b",
+                normalized,
+            ):
+                continue
+        source_label = _handbook_source_label(chunk, sources)
 
-    fee = ""
-    if asks_fee:
-        raw_fee = str(metadata.get("total_fees") or metadata.get("fees") or "").strip()
-        if not raw_fee:
-            match = re.search(r"(?im)^(?:Fees|Fee|Total Fees)\s*[:\-]?\s*(.+)$", chunk.text or "")
-            if match:
-                raw_fee = match.group(1).strip()
-        from app.services.qa.question_answering import _fee_usable_for_question, _fee_answer_title
-
-        fee = _fee_usable_for_question(raw_fee, title, normalized) or ""
-
-    if asks_fee and asks_office and fee:
-        answer_title = _fee_answer_title(title, fee, normalized)
-        if office:
-            return (
-                f"For {answer_title}, the listed fee is {fee}. "
-                f"The responsible office is {office}, according to the {source_label}."
-            )
-        return f"The listed fee for {answer_title} is {fee} ({source_label})."
-    if asks_fee and fee:
-        answer_title = _fee_answer_title(title, fee, normalized)
-        return f"The listed fee for {answer_title} is {fee} ({source_label})."
-    if asks_office and office and not asks_fee:
-        return (
-            f"The office responsible for {title} is {office}, "
-            f"according to the {source_label}."
+        asks_office = bool(
+            re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized)
         )
-    if re.search(
-        r"\b(?:what documents|what additional|what must|documents? (?:are )?required|"
-        r"requirements? (?:for|from|needed)|what (?:are|is) the (?:requirement|requirements|document|documents))\b",
-        normalized,
-    ):
-        for candidate in ranked:
-            answer = format_requirements_detail_answer(question, candidate, sources)
+
+        if re.search(r"\b(?:who may|who can avail|who can)\b", normalized):
+            who = str(metadata.get("who_may_avail") or "").strip()
+            if not who:
+                match = re.search(
+                    r"(?im)^(?:Who May Avail(?: of the Service)?|Clientele)\s*[:\-]?\s*(.+)$",
+                    chunk.text or "",
+                )
+                if match:
+                    who = match.group(1).strip()
+            if who:
+                return f"{who} may avail of {title}, according to the {source_label}."
+        if re.search(r"\b(?:how long|processing time)\b", normalized):
+            time_value = str(metadata.get("total_processing_time") or "").strip()
+            if not time_value:
+                match = re.search(r"(?im)^Total Processing Time\s*[:\-]?\s*(.+)$", chunk.text or "")
+                if match:
+                    time_value = match.group(1).strip()
+            if time_value:
+                return f"The total processing time for {title} is {time_value} ({source_label})."
+
+        fee = ""
+        if asks_fee:
+            raw_fee = str(metadata.get("total_fees") or metadata.get("fees") or "").strip()
+            if not raw_fee:
+                match = re.search(r"(?im)^(?:Fees|Fee|Total Fees)\s*[:\-]?\s*(.+)$", chunk.text or "")
+                if match:
+                    raw_fee = match.group(1).strip()
+            fee = _fee_usable_for_question(raw_fee, title, normalized) or ""
+
+        if asks_fee and asks_office and fee:
+            answer_title = _fee_answer_title(title, fee, normalized)
+            if office:
+                return (
+                    f"For {answer_title}, the listed fee is {fee}. "
+                    f"The responsible office is {office}, according to the {source_label}."
+                )
+            return f"The listed fee for {answer_title} is {fee} ({source_label})."
+        if asks_fee and fee:
+            answer_title = _fee_answer_title(title, fee, normalized)
+            return f"The listed fee for {answer_title} is {fee} ({source_label})."
+        if asks_office and office and not asks_fee:
+            return (
+                f"The office responsible for {title} is {office}, "
+                f"according to the {source_label}."
+            )
+        if re.search(
+            r"\b(?:what documents|what additional|what must|documents? (?:are )?required|"
+            r"requirements? (?:for|from|needed)|what (?:are|is) the (?:requirement|requirements|document|documents))\b",
+            normalized,
+        ):
+            answer = format_requirements_detail_answer(question, chunk, sources)
             if answer:
                 return answer
     # Do not invent an office answer for unrelated factual questions.

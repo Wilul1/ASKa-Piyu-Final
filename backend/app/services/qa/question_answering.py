@@ -593,11 +593,12 @@ def answer_qa_question(
 
 
 def resolve_followup_question(question: str, history: list[Any] | None) -> str:
-    """Expand follow-ups with prior topic for better retrieval (any subject).
+    """Expand follow-ups with the *active* conversational topic.
 
-    Walks chat history to the latest *substantive* user topic (skipping slot
-    follow-ups like "how much does it cost?") and, when helpful, topic anchors
-    from recent assistant answers so pronouns resolve without hardcoding services.
+    Active topic = the latest substantive topic-setting user turn (explicit
+    service questions and topic switches), skipping slot follow-ups such as
+    "how much does it cost?". Older topics before a switch are ignored so
+    Topic A → Topic B → follow-up resolves against B only.
     """
     cleaned = (question or "").strip()
     if not cleaned or not history:
@@ -633,7 +634,7 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     has_pronoun = unanchored_pronoun or demonstrative_that
     content_tokens = _content_tokens(normalized)
     # Standalone if the question already names a concrete topic (2+ content words)
-    # and has no follow-up cues.
+    # and has no follow-up cues — this is an explicit topic switch / new topic.
     standalone = (
         len(content_tokens) >= 2
         and not followup_prefix
@@ -644,10 +645,27 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     if not (followup_prefix or has_pronoun or short_followup or _is_slot_followup_question(cleaned)):
         return cleaned
 
-    topic = _topic_anchor_from_history(history, last_user, last_assistant)
+    topic = resolve_active_topic(history, fallback_user=last_user)
     if not topic:
         return cleaned
     return f"{cleaned}\n\n(Prior question context: {topic})"
+
+
+def resolve_active_topic(history: list[Any] | None, *, fallback_user: str = "") -> str:
+    """Return the active conversational topic/service identity from history.
+
+    Walks user turns newest-first and returns the latest *substantive*
+    topic-setting message. Slot follow-ups are skipped. An explicit topic
+    switch ("Now tell me about dropping…") replaces any older topic.
+    """
+    if not history:
+        return (fallback_user or "").strip()[:240]
+    for content in reversed(_history_user_turns(history)):
+        if _is_slot_followup_question(content):
+            continue
+        if len(_content_tokens(content)) >= 2:
+            return content.strip()[:240]
+    return (fallback_user or "").strip()[:240]
 
 
 def _is_slot_followup_question(text: str) -> bool:
@@ -719,12 +737,7 @@ def _history_user_turns(history: list[Any]) -> list[str]:
 
 def _last_substantive_user_topic(history: list[Any], fallback_user: str) -> str:
     """Prefer the latest contentful user question, skipping slot follow-ups."""
-    for content in reversed(_history_user_turns(history)):
-        if _is_slot_followup_question(content):
-            continue
-        if len(_content_tokens(content)) >= 2:
-            return content.strip()[:240]
-    return (fallback_user or "").strip()[:240]
+    return resolve_active_topic(history, fallback_user=fallback_user)
 
 
 def _content_tokens(text: str) -> set[str]:
@@ -735,6 +748,7 @@ def _content_tokens(text: str) -> set[str]:
         "about", "that", "this", "it", "those", "them", "there", "same", "also",
         "and", "or", "my", "me", "i", "you", "your", "please", "tell", "need",
         "want", "office", "handles", "responsible", "process", "service",
+        "now", "regarding",
     }
     return {
         token
@@ -748,35 +762,9 @@ def _topic_anchor_from_history(
     last_user: str,
     last_assistant: str,
 ) -> str:
-    """Build a topic string from prior turns — not tied to one FAQ."""
-    parts: list[str] = []
-    substantive = _last_substantive_user_topic(history, last_user)
-    if substantive:
-        parts.append(substantive)
-    # Prefer phrases from the latest assistant, then older assistants if needed.
-    assistants: list[str] = []
-    if last_assistant:
-        assistants.append(last_assistant)
-    for item in reversed(list(history)):
-        if isinstance(item, dict):
-            role = str(item.get("role") or "").strip().lower()
-            content = str(item.get("content") or "").strip()
-        else:
-            role = str(getattr(item, "role", "") or "").strip().lower()
-            content = str(getattr(item, "content", "") or "").strip()
-        if role == "assistant" and content and content not in assistants:
-            assistants.append(content)
-        if len(assistants) >= 3:
-            break
-    for assistant_text in assistants:
-        extracted = _extract_topic_phrases(assistant_text)
-        for phrase in extracted:
-            if phrase and phrase.casefold() not in " ".join(parts).casefold():
-                parts.append(phrase)
-        if len(parts) >= 3:
-            break
-    joined = " | ".join(parts).strip()
-    return joined[:400]
+    """Active topic only — do not mix older assistant service titles into context."""
+    del last_assistant  # retained for call-site compatibility
+    return resolve_active_topic(history, fallback_user=last_user)
 
 
 def _extract_topic_phrases(assistant_text: str) -> list[str]:
@@ -1667,9 +1655,64 @@ def _title_topic_overlap(title: str, topic_tokens: set[str]) -> int:
     title_n = _normalize(title)
     if not title_n or not topic_tokens:
         return 0
-    # Whole-token match only — avoid "certificate" ⊂ "certifications".
     title_words = set(re.findall(r"[a-z0-9]+", title_n))
-    return sum(1 for token in topic_tokens if token in title_words)
+    return sum(1 for token in topic_tokens if _token_matches_any(token, title_words))
+
+
+def _token_matches_any(token: str, words: set[str]) -> bool:
+    if token in words:
+        return True
+    return any(_inflection_compatible(token, word) for word in words)
+
+
+def _inflection_compatible(left: str, right: str) -> bool:
+    """Match enroll↔enrollment / drop↔dropping without nested-noun false friends.
+
+    Rejects certificate↔certifications (suffix ``ions`` is not a simple
+    inflection of the shorter form).
+    """
+    if left == right:
+        return True
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    if len(shorter) < 4:
+        return False
+    inflections = {
+        "ment", "ments", "ing", "ings", "ed", "er", "ers", "ion", "tions", "ation",
+        "ations", "es", "s",
+    }
+    if longer.startswith(shorter) and longer[len(shorter) :] in inflections:
+        return True
+    # Consonant doubling: drop -> dropping / dropped
+    if longer.startswith(shorter + shorter[-1]) and longer[len(shorter) + 1 :] in {
+        "ing",
+        "ed",
+        "er",
+    }:
+        return True
+    return False
+
+
+def _service_matches_active_topic(service_title: str, topic_tokens: set[str]) -> bool:
+    """True when a charter/service title is identity-compatible with the active topic.
+
+    Fee/time/requirements recovery must use this gate — loose fee-blob token
+    overlap is not enough (that let Enrollment fees answer Good Moral costs).
+    """
+    if not topic_tokens:
+        return False
+    return _title_topic_overlap(service_title, topic_tokens) > 0
+
+
+def _chunk_service_title(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata or {}
+    return (
+        _meta_text(metadata, "source_section")
+        or _meta_text(metadata, "canonical_topic")
+        or _meta_text(metadata, "procedure_title")
+        or _meta_text(metadata, "title")
+        or _display_title(chunk)
+        or ""
+    )
 
 
 def _recover_factual_charter_answer(
@@ -1686,6 +1729,10 @@ def _recover_factual_charter_answer(
         re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized)
     )
     topic_tokens = _fee_topic_tokens(normalized)
+    # Fee answers require an active service identity. Bare "how much does it cost?"
+    # must not invent a random charter fee card.
+    if asks_fee and not topic_tokens:
+        return None
     ranked = sorted(
         chunks,
         key=lambda chunk: _charter_recovery_rank(
@@ -1697,13 +1744,7 @@ def _recover_factual_charter_answer(
     )
     for chunk in ranked:
         metadata = chunk.metadata or {}
-        title = (
-            _meta_text(metadata, "source_section")
-            or _meta_text(metadata, "canonical_topic")
-            or _meta_text(metadata, "title")
-            or _display_title(chunk)
-            or "this service"
-        )
+        title = _chunk_service_title(chunk) or "this service"
         source_label = _source_label(
             sources,
             fallback=_meta_text(metadata, "source_label")
@@ -1712,6 +1753,8 @@ def _recover_factual_charter_answer(
         )
 
         if re.search(r"\b(?:who may|who can avail|who can)\b", normalized):
+            if topic_tokens and not _service_matches_active_topic(title, topic_tokens):
+                continue
             who = _meta_text(metadata, "who_may_avail") or _extract_labeled_line(
                 chunk.text or "",
                 ("Who May Avail", "Who May Avail of the Service", "Clientele"),
@@ -1722,7 +1765,7 @@ def _recover_factual_charter_answer(
                 )
 
         if re.search(r"\b(?:how long|processing time)\b", normalized):
-            if topic_tokens and _title_topic_overlap(title, topic_tokens) == 0:
+            if topic_tokens and not _service_matches_active_topic(title, topic_tokens):
                 continue
             time_value = _meta_text(metadata, "total_processing_time") or _extract_labeled_line(
                 chunk.text or "",
@@ -1734,22 +1777,19 @@ def _recover_factual_charter_answer(
         fee = None
         office = None
         if asks_fee:
-            # Never borrow a fee from an unrelated service when the question
-            # already names (or inherits) a concrete topic. Fee lines may name
-            # the topic even when the card title does not (e.g. diploma fees on
-            # a TOR charter card).
-            fee_blob = _normalize(
-                " ".join(
-                    [
-                        str(metadata.get("total_fees") or ""),
-                        str(metadata.get("fees") or ""),
-                        (chunk.text or "")[:800],
-                    ]
-                )
-            )
-            if topic_tokens and _title_topic_overlap(title, topic_tokens) == 0:
-                fee_words = set(re.findall(r"[a-z0-9]+", fee_blob))
-                if not any(token in fee_words for token in topic_tokens):
+            # Hard identity gate: fee cards from other services are never usable,
+            # even when their fee text happens to share a token with the topic.
+            if not _service_matches_active_topic(title, topic_tokens):
+                # Diploma amounts may live on a TOR/certifications card when the
+                # question explicitly asks about diploma fees.
+                if not (
+                    "diploma" in normalized
+                    and "diploma" in _normalize(
+                        str(metadata.get("total_fees") or metadata.get("fees") or "")
+                        + " "
+                        + (chunk.text or "")[:500]
+                    )
+                ):
                     continue
             raw_fee = (
                 _meta_text(metadata, "total_fees")
@@ -1759,6 +1799,8 @@ def _recover_factual_charter_answer(
             )
             fee = _fee_usable_for_question(raw_fee, title, normalized)
         if asks_office:
+            if topic_tokens and not _service_matches_active_topic(title, topic_tokens):
+                continue
             office = (
                 _meta_text(metadata, "office")
                 or _meta_text(metadata, "responsible_office")
@@ -1787,7 +1829,7 @@ def _recover_factual_charter_answer(
             r"requirements? (?:for|from|needed)|what (?:are|is) the (?:requirement|requirements|document|documents))\b",
             normalized,
         ):
-            if topic_tokens and _title_topic_overlap(title, topic_tokens) == 0:
+            if topic_tokens and not _service_matches_active_topic(title, topic_tokens):
                 continue
             answer = format_requirements_detail_answer(question, chunk, sources)
             if answer:
@@ -1867,8 +1909,9 @@ def _charter_recovery_rank(
         return (2, overlap_rank, fee_priority, score)
 
     # Default: topic overlap first, then fee metadata, then retrieval score.
+    # Incompatible services sort last so identity-gated recovery never prefers them.
     if tokens and _title_topic_overlap(title, tokens) == 0:
-        return (2, overlap_rank, fee_priority, score)
+        return (4, overlap_rank, fee_priority, score)
     return (1, overlap_rank, fee_priority, score)
 
 

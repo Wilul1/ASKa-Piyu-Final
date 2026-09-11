@@ -110,7 +110,7 @@
     },
     {
       "name": "Scholarships & Financial Policies",
-      "keywords": ["scholarship", "scholarships", "financial", "tuition", "fee", "fees", "refund", "financial assistance", "grant"],
+      "keywords": ["scholarship", "scholarships", "financial", "tuition", "fee", "fees", "refund", "financial assistance", "grant", "billing", "payment", "cashier", "accounting"],
       "subcategories": [
         {
           "name": "Scholarships",
@@ -125,7 +125,7 @@
         {
           "name": "Tuition Policies",
           "office": "Cashier",
-          "keywords": ["tuition", "tuition policies", "tuition policy", "tuition fee", "tuition fees", "assessment of fees", "miscellaneous fees", "payment of fees"]
+          "keywords": ["tuition", "tuition policies", "tuition policy", "tuition fee", "tuition fees", "assessment of fees", "miscellaneous fees", "miscellaneous fee", "payment of fees", "billing", "fee billing", "billing concern", "miscellaneous charge", "statement of account", "payment posting", "posted incorrectly", "or number", "assessment charge", "charged twice", "fee concern"]
         }
       ]
     },

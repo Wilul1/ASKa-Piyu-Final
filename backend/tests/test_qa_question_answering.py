@@ -2003,3 +2003,100 @@ def test_greeting_skips_retrieval_and_sources():
     assert result.retrieved_chunks == []
     assert result.confidence == "high"
 
+
+def test_fee_recovery_does_not_borrow_unrelated_library_fee_for_good_moral_cost():
+    """BUG-001: cost follow-ups must not answer with an unrelated fee card."""
+    from app.services.chroma_store import RetrievedChunk
+    from app.services.qa.question_answering import _recover_factual_charter_answer
+
+    library = RetrievedChunk(
+        document_id="doc-1",
+        title="Library Reference Assistance",
+        source_filename="charter.pdf",
+        chunk_index=0,
+        text="Fees: None\nOffice / Division: Library",
+        relevance_score=0.99,
+        metadata={
+            "source_section": "Library Reference Assistance",
+            "total_fees": "None",
+            "office": "Library",
+            "document_type": "citizen_charter_service",
+        },
+    )
+    good_moral = RetrievedChunk(
+        document_id="doc-1",
+        title="Issuance of Good Moral Certificate (Undergraduate)",
+        source_filename="charter.pdf",
+        chunk_index=1,
+        text="Issuance of Good Moral Certificate. Fees are not listed in this section.",
+        relevance_score=0.55,
+        metadata={
+            "source_section": "Issuance of Good Moral Certificate (Undergraduate)",
+            "office": "Office of the Student Affairs and Services",
+            "document_type": "citizen_charter_service",
+        },
+    )
+    question = (
+        "How much does it cost? regarding How do I get a Good Moral Certificate?"
+    )
+    recovered = _recover_factual_charter_answer(
+        question,
+        [library, good_moral],
+        sources=[{"title": "Citizen Charter", "path": "charter.pdf"}],
+    )
+    assert recovered is None
+
+
+def test_prefer_structured_fee_recovery_does_not_override_missing_fee_with_unrelated_service():
+    from app.services.qa.question_answering import _prefer_structured_fee_recovery
+
+    recovered = "The listed fee for Library Reference Assistance is None (Citizen Charter)."
+    llm = (
+        "The available Good Moral Certificate sources do not specify the cost "
+        "or listed fee for this service."
+    )
+    assert (
+        _prefer_structured_fee_recovery(
+            "How much does it cost? regarding How do I get a Good Moral Certificate?",
+            recovered,
+            llm,
+        )
+        is False
+    )
+
+
+def test_should_prefer_recovered_factual_does_not_force_override_when_sources_lack_fee():
+    from app.services.qa.question_answering import _should_prefer_recovered_factual
+
+    llm = (
+        "Based on the retrieved Good Moral Certificate materials, the sources "
+        "do not specify the cost for this service."
+    )
+    assert (
+        _should_prefer_recovered_factual(
+            "How much does it cost? regarding How do I get a Good Moral Certificate?",
+            llm,
+        )
+        is False
+    )
+
+
+def test_fee_usable_rejects_none_placeholder_values():
+    from app.services.qa.question_answering import _fee_usable_for_question
+
+    assert (
+        _fee_usable_for_question(
+            "None",
+            "Library Reference Assistance",
+            "how much does it cost regarding good moral certificate",
+        )
+        is None
+    )
+    assert (
+        _fee_usable_for_question(
+            "N/A",
+            "Library Reference Assistance",
+            "how much does it cost regarding good moral certificate",
+        )
+        is None
+    )

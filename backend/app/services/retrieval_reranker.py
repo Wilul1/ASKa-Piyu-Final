@@ -1704,11 +1704,40 @@ def _fee_service_boost(
             return boost
 
     if asks_fee and total_fees and not (asks_diploma and "diploma" not in _normalize(total_fees) and "diploma" not in normalized_title_path):
+        # When the query already names a service topic (or carries prior-context
+        # tokens), only boost fee cards that overlap that topic — otherwise
+        # generic "how much does it cost?" follow-ups promote unrelated fees.
+        topic_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", normalized_query)
+            if len(token) >= 3
+            and token
+            not in {
+                "how", "much", "does", "the", "cost", "fee", "fees", "for", "and",
+                "what", "about", "prior", "question", "context", "regarding",
+                "long", "take", "please", "tell",
+            }
+        }
+        if topic_tokens and not any(token in normalized_title_path for token in topic_tokens):
+            return boost
         boost += 0.35
         reasons.append("boost_chunk_with_total_fees")
     if asks_fee and is_charter and total_fees and not (
         asks_diploma and "diploma" not in _normalize(total_fees) and "diploma" not in normalized_title_path
     ):
+        topic_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", normalized_query)
+            if len(token) >= 3
+            and token
+            not in {
+                "how", "much", "does", "the", "cost", "fee", "fees", "for", "and",
+                "what", "about", "prior", "question", "context", "regarding",
+                "long", "take", "please", "tell",
+            }
+        }
+        if topic_tokens and not any(token in normalized_title_path for token in topic_tokens):
+            return boost
         boost += 0.2
         reasons.append("boost_charter_fee_metadata")
     return boost

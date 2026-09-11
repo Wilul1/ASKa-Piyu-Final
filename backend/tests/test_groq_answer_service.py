@@ -329,3 +329,87 @@ def test_generate_groq_answer_defaults_to_groq_endpoint_with_no_extra_headers():
     call_args, call_kwargs = mock_client.post.call_args
     assert call_args[0] == "https://api.groq.com/openai/v1/chat/completions"
     assert "X-GitHub-Api-Version" not in call_kwargs["headers"]
+
+
+@pytest.mark.parametrize(
+    ("topic_question", "slot_chain"),
+    (
+        (
+            "How do I get a Good Moral Certificate?",
+            (
+                "What are the requirements?",
+                "Where do I submit them?",
+                "How much does it cost?",
+            ),
+        ),
+        (
+            "How do I request a Transcript of Records?",
+            (
+                "What are the requirements?",
+                "Where do I submit them?",
+                "How much does it cost?",
+            ),
+        ),
+        (
+            "How do I enroll as a continuing student?",
+            (
+                "What are the requirements?",
+                "How long does it take?",
+                "How much does it cost?",
+            ),
+        ),
+    ),
+)
+def test_resolve_followup_keeps_substantive_topic_across_slot_chain(
+    topic_question: str,
+    slot_chain: tuple[str, ...],
+):
+    """Slot follow-ups must keep the original service topic, not the previous slot."""
+    history = [
+        {"role": "user", "content": topic_question},
+        {
+            "role": "assistant",
+            "content": (
+                f"Based on the retrieved context related to {topic_question}, "
+                "here is the process and office handling it."
+            ),
+        },
+    ]
+    topic_tokens = {
+        token
+        for token in topic_question.casefold().replace("?", "").split()
+        if len(token) >= 4 and token not in {"how", "does", "what", "with", "from"}
+    }
+    for slot in slot_chain:
+        resolved = resolve_followup_question(slot, history)
+        assert slot in resolved
+        assert "Prior question context" in resolved
+        blob = resolved.casefold()
+        assert any(token in blob for token in topic_tokens), resolved
+        # Intermediate slot questions must not become the only prior context.
+        assert "where do i submit them" not in blob.split("prior question context:")[-1] or any(
+            token in blob.split("prior question context:")[-1] for token in topic_tokens
+        )
+        history.append({"role": "user", "content": slot})
+        history.append({"role": "assistant", "content": f"Continuing about {topic_question}."})
+
+
+def test_resolve_followup_cost_after_submit_keeps_good_moral_not_submit_phrasing():
+    history = [
+        {"role": "user", "content": "How do I get a Good Moral Certificate?"},
+        {
+            "role": "assistant",
+            "content": (
+                "# How to Get a Good Moral Certificate (Undergraduate)\n\n"
+                "Work through the Office of the Student Affairs and Services."
+            ),
+        },
+        {"role": "user", "content": "What are the requirements?"},
+        {"role": "assistant", "content": "Requirements related to the Good Moral Certificate include ID and clearance."},
+        {"role": "user", "content": "Where do I submit them?"},
+        {"role": "assistant", "content": "Submit Good Moral Certificate documents to the listed office."},
+    ]
+    resolved = resolve_followup_question("How much does it cost?", history)
+    assert "How much does it cost?" in resolved
+    assert "good moral" in resolved.casefold()
+    assert "where do i submit them" not in resolved.casefold().split("prior question context:")[-1]

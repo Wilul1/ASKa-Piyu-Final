@@ -595,9 +595,9 @@ def answer_qa_question(
 def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     """Expand follow-ups with prior topic for better retrieval (any subject).
 
-    Uses the last user question and, when helpful, topic anchors from the last
-    assistant answer so pronouns like "that" / "it" resolve without hardcoding
-    specific services.
+    Walks chat history to the latest *substantive* user topic (skipping slot
+    follow-ups like "how much does it cost?") and, when helpful, topic anchors
+    from recent assistant answers so pronouns resolve without hardcoding services.
     """
     cleaned = (question or "").strip()
     if not cleaned or not history:
@@ -641,13 +641,45 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
         and len(cleaned.split()) > 6
     )
     short_followup = len(cleaned.split()) <= 8 and not standalone
-    if not (followup_prefix or has_pronoun or short_followup):
+    if not (followup_prefix or has_pronoun or short_followup or _is_slot_followup_question(cleaned)):
         return cleaned
 
-    topic = _topic_anchor_from_history(last_user, last_assistant)
+    topic = _topic_anchor_from_history(history, last_user, last_assistant)
     if not topic:
         return cleaned
     return f"{cleaned}\n\n(Prior question context: {topic})"
+
+
+def _is_slot_followup_question(text: str) -> bool:
+    """True for anaphoric slot questions that need a prior substantive topic."""
+    normalized = re.sub(r"\s+", " ", (text or "").strip().casefold())
+    if not normalized:
+        return False
+    if re.match(
+        r"^(?:what about|how about|how much|how long|and the|the fee|the office|"
+        r"which office|what office|who handles|who is responsible|same for|"
+        r"for that|that one|and for|also|what if|and then|then what)\b",
+        normalized,
+    ):
+        return True
+    if re.match(
+        r"^(?:what are the requirements?|where do i submit(?: them| it)?|"
+        r"how long does it take|what does it cost|how much is it|"
+        r"what(?:'s| is) the fee|where can i submit|"
+        r"what documents? (?:do i need|are required)|"
+        r"who (?:handles|processes) (?:it|that|this))\b",
+        normalized,
+    ):
+        return True
+    tokens = _content_tokens(normalized)
+    slot_only = {
+        "much", "cost", "fee", "fees", "long", "submit", "requirement",
+        "requirements", "document", "documents", "office", "handles",
+        "responsible", "take", "need", "required",
+    }
+    if len(normalized.split()) <= 8 and tokens and tokens <= slot_only:
+        return True
+    return False
 
 
 def _last_history_turns(history: list[Any]) -> tuple[str, str]:
@@ -671,6 +703,30 @@ def _last_history_turns(history: list[Any]) -> tuple[str, str]:
     return last_user, last_assistant
 
 
+def _history_user_turns(history: list[Any]) -> list[str]:
+    turns: list[str] = []
+    for item in history:
+        if isinstance(item, dict):
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+        else:
+            role = str(getattr(item, "role", "") or "").strip().lower()
+            content = str(getattr(item, "content", "") or "").strip()
+        if role == "user" and content:
+            turns.append(content)
+    return turns
+
+
+def _last_substantive_user_topic(history: list[Any], fallback_user: str) -> str:
+    """Prefer the latest contentful user question, skipping slot follow-ups."""
+    for content in reversed(_history_user_turns(history)):
+        if _is_slot_followup_question(content):
+            continue
+        if len(_content_tokens(content)) >= 2:
+            return content.strip()[:240]
+    return (fallback_user or "").strip()[:240]
+
+
 def _content_tokens(text: str) -> set[str]:
     stop = {
         "what", "which", "who", "how", "when", "where", "why", "the", "a", "an",
@@ -687,16 +743,38 @@ def _content_tokens(text: str) -> set[str]:
     }
 
 
-def _topic_anchor_from_history(last_user: str, last_assistant: str) -> str:
+def _topic_anchor_from_history(
+    history: list[Any],
+    last_user: str,
+    last_assistant: str,
+) -> str:
     """Build a topic string from prior turns — not tied to one FAQ."""
     parts: list[str] = []
-    if last_user:
-        parts.append(last_user.strip()[:240])
+    substantive = _last_substantive_user_topic(history, last_user)
+    if substantive:
+        parts.append(substantive)
+    # Prefer phrases from the latest assistant, then older assistants if needed.
+    assistants: list[str] = []
     if last_assistant:
-        extracted = _extract_topic_phrases(last_assistant)
+        assistants.append(last_assistant)
+    for item in reversed(list(history)):
+        if isinstance(item, dict):
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+        else:
+            role = str(getattr(item, "role", "") or "").strip().lower()
+            content = str(getattr(item, "content", "") or "").strip()
+        if role == "assistant" and content and content not in assistants:
+            assistants.append(content)
+        if len(assistants) >= 3:
+            break
+    for assistant_text in assistants:
+        extracted = _extract_topic_phrases(assistant_text)
         for phrase in extracted:
             if phrase and phrase.casefold() not in " ".join(parts).casefold():
                 parts.append(phrase)
+        if len(parts) >= 3:
+            break
     joined = " | ".join(parts).strip()
     return joined[:400]
 
@@ -711,17 +789,30 @@ def _extract_topic_phrases(assistant_text: str) -> list[str]:
         r"(?i)may avail of\s+(.+?),",
         r"(?i)(?:fee|processing time)\s+for\s+(.+?)\s+is\s+",
         r"(?i)assistance for\s+(.+?)(?:\.|$)",
+        r"(?i)(?:related to|regarding|about)\s+(?:the\s+)?(.+?)(?:\.|,|$)",
+        r"(?i)#\s*(.+?)$",
+        r"(?i)\*\*(.+?)\*\*",
     )
     for pattern in patterns:
-        match = re.search(pattern, text)
+        match = re.search(pattern, text, flags=re.M)
         if match:
-            phrase = re.sub(r"\s+", " ", match.group(1)).strip(" .:;-")
-            if 3 <= len(phrase) <= 120:
+            phrase = re.sub(r"\s+", " ", match.group(1)).strip(" .:;-#*")
+            if 3 <= len(phrase) <= 120 and not _is_slot_followup_question(phrase):
                 phrases.append(phrase)
+    # Service-style titles (e.g. "Good Moral Certificate", "Transcript of Records").
+    for match in re.finditer(
+        r"\b([A-Z][A-Za-z0-9/'/-]*(?:\s+[A-Z][A-Za-z0-9/'/-]*){1,6})\b",
+        text,
+    ):
+        phrase = re.sub(r"\s+", " ", match.group(1)).strip()
+        if 8 <= len(phrase) <= 90 and not phrase.lower().startswith(
+            ("based on", "according to", "the office", "office of")
+        ):
+            phrases.append(phrase)
     # First short line often carries the service/section title from templates.
-    first_line = re.sub(r"\s+", " ", text.splitlines()[0]).strip()
+    first_line = re.sub(r"\s+", " ", text.splitlines()[0]).strip().lstrip("# ").strip()
     if 8 <= len(first_line) <= 90 and not first_line.lower().startswith(
-        ("sure", "here", "the retrieved", "this may", "overview")
+        ("sure", "here", "the retrieved", "this may", "overview", "based on", "i've", "i have")
     ):
         phrases.append(first_line)
     # Dedupe preserving order.
@@ -1508,11 +1599,8 @@ def _should_prefer_recovered_factual(question: str, answer: str) -> bool:
         normalized_a,
     ):
         return True
-    if asks_fee and re.search(
-        r"\b(?:do not specify|does not specify|not specify the cost|do not contain)\b",
-        normalized_a,
-    ):
-        return True
+    # Do NOT override a grounded "sources do not specify the fee" answer with an
+    # unrelated fee-bearing chunk — recovery must find a topic-matched fee first.
     return False
 
 
@@ -1524,11 +1612,31 @@ def _prefer_structured_fee_recovery(question: str, recovered: str, llm_answer: s
     recovered_n = _normalize(recovered)
     if "listed fee" not in recovered_n:
         return False
+    # Recovered title must overlap the asked topic when the question carries one.
+    recovered_title_match = re.search(
+        r"listed fee for (.+?) is ",
+        recovered_n,
+    )
+    recovered_title = recovered_title_match.group(1) if recovered_title_match else ""
+    topic_tokens = _fee_topic_tokens(normalized_q)
+    if topic_tokens and _title_topic_overlap(recovered_title, topic_tokens) == 0:
+        return False
     llm_n = _normalize(llm_answer or "")
     if not llm_n.strip():
         return True
-    if re.search(r"\b(?:fees?:\s*none|fee:\s*none|not specified|do not specify|does not specify)\b", llm_n):
-        return True
+    # If the model already says the sources lack a fee, keep that unless recovery
+    # is clearly about the same topic *and* provides a concrete amount.
+    if re.search(
+        r"\b(?:fees?:\s*none|fee:\s*none|not specified|do not specify|does not specify|"
+        r"do not contain|does not contain|no fee|not provide the fee)\b",
+        llm_n,
+    ):
+        if not re.search(r"(?i)\bp\s*\d|\d+\.\d{2}", recovered):
+            return False
+        if topic_tokens and _title_topic_overlap(recovered_title, topic_tokens) == 0:
+            return False
+        # Topic-matched concrete fee may still replace a vague "not specified".
+        return _title_topic_overlap(recovered_title, topic_tokens) > 0 if topic_tokens else False
     if re.search(
         r"\b(?:assessment of fees|certified true copy|comprehensive examination)\b",
         llm_n,
@@ -1544,6 +1652,24 @@ def _prefer_structured_fee_recovery(question: str, recovered: str, llm_answer: s
     return False
 
 
+def _fee_topic_tokens(normalized_question: str) -> set[str]:
+    """Content tokens that identify the service being asked about (not fee slots)."""
+    stop = {
+        "much", "cost", "fee", "fees", "long", "submit", "requirement", "requirements",
+        "document", "documents", "regarding", "prior", "question", "context", "listed",
+        "processing", "time", "take", "need", "required", "office", "handles",
+        "responsible", "avail", "service", "services",
+    }
+    return {token for token in _content_tokens(normalized_question) if token not in stop}
+
+
+def _title_topic_overlap(title: str, topic_tokens: set[str]) -> int:
+    title_n = _normalize(title)
+    if not title_n or not topic_tokens:
+        return 0
+    return sum(1 for token in topic_tokens if token in title_n)
+
+
 def _recover_factual_charter_answer(
     question: str,
     chunks: list[RetrievedChunk],
@@ -1557,9 +1683,15 @@ def _recover_factual_charter_answer(
     asks_office = bool(
         re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized)
     )
+    topic_tokens = _fee_topic_tokens(normalized)
     ranked = sorted(
         chunks,
-        key=lambda chunk: _charter_recovery_rank(chunk, normalized, prefer_fees=asks_fee),
+        key=lambda chunk: _charter_recovery_rank(
+            chunk,
+            normalized,
+            prefer_fees=asks_fee,
+            topic_tokens=topic_tokens,
+        ),
     )
     for chunk in ranked:
         metadata = chunk.metadata or {}
@@ -1588,6 +1720,8 @@ def _recover_factual_charter_answer(
                 )
 
         if re.search(r"\b(?:how long|processing time)\b", normalized):
+            if topic_tokens and _title_topic_overlap(title, topic_tokens) == 0:
+                continue
             time_value = _meta_text(metadata, "total_processing_time") or _extract_labeled_line(
                 chunk.text or "",
                 ("Total Processing Time",),
@@ -1598,6 +1732,22 @@ def _recover_factual_charter_answer(
         fee = None
         office = None
         if asks_fee:
+            # Never borrow a fee from an unrelated service when the question
+            # already names (or inherits) a concrete topic. Fee lines may name
+            # the topic even when the card title does not (e.g. diploma fees on
+            # a TOR charter card).
+            fee_blob = _normalize(
+                " ".join(
+                    [
+                        str(metadata.get("total_fees") or ""),
+                        str(metadata.get("fees") or ""),
+                        (chunk.text or "")[:800],
+                    ]
+                )
+            )
+            if topic_tokens and _title_topic_overlap(title, topic_tokens) == 0:
+                if not any(token in fee_blob for token in topic_tokens):
+                    continue
             raw_fee = (
                 _meta_text(metadata, "total_fees")
                 or _meta_text(metadata, "fees")
@@ -1634,6 +1784,8 @@ def _recover_factual_charter_answer(
             r"requirements? (?:for|from|needed)|what (?:are|is) the (?:requirement|requirements|document|documents))\b",
             normalized,
         ):
+            if topic_tokens and _title_topic_overlap(title, topic_tokens) == 0:
+                continue
             answer = format_requirements_detail_answer(question, chunk, sources)
             if answer:
                 return answer
@@ -1645,7 +1797,8 @@ def _charter_recovery_rank(
     normalized_question: str,
     *,
     prefer_fees: bool = False,
-) -> tuple[int, float, int]:
+    topic_tokens: set[str] | None = None,
+) -> tuple[int, int, int, float]:
     metadata = chunk.metadata or {}
     title = _normalize(
         " ".join(
@@ -1665,6 +1818,9 @@ def _charter_recovery_rank(
         or _extract_labeled_line(chunk.text or "", ("Fees", "Fee", "Total Fees"))
     ) else 1
     fee_priority = has_fees if prefer_fees else 0
+    tokens = topic_tokens if topic_tokens is not None else _fee_topic_tokens(normalized_question)
+    # Higher overlap sorts first (negate for ascending key).
+    overlap_rank = -_title_topic_overlap(title, tokens) if tokens else 0
 
     if "enroll" in normalized_question:
         if (
@@ -1673,19 +1829,19 @@ def _charter_recovery_rank(
             or "visitation" in title
             or "article 3" in title
         ):
-            return (3, fee_priority, score)
+            return (3, overlap_rank, fee_priority, score)
         if "enrollment" in title or "enrolment" in title:
-            return (0, fee_priority, score)
+            return (0, overlap_rank, fee_priority, score)
         if "registration" in title and "enrollment" not in title:
-            return (3, fee_priority, score)
-        return (1, fee_priority, score)
+            return (3, overlap_rank, fee_priority, score)
+        return (1, overlap_rank, fee_priority, score)
 
     if re.search(r"\b(?:tor|transcript)\b", normalized_question):
         if re.search(r"\b(?:transcript of records|issuance of transcript|\btor\b)\b", title):
-            return (0, fee_priority, score)
+            return (0, overlap_rank, fee_priority, score)
         if "annual report" in title or "certificate of completion" in title or "article 3" in title:
-            return (3, fee_priority, score)
-        return (2, fee_priority, score)
+            return (3, overlap_rank, fee_priority, score)
+        return (2, overlap_rank, fee_priority, score)
 
     if "diploma" in normalized_question:
         fee_blob = _normalize(
@@ -1694,7 +1850,7 @@ def _charter_recovery_rank(
             + (chunk.text or "")[:500]
         )
         if "diploma" in title or "diploma" in fee_blob:
-            return (0, 0 if prefer_fees else fee_priority, score)
+            return (0, overlap_rank, 0 if prefer_fees else fee_priority, score)
         if (
             "assessment of fee" in title
             or "examination" in title
@@ -1704,10 +1860,13 @@ def _charter_recovery_rank(
             or "program accreditation" in title
             or "certified true copy" in title
         ):
-            return (3, fee_priority, score)
-        return (2, fee_priority, score)
+            return (3, overlap_rank, fee_priority, score)
+        return (2, overlap_rank, fee_priority, score)
 
-    return (1, fee_priority, score)
+    # Default: topic overlap first, then fee metadata, then retrieval score.
+    if tokens and _title_topic_overlap(title, tokens) == 0:
+        return (2, overlap_rank, fee_priority, score)
+    return (1, overlap_rank, fee_priority, score)
 
 
 def _fee_usable_for_question(fee: str | None, title: str, normalized_question: str) -> str | None:
@@ -1716,6 +1875,20 @@ def _fee_usable_for_question(fee: str | None, title: str, normalized_question: s
         return None
     title_n = _normalize(title)
     fee_n = _normalize(fee)
+    if fee_n in {
+        "none",
+        "n/a",
+        "na",
+        "null",
+        "-",
+        "--",
+        "nil",
+        "[needs review]",
+        "needs review",
+        "not specified",
+        "not applicable",
+    }:
+        return None
 
     if "assessment of fee" in title_n and not re.search(
         r"\b(?:assessment of fees?|enrol(?:l)?ment fee)\b",

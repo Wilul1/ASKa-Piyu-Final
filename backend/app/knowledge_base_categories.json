@@ -147,7 +147,7 @@
     },
     {
       "name": "Student Services",
-      "keywords": ["student services", "student affairs", "guidance", "counseling", "health", "welfare", "student organization", "osas"],
+      "keywords": ["student services", "student affairs", "guidance", "counseling", "health", "welfare", "student organization", "osas", "library"],
       "subcategories": [
         {
           "name": "Guidance",
@@ -163,6 +163,11 @@
           "name": "Health Services",
           "office": "Medical Clinic",
           "keywords": ["health services", "health service", "medical clinic", "clinic", "medical certificate", "first aid", "nurse", "physical examination"]
+        },
+        {
+          "name": "Library",
+          "office": "Library",
+          "keywords": ["library", "library reference", "library reference assistance", "reference assistance", "library databases", "outside researchers", "library services"]
         },
         {
           "name": "Student Organizations",

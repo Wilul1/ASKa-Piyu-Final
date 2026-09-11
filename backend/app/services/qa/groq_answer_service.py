@@ -71,6 +71,20 @@ Broad/list-style or collection question mode:
 """.strip()
 
 
+def _active_topic_instructions(active_topic: str) -> str:
+    topic = (active_topic or "").strip()
+    return f"""
+Active conversational service/topic for this turn: {topic}
+
+Answer-framing rules for the active topic (required):
+- Frame the entire answer around this active service/topic only.
+- Name fees, offices, requirements, processing times, and submission steps for this active service/topic — not for earlier topics in chat history.
+- Prior chat turns may clarify pronouns or short follow-ups, but the active service/topic above outranks any stale wording from older topics.
+- If retrieved context mixes multiple services, use only details that belong to the active service/topic.
+- Do not say the documents lack information about a previous topic when the user is now asking about the active service/topic.
+""".strip()
+
+
 class GroqAnswerError(RuntimeError):
     pass
 
@@ -106,6 +120,7 @@ def generate_groq_answer(
     broad_mode: bool = False,
     history: list[Any] | None = None,
     grounding_notes: str | None = None,
+    active_topic: str | None = None,
 ) -> str:
     if not settings.groq_api_key:
         raise GroqAnswerError("Groq API key is not configured.")
@@ -116,6 +131,7 @@ def generate_groq_answer(
         broad_mode=broad_mode,
         history=history,
         grounding_notes=grounding_notes,
+        active_topic=active_topic,
     )
     logger.debug("Groq QA context for question %r:\n%s", question.strip(), context)
     logger.debug("Groq QA final messages for question %r: %r", question.strip(), messages)
@@ -208,10 +224,14 @@ def build_groq_messages(
     broad_mode: bool = False,
     history: list[Any] | None = None,
     grounding_notes: str | None = None,
+    active_topic: str | None = None,
 ) -> list[dict[str, str]]:
     system_prompt = ASKA_PIYU_SYSTEM_PROMPT
     if broad_mode:
         system_prompt = f"{system_prompt}\n\n{BROAD_ANSWER_INSTRUCTIONS}"
+    topic = (active_topic or "").strip()
+    if topic:
+        system_prompt = f"{system_prompt}\n\n{_active_topic_instructions(topic)}"
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     prior = normalize_chat_history(history)
     # Keep prior turns before the grounded user prompt for this question.
@@ -224,6 +244,7 @@ def build_groq_messages(
                 context=context,
                 broad_mode=broad_mode,
                 grounding_notes=grounding_notes,
+                active_topic=topic or None,
             ),
         }
     )
@@ -236,6 +257,7 @@ def _build_user_prompt(
     context: str,
     broad_mode: bool = False,
     grounding_notes: str | None = None,
+    active_topic: str | None = None,
 ) -> str:
     broad_check = ""
     if broad_mode:
@@ -249,7 +271,17 @@ def _build_user_prompt(
     notes = (grounding_notes or "").strip()
     if notes:
         scoped_check = f"This question needs extra care:\n{notes}\n\n"
+    topic = (active_topic or "").strip()
+    topic_block = ""
+    if topic:
+        topic_block = (
+            f"Active service/topic for this turn: {topic}\n"
+            "- Frame the entire answer around this active service/topic only.\n"
+            "- Ignore stale fees, offices, requirements, or wording from earlier topics in chat history.\n"
+            "- If retrieved context mixes other services, keep only details for the active service/topic.\n\n"
+        )
     return (
+        f"{topic_block}"
         "Retrieved context:\n\n"
         f"{context}\n\n"
         "Answering check:\n"

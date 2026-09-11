@@ -6,6 +6,7 @@ import logging
 import re
 import json
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -35,6 +36,7 @@ from app.services.knowledge_taxonomy import (
     DEFAULT_CATEGORY,
     DEFAULT_SUBCATEGORY,
     classify_question,
+    load_taxonomy,
 )
 from app.services.retrieval_reranker import is_faculty_restricted_query, prepare_retrieval_query
 from app.services.qa.service_answer_formatter import (
@@ -177,6 +179,7 @@ def answer_qa_question(
         )
 
     retrieval_question = resolve_followup_question(cleaned_question, chat_history)
+    active_topic = resolve_turn_active_topic(cleaned_question, chat_history)
     prepared_query = prepare_retrieval_query(retrieval_question)
     ticket_routing = _ticket_routing_for_question(cleaned_question)
     qa_intent = detect_question_intent(cleaned_question)
@@ -297,6 +300,13 @@ def answer_qa_question(
             retrieved,
             facet_evidence,
         )
+    # Slot follow-ups must not keep prior-topic chunks that confuse answer wording.
+    if (
+        not collection_mode
+        and _is_slot_followup_question(cleaned_question)
+        and active_topic
+    ):
+        selected_context = _prefer_active_topic_context(selected_context, active_topic)
     # Which parts of the question the final context can actually answer.
     facet_coverage = (
         FacetCoverage()
@@ -448,11 +458,12 @@ def answer_qa_question(
             build_cross_article_notes(article_labels),
         )
         answer = generate_groq_answer(
-            question=cleaned_question,
+            question=extractor_question,
             context=context,
             broad_mode=broad_query,
             history=chat_history,
             grounding_notes=grounding_notes,
+            active_topic=active_topic,
         )
     except GroqAnswerError as exc:
         logger.warning(
@@ -604,6 +615,10 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     if not cleaned or not history:
         return cleaned
 
+    # Explicit / short topic-setting turns must not inherit the prior topic.
+    if _is_topic_setting_turn(cleaned):
+        return cleaned
+
     last_user, last_assistant = _last_history_turns(history)
     if not last_user and not last_assistant:
         return cleaned
@@ -651,21 +666,226 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     return f"{cleaned}\n\n(Prior question context: {topic})"
 
 
+def resolve_turn_active_topic(question: str, history: list[Any] | None) -> str:
+    """Active topic for the current turn: current message if topic-setting, else history."""
+    cleaned = (question or "").strip()
+    if cleaned and not _is_slot_followup_question(cleaned):
+        if (
+            _is_topic_setting_turn(cleaned)
+            or len(_content_tokens(cleaned)) >= 2
+            or _is_known_service_label(cleaned)
+        ):
+            return cleaned[:240]
+    return resolve_active_topic(history, fallback_user=cleaned)
+
+
 def resolve_active_topic(history: list[Any] | None, *, fallback_user: str = "") -> str:
     """Return the active conversational topic/service identity from history.
 
     Walks user turns newest-first and returns the latest *substantive*
     topic-setting message. Slot follow-ups are skipped. An explicit topic
-    switch ("Now tell me about dropping…") replaces any older topic.
+    switch ("Now tell me about TOR.") replaces any older topic, including
+    short/acronym service labels present in taxonomy metadata.
     """
     if not history:
         return (fallback_user or "").strip()[:240]
     for content in reversed(_history_user_turns(history)):
         if _is_slot_followup_question(content):
             continue
-        if len(_content_tokens(content)) >= 2:
+        tokens = _content_tokens(content)
+        if (
+            _is_topic_setting_turn(content)
+            or len(tokens) >= 2
+            or (len(tokens) == 1 and _is_known_service_label(content))
+        ):
             return content.strip()[:240]
     return (fallback_user or "").strip()[:240]
+
+
+_TOPIC_SETTING_PREFIX = re.compile(
+    r"(?is)^(?:(?:ok|okay|alright|please|now)[,!]?\s+)*"
+    r"(?:(?:can\s+you|could\s+you)\s+)?"
+    r"(?:tell\s+me\s+(?:more\s+)?about|what\s+about|how\s+about|"
+    r"switch\s+to|go\s+back\s+to|let'?s\s+talk\s+about|"
+    r"i\s+(?:want|need)\s+to\s+know\s+about|regarding|about)\s+"
+)
+
+
+def _strip_topic_setting_wrapper(text: str) -> str:
+    cleaned = (text or "").strip()
+    match = _TOPIC_SETTING_PREFIX.match(cleaned)
+    if match:
+        return cleaned[match.end() :].strip(" ?.!,;:\"'")
+    return cleaned.strip(" ?.!,;:\"'")
+
+
+def _is_explicit_topic_setting(text: str) -> bool:
+    return bool(_TOPIC_SETTING_PREFIX.match((text or "").strip()))
+
+
+def _is_topic_setting_turn(text: str) -> bool:
+    """True for explicit switches and short/acronym service labels from KB metadata."""
+    cleaned = (text or "").strip()
+    if not cleaned or _is_slot_followup_question(cleaned):
+        return False
+    if _is_explicit_topic_setting(cleaned):
+        return True
+    if len(cleaned.split()) <= 6 and _is_known_service_label(cleaned):
+        return True
+    return False
+
+
+@lru_cache(maxsize=1)
+def _service_vocab_sets() -> tuple[frozenset[str], frozenset[str]]:
+    """Phrases and single-token labels derived from taxonomy (+ expansion triggers)."""
+    phrases: set[str] = set()
+    singles: set[str] = set()
+
+    def _add_phrase(raw: str) -> None:
+        phrase = re.sub(r"\s+", " ", (raw or "").casefold()).strip()
+        if not phrase or len(phrase) < 2:
+            return
+        phrases.add(phrase)
+        if " " not in phrase:
+            singles.add(phrase)
+
+    for cat in load_taxonomy():
+        _add_phrase(cat.name)
+        for sub in cat.subcategories:
+            _add_phrase(sub.name)
+            for keyword in sub.keywords:
+                _add_phrase(keyword)
+
+    # Read-only vocabulary enrichment from existing expansion triggers (do not edit rules).
+    try:
+        from app.services.retrieval_reranker import QUERY_EXPANSION_RULES
+
+        for rule in QUERY_EXPANSION_RULES:
+            for term in rule.trigger_terms:
+                _add_phrase(term)
+    except Exception:  # pragma: no cover - defensive import guard
+        logger.debug("service vocab: expansion triggers unavailable", exc_info=True)
+
+    return frozenset(phrases), frozenset(singles)
+
+
+@lru_cache(maxsize=1)
+def _service_alias_token_map() -> dict[str, frozenset[str]]:
+    """Map primary service labels to sibling tokens from the same subcategory.
+
+    Only single-token keywords and subcategory-name tokens are anchors. Tokens
+    that merely appear inside a multi-word phrase (e.g. ``enrollment`` inside
+    ``graduate enrollment``) must not pull unrelated sibling services.
+    """
+    mapping: dict[str, set[str]] = {}
+    alias_stop = {
+        "of", "the", "and", "or", "for", "to", "in", "on", "a", "an", "at", "by",
+        "with", "from", "per", "as", "is", "are", "be", "this", "that", "into",
+    }
+
+    def _tokens(raw: str) -> set[str]:
+        return {
+            tok
+            for tok in re.findall(r"[a-z0-9]+", (raw or "").casefold())
+            if len(tok) >= 2 and tok not in alias_stop
+        }
+
+    for cat in load_taxonomy():
+        for sub in cat.subcategories:
+            phrases = (sub.name, *sub.keywords)
+            group: set[str] = set()
+            for phrase in phrases:
+                group |= _tokens(phrase)
+            if not group:
+                continue
+            anchors = set(_tokens(sub.name))
+            for phrase in sub.keywords:
+                normalized = re.sub(r"\s+", " ", phrase.casefold()).strip()
+                if normalized and " " not in normalized and normalized not in alias_stop:
+                    anchors.add(normalized)
+            for anchor in anchors:
+                mapping.setdefault(anchor, set()).update(group)
+
+    return {key: frozenset(values) for key, values in mapping.items()}
+
+
+def _is_known_service_label(text: str) -> bool:
+    """True when residual text matches taxonomy / metadata service labels."""
+    residual = _strip_topic_setting_wrapper(text)
+    normalized = re.sub(r"\s+", " ", residual.casefold()).strip(" ?.!,;:\"'")
+    if not normalized:
+        return False
+    normalized = re.sub(r"^(?:the|my|a|an|our)\s+", "", normalized).strip()
+    if not normalized or len(normalized.split()) > 8:
+        return False
+    phrases, singles = _service_vocab_sets()
+    if normalized in phrases or normalized in singles:
+        return True
+    # Compact acronyms / short titles that appear as whole-token taxonomy keywords.
+    if " " not in normalized and normalized in singles:
+        return True
+    return False
+
+
+_GENERIC_TOPIC_TOKENS = frozenset(
+    {
+        "student",
+        "students",
+        "form",
+        "forms",
+        "request",
+        "requests",
+        "certificate",
+        "certificates",
+        "certification",
+        "certifications",
+        "issuance",
+        "service",
+        "services",
+        "office",
+        "document",
+        "documents",
+        "application",
+        "applications",
+        "official",
+        "academic",
+    }
+)
+
+
+def _expand_topic_identity_tokens(topic_tokens: set[str]) -> set[str]:
+    """Expand short/acronym topic tokens using taxonomy sibling aliases."""
+    if not topic_tokens:
+        return set()
+    expanded = set(topic_tokens)
+    _, singles = _service_vocab_sets()
+    alias_map = _service_alias_token_map()
+    for token in topic_tokens:
+        # Only expand exact single-token taxonomy labels (tor, cor, clearance, …).
+        if token in singles:
+            expanded.update(
+                alias
+                for alias in alias_map.get(token, ())
+                if alias not in _GENERIC_TOPIC_TOKENS
+            )
+    return expanded
+
+
+def _prefer_active_topic_context(
+    chunks: list[RetrievedChunk],
+    active_topic: str,
+) -> list[RetrievedChunk]:
+    """Keep evidence that matches the active service when any such chunk exists."""
+    # Pass raw topic tokens; matching expands aliases once internally.
+    topic_tokens = _fee_topic_tokens(active_topic) | _content_tokens(active_topic)
+    if not chunks or not topic_tokens:
+        return chunks
+    matching = [
+        chunk
+        for chunk in chunks
+        if _service_matches_active_topic(_chunk_service_title(chunk), topic_tokens)
+    ]
+    return matching or chunks
 
 
 def _is_slot_followup_question(text: str) -> bool:
@@ -673,8 +893,23 @@ def _is_slot_followup_question(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", (text or "").strip().casefold())
     if not normalized:
         return False
+    # "What about TOR?" / "How about Enrollment?" are topic switches, not slots.
+    if re.match(r"^(?:what about|how about)\b", normalized):
+        residual = _strip_topic_setting_wrapper(text)
+        residual_tokens = _content_tokens(residual)
+        slot_only_probe = {
+            "much", "cost", "fee", "fees", "long", "submit", "requirement",
+            "requirements", "document", "documents", "office", "handles",
+            "responsible", "take", "need", "required",
+        }
+        if residual and (
+            _is_known_service_label(residual)
+            or (residual_tokens and not residual_tokens <= slot_only_probe)
+        ):
+            return False
+        return True
     if re.match(
-        r"^(?:what about|how about|how much|how long|and the|the fee|the office|"
+        r"^(?:how much|how long|and the|the fee|the office|"
         r"which office|what office|who handles|who is responsible|same for|"
         r"for that|that one|and for|also|what if|and then|then what)\b",
         normalized,
@@ -1697,10 +1932,16 @@ def _service_matches_active_topic(service_title: str, topic_tokens: set[str]) ->
 
     Fee/time/requirements recovery must use this gate — loose fee-blob token
     overlap is not enough (that let Enrollment fees answer Good Moral costs).
+    Short acronyms (e.g. TOR) expand via taxonomy aliases before matching.
     """
     if not topic_tokens:
         return False
-    return _title_topic_overlap(service_title, topic_tokens) > 0
+    expanded = _expand_topic_identity_tokens(topic_tokens)
+    discriminative = {token for token in expanded if token not in _GENERIC_TOPIC_TOKENS}
+    if discriminative and _title_topic_overlap(service_title, discriminative) > 0:
+        return True
+    core = {token for token in topic_tokens if token not in _GENERIC_TOPIC_TOKENS}
+    return bool(core) and _title_topic_overlap(service_title, core) > 0
 
 
 def _chunk_service_title(chunk: RetrievedChunk) -> str:

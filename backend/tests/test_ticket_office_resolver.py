@@ -181,3 +181,38 @@ def test_student_activity_still_routes_to_osa():
         assert "Student Affairs" in result["assigned_office"] or "OSA" in result["assigned_office"]
     finally:
         session.close()
+
+
+def test_library_reference_routes_to_library_not_icts():
+    """STRESS-06: library concerns map to the existing Library office, not ICTS."""
+    from app.services.knowledge_taxonomy import classify_question, load_taxonomy
+
+    load_taxonomy.cache_clear()
+    # Clear QA-side vocab caches that embed taxonomy snapshots.
+    from app.services.qa import question_answering as qa
+
+    qa._service_vocab_sets.cache_clear()
+    qa._service_alias_token_map.cache_clear()
+
+    classified = classify_question(
+        "I need library reference assistance for thesis research using library databases"
+    )
+    assert classified.office == "Library"
+    assert "library" in classified.subcategory.casefold()
+
+    session = _session_with_offices(
+        "Library",
+        "Information and Communications Technology Services (ICTS)",
+        "Office of Student Affairs (OSA)",
+        "Registrar's Office",
+    )
+    try:
+        result = triage_ticket(
+            "Library reference assistance for thesis research",
+            "Need help using library databases and reference services on campus.",
+            session=session,
+        )
+        assert result["assigned_office"] == "Library"
+        assert "ICT" not in result["assigned_office"]
+    finally:
+        session.close()

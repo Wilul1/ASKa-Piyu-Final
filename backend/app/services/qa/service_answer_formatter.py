@@ -34,9 +34,11 @@ def is_factual_service_detail_query(question: str) -> bool:
             r"edition|year|total)|"
             r"what documents|what additional|what must|"
             r"documents? (?:are )?required|requirements? (?:for|from|needed)|"
-            r"fee for|cost of|processing time)\b",
+            r"fee for|cost of|processing time|"
+            r"where|saan|kukuha|makakakuha|submit)\b",
             normalized,
         )
+        or re.match(r"^(?:requirements?|cost|fees?)\b", normalized)
     )
 
 
@@ -362,6 +364,7 @@ def prefer_service_chunks(
         return chunks
 
     normalized_question = _normalize(question)
+    service_name_tokens = _taxonomy_service_name_tokens(question)
     service_oriented = (
         is_service_howto_query(question)
         or is_factual_service_detail_query(question)
@@ -369,17 +372,47 @@ def prefer_service_chunks(
         or ("office" in normalized_question and "handles" in normalized_question)
         or ("which office" in normalized_question)
         or ("what office" in normalized_question)
+        # A bare service label/name ("Good Moral", "good moral certificate")
+        # carries no question-shaped wording at all, so none of the patterns
+        # above ever fire for it — but it is exactly the case where "which
+        # card is this service's own authoritative record" matters most.
+        # Narrowed to require an actual service-procedure candidate whose own
+        # title corresponds to the named service (reusing the same
+        # taxonomy-name/title match already used for tie-breaking below) —
+        # not merely "the question names *some* taxonomy entry", which would
+        # also fire for institutional-identity topics like "Vision, Mission,
+        # Goals" that have no Citizen's Charter service card at all and must
+        # keep handbook ranking. No new matching mechanism, no typo handling.
+        or (
+            bool(service_name_tokens)
+            and any(
+                is_service_procedure_chunk(chunk)
+                and _service_title_mismatch_rank(chunk, normalized_question) == 0
+                for chunk in preferred
+            )
+        )
     )
 
     # For non-service questions (definitions, policies, identity, etc.), keep semantic
     # ranking but demote unrelated charter service procedures so they do not leap to #1.
+    # When the question names a taxonomy service, title identity still outranks a
+    # body mention of that service on another card (e.g. TOR as a crediting requirement).
     if not service_oriented:
         preferred.sort(
             key=lambda chunk: (
-                0 if _chunk_overlaps_question_topic(chunk, normalized_question) else 1,
+                0
+                if _chunk_overlaps_question_topic(
+                    chunk, normalized_question, extra_tokens=service_name_tokens
+                )
+                else 1,
+                _service_title_mismatch_rank(chunk, normalized_question)
+                if service_name_tokens
+                else 0,
                 1
                 if is_service_procedure_chunk(chunk)
-                and not _chunk_overlaps_question_topic(chunk, normalized_question)
+                and not _chunk_overlaps_question_topic(
+                    chunk, normalized_question, extra_tokens=service_name_tokens
+                )
                 else 0,
                 -(
                     chunk.reranked_score
@@ -402,7 +435,33 @@ def prefer_service_chunks(
     return preferred + demoted
 
 
-def _chunk_overlaps_question_topic(chunk: RetrievedChunk, normalized_question: str) -> bool:
+def _taxonomy_service_name_tokens(question: str) -> set[str]:
+    """Tokens from taxonomy service titles mentioned in the question.
+
+    Acronyms such as TOR expand to ``transcript``/``records`` so ranking can
+    prefer the matching service card over an unrelated acronym collision.
+    """
+    try:
+        from app.services.qa.question_answering import _canonical_service_names_in_text
+    except Exception:
+        return set()
+    stop = {"the", "and", "for", "of", "to", "in", "on", "a", "an"}
+    tokens: set[str] = set()
+    for name in _canonical_service_names_in_text(question):
+        tokens.update(
+            token
+            for token in re.findall(r"[a-z0-9]+", name.casefold())
+            if token not in stop and len(token) >= 3
+        )
+    return tokens
+
+
+def _chunk_overlaps_question_topic(
+    chunk: RetrievedChunk,
+    normalized_question: str,
+    *,
+    extra_tokens: set[str] | None = None,
+) -> bool:
     """True when chunk title/section/text shares contentful tokens with the question."""
     stop = {
         "what", "which", "who", "how", "when", "where", "why", "the", "a", "an",
@@ -416,6 +475,8 @@ def _chunk_overlaps_question_topic(chunk: RetrievedChunk, normalized_question: s
         for token in re.findall(r"[a-z0-9]+", normalized_question)
         if token not in stop and len(token) >= 3
     }
+    if extra_tokens:
+        q_tokens = set(q_tokens) | {token for token in extra_tokens if token not in stop}
     if not q_tokens:
         return True
     blob = _normalize(
@@ -455,9 +516,19 @@ def _service_title_mismatch_rank(chunk: RetrievedChunk, normalized_question: str
         if "registration" in title and "enrollment" not in title and "enrolment" not in title:
             return 3
         return 2
-    if re.search(r"\b(?:tor|transcript)\b", normalized_question):
-        if re.search(r"\b(?:transcript of records|issuance of transcript|\btor\b)\b", title):
+    name_tokens = _taxonomy_service_name_tokens(normalized_question)
+    if name_tokens:
+        title_tokens = set(re.findall(r"[a-z0-9]+", title))
+        if name_tokens & title_tokens:
             return 0
+        # Acronym-only collisions (TOR vs Terms of Reference) rank worse than
+        # titles that share the canonical service name.
+        return 3
+    if re.search(r"\b(?:tor|transcript)\b", normalized_question):
+        if re.search(r"\b(?:transcript of records|issuance of transcript)\b", title):
+            return 0
+        if "terms of reference" in title:
+            return 3
         if "annual report" in title or "certificate of completion" in title:
             return 3
         return 2

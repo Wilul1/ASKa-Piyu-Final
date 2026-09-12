@@ -7,7 +7,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.services.chroma_store import RetrievedChunk
-from app.services.knowledge_taxonomy import category_metadata_boost
+from app.services.knowledge_taxonomy import (
+    category_metadata_boost,
+    taxonomy_service_matches_in_text,
+    taxonomy_service_names_in_text,
+)
 
 
 ACADEMIC_TERMS = (
@@ -267,6 +271,7 @@ _NAMED_SERVICE_BOOST_REASON_PREFIXES: tuple[str, ...] = (
     "boost_exact_service_title",
     "boost_near_exact_service_title",
     "boost_service_title_similarity",
+    "boost_taxonomy_service_identity",
     "boost_tor_service_title",
     "boost_diploma_service_title",
     "boost_primary_enrollment_service_title",
@@ -771,6 +776,21 @@ def prepare_retrieval_query(
 # fully drowning out genuine semantic similarity with an unbounded score.
 MAX_HEURISTIC_DELTA_MAGNITUDE = 4.0
 
+# Reasons that describe how well-formed a chunk is, not whether it is about what
+# the student asked. They fire on every properly ingested chunk, so a consumer
+# asking "did retrieval find topical support for this question?" must ignore
+# them — otherwise a result set of unrelated services (measured: every one of the
+# seven chunks returned for the bare query "help") looks positively aligned.
+NON_TOPICAL_RERANK_REASONS = frozenset(
+    {
+        "semantic_similarity",
+        "boost_valid_source_metadata",
+        "boost_has_page_number",
+        "boost_has_office_metadata",
+        "boost_level2_citation_ready",
+    }
+)
+
 
 def _apply_heuristic_delta_cap(original: float, score: float, reasons: list[str]) -> float:
     """Clamp the cumulative heuristic adjustment to +/-MAX_HEURISTIC_DELTA_MAGNITUDE.
@@ -831,6 +851,13 @@ def rerank_chunks(
         score += _keyword_overlap_boost(normalized_query, normalized_title_path, reasons)
         if named_boosts:
             score += _service_title_similarity_boost(intent_phrases, normalized_title_path, reasons)
+            score += _service_identity_boost(
+                normalized_query,
+                normalized_title_path=normalized_title_path,
+                metadata=metadata,
+                content=chunk.text or "",
+                reasons=reasons,
+            )
         score += _distinctive_term_boost(
             normalized_query,
             normalized_title_path,
@@ -1421,6 +1448,150 @@ def _service_title_similarity_boost(intent_phrases: list[str], normalized_title_
     return 0.0
 
 
+def taxonomy_service_title_match(
+    normalized_query: str,
+    normalized_title_path: str,
+    *,
+    exclude_tokens: frozenset[str] | None = None,
+) -> tuple[str, float] | None:
+    """Which taxonomy service (if any) ``normalized_title_path`` can be trusted
+    to represent, given the services named in ``normalized_query`` — and how
+    strongly (a ratio in ``(0, 1]``, for callers that want a magnitude, not
+    just a yes/no).
+
+    A title is trusted for a service when either:
+
+    - a token the query *itself literally said* (the service's canonical
+      name, if it appeared verbatim, or whichever keyword alias fired) also
+      appears in the title — the query's own wording anchors the match; or
+    - the query reached the service only through a *different* alias, but
+      the service's full canonical name (every one of its distinctive
+      tokens, when it has more than one) is present in the title anyway.
+
+    A single shared token that is *only* the canonical name of a
+    single-word-named service (e.g. "Registration") — and was not itself
+    something the query said — is deliberately not enough: that pattern is
+    exactly how an unrelated card (e.g. a real "IP Registration Process"
+    service, sharing nothing with the query but that one institutional word)
+    could otherwise be credited as if it were the named service's own
+    record. A two-or-more-token canonical name (e.g. "Transcript of
+    Records") does not have this problem — requiring *all* of its tokens is
+    already a much narrower bar, so it is allowed to qualify on its own.
+
+    ``exclude_tokens`` is forwarded to :func:`taxonomy_service_matches_in_text`
+    so a caller with a broader "generic" vocabulary (the QA layer excludes a
+    few additional slot/intent words the reranker does not need to) still
+    shares this one matching algorithm rather than reimplementing it.
+    """
+    kwargs = {} if exclude_tokens is None else {"exclude_tokens": exclude_tokens}
+    matches = taxonomy_service_matches_in_text(normalized_query, **kwargs)
+    if not matches:
+        return None
+
+    title_tokens = {
+        _singularize(token) for token in re.findall(r"[a-z0-9]+", normalized_title_path)
+    }
+    best: tuple[str, float] | None = None
+    for match in matches:
+        literal_tokens = {_singularize(token) for token in match.literal_tokens}
+        strong = bool(literal_tokens & title_tokens)
+        if not strong:
+            name_tokens = {
+                _singularize(token)
+                for token in re.findall(r"[a-z0-9]+", match.name.casefold())
+                if len(token) >= 3
+            }
+            if len(name_tokens) < 2 or not (name_tokens <= title_tokens):
+                continue
+        identity_tokens = {_singularize(token) for token in match.identity_tokens}
+        if not identity_tokens:
+            continue
+        overlap = len(identity_tokens & title_tokens)
+        if not overlap:
+            continue
+        ratio = overlap / len(identity_tokens)
+        if best is None or ratio > best[1]:
+            best = (match.name, ratio)
+    return best
+
+
+def _service_identity_boost(
+    normalized_query: str,
+    *,
+    normalized_title_path: str,
+    metadata: dict,
+    content: str,
+    reasons: list[str],
+) -> float:
+    """Prefer the chunk that IS a taxonomy-named service's authoritative record.
+
+    Generic, taxonomy-driven counterpart to one-off per-service title boosts
+    (e.g. the old TOR/diploma-only branches in ``_fee_service_boost``): when
+    the query names an existing taxonomy service (``knowledge_taxonomy``),
+    a chunk whose own title matches that service AND whose document type
+    marks it as the service-procedure/Citizen's Charter record gets a strong
+    boost. A chunk that merely shares the same title words — e.g. a handbook
+    policy clause named after the same topic — is not the authoritative
+    record for the named service and gets nothing from this function, so a
+    same-named adjacent policy mention cannot win purely on lexical overlap
+    with the *wrong* document. Works for every taxonomy service, not a
+    hardcoded list of them. See :func:`taxonomy_service_title_match` for the
+    identity rule itself (shared with ``_authoritative_evidence_present`` in
+    the QA layer, so both agree on what counts as this service's own record).
+    """
+    match = taxonomy_service_title_match(normalized_query, normalized_title_path)
+    if match is None:
+        return 0.0
+    best_name, best_ratio = match
+
+    if not _looks_like_authoritative_service_chunk(metadata, content):
+        # Same service name, but this chunk is not the service's own record
+        # (e.g. a handbook policy clause that mentions the service by name).
+        # No identity boost — topical relatedness is not service identity.
+        return 0.0
+
+    boost = 0.45 + 0.25 * best_ratio  # up to ~0.70 for a full-title authoritative match
+    reasons.append(f"boost_taxonomy_service_identity:{best_name}")
+    return boost
+
+
+def _singularize(token: str) -> str:
+    """Fold a trailing plural "s" so "Scholarships" and "scholarship" line up.
+
+    Deliberately not a real stemmer — just enough for taxonomy service names
+    (mostly plain nouns) to match a title's wording regardless of number.
+    """
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+_SERVICE_PROCEDURE_TEXT_MARKERS = re.compile(
+    r"(?im)^(?:Office\s*/\s*Division|Client Step:|Total Processing Time)\b"
+)
+
+
+def _looks_like_authoritative_service_chunk(metadata: dict, content: str) -> bool:
+    # This module's ``_normalize`` turns "-_/" into spaces, so the tagged
+    # values ("citizen_charter", "service_procedure", ...) must be compared in
+    # their space-separated form here, not their raw underscored spelling.
+    doc_type = _normalize(
+        str(metadata.get("document_type") or metadata.get("parser_document_type") or "")
+    )
+    article_type = _normalize(str(metadata.get("article_type") or metadata.get("content_type") or ""))
+    source_type = _normalize(str(metadata.get("source_type") or ""))
+    if doc_type in {"citizen charter", "procedure", "service process"}:
+        return True
+    if article_type in {"service procedure", "procedure"}:
+        return True
+    if "citizen" in source_type and "charter" in source_type:
+        return True
+    # Metadata quality varies across ingested documents; fall back to the
+    # charter template's own structural markers rather than trusting tags
+    # alone (mirrors ``is_service_procedure_chunk`` in service_answer_formatter).
+    return bool(_SERVICE_PROCEDURE_TEXT_MARKERS.search(content or ""))
+
+
 def _phrase_title_similarity(phrase: str, title_path: str) -> float:
     title_folded = _lexical_token_set(title_path)
     phrase_tokens = [token for token in phrase.split() if token]
@@ -1663,6 +1834,14 @@ def _fee_service_boost(
     fee_text = _normalize(f"{total_fees} {normalized_content}")
 
     if asks_tor:
+        # NOTE: ``_service_identity_boost`` also gives the real TOR service
+        # card a generic, taxonomy-driven identity boost now, but only when
+        # the chunk's metadata/text marks it as an authoritative charter
+        # record. Real KB content is not always tagged that consistently
+        # (see test_kb_browser.py), so this title-regex boost stays as a
+        # fallback for untagged chunks rather than being removed — regression
+        # testing showed removing it drops "Transcript of Records" out of
+        # first place when neither candidate carries document_type metadata.
         if re.search(r"\b(?:transcript of records|issuance of transcript|\btor\b)\b", normalized_title_path):
             boost += 0.55
             reasons.append("boost_tor_service_title")

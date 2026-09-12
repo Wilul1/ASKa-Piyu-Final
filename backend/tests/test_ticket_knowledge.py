@@ -22,7 +22,7 @@ from app.services.article_rag_indexer import (
     infer_rag_audience_from_document,
     remove_published_article_index,
 )
-from app.services.chroma_store import RetrievedChunk
+from app.services.chroma_store import RetrievedChunk, select_role_visible_hits
 from app.services.passwords import hash_password
 from app.services.ticket_knowledge import (
     TicketKnowledgeError,
@@ -407,6 +407,61 @@ def test_audience_filter_keeps_legacy_and_role_chunks():
     assert chroma_where_for_audience("admin") is None
     assert chroma_where_for_audience("faculty") == {"audience": {"$in": ["faculty", "both"]}}
     assert legacy_chunk in admin_view
+
+
+def test_audience_filter_before_top_k_keeps_student_evidence():
+    """Faculty-only hits must not empty the student window just because they ranked first."""
+    faculty_pool = [
+        RetrievedChunk(
+            document_id=f"fac-{i}",
+            title=f"Faculty Leave {i}",
+            source_filename="faculty-manual.pdf",
+            chunk_index=i,
+            text="Faculty leave of absence and vacation service credits.",
+            relevance_score=4.0 - (i * 0.05),
+            original_score=0.86,
+            reranked_score=4.0 - (i * 0.05),
+            metadata={"audience": "faculty"},
+        )
+        for i in range(7)
+    ]
+    student_chunk = RetrievedChunk(
+        document_id="stu-absences",
+        title="Absences",
+        source_filename="handbook.pdf",
+        chunk_index=20,
+        text="A student who incurs absences of more than 25% of the required number of class hours is dropped from the subject.",
+        relevance_score=2.4,
+        original_score=0.84,
+        reranked_score=2.4,
+        metadata={"audience": "student"},
+    )
+    faculty_only = RetrievedChunk(
+        document_id="fac-secret",
+        title="Faculty-only salary schedule",
+        source_filename="faculty-manual.pdf",
+        chunk_index=99,
+        text="Faculty salary schedule is restricted.",
+        relevance_score=1.1,
+        original_score=0.81,
+        reranked_score=1.1,
+        metadata={"audience": "faculty"},
+    )
+    selected = select_role_visible_hits(
+        faculty_pool + [student_chunk, faculty_only],
+        user_role="student",
+        top_k=7,
+    )
+    assert student_chunk in selected
+    assert all((chunk.metadata or {}).get("audience") != "faculty" for chunk in selected)
+    assert faculty_only not in selected
+    faculty_selected = select_role_visible_hits(
+        faculty_pool + [student_chunk, faculty_only],
+        user_role="faculty",
+        top_k=7,
+    )
+    assert student_chunk not in faculty_selected
+    assert faculty_pool[0] in faculty_selected
 
 
 def test_office_can_convert_and_publish_in_one_step(session: Session, monkeypatch):

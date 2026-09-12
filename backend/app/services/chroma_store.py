@@ -90,6 +90,32 @@ def _get_or_create_collection_with_fallback(client: Any, *, name: str, metadata:
 
 @dataclass
 class RetrievedChunk:
+    """A retrieved chunk and the three distinct scores attached to it.
+
+    The scores are not interchangeable:
+
+    ``original_score`` — cosine similarity from Chroma, ``1 - distance``, in
+    ``[0, 1]``. Read it through :attr:`vector_similarity`. With the current
+    ``intfloat/multilingual-e5-small`` encoder this is only weakly
+    discriminative: measured against the production store, a perfectly relevant
+    chunk scores ~0.87 and a completely unrelated one ~0.80, and every chunk in
+    a result set lands in ~0.79-0.91. It must therefore never carry an absolute
+    "is this good evidence?" threshold.
+
+    ``reranked_score`` — ranking priority produced by ``rerank_chunks``:
+    similarity plus the heuristic delta (clamped to ±4.0). Read it through
+    :attr:`rerank_score`. Unbounded and topic-dependent (production values run
+    ~1.0 to ~4.7 purely as a function of how many boosts fired), so it is valid
+    for ordering and for comparisons *within* one result set, and invalid as an
+    absolute threshold.
+
+    ``relevance_score`` — the ranking score. It holds the cosine similarity at
+    fetch time and is then overwritten with ``reranked_score`` by
+    ``rerank_chunks``. Kept for API/debug back-compatibility; new code should
+    read :attr:`rerank_score` or :attr:`vector_similarity` so the intent is
+    explicit.
+    """
+
     document_id: str
     title: str
     source_filename: str
@@ -100,6 +126,23 @@ class RetrievedChunk:
     reranked_score: float | None = None
     rerank_reasons: list[str] | None = None
     metadata: dict[str, Any] | None = None
+
+    @property
+    def vector_similarity(self) -> float:
+        """Cosine similarity in ``[0, 1]``. Weakly discriminative — see class docs."""
+        score = self.original_score
+        return float(score if score is not None else self.relevance_score)
+
+    @property
+    def rerank_score(self) -> float:
+        """Ranking priority. Unbounded — ordering and in-set comparisons only."""
+        score = self.reranked_score
+        return float(score if score is not None else self.relevance_score)
+
+    @property
+    def heuristic_support(self) -> float:
+        """How much topical evidence the reranker found, encoder-independent."""
+        return self.rerank_score - self.vector_similarity
 
 
 class KnowledgeBaseStore:
@@ -550,7 +593,32 @@ class KnowledgeBaseStore:
                     metadata=dict(meta),
                 )
             )
-        return rerank_chunks(prepared_query.expanded_query, chunks, ablation=ablation)[:k]
+        ranked = rerank_chunks(prepared_query.expanded_query, chunks, ablation=ablation)
+        if user_role is None:
+            # Role-less callers (Phase 2A retrieval ranking) keep the raw top-k.
+            return ranked[:k]
+        return select_role_visible_hits(ranked, user_role=user_role, top_k=k)
+
+
+def select_role_visible_hits(
+    chunks: list[RetrievedChunk],
+    *,
+    user_role: str | None,
+    top_k: int,
+) -> list[RetrievedChunk]:
+    """Apply audience visibility, then take the final top-k.
+
+    Faculty-only rows can occupy the raw candidate window. Filtering *after*
+    the top-k slice turns a mixed pool into an empty student result and a
+    false "no information" answer. Visibility is applied on the full reranked
+    candidate list; the slice happens last. Untagged legacy chunks stay
+    student-visible (see ``filter_chunks_for_audience``).
+    """
+    from app.services.article_rag_indexer import filter_chunks_for_audience
+
+    visible = filter_chunks_for_audience(chunks, user_role)
+    limit = max(1, int(top_k))
+    return list(visible[:limit])
 
 
 @lru_cache(maxsize=1)

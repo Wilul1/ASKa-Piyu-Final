@@ -59,6 +59,7 @@ async def student_ask_question(
             body.question,
             user_role=user_role,
             history=history,
+            client_active_service=body.active_service,
         )
     except EmptyKnowledgeBaseError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -95,4 +96,5 @@ async def student_ask_question(
         sources=sources,
         confidence=result.confidence,
         degraded=bool(result.fallback_used),
+        active_service=result.active_service,
     )

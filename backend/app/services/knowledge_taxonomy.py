@@ -184,6 +184,215 @@ def category_metadata_boost(query: str, metadata: dict[str, Any]) -> tuple[float
     return score, reasons
 
 
+# Words too generic, on their own, to identify a specific taxonomy service —
+# shared by the QA layer (topic/conversation resolution) and the reranker
+# (upstream service-identity boosting) so neither can drift out of sync with
+# the other about what counts as "naming a service". A handful of taxonomy
+# subcategories are themselves named after bare generic nouns (e.g.
+# "Certificates", "Requests", "Application Forms") specifically to bucket
+# miscellaneous form/document FAQs — without this exclusion, a completely
+# vague question like "I want to make a request" would be treated as if it
+# named a specific service.
+GENERIC_SERVICE_NAME_TOKENS = frozenset(
+    {
+        "student",
+        "students",
+        "form",
+        "forms",
+        "request",
+        "requests",
+        "certificate",
+        "certificates",
+        "certification",
+        "certifications",
+        "issuance",
+        "service",
+        "services",
+        "office",
+        "document",
+        "documents",
+        "application",
+        "applications",
+        "official",
+        "academic",
+    }
+)
+
+
+def has_distinctive_token(phrase: str, exclude_tokens: frozenset[str]) -> bool:
+    """True when at least one word of ``phrase`` is not a generic/excluded word.
+
+    A taxonomy name or keyword built entirely from generic words (the bare
+    subcategory name "Certificates", or a keyword like "application form")
+    must not count as naming a service just because every one of its words
+    happens to appear in the text — the text still has to contain at least
+    one *distinctive* word from that name/keyword. Public: shared by every
+    place that needs the same "is this phrase generic-only" test (taxonomy
+    matching here, plus exact-label matching in the QA layer) so there is
+    exactly one definition of "generic" to keep in sync, not several.
+    """
+    words = re.findall(r"[a-z0-9]+", phrase)
+    return any(word not in exclude_tokens for word in words) if words else False
+
+
+def _phrase_tokens(phrase: str, exclude_tokens: frozenset[str]) -> frozenset[str]:
+    """Distinctive (len>=3, non-generic) tokens of one name/keyword phrase."""
+    return frozenset(
+        token
+        for token in re.findall(r"[a-z0-9]+", phrase)
+        if len(token) >= 3 and token not in exclude_tokens
+    )
+
+
+@dataclass(frozen=True)
+class TaxonomyServiceMatch:
+    """A taxonomy service identified in text, distinguishing *how* it was found.
+
+    ``identity_tokens`` — the canonical name's own distinctive tokens, unioned
+    with the distinctive tokens of every keyword alias that also matched.
+    Used where more identity signal only ever helps (e.g. a ranking boost's
+    magnitude): the service reached only through an alias (e.g. "enrollment"
+    reached via the "Registration" subcategory) still carries "registration"
+    here too, in case some other card is titled with the canonical name
+    itself.
+
+    ``literal_tokens`` — distinctive tokens of only the name/keyword phrase(s)
+    that literally, verbatim matched the text. For a service reached only
+    through an alias, this is the alias's own tokens, *not* the canonical
+    name's (the canonical name never actually appeared in the text). This is
+    the stronger signal: a title sharing a *literal* query word is reliable
+    evidence; a title sharing only the broader, never-said canonical name is
+    not, on its own — see ``taxonomy_service_title_match`` in
+    ``retrieval_reranker`` for why that distinction matters.
+    """
+
+    name: str
+    identity_tokens: frozenset[str]
+    literal_tokens: frozenset[str]
+
+
+def taxonomy_service_matches_in_text(
+    normalized_text: str,
+    *,
+    exclude_tokens: frozenset[str] = GENERIC_SERVICE_NAME_TOKENS,
+) -> list[TaxonomyServiceMatch]:
+    """Taxonomy services named in ``normalized_text``, with the tokens that identified each.
+
+    Single source of truth for "which existing taxonomy service does this
+    text name, and through which of its words" — used both to resolve
+    conversational topic identity (QA layer) and to judge whether a chunk's
+    title is that service's own authoritative record (retrieval layer AND QA
+    layer), so all three cannot silently disagree about what counts as a
+    named service or how strongly. ``exclude_tokens`` gates every name and
+    keyword match — one built entirely from generic words (see
+    :data:`GENERIC_SERVICE_NAME_TOKENS`) is not a real service identification,
+    however exactly it matches the text.
+    """
+    if not normalized_text:
+        return []
+    tokens = set(re.findall(r"[a-z0-9]+", normalized_text))
+    order: list[str] = []
+    identity: dict[str, set[str]] = {}
+    literal: dict[str, set[str]] = {}
+
+    def _record(name: str, *, identity_add: frozenset[str], literal_add: frozenset[str]) -> None:
+        if name not in identity:
+            order.append(name)
+            identity[name] = set()
+            literal[name] = set()
+        identity[name] |= identity_add
+        literal[name] |= literal_add
+
+    for category in load_taxonomy():
+        for subcategory in category.subcategories:
+            name_cf = subcategory.name.casefold().strip()
+            name_tokens = _phrase_tokens(name_cf, exclude_tokens)
+            name_hit = bool(
+                name_tokens and re.search(rf"\b{re.escape(name_cf)}\b", normalized_text)
+            )
+            keyword_hit_tokens: set[str] = set()
+            for keyword in subcategory.keywords:
+                kw_cf = keyword.casefold().strip()
+                if not kw_cf:
+                    continue
+                kw_tokens = _phrase_tokens(kw_cf, exclude_tokens)
+                if not kw_tokens:
+                    continue
+                hit = (
+                    re.search(rf"\b{re.escape(kw_cf)}\b", normalized_text)
+                    if " " in kw_cf
+                    else kw_cf in tokens
+                )
+                if hit:
+                    keyword_hit_tokens |= kw_tokens
+            if not (name_hit or keyword_hit_tokens):
+                continue
+            # identity_tokens always carries the canonical name's tokens (the
+            # existing production comparison always used the canonical name);
+            # literal_tokens carries only what the text actually said.
+            literal_add = (name_tokens if name_hit else frozenset()) | frozenset(keyword_hit_tokens)
+            identity_add = name_tokens | frozenset(keyword_hit_tokens)
+            _record(subcategory.name, identity_add=identity_add, literal_add=literal_add)
+
+    return [
+        TaxonomyServiceMatch(
+            name=name,
+            identity_tokens=frozenset(identity[name]),
+            literal_tokens=frozenset(literal[name]),
+        )
+        for name in order
+    ]
+
+
+def taxonomy_service_names_in_text(
+    normalized_text: str,
+    *,
+    exclude_tokens: frozenset[str] = GENERIC_SERVICE_NAME_TOKENS,
+) -> list[str]:
+    """Back-compat view of :func:`taxonomy_service_matches_in_text`: names only.
+
+    Existing callers that only need "which services are named" (not the
+    matched alias detail) keep working unchanged.
+    """
+    return [
+        match.name
+        for match in taxonomy_service_matches_in_text(normalized_text, exclude_tokens=exclude_tokens)
+    ]
+
+
+@lru_cache(maxsize=1)
+def _canonical_service_name_map() -> dict[str, str]:
+    """Casefolded taxonomy subcategory name -> its canonical spelling.
+
+    Used to validate a client-supplied active-service identity against the
+    same vocabulary this backend itself would ever produce.
+    """
+    return {
+        subcategory.name.casefold().strip(): subcategory.name
+        for category in load_taxonomy()
+        for subcategory in category.subcategories
+    }
+
+
+def validate_active_service_identity(value: str | None) -> str | None:
+    """A client-supplied "active service" value, or ``None`` if untrustworthy.
+
+    A client (e.g. the Flutter app) may echo back a service identity this
+    backend returned on an earlier turn. That value must never be trusted
+    blindly — it is arbitrary client input — so it is only accepted when it
+    exactly matches a real taxonomy subcategory name. Anything else
+    (garbage, a stale/removed service, a spoofed value) is rejected here and
+    the caller falls back to its own resolution instead of retrieving for a
+    service that was never validated.
+    """
+    if not value:
+        return None
+    cleaned = re.sub(r"\s+", " ", str(value)).strip()
+    if not cleaned or len(cleaned) > 240:
+        return None
+    return _canonical_service_name_map().get(cleaned.casefold())
+
+
 def knowledge_base_taxonomy() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for category in load_taxonomy():

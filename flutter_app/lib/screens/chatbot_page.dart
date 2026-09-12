@@ -197,6 +197,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
     final auth = AuthScope.of(context);
     final history = _chatHistoryPayload(session.turns);
+    final activeService = _lastKnownActiveService(session.turns);
 
     setState(() {
       session!.turns.add(_ChatTurn.user(question));
@@ -222,6 +223,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
         jsonBody: {
           'question': question,
           if (history.isNotEmpty) 'history': history,
+          if (activeService != null) 'active_service': activeService,
         },
         timeout: const Duration(seconds: 120),
       );
@@ -292,6 +294,19 @@ class _ChatbotPageState extends State<ChatbotPage> {
       return history.sublist(history.length - 8);
     }
     return history;
+  }
+
+  /// The most recent non-null `active_service` the backend returned in this
+  /// session, independent of how many raw turns the (separately capped)
+  /// chat-history window holds — this is what survives long conversations.
+  String? _lastKnownActiveService(List<_ChatTurn> turns) {
+    for (final turn in turns.reversed) {
+      final service = turn.answer?.activeService;
+      if (service != null && service.trim().isNotEmpty) {
+        return service.trim();
+      }
+    }
+    return null;
   }
 
   void _scrollToBottom() {
@@ -1875,6 +1890,12 @@ class _QaAnswer {
   final String confidence;
   final List<_QaSource> sources;
   final bool degraded;
+  // Machine-readable taxonomy service identity the backend resolved for
+  // this turn (see AskQuestionResponse/QAAskResponse.active_service), or
+  // null when no specific service applied. Stored per-turn so the most
+  // recent non-null value can be echoed back on the next request instead
+  // of relying on the backend re-parsing raw chat history.
+  final String? activeService;
 
   const _QaAnswer({
     required this.question,
@@ -1882,6 +1903,7 @@ class _QaAnswer {
     required this.confidence,
     required this.sources,
     this.degraded = false,
+    this.activeService,
   });
 
   _QaSource? get primarySource {
@@ -1901,11 +1923,13 @@ class _QaAnswer {
         'confidence': confidence,
         'degraded': degraded,
         'sources': sources.map((source) => source.toJson()).toList(),
+        if (activeService != null) 'active_service': activeService,
       };
 
   factory _QaAnswer.fromStored(Map<String, dynamic> json) {
     final rawSources =
         json['sources'] is List ? json['sources'] as List : const [];
+    final rawActiveService = json['active_service'];
     return _QaAnswer(
       question: (json['question'] ?? '').toString(),
       text: (json['text'] ?? json['answer'] ?? '').toString(),
@@ -1915,6 +1939,9 @@ class _QaAnswer {
           .whereType<Map>()
           .map((item) => _QaSource.fromJson(Map<String, dynamic>.from(item)))
           .toList(),
+      activeService: rawActiveService is String && rawActiveService.trim().isNotEmpty
+          ? rawActiveService.trim()
+          : null,
     );
   }
 
@@ -1942,12 +1969,16 @@ class _QaAnswer {
       addSources(sourceItems);
     }
 
+    final rawActiveService = json['active_service'];
     return _QaAnswer(
       text: (json['answer'] ?? '').toString(),
       question: question,
       confidence: (json['confidence'] ?? 'low').toString(),
       sources: merged,
       degraded: json['degraded'] == true,
+      activeService: rawActiveService is String && rawActiveService.trim().isNotEmpty
+          ? rawActiveService.trim()
+          : null,
     );
   }
 }

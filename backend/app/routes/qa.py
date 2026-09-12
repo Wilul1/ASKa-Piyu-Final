@@ -60,6 +60,7 @@ async def qa_ask(
             payload.question,
             user_role=user_role,
             history=history,
+            client_active_service=payload.active_service,
         )
     except EmptyKnowledgeBaseError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -105,4 +106,5 @@ async def qa_ask(
         fallback_reason=result.fallback_reason if debug_enabled else None,
         out_of_scope_detected=result.out_of_scope_detected if debug_enabled else None,
         ticket_routing=result.ticket_routing,
+        active_service=result.active_service,
     )

@@ -205,6 +205,28 @@ def test_topic_setting_turn_does_not_inherit_prior_topic():
     assert "drop" not in resolve_followup_question("Clearance", history).casefold()
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "TOR",
+        "Enrollment",
+        "Clearance",
+        "Scholarship",
+        "Good Moral",
+    ],
+)
+def test_first_turn_short_service_labels_canonicalize_without_history(question):
+    resolved = resolve_followup_question(question, None)
+    assert resolved != question or question.casefold() in resolved.casefold()
+    if question == "TOR":
+        assert "transcript" in resolved.casefold()
+        assert "terms of reference" not in resolved.casefold()
+    elif question == "Good Moral":
+        assert "good moral" in resolved.casefold()
+    else:
+        assert question.casefold() in resolved.casefold()
+
+
 def test_tor_short_label_canonicalizes_to_transcript_of_records():
     from app.services.qa.question_answering import _canonical_service_retrieval_phrase
 

@@ -242,6 +242,11 @@ class QAChatMessage(BaseModel):
 class AskQuestionRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     history: list[QAChatMessage] = Field(default_factory=list, max_length=12)
+    # Optional: a taxonomy service identity this backend returned on an
+    # earlier turn (see AskQuestionResponse.active_service), echoed back by
+    # the client. Re-validated against the taxonomy server-side before use;
+    # an unrecognized value is ignored, not trusted. Omitted by old clients.
+    active_service: str | None = Field(default=None, max_length=240)
 
 
 class SourceChunk(BaseModel):
@@ -261,6 +266,12 @@ class AskQuestionResponse(BaseModel):
     sources: list[SourceChunk]
     confidence: str | None = None
     degraded: bool | None = None
+    # Machine-readable taxonomy service identity resolved for this turn, or
+    # null when no specific service applies. A client may store this and
+    # echo it back as `active_service` on the next request so a later
+    # slot-only follow-up's active service does not depend on scanning
+    # assistant prose.
+    active_service: str | None = None
 
 
 # --- Production QA chatbot ---
@@ -271,6 +282,11 @@ class QAAskRequest(BaseModel):
     debug: bool = False
     # Recent turns only — oldest first. Backend keeps at most ~8 messages.
     history: list[QAChatMessage] = Field(default_factory=list, max_length=12)
+    # Optional: a taxonomy service identity this backend returned on an
+    # earlier turn (see QAAskResponse.active_service), echoed back by the
+    # client. Re-validated against the taxonomy server-side before use; an
+    # unrecognized value is ignored, not trusted. Omitted by old clients.
+    active_service: str | None = Field(default=None, max_length=240)
 
 
 class QASourceSchema(BaseModel):
@@ -360,6 +376,12 @@ class QAAskResponse(BaseModel):
     fallback_reason: str | None = None
     out_of_scope_detected: bool | None = None
     ticket_routing: dict | None = None
+    # Machine-readable taxonomy service identity resolved for this turn, or
+    # null when no specific service applies. A client may store this and
+    # echo it back as `active_service` on the next request so a later
+    # slot-only follow-up's active service does not depend on scanning
+    # assistant prose.
+    active_service: str | None = None
 
 
 class DocumentSourceMetaSchema(BaseModel):

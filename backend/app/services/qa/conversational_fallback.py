@@ -144,12 +144,23 @@ def query_matches_retrieval_title(
             return True
         # Partial title hits: a distinctive topic word (≥6 chars) from the title
         # appears in the question (e.g. "Issuance of Diploma" ↔ "...fee for a diploma").
+        # One shared word is not enough when the question has many other leftover
+        # tokens — that is how unrelated/nonsense queries inherited a title match.
         strong_hits = [
             token
             for token in title_tokens
             if len(token) >= 6 and _title_token_in_query(token, phrase)
         ]
-        if strong_hits:
+        query_tokens = [
+            token
+            for token in re.findall(r"[a-z0-9]+", phrase)
+            if len(token) >= 4 and token not in GENERIC_INTENT_TOKENS
+        ]
+        if strong_hits and (
+            len(query_tokens) <= 3
+            or len(strong_hits) >= 2
+            or (len(strong_hits) == 1 and len(query_tokens) <= 4)
+        ):
             return True
     return False
 
@@ -375,6 +386,12 @@ def _format_office_or_detail_answer(
         if asks_fee and fee:
             answer_title = _fee_answer_title(title, fee, normalized)
             return f"The listed fee for {answer_title} is {fee} ({source_label})."
+        if asks_fee:
+            from app.services.qa.question_answering import _fee_unclear_or_zero_answer
+
+            reply = _fee_unclear_or_zero_answer(title, raw_fee, fee, normalized, source_label)
+            if reply:
+                return reply
         if asks_office and office and not asks_fee:
             return (
                 f"The office responsible for {title} is {office}, "

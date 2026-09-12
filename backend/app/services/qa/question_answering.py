@@ -35,10 +35,20 @@ from app.services.qa.multi_facet import (
 from app.services.knowledge_taxonomy import (
     DEFAULT_CATEGORY,
     DEFAULT_SUBCATEGORY,
+    GENERIC_SERVICE_NAME_TOKENS,
     classify_question,
+    has_distinctive_token,
     load_taxonomy,
+    taxonomy_service_names_in_text,
+    validate_active_service_identity,
 )
-from app.services.retrieval_reranker import is_faculty_restricted_query, prepare_retrieval_query
+from app.services.retrieval_reranker import (
+    GENERIC_INTENT_TOKENS,
+    NON_TOPICAL_RERANK_REASONS,
+    is_faculty_restricted_query,
+    prepare_retrieval_query,
+    taxonomy_service_title_match,
+)
 from app.services.qa.service_answer_formatter import (
     format_requirements_detail_answer,
     format_service_procedure_answer,
@@ -48,6 +58,7 @@ from app.services.qa.service_answer_formatter import (
     is_service_howto_query,
     is_service_procedure_chunk,
     prefer_service_chunks,
+    _has_usable_service_fields,
 )
 logger = logging.getLogger(__name__)
 
@@ -145,6 +156,12 @@ class QAResult:
     fallback_used: bool = False
     fallback_reason: str | None = None
     out_of_scope_detected: bool = False
+    # Machine-readable, taxonomy-validated service identity for this turn —
+    # `None` when no specific service applies (greeting, out-of-scope, vague
+    # clarification, broad/collection question). A client may store this and
+    # echo it back on the next call as `client_active_service` so a slot-only
+    # follow-up's active service does not depend on scanning assistant prose.
+    active_service: str | None = None
 
 
 def answer_qa_question(
@@ -152,9 +169,14 @@ def answer_qa_question(
     *,
     user_role: str | None = None,
     history: list[Any] | None = None,
+    client_active_service: str | None = None,
 ) -> QAResult:
     cleaned_question = question.strip()
     chat_history = list(history or [])
+    # An arbitrary client-supplied value is never trusted directly — only a
+    # value that matches a real taxonomy service is used at all, so a
+    # stale/removed/spoofed client value cannot steer retrieval.
+    validated_client_service = validate_active_service_identity(client_active_service)
     # Greetings / thanks are not KB questions — never retrieve or cite sources.
     if is_greeting_query(cleaned_question):
         return QAResult(
@@ -179,7 +201,21 @@ def answer_qa_question(
         )
 
     retrieval_question = resolve_followup_question(cleaned_question, chat_history)
-    active_topic = resolve_turn_active_topic(cleaned_question, chat_history)
+    active_topic = resolve_turn_active_topic(
+        cleaned_question, chat_history, client_active_service=validated_client_service
+    )
+    # On an explicit service switch ("Now tell me about TOR." after a
+    # Dropping conversation), the prior turns' raw text is a *previous*
+    # service's own procedural steps/fees, sitting right in the model's
+    # recent context alongside this turn's (correct) new-service evidence.
+    # Instruction-level framing alone ("outrank stale wording") was not
+    # reliably enough to stop that prior text from bleeding into the
+    # generated answer, so the prior turns are left out of the generation
+    # prompt entirely for this one turn — retrieval/topic resolution above
+    # still use the full history unchanged, and once this turn's own
+    # (new-service) reply exists, ordinary slot follow-ups resume seeing
+    # history normally, preserving continuity within the new topic.
+    generation_history = [] if _is_topic_setting_turn(cleaned_question) else chat_history
     prepared_query = prepare_retrieval_query(retrieval_question)
     ticket_routing = _ticket_routing_for_question(cleaned_question)
     qa_intent = detect_question_intent(cleaned_question)
@@ -246,12 +282,37 @@ def answer_qa_question(
             out_of_scope_detected=True,
         )
 
+    if _is_underspecified_question(cleaned_question) and not _has_real_active_topic(active_topic):
+        return QAResult(
+            answer=(
+                "Which university service or topic are you asking about? "
+                "Name the process, office, or document so I can look it up."
+            ),
+            sources=[],
+            confidence="low",
+            retrieved_chunks=[],
+            normalized_query=prepared_query.normalized_query,
+            expanded_query=prepared_query.expanded_query,
+            matched_expansion_rules=prepared_query.matched_expansion_rules,
+            broad_query=False,
+            broad_query_reason=None,
+            selected_context_count=0,
+            detected_intent=detected_intent,
+            collection_mode=False,
+            ticket_routing=ticket_routing,
+            query_expansions_used=prepared_query.matched_expansion_rules,
+            rerank_reasons=[],
+            fallback_used=True,
+            fallback_reason="underspecified_without_active_topic",
+            out_of_scope_detected=False,
+        )
+
     program_scope: dict[str, Any] | None = None
     question_facets: list[QuestionFacet] = []
     facet_evidence: FacetEvidence = EMPTY_EVIDENCE
     if collection_mode and hasattr(store, "list_chunks"):
         retrieved = collect_intent_chunks(store, collection_intent)
-        retrieved = _apply_audience_filter(retrieved, user_role)
+        retrieved = _apply_audience_filter(retrieved, role)
         selected_context, context_filter, program_scope = select_collection_context_chunks(
             retrieval_question,
             retrieved,
@@ -266,12 +327,26 @@ def answer_qa_question(
         retrieval_variants.extend(
             facet_retrieval_queries(question_facets, existing=retrieval_variants)
         )
+        if _is_slot_followup_question(cleaned_question) and active_topic:
+            # A slot follow-up's resolved retrieval text mixes the active
+            # service with the attribute being asked for ("What are the
+            # requirements?" + the service name) into one combined string.
+            # Also retrieve using the service identity alone, so a
+            # dedicated, undiluted pass toward the active service can
+            # surface it even when the combined text's own embedding drifts
+            # toward the generic attribute wording — the same "retrieve each
+            # part separately" pattern already used for bundled-question
+            # facets above, applied to conversational topic identity instead
+            # of intra-question facets.
+            topic_query = _canonical_service_name(active_topic)
+            if topic_query and topic_query not in retrieval_variants:
+                retrieval_variants.append(topic_query)
         retrieved, retrieved_by_query = _multi_query_retrieve(
             store,
             retrieval_variants,
             top_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else FINAL_CONTEXT_CHUNKS,
             raw_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else RAW_RETRIEVAL_CANDIDATES,
-            user_role=user_role,
+            user_role=role,
         )
         facet_evidence = build_facet_evidence(
             retrieved_by_query,
@@ -279,7 +354,9 @@ def answer_qa_question(
             baseline_query=retrieval_question,
         )
         retrieved = prefer_service_chunks(retrieved, question=retrieval_question)
-        retrieved = _apply_audience_filter(retrieved, user_role)
+        retrieved = _apply_audience_filter(retrieved, role)
+        if _is_slot_followup_question(cleaned_question) and active_topic:
+            retrieved = _prefer_active_topic_context(retrieved, active_topic)
         # Sections that no part of the question retrieved must not lead the
         # context just because their wording scores well.
         on_topic, off_topic = partition_off_topic(
@@ -329,6 +406,7 @@ def answer_qa_question(
     retrieved_debug = _retrieved_debug(retrieved, context_filter)
     grouped_summary = _grouped_context_summary(selected_context) if broad_query else None
     collection_articles = [item["group"] for item in grouped_summary or []]
+    active_service_for_response = _active_service_for_response(active_topic, selected_context)
 
     if not retrieved:
         return QAResult(
@@ -363,6 +441,7 @@ def answer_qa_question(
         selected_context,
         broad_query=broad_query,
         collection_mode=collection_mode,
+        active_topic=active_topic,
     )
     if retrieval_quality["should_clarify"]:
         answer = format_conversational_fallback(
@@ -425,6 +504,7 @@ def answer_qa_question(
                 broad_query=broad_query,
                 collection_mode=collection_mode,
                 facet_coverage=facet_coverage,
+                active_topic=active_topic,
             ),
             retrieved_chunks=retrieved_debug,
             normalized_query=prepared_query.normalized_query,
@@ -446,8 +526,10 @@ def answer_qa_question(
             fallback_used=False,
             fallback_reason=None,
             out_of_scope_detected=False,
+            active_service=active_service_for_response,
         )
 
+    table_inversion_corrected = False
     try:
         article_labels = distinct_source_articles(
             selected_context,
@@ -461,10 +543,14 @@ def answer_qa_question(
             question=extractor_question,
             context=context,
             broad_mode=broad_query,
-            history=chat_history,
+            history=generation_history,
             grounding_notes=grounding_notes,
             active_topic=active_topic,
         )
+        table_records = _structured_table_records_from_text(context)
+        if table_records and _answer_contradicts_table_records(answer, table_records):
+            answer = _table_records_evidence_answer(table_records)
+            table_inversion_corrected = True
     except GroqAnswerError as exc:
         logger.warning(
             "LLM answer generation unavailable; using conversational fallback. reason=%s",
@@ -483,6 +569,7 @@ def answer_qa_question(
                     broad_query=broad_query,
                     collection_mode=collection_mode,
                     facet_coverage=facet_coverage,
+                    active_topic=active_topic,
                 ),
                 retrieved_chunks=retrieved_debug,
                 normalized_query=prepared_query.normalized_query,
@@ -504,6 +591,7 @@ def answer_qa_question(
                 fallback_used=True,
                 fallback_reason=_safe_fallback_reason(str(exc)),
                 out_of_scope_detected=False,
+                active_service=active_service_for_response,
             )
         fallback_answer, fallback_confidence, fallback_sources = _fallback_answer_from_context(
             selected_context,
@@ -549,6 +637,7 @@ def answer_qa_question(
             fallback_used=True,
             fallback_reason=_safe_fallback_reason(str(exc)),
             out_of_scope_detected=False,
+            active_service=active_service_for_response,
         )
 
     confidence = _confidence_for(
@@ -559,7 +648,16 @@ def answer_qa_question(
         broad_query=broad_query,
         collection_mode=collection_mode,
         facet_coverage=facet_coverage,
+        active_topic=active_topic,
     )
+    if table_inversion_corrected:
+        # The model's own reading of a labeled-value table (grade scale, fee
+        # schedule, etc.) was self-contradictory and had to be replaced with
+        # a plain restatement of the rows. That restatement is trustworthy as
+        # a *listing*, but we no longer have a verified interpretation of it
+        # to be confident about — "high" would claim more certainty than a
+        # generation the system just had to correct actually earned.
+        confidence = "medium" if confidence == "high" else confidence
     final_answer = _student_facing_answer(answer, confidence, user_role=user_role)
     recovered = _recover_factual_charter_answer(
         extractor_question,
@@ -600,6 +698,7 @@ def answer_qa_question(
         fallback_used=False,
         fallback_reason=None,
         out_of_scope_detected=False,
+        active_service=active_service_for_response,
     )
 
 
@@ -612,14 +711,21 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     Topic A → Topic B → follow-up resolves against B only.
     """
     cleaned = (question or "").strip()
-    if not cleaned or not history:
+    if not cleaned:
         return cleaned
 
-    # Explicit / short topic-setting turns must not inherit the prior topic.
-    # Expand short taxonomy labels (e.g. TOR) to their canonical service phrase
-    # so retrieval targets the KB service, not an unrelated acronym collision.
+    # Explicit / short topic-setting turns must not inherit the prior topic,
+    # including on the first turn (empty history). Expand short taxonomy labels
+    # (e.g. TOR) to their canonical service phrase so retrieval targets the KB
+    # service, not an unrelated acronym collision.
     if _is_topic_setting_turn(cleaned):
         return _canonical_service_retrieval_phrase(cleaned) or cleaned
+
+    if not history:
+        names = _canonical_service_names_in_text(cleaned)
+        if names:
+            return f"{cleaned}\n\n(Service: {', '.join(names)})"
+        return cleaned
 
     last_user, last_assistant = _last_history_turns(history)
     if not last_user and not last_assistant:
@@ -668,10 +774,22 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     return f"{cleaned}\n\n(Prior question context: {topic})"
 
 
-def resolve_turn_active_topic(question: str, history: list[Any] | None) -> str:
-    """Active topic for the current turn: current message if topic-setting, else history."""
+def resolve_turn_active_topic(
+    question: str,
+    history: list[Any] | None,
+    *,
+    client_active_service: str | None = None,
+) -> str:
+    """Active topic for the current turn: current message if topic-setting, else history.
+
+    ``client_active_service`` must already be validated by the caller (see
+    ``knowledge_taxonomy.validate_active_service_identity``) — an explicit
+    topic-setting/new-service question in ``question`` itself always takes
+    precedence over it (a real topic switch must replace a stale client-
+    carried value, never the other way around).
+    """
     cleaned = (question or "").strip()
-    if cleaned and not _is_slot_followup_question(cleaned):
+    if cleaned and not _is_underspecified_question(cleaned):
         if (
             _is_topic_setting_turn(cleaned)
             or len(_content_tokens(cleaned)) >= 2
@@ -679,21 +797,65 @@ def resolve_turn_active_topic(question: str, history: list[Any] | None) -> str:
         ):
             # Prefer canonical taxonomy phrasing for grounding/identity matching.
             return (_canonical_service_retrieval_phrase(cleaned) or cleaned)[:240]
-    return resolve_active_topic(history, fallback_user=cleaned)
+    return resolve_active_topic(
+        history, fallback_user=cleaned, client_active_service=client_active_service
+    )
 
 
-def resolve_active_topic(history: list[Any] | None, *, fallback_user: str = "") -> str:
+def _usable_topic_label(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned or _is_underspecified_question(cleaned):
+        return ""
+    return cleaned[:240]
+
+
+def resolve_active_topic(
+    history: list[Any] | None,
+    *,
+    fallback_user: str = "",
+    client_active_service: str | None = None,
+) -> str:
     """Return the active conversational topic/service identity from history.
 
     Walks user turns newest-first and returns the latest *substantive*
-    topic-setting message. Slot follow-ups are skipped. An explicit topic
-    switch ("Now tell me about TOR.") replaces any older topic, including
-    short/acronym service labels present in taxonomy metadata.
+    topic-setting message. Slot follow-ups and vague requests are skipped.
+    An explicit topic switch ("Now tell me about TOR.") replaces any older
+    topic, including short/acronym service labels present in taxonomy metadata.
+
+    A client may only forward a bounded recent window of the conversation
+    (e.g. the last few turns), which can drop the original topic-setting
+    question entirely while every *user* turn still in the window is a slot
+    follow-up ("What documents do I need?", "Which office handles that?").
+    When that happens, the active service is reconstructed from the
+    assistant's own past replies that name a taxonomy service —
+    deterministic answers already restate the resolved service by name even
+    when the user's own wording was generic, so this recovers the topic from
+    conversational content already present, independent of how many raw
+    messages the window held.
+
+    Scanning assistant prose for a corroborated service name is a fallback
+    of last resort, not a trustworthy source of truth: a real reply can
+    legitimately mention a prerequisite, related, previous, or next service
+    in passing, and no amount of counting/recency heuristics over free-form
+    text can fully rule that out. When the caller has a ``client_active_service``
+    — a service identity this backend itself returned on an earlier turn in
+    *this* conversation, carried by the client and already validated by the
+    caller against the taxonomy before being passed in here — that
+    machine-readable value is preferred over scanning assistant prose at
+    all. Prose-scanning remains only for clients that do
+    not yet carry that state (backward compatibility), and even then only
+    trusts a service *corroborated* by at least two scanned replies — a
+    single, possibly-incidental mention must not silently replace the
+    running topic. When neither a validated client value nor a corroborated
+    prose match exists, no topic is reconstructed at all; the caller's
+    existing "no active topic" handling (clarify rather than guess) applies
+    instead — a safe clarification is preferable to a confidently wrong
+    office.
     """
     if not history:
-        return (fallback_user or "").strip()[:240]
+        return _usable_topic_label(fallback_user)
     for content in reversed(_history_user_turns(history)):
-        if _is_slot_followup_question(content):
+        if _is_underspecified_question(content):
             continue
         tokens = _content_tokens(content)
         if (
@@ -703,7 +865,21 @@ def resolve_active_topic(history: list[Any] | None, *, fallback_user: str = "") 
         ):
             canonical = _canonical_service_retrieval_phrase(content)
             return (canonical or content.strip())[:240]
-    return (fallback_user or "").strip()[:240]
+    if client_active_service:
+        return client_active_service[:240]
+    primary_names: list[str] = []
+    for content in reversed(_history_assistant_turns(history)):
+        names = _canonical_service_names_in_text(content)
+        if names:
+            primary_names.append(names[0])
+    if primary_names:
+        occurrence_counts: dict[str, int] = {}
+        for name in primary_names:
+            occurrence_counts[name] = occurrence_counts.get(name, 0) + 1
+        newest_candidate = primary_names[0]
+        if occurrence_counts[newest_candidate] >= 2:
+            return newest_candidate[:240]
+    return _usable_topic_label(fallback_user)
 
 
 _TOPIC_SETTING_PREFIX = re.compile(
@@ -730,7 +906,7 @@ def _is_explicit_topic_setting(text: str) -> bool:
 def _is_topic_setting_turn(text: str) -> bool:
     """True for explicit switches and short/acronym service labels from KB metadata."""
     cleaned = (text or "").strip()
-    if not cleaned or _is_slot_followup_question(cleaned):
+    if not cleaned or _is_underspecified_question(cleaned):
         return False
     if _is_explicit_topic_setting(cleaned):
         return True
@@ -745,22 +921,30 @@ def _service_vocab_sets() -> tuple[frozenset[str], frozenset[str]]:
     phrases: set[str] = set()
     singles: set[str] = set()
 
-    def _add_phrase(raw: str) -> None:
+    def _add_phrase(raw: str, *, require_distinctive: bool = False) -> None:
         phrase = re.sub(r"\s+", " ", (raw or "").casefold()).strip()
         if not phrase or len(phrase) < 2:
+            return
+        # Taxonomy names/keywords built entirely from generic bucket words
+        # ("Certificates", "Requests", "Application Forms") must not count as
+        # a known service label just because the bare word appears — same
+        # exclusion `taxonomy_service_matches_in_text` applies, reused here
+        # rather than re-deciding "generic" a third way.
+        if require_distinctive and not has_distinctive_token(phrase, GENERIC_SERVICE_NAME_TOKENS):
             return
         phrases.add(phrase)
         if " " not in phrase:
             singles.add(phrase)
 
     for cat in load_taxonomy():
-        _add_phrase(cat.name)
+        _add_phrase(cat.name, require_distinctive=True)
         for sub in cat.subcategories:
-            _add_phrase(sub.name)
+            _add_phrase(sub.name, require_distinctive=True)
             for keyword in sub.keywords:
-                _add_phrase(keyword)
+                _add_phrase(keyword, require_distinctive=True)
 
     # Read-only vocabulary enrichment from existing expansion triggers (do not edit rules).
+    # Not taxonomy-derived, so the generic-service exclusion above does not apply here.
     try:
         from app.services.retrieval_reranker import QUERY_EXPANSION_RULES
 
@@ -849,11 +1033,11 @@ def _canonical_service_retrieval_phrase(text: str) -> str | None:
     for cat in load_taxonomy():
         for sub in cat.subcategories:
             name_cf = sub.name.casefold().strip()
-            if normalized == name_cf:
+            if normalized == name_cf and has_distinctive_token(name_cf, GENERIC_SERVICE_NAME_TOKENS):
                 exact_name = sub.name
             for keyword in sub.keywords:
                 kw_cf = keyword.casefold().strip()
-                if normalized == kw_cf:
+                if normalized == kw_cf and has_distinctive_token(kw_cf, GENERIC_SERVICE_NAME_TOKENS):
                     # Keep both canonical service title and the matched label.
                     exact_keyword = f"{sub.name} ({keyword})"
                     break
@@ -868,30 +1052,88 @@ def _canonical_service_retrieval_phrase(text: str) -> str | None:
     return None
 
 
-_GENERIC_TOPIC_TOKENS = frozenset(
-    {
-        "student",
-        "students",
-        "form",
-        "forms",
-        "request",
-        "requests",
-        "certificate",
-        "certificates",
-        "certification",
-        "certifications",
-        "issuance",
-        "service",
-        "services",
-        "office",
-        "document",
-        "documents",
-        "application",
-        "applications",
-        "official",
-        "academic",
-    }
-)
+def _canonical_service_name(phrase: str) -> str:
+    """Strip a parenthetical alias, leaving the taxonomy service title."""
+    return re.sub(r"\s*\([^)]*\)\s*", " ", phrase or "").strip()
+
+
+def _active_service_for_response(
+    active_topic: str | None,
+    selected_context: list[RetrievedChunk] | None = None,
+) -> str | None:
+    """The machine-readable ``active_service`` value for the API response.
+
+    Always a real, validated taxonomy service name, or ``None`` — never the
+    raw ``active_topic`` fallback string, which is frequently a full
+    sentence ("How do I enroll as a new student?") rather than a clean
+    canonical name.
+
+    Grounded primarily in the *actually selected evidence* — the top
+    selected chunk's own title/canonical topic — rather than re-parsing the
+    (often ambiguous) question text: a chunk's identity is unambiguous,
+    while a full sentence can name more than one plausible taxonomy service
+    (e.g. "new student" also matches "Freshmen", not only "Registration"),
+    and picking the wrong one here would defeat the point of a client
+    echoing it back later. Falls back to the resolved ``active_topic``
+    string only when no selected evidence is available (e.g. a template
+    answer path with no chunk in scope). A client must only ever be handed
+    back something this backend would also accept and trust on the next
+    turn.
+    """
+    if selected_context:
+        top = selected_context[0]
+        metadata = top.metadata or {}
+        title = str(
+            metadata.get("canonical_topic")
+            or metadata.get("source_section")
+            or metadata.get("title")
+            or top.title
+            or ""
+        ).strip()
+        if title:
+            names = _canonical_service_names_in_text(title)
+            if names:
+                return names[0]
+    if not active_topic:
+        return None
+    exact = validate_active_service_identity(_canonical_service_name(active_topic))
+    if exact:
+        return exact
+    names = _canonical_service_names_in_text(active_topic)
+    return names[0] if names else None
+
+
+def _canonical_service_names_in_text(text: str) -> list[str]:
+    """Taxonomy service titles mentioned in *text* as whole tokens or phrases.
+
+    Used so acronyms such as TOR expand to ``Transcript of Records`` for
+    overlap/ranking without a one-off ``if question == "TOR"`` branch.
+    """
+    residual = _strip_topic_setting_wrapper(text)
+    normalized = re.sub(r"\s+", " ", residual.casefold()).strip(" ?.!,;:\"'")
+    if not normalized:
+        return []
+
+    names: list[str] = []
+    exact = _canonical_service_retrieval_phrase(text)
+    if exact:
+        names.append(_canonical_service_name(exact))
+
+    names.extend(
+        taxonomy_service_names_in_text(
+            normalized,
+            exclude_tokens=_GENERIC_TOPIC_TOKENS | _SLOT_ATTRIBUTE_TOKENS | GENERIC_INTENT_TOKENS,
+        )
+    )
+    return list(dict.fromkeys(name for name in names if name))
+
+
+
+# Reuses the taxonomy module's shared generic-word set (see
+# GENERIC_SERVICE_NAME_TOKENS) rather than keeping a second, independently
+# maintained copy that could drift out of sync with the reranker's own use
+# of the same exclusion.
+_GENERIC_TOPIC_TOKENS = GENERIC_SERVICE_NAME_TOKENS
 
 
 def _expand_topic_identity_tokens(topic_tokens: set[str]) -> set[str]:
@@ -916,7 +1158,12 @@ def _prefer_active_topic_context(
     chunks: list[RetrievedChunk],
     active_topic: str,
 ) -> list[RetrievedChunk]:
-    """Keep evidence that matches the active service when any such chunk exists."""
+    """Keep evidence that matches the active service when any such chunk exists.
+
+    Slot follow-ups (requirements/cost/where/time) prefer charter/procedure
+    cards with usable service fields over policy clauses that only share the
+    service name.
+    """
     # Pass raw topic tokens; matching expands aliases once internally.
     topic_tokens = _fee_topic_tokens(active_topic) | _content_tokens(active_topic)
     if not chunks or not topic_tokens:
@@ -926,11 +1173,75 @@ def _prefer_active_topic_context(
         for chunk in chunks
         if _service_matches_active_topic(_chunk_service_title(chunk), topic_tokens)
     ]
-    return matching or chunks
+    if not matching:
+        return chunks
+    usable = [
+        chunk
+        for chunk in matching
+        if _has_usable_service_fields(chunk) or is_service_procedure_chunk(chunk)
+    ]
+    if not usable:
+        return matching
+    usable.sort(
+        key=lambda chunk: (
+            0 if _has_usable_service_fields(chunk) else 1,
+            0 if is_service_procedure_chunk(chunk) else 1,
+        )
+    )
+    return usable
+
+
+# Words that name the *attribute* a student is asking for rather than the thing
+# it belongs to: "how much", "the requirements", "which office". On their own they
+# identify no subject.
+_SLOT_ATTRIBUTE_TOKENS = frozenset(
+    {
+        "much", "cost", "fee", "fees", "long", "submit", "requirement",
+        "requirements", "document", "documents", "office", "handles",
+        "responsible", "take", "need", "required", "where", "saan",
+    }
+)
+
+_VAGUE_REQUEST_RE = re.compile(
+    r"^(?:help|please\s+help(?:\s+me)?|can\s+you\s+help(?:\s+me)?|"
+    r"i\s+need\s+help|what\s+can\s+you\s+do)\s*[?.!]*$",
+    re.I,
+)
+
+
+def _is_vague_request(text: str) -> bool:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    return bool(cleaned) and bool(_VAGUE_REQUEST_RE.match(cleaned))
+
+
+def _is_underspecified_question(text: str) -> bool:
+    """True for slot-only or vague requests that do not name a service/topic."""
+    return _is_vague_request(text) or _is_slot_followup_question(text)
+
+
+def _has_real_active_topic(active_topic: str | None) -> bool:
+    topic = (active_topic or "").strip()
+    return bool(topic) and not _is_underspecified_question(topic)
+
+
+def _question_names_a_service_or_subject(text: str) -> bool:
+    """True when the wording already identifies a service or distinctive subject."""
+    if _canonical_service_names_in_text(text) or _is_known_service_label(text):
+        return True
+    residual = _strip_topic_setting_wrapper(text)
+    if residual and residual != (text or "").strip() and (
+        _canonical_service_names_in_text(residual) or _is_known_service_label(residual)
+    ):
+        return True
+    return bool(_distinctive_subject_tokens(text))
 
 
 def _is_slot_followup_question(text: str) -> bool:
-    """True for anaphoric slot questions that need a prior substantive topic."""
+    """True for anaphoric slot questions that need a prior substantive topic.
+
+    "How much does it cost?" is a slot. "How much does a Good Moral Certificate
+    cost?" already names a service and is not slot-only.
+    """
     normalized = re.sub(r"\s+", " ", (text or "").strip().casefold())
     if not normalized:
         return False
@@ -938,17 +1249,14 @@ def _is_slot_followup_question(text: str) -> bool:
     if re.match(r"^(?:what about|how about)\b", normalized):
         residual = _strip_topic_setting_wrapper(text)
         residual_tokens = _content_tokens(residual)
-        slot_only_probe = {
-            "much", "cost", "fee", "fees", "long", "submit", "requirement",
-            "requirements", "document", "documents", "office", "handles",
-            "responsible", "take", "need", "required",
-        }
         if residual and (
             _is_known_service_label(residual)
-            or (residual_tokens and not residual_tokens <= slot_only_probe)
+            or (residual_tokens and not residual_tokens <= _SLOT_ATTRIBUTE_TOKENS)
         ):
             return False
         return True
+    if _question_names_a_service_or_subject(text):
+        return False
     if re.match(
         r"^(?:how much|how long|and the|the fee|the office|"
         r"which office|what office|who handles|who is responsible|same for|"
@@ -966,12 +1274,7 @@ def _is_slot_followup_question(text: str) -> bool:
     ):
         return True
     tokens = _content_tokens(normalized)
-    slot_only = {
-        "much", "cost", "fee", "fees", "long", "submit", "requirement",
-        "requirements", "document", "documents", "office", "handles",
-        "responsible", "take", "need", "required",
-    }
-    if len(normalized.split()) <= 8 and tokens and tokens <= slot_only:
+    if len(normalized.split()) <= 8 and tokens and tokens <= _SLOT_ATTRIBUTE_TOKENS:
         return True
     return False
 
@@ -1011,6 +1314,20 @@ def _history_user_turns(history: list[Any]) -> list[str]:
     return turns
 
 
+def _history_assistant_turns(history: list[Any]) -> list[str]:
+    turns: list[str] = []
+    for item in history:
+        if isinstance(item, dict):
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+        else:
+            role = str(getattr(item, "role", "") or "").strip().lower()
+            content = str(getattr(item, "content", "") or "").strip()
+        if role == "assistant" and content:
+            turns.append(content)
+    return turns
+
+
 def _last_substantive_user_topic(history: list[Any], fallback_user: str) -> str:
     """Prefer the latest contentful user question, skipping slot follow-ups."""
     return resolve_active_topic(history, fallback_user=fallback_user)
@@ -1031,6 +1348,38 @@ def _content_tokens(text: str) -> set[str]:
         for token in re.findall(r"[a-z0-9]+", (text or "").casefold())
         if token not in stop and len(token) >= 3
     }
+
+
+def _chunks_overlap_question_tokens(
+    question: str,
+    chunks: list[RetrievedChunk],
+) -> bool:
+    """True when a content token from the question appears in retrieved text/title.
+
+    Used as a scale-free alignment signal so a named subject (president, diploma,
+    enrollment) is not treated as unaligned just because unit fixtures omit
+    rerank reasons.
+    """
+    tokens = _content_tokens(question) - _SLOT_ATTRIBUTE_TOKENS - _GENERIC_TOPIC_TOKENS
+    if not tokens or not chunks:
+        return False
+    for chunk in chunks:
+        metadata = chunk.metadata or {}
+        blob = _normalize(
+            " ".join(
+                str(value or "")
+                for value in (
+                    metadata.get("source_section"),
+                    metadata.get("canonical_topic"),
+                    metadata.get("title"),
+                    chunk.title,
+                    (chunk.text or "")[:800],
+                )
+            )
+        )
+        if any(token in blob for token in tokens):
+            return True
+    return False
 
 
 def _topic_anchor_from_history(
@@ -1340,10 +1689,11 @@ def select_context_chunks(
         )
         group_key = _context_group_key(chunk, normalized_query)
         duplicate_group = broad_query and group_key in seen_groups
-        keep = (rank == 1 and not broad_query) or (len(selected) < limit and any(reason.startswith("keep_") for reason in reasons))
+        keep = rank == 1 or (
+            len(selected) < limit and any(reason.startswith("keep_") for reason in reasons)
+        )
         if broad_query:
-            keep = len(selected) < limit and any(reason.startswith("keep_") for reason in reasons)
-            if duplicate_group:
+            if duplicate_group and rank != 1:
                 keep = False
                 reasons.append("drop_duplicate_context_group")
         if rank != 1 and _has_strong_penalty(chunk):
@@ -1468,6 +1818,7 @@ def format_retrieved_context(chunks: list[RetrievedChunk]) -> str:
         path = _hierarchy_path(metadata) or title
         page = _page_label(metadata)
         meta_lines = _charter_metadata_context_lines(metadata)
+        content = _format_structured_tables(_redact_extraction_artifacts(chunk.text.strip()))
         blocks.append(
             "\n".join(
                 [
@@ -1477,7 +1828,7 @@ def format_retrieved_context(chunks: list[RetrievedChunk]) -> str:
                     *meta_lines,
                     "",
                     "Content:",
-                    chunk.text.strip(),
+                    content,
                 ]
             )
         )
@@ -1506,7 +1857,7 @@ def format_collection_context(chunks: list[RetrievedChunk], question: str, inten
                     f"Path: {_hierarchy_path(metadata) or _display_title(chunk)}",
                     f"Page: {_page_label(metadata)}",
                     "Content:",
-                    chunk.text.strip(),
+                    _redact_extraction_artifacts(chunk.text.strip()),
                 ]
             )
         blocks.append("\n".join(lines))
@@ -1542,6 +1893,7 @@ def _confidence_for(
     broad_query: bool = False,
     collection_mode: bool = False,
     facet_coverage: FacetCoverage | None = None,
+    active_topic: str | None = None,
 ) -> str:
     if not retrieved_chunks or not selected_chunks:
         return "low"
@@ -1549,7 +1901,6 @@ def _confidence_for(
     if any(phrase in normalized_answer for phrase in MISSING_INFO_PHRASES):
         return "low"
 
-    top_score = _chunk_score(retrieved_chunks[0])
     domain = _detected_query_domain(_normalize(question))
     taxonomy_available = bool(domain) and _chunks_carry_taxonomy(selected_chunks)
     if taxonomy_available:
@@ -1564,8 +1915,8 @@ def _confidence_for(
             1 for chunk in selected_chunks if _soft_domain_text_match(chunk, domain)
         )
     else:
-        has_domain_match = True
-        domain_match_count = len(selected_chunks)
+        has_domain_match = False
+        domain_match_count = 0
     has_positive_signal = any(_positive_reasons(chunk) for chunk in selected_chunks)
     # Topic-coverage context is deliberate, so its ranking penalty is not noise.
     ranked_selection = [chunk for chunk in selected_chunks if not _is_facet_recovered(chunk)]
@@ -1584,11 +1935,119 @@ def _confidence_for(
             return "medium"
         return "low"
 
-    if top_score >= 0.82 and has_domain_match and has_positive_signal and not noisy_selected:
+    # Confidence used to hinge on ``top_score >= 0.82`` / ``>= 0.58``. Those
+    # thresholds were written for cosine similarity but are applied to the
+    # post-rerank ranking score, whose production range is ~1.0 to ~4.7 — so
+    # every answer cleared both and confidence collapsed onto the remaining
+    # conditions. It is now graded on whether the evidence is aligned with a
+    # question we can actually pin down, which holds on any score scale.
+    if not _question_identifies_a_subject(
+        question, retrieved_chunks, selected_chunks, active_topic=active_topic
+    ):
+        return "low"
+    title_anchored = query_matches_retrieval_title(
+        question, selected_chunks
+    ) or query_matches_retrieval_title(question, retrieved_chunks)
+    text_anchored = _chunks_overlap_question_tokens(
+        question, selected_chunks
+    ) or _chunks_overlap_question_tokens(question, retrieved_chunks)
+    distinctive = _distinctive_subject_tokens(question)
+    distinctive_in_evidence = _chunks_contain_tokens(
+        distinctive, selected_chunks
+    ) or _chunks_contain_tokens(distinctive, retrieved_chunks)
+    domain_grounded = bool(
+        domain
+        and has_domain_match
+        and distinctive
+        and _domain_shares_distinctive_tokens(domain, distinctive)
+    )
+    # HIGH requires the question's own distinctive tokens to appear in evidence
+    # or in the taxonomy domain label. A weak classify("… policy") hit must not
+    # upgrade unrelated handbook chunks to high confidence.
+    strong_aligned = bool(
+        (title_anchored and (not distinctive or distinctive_in_evidence))
+        or domain_grounded
+    )
+    # A single narrow chunk's title/text can share literal wording with a
+    # *compound* question (title_anchored) while only ever answering one of
+    # several distinct parts — this is exactly what taxonomy domain-matching
+    # used to guard against (chunk category/subcategory vs. the question's
+    # classified category), before that check was replaced by title/text
+    # anchoring. Requiring the classified domain to also match — whenever the
+    # question actually classifies into one — keeps that guard for HIGH
+    # without reintroducing an absolute score threshold: a question with no
+    # detected domain at all is unaffected (``domain`` is falsy).
+    domain_consistent = (not domain) or has_domain_match
+    if (
+        strong_aligned
+        and has_positive_signal
+        and not noisy_selected
+        and domain_consistent
+        and _authoritative_evidence_present(question, selected_chunks)
+    ):
         return _capped_for_facet_gap("high", facet_coverage)
-    if top_score >= 0.58 and not noisy_selected:
+    if (strong_aligned or text_anchored or has_positive_signal) and not noisy_selected:
         return _capped_for_facet_gap("medium", facet_coverage)
     return "low"
+
+
+# Mirrors the exclude_tokens already used by ``_canonical_service_names_in_text``
+# so the "is a service named at all" gate and the "does this chunk's title
+# match that service" check below cannot disagree about what counts as generic.
+_SERVICE_EVIDENCE_EXCLUDE_TOKENS = (
+    GENERIC_SERVICE_NAME_TOKENS | _SLOT_ATTRIBUTE_TOKENS | GENERIC_INTENT_TOKENS
+)
+
+
+def _authoritative_evidence_present(question: str, chunks: list[RetrievedChunk]) -> bool:
+    """For a factual/how-to service question, is the *named service's own
+    record* in evidence — not merely a chunk that mentions the same topic?
+
+    Topical overlap (a handbook policy clause that happens to share a
+    service's name) is not the same as having that service's actual
+    Citizen's Charter/service-procedure card. Confidence must not go "high"
+    on the former when the question asks a service-specific fact (fee,
+    office, requirements, processing time) and only the latter can ground it.
+    Questions that do not name a specific taxonomy service, or are not
+    fact-seeking about one, are unaffected — this only tightens the case
+    Cursor's diagnosis flagged.
+
+    Reuses :func:`taxonomy_service_title_match` (the same identity rule
+    ``_service_identity_boost`` uses in the reranker) instead of an
+    independent name/title token-overlap check, so a service reached only
+    through a keyword alias — "enrollment" under the "Registration"
+    subcategory, "dropping" under "Withdrawal" — is not silently rejected
+    just because its bare canonical name shares no word with the real card
+    title, and a card that merely shares one common institutional word with
+    the canonical name (e.g. a hypothetical "IP Registration Process" for an
+    enrollment question) is not wrongly accepted either.
+    """
+    if not (is_factual_service_detail_query(question) or is_service_howto_query(question)):
+        return True
+    names = _canonical_service_names_in_text(question)
+    if not names:
+        return True
+    normalized_question = _normalize(question)
+    for chunk in chunks:
+        if not is_service_procedure_chunk(chunk):
+            continue
+        metadata = chunk.metadata or {}
+        title = _normalize(
+            " ".join(
+                str(value or "")
+                for value in (
+                    metadata.get("source_section"),
+                    metadata.get("canonical_topic"),
+                    metadata.get("title"),
+                    chunk.title,
+                )
+            )
+        )
+        if taxonomy_service_title_match(
+            normalized_question, title, exclude_tokens=_SERVICE_EVIDENCE_EXCLUDE_TOKENS
+        ):
+            return True
+    return False
 
 
 def _is_facet_recovered(chunk: RetrievedChunk) -> bool:
@@ -1743,15 +2202,13 @@ def _retrieval_quality(
     *,
     broad_query: bool,
     collection_mode: bool,
+    active_topic: str | None = None,
 ) -> dict[str, Any]:
     if not retrieved or not selected:
         return {"should_clarify": True, "reason": "no_retrieval_context"}
     if broad_query or collection_mode:
         return {"should_clarify": False, "reason": "broad_or_collection_mode"}
 
-    top = _chunk_score(retrieved[0])
-    second = _chunk_score(retrieved[1]) if len(retrieved) > 1 else 0.0
-    margin = top - second
     normalized_q = _normalize(question)
     domain = _detected_query_domain(normalized_q)
     if domain and _chunks_carry_taxonomy(selected):
@@ -1759,16 +2216,13 @@ def _retrieval_quality(
     elif domain:
         domain_match_count = sum(1 for chunk in selected if _soft_domain_text_match(chunk, domain))
     else:
-        domain_match_count = len(selected)
+        # No taxonomy label for the question: do not treat every retrieved
+        # section as domain-aligned. Underspecified/nonsense queries must not
+        # inherit confidence from arbitrary charter cards.
+        domain_match_count = 0
     positive_count = sum(1 for chunk in selected if _positive_reasons(chunk))
     noisy_count = sum(1 for chunk in selected if _has_strong_penalty(chunk))
 
-    too_short_or_noisy = len(_meaningful_tokens(normalized_q)) <= 3
-    weak_top_score = top < 0.54
-    weak_margin = len(retrieved) > 1 and margin < 0.03 and top < 0.62
-    # High-scoring hits are enough even when FakeStore/unit tests omit boost_* tags.
-    # Keep the floor below typical promoted service-procedure scores (~0.7+).
-    weak_alignment = (domain_match_count == 0 or positive_count == 0) and top < 0.68
     noisy_context = noisy_count >= max(1, len(selected) // 2)
     # Title/section alignment (short topics or fuller questions that name the topic)
     # is sufficient grounding — do not force clarification just because the phrase
@@ -1776,20 +2230,135 @@ def _retrieval_quality(
     title_anchored = query_matches_retrieval_title(
         question, selected
     ) or query_matches_retrieval_title(question, retrieved)
+    text_anchored = _chunks_overlap_question_tokens(question, selected)
+    # The three gates that used to live here — top < 0.54, a margin gate below
+    # 0.62, and an alignment gate below 0.68 — were written for the 0-1 cosine
+    # scale that ``relevance_score`` carries before reranking. After reranking it
+    # carries the unbounded rerank priority instead (production: ~1.0 to ~4.7),
+    # so all three were unreachable. Their intent was an absolute "is this good
+    # evidence?" floor, which neither score can express: cosine puts relevant and
+    # unrelated chunks alike in ~0.79-0.91, and the rerank scale shifts with the
+    # topic. The intent is carried instead by two scale-free questions — do we
+    # know what is being asked about, and did retrieval find topical support?
+    if not _question_identifies_a_subject(
+        question, retrieved, selected, active_topic=active_topic
+    ):
+        return {"should_clarify": True, "reason": "question_identifies_no_subject"}
+    weak_alignment = (
+        domain_match_count == 0
+        and not title_anchored
+        and not text_anchored
+        and _reranker_found_no_topical_support(selected)
+    )
 
-    if title_anchored:
-        should_clarify = bool(noisy_context or (weak_top_score and top < 0.35))
-    else:
-        should_clarify = bool(
-            weak_top_score
-            or weak_margin
-            or weak_alignment
-            or noisy_context
-            or (too_short_or_noisy and (weak_top_score or weak_alignment))
-        )
-    if should_clarify:
+    if noisy_context or weak_alignment:
         return {"should_clarify": True, "reason": "weak_or_inconsistent_retrieval_evidence"}
     return {"should_clarify": False, "reason": "retrieval_evidence_sufficient"}
+
+
+def _reranker_found_no_topical_support(chunks: list[RetrievedChunk]) -> bool:
+    """True when no selected chunk has a subject-level rerank reason.
+
+    Hygiene boosts (page number, citation-ready, valid source metadata) fire on
+    every well-formed chunk and do not count.
+    """
+    return not any(_positive_reasons(chunk) for chunk in chunks)
+
+
+def _question_identifies_a_subject(
+    question: str,
+    retrieved: list[RetrievedChunk],
+    selected: list[RetrievedChunk],
+    *,
+    active_topic: str | None = None,
+) -> bool:
+    """Do we know *what* the student is asking about?
+
+    Deliberately reads no similarity or rerank score: neither carries an
+    absolute notion of relevance (see :class:`RetrievedChunk`), so "we have no
+    idea what this question is about" has to be answered from the question, the
+    conversation and the taxonomy instead.
+
+    A question identifies a subject when the conversation has an active topic,
+    when it anchors onto a retrieved section title, or when its own wording
+    contributes subject tokens — words left over once the attribute being asked
+    for ("how much", "the requirements", "which office") is removed. "How much
+    is the fee for a Transcript of Records?" keeps ``transcript``/``records``;
+    "How much does it cost?" keeps nothing, and neither does a bare "help".
+    """
+    if _has_real_active_topic(active_topic):
+        return True
+    normalized = _normalize(question)
+    if not normalized or _is_underspecified_question(question):
+        return False
+    distinctive = _distinctive_subject_tokens(normalized)
+    names = _canonical_service_names_in_text(question)
+    if names:
+        return True
+    if _is_known_service_label(question):
+        return True
+    in_evidence = _chunks_contain_tokens(distinctive, selected) or _chunks_contain_tokens(
+        distinctive, retrieved
+    )
+    domain = _detected_query_domain(normalized)
+    domain_grounded = bool(
+        domain and distinctive and _domain_shares_distinctive_tokens(domain, distinctive)
+    )
+    # Leftover words that never appear in retrieved titles/text are not a campus subject.
+    if distinctive and not in_evidence and not domain_grounded:
+        return False
+    title_anchored = query_matches_retrieval_title(
+        question, selected
+    ) or query_matches_retrieval_title(question, retrieved)
+    if title_anchored and (not distinctive or in_evidence):
+        return True
+    if domain_grounded:
+        return True
+    return False
+
+
+def _distinctive_subject_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in (
+            _content_tokens(text) - _SLOT_ATTRIBUTE_TOKENS - _GENERIC_TOPIC_TOKENS
+        )
+        if token not in GENERIC_INTENT_TOKENS
+    }
+
+
+def _chunks_contain_tokens(tokens: set[str], chunks: list[RetrievedChunk]) -> bool:
+    if not tokens or not chunks:
+        return False
+    for chunk in chunks:
+        blob = _normalize(
+            " ".join(
+                str(value or "")
+                for value in (
+                    (chunk.metadata or {}).get("source_section"),
+                    (chunk.metadata or {}).get("canonical_topic"),
+                    (chunk.metadata or {}).get("title"),
+                    chunk.title,
+                    (chunk.text or "")[:400],
+                )
+            )
+        )
+        if any(token in blob for token in tokens):
+            return True
+    return False
+
+
+def _domain_shares_distinctive_tokens(domain: str, distinctive: set[str]) -> bool:
+    domain_tokens = set(re.findall(r"[a-z0-9]+", _normalize(domain)))
+    if distinctive & domain_tokens:
+        return True
+    for token in distinctive:
+        for domain_token in domain_tokens:
+            if len(token) >= 4 and len(domain_token) >= 4 and (
+                token.startswith(domain_token) or domain_token.startswith(token)
+            ):
+                return True
+    return False
 
 
 def _student_facing_answer(
@@ -1800,7 +2369,9 @@ def _student_facing_answer(
 ) -> str:
     from app.services.qa.groq_answer_service import _strip_pointer_phrasing
 
-    cleaned = _strip_pointer_phrasing(_strip_source_lines(answer))
+    cleaned = _redact_extraction_artifacts(
+        _strip_pointer_phrasing(_strip_source_lines(answer))
+    )
     # Only collapse to the stock OOS line when the reply is basically a refusal —
     # keep partial useful answers that also mention missing details.
     if (
@@ -2008,7 +2579,11 @@ def _recover_factual_charter_answer(
     normalized = _normalize(question)
     asks_fee = bool(re.search(r"\b(?:how much|fee|fees|cost)\b", normalized))
     asks_office = bool(
-        re.search(r"\b(?:which office|what office|who handles|responsible|in charge)\b", normalized)
+        re.search(
+            r"\b(?:which office|what office|who handles|responsible|in charge|"
+            r"where|saan|kukuha|makakakuha|submit)\b",
+            normalized,
+        )
     )
     topic_tokens = _fee_topic_tokens(normalized)
     # Fee answers require an active service identity. Bare "how much does it cost?"
@@ -2102,6 +2677,11 @@ def _recover_factual_charter_answer(
         if asks_fee and fee:
             answer_title = _fee_answer_title(title, fee, normalized)
             return f"The listed fee for {answer_title} is {fee} ({source_label})."
+
+        if asks_fee:
+            reply = _fee_unclear_or_zero_answer(title, raw_fee, fee, normalized, source_label)
+            if reply:
+                return reply
 
         if asks_office and office and not asks_fee:
             return f"The office responsible for {title} is {office} ({source_label})."
@@ -2197,13 +2777,8 @@ def _charter_recovery_rank(
     return (1, overlap_rank, fee_priority, score)
 
 
-def _fee_usable_for_question(fee: str | None, title: str, normalized_question: str) -> str | None:
-    """Accept fees only when they belong to the asked service (not Assessment of Fees noise)."""
-    if not fee:
-        return None
-    title_n = _normalize(title)
-    fee_n = _normalize(fee)
-    if fee_n in {
+_UNSPECIFIED_FEE_VALUES = frozenset(
+    {
         "none",
         "n/a",
         "na",
@@ -2215,7 +2790,368 @@ def _fee_usable_for_question(fee: str | None, title: str, normalized_question: s
         "needs review",
         "not specified",
         "not applicable",
-    }:
+    }
+)
+_DOCUMENTED_ZERO_FEE_VALUES = frozenset(
+    {"none", "no fee", "no fees", "free", "walang bayad", "0", "0.00", "p0", "p0.00"}
+)
+
+
+def _documented_zero_fee(fee: str | None) -> bool:
+    """True when the source explicitly records that no fee is charged."""
+    return _normalize(fee or "") in _DOCUMENTED_ZERO_FEE_VALUES
+
+
+def _fee_unclear_or_zero_answer(
+    title: str,
+    raw_fee: str | None,
+    fee: str | None,
+    normalized_question: str,
+    source_label: str,
+) -> str | None:
+    """Reply for an asks-fee question whose source has no *usable* fee value.
+
+    Distinguishes "the source explicitly says there is no fee" from "the
+    source's fee field could not be parsed" so neither is misreported as the
+    other. Shared by the LLM-answer factual-recovery path and the
+    conversational (no-LLM) fallback path so the two do not drift apart.
+    """
+    answer_title = _fee_answer_title(title, raw_fee or "", normalized_question)
+    if _documented_zero_fee(raw_fee):
+        return f"There is no listed fee for {answer_title} ({source_label})."
+    if raw_fee and not fee:
+        return f"The cited source does not clearly specify a fee for {answer_title}."
+    return None
+
+
+def _looks_like_fee_amount(fee: str | None) -> bool:
+    """True for a currency-like amount, not an extraction fragment such as ``form. 3``."""
+    text = (fee or "").strip()
+    if not text or _normalize(text) in _UNSPECIFIED_FEE_VALUES:
+        return False
+    if _documented_zero_fee(text):
+        return False
+    if re.search(r"(?i)\bform\.?\s*\d+", text):
+        return False
+    if re.search(r"(?i)\b(?:php|peso|pesos)\b.*\d", text):
+        return True
+    # Isolated P### page markers (P137) are not currency. Require a decimal,
+    # /page, or per-unit so page codes cannot be quoted as fees.
+    if re.search(
+        r"(?i)(?:^|[^\w])(?:php|p)\s*\d+(?:\.\d{2}|\s*/\s*page|\s*per\b|,)",
+        text,
+    ):
+        return True
+    if re.search(r"\d+\.\d{2}", text):
+        return True
+    return False
+
+
+def _redact_extraction_artifacts(text: str) -> str:
+    """Keep uncertain parser leftovers from being quoted as student-facing facts."""
+    cleaned = re.sub(r"\[NEEDS REVIEW\]", "not specified in the source", text or "", flags=re.I)
+    cleaned = re.sub(
+        r"(?im)^(Fees|Fee|Total Fees)\s*:\s*(?:form\.?\s*\d+|[-–—]\s*\d+)\s*$",
+        r"\1: not clearly specified in the source",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)\bform\.?\s*\d+\b",
+        "a value that is not clearly specified in the source",
+        cleaned,
+    )
+    # Page-like P### tokens without a currency unit or /page qualifier.
+    cleaned = re.sub(
+        r"(?i)(?<![A-Za-z0-9])P\s*(\d{3,})(?!\.\d|/\s*page|\s*per\b)",
+        "a source page marker that is not a listed fee",
+        cleaned,
+    )
+    return cleaned
+
+
+_RANGE_THEN_STATUS = re.compile(
+    r"^(?P<range>\d+(?:\.\d+)?\s*(?:[-–]\s*\d+(?:\.\d+)?|and\s+(?:below|above)))\s+"
+    r"(?P<status>[A-Za-z][A-Za-z /-]*)$",
+    re.I,
+)
+_IDENTIFIER_CELL = re.compile(r"^(?:\d+\.\d{2}|[A-Z]{2,6})$")
+_RANGE_CELL = re.compile(
+    r"\d+\s*[-–]\s*\d+|\d+\s+and\s+(?:below|above)|\bpercent\b|\b%\b",
+    re.I,
+)
+_NEGATIVE_STATUS = re.compile(
+    r"\b(?:fail(?:ed|ure)?|conditional|incomplete|dropped|unsatisfactory)\b",
+    re.I,
+)
+_PASSING_CLAIM = re.compile(r"\b(?:pass(?:ing|ed)?|successful)\b", re.I)
+_FAILING_CLAIM = re.compile(r"\bfail(?:s|ing|ed)?\b", re.I)
+_AND_ABOVE_CLAIM = re.compile(
+    r"(\d+(?:\.\d{2})?|[A-Za-z]{2,6})\s+and\s+above",
+    re.I,
+)
+
+
+def _split_fused_range_status(cell: str) -> list[str]:
+    text = (cell or "").strip()
+    match = _RANGE_THEN_STATUS.match(text)
+    if match:
+        return [match.group("range").strip(), match.group("status").strip()]
+    loose = re.match(
+        r"^(?P<range>\d.+\b(?:and\s+(?:below|above)|[-–]\s*\d+))\s+"
+        r"(?P<status>[A-Za-z][A-Za-z /-]*)\s*$",
+        text,
+        flags=re.I,
+    )
+    if loose:
+        return [loose.group("range").strip(), loose.group("status").strip()]
+    return [text] if text else []
+
+
+def _infer_table_cell_role(cell: str) -> str:
+    text = (cell or "").strip()
+    if _IDENTIFIER_CELL.match(text):
+        return "Identifier"
+    if _RANGE_CELL.search(text):
+        return "Range"
+    if re.search(r"[A-Za-z]", text):
+        return "Status"
+    return "Value"
+
+
+def _table_record_from_row(row: list[str], header: list[str] | None) -> dict[str, str]:
+    """One table row as a record, keyed both by the source's own header labels
+    (if any) and by generic, shape-inferred roles (Identifier/Range/Status/Value).
+
+    A header naming its columns "Tier Code" / "Score Range" / "Rating" (or any
+    other institution-specific wording) describes the same *kind* of row as
+    one with no header at all — the role tags are always computed from each
+    cell's own shape so downstream code that reasons about value-to-status
+    association (``_answer_contradicts_table_records``) has a table-agnostic
+    place to read from, never tied to a particular table's own column-naming
+    choices. A header-provided value for the same role name (rare, but
+    possible if a header literally reads "Status") is left as authoritative;
+    role-inference only fills in roles the header did not already supply.
+    """
+    cells: list[str] = []
+    for cell in row:
+        cells.extend(_split_fused_range_status(cell.strip()) if cell.strip() else [])
+    record: dict[str, str] = {"raw": " — ".join(cells)}
+    if header and len(header) == len(row):
+        for label, value in zip(header, row):
+            if value:
+                record[label.strip() or "Value"] = value
+    for cell in cells:
+        role = _infer_table_cell_role(cell)
+        record.setdefault(role, cell)
+        if role == "Status":
+            record["Status"] = cell
+    return record
+
+
+def _format_table_record_line(record: dict[str, str]) -> str:
+    order = ("Identifier", "Range", "Status", "Value")
+    parts = [
+        f"{key}: {record[key]}"
+        for key in order
+        if record.get(key)
+    ]
+    extra = [
+        f"{key}: {value}"
+        for key, value in record.items()
+        if key not in {*order, "raw"} and value
+    ]
+    return "- " + " — ".join(parts or extra or [record.get("raw") or ""])
+
+
+def _format_structured_tables(text: str) -> str:
+    """Rewrite pipe-delimited institutional tables so each row stays associated.
+
+    Flattened rows are easy for a model to read backwards (treating a failing
+    range as a passing threshold). Each row is one record with inferred
+    Identifier / Range / Status roles when no header is present. No
+    institutional facts are invented.
+    """
+    lines = (text or "").splitlines()
+    out: list[str] = []
+    pending: list[str] = []
+
+    def _flush() -> None:
+        if len(pending) < 2:
+            out.extend(pending)
+            pending.clear()
+            return
+        parsed = [[cell.strip() for cell in row.split("|")] for row in pending]
+        header: list[str] | None = None
+        data_rows = parsed
+        first = parsed[0]
+        if first and not any(re.search(r"\d", cell) for cell in first):
+            header = first
+            data_rows = parsed[1:]
+        out.append(
+            "Structured table (each row is one record; Identifier, Range, and "
+            "Status on a row belong only to that row):"
+        )
+        has_status = False
+        for row in data_rows:
+            record = _table_record_from_row(row, header)
+            if record.get("Status"):
+                has_status = True
+            out.append(_format_table_record_line(record))
+        if has_status:
+            out.append(
+                "Table semantics: a Status/interpretation label is authoritative "
+                "for its own Identifier and Range only. Do not assume a larger "
+                "identifier means 'above' or a better outcome. Do not write "
+                "'X and above' unless those words appear in a cell. A row "
+                "labeled Failed, Conditional, Incomplete, or Dropped is not a "
+                "passing or successful outcome."
+            )
+        pending.clear()
+
+    for line in lines:
+        if "|" in line:
+            pending.append(line)
+        else:
+            _flush()
+            out.append(line)
+    _flush()
+    return "\n".join(out)
+
+
+def _structured_table_records_from_text(text: str) -> list[dict[str, str]]:
+    """Parse Identifier/Range/Status records from formatted table context."""
+    records: list[dict[str, str]] = []
+    in_table = False
+    for line in (text or "").splitlines():
+        if line.startswith("Structured table"):
+            in_table = True
+            continue
+        if in_table and line.startswith("- "):
+            record: dict[str, str] = {"raw": line[2:]}
+            for part in line[2:].split(" — "):
+                if ": " in part:
+                    key, value = part.split(": ", 1)
+                    record[key.strip()] = value.strip()
+            records.append(record)
+            continue
+        if in_table and line and not line.startswith("- "):
+            in_table = False
+    return records
+
+
+def _record_boundary_numbers(record: dict[str, str]) -> set[str]:
+    """Numeric tokens appearing in a record's own Identifier/Range values."""
+    text = " ".join(
+        str(record.get(key) or "") for key in ("Identifier", "Range")
+    )
+    return set(re.findall(r"\d+(?:\.\d+)?", text))
+
+
+def _answer_contradicts_table_records(answer: str, records: list[dict[str, str]]) -> bool:
+    """True when a generated answer inverts a table row's status or invents 'and above'.
+
+    A negative-status row is identified by *either* of its own value markers
+    — the row's Identifier (e.g. a GPA-style code) or its Range (e.g. a
+    percentage band) — since a generated answer may restate the row using
+    whichever value it reads as more natural (a real, reproduced failure:
+    "a range of 70-74 is passing" slipped past a check that only looked for
+    the Identifier "4.00").
+
+    Matching is at *two* levels, both tied to the same one record so this
+    never becomes a cross-record lookup: the literal marker string (for
+    non-numeric codes like "INC"), and the record's own *numbers* extracted
+    from those markers. The number-level match is what closes a real,
+    reproduced gap: a generated answer paraphrasing "69 and below" down to
+    just "above 69" (or "70 and higher") never reproduces the captured
+    marker string verbatim, so whole-string matching alone missed it, even
+    though the number "69"/"70" is still literally the row's own boundary.
+    """
+    if not answer or not records:
+        return False
+    evidence = " ".join(
+        f"{record.get('Identifier', '')} {record.get('Range', '')} {record.get('Status', '')} {record.get('raw', '')}"
+        for record in records
+    ).casefold()
+    if _AND_ABOVE_CLAIM.search(answer) and "and above" not in evidence:
+        return True
+    for record in records:
+        status = record.get("Status") or ""
+        if not _NEGATIVE_STATUS.search(status):
+            continue
+        markers = [
+            value.strip()
+            for value in (record.get("Identifier"), record.get("Range"))
+            if value and value.strip()
+        ]
+        record_numbers = _record_boundary_numbers(record)
+        if not markers and not record_numbers:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", answer):
+            literal_hit = any(marker in sentence for marker in markers)
+            sentence_numbers = set(re.findall(r"\d+(?:\.\d+)?", sentence)) if record_numbers else set()
+            numeric_hit = bool(record_numbers & sentence_numbers)
+            if not (literal_hit or numeric_hit):
+                continue
+            # Copying the status word ("Conditional Failure is passing") is still
+            # an inversion of that row.
+            if _PASSING_CLAIM.search(sentence):
+                return True
+    # Symmetric case: claiming a row with an explicit, non-negative status
+    # (e.g. "Good", "Satisfactory") "fails" is the same inversion in the
+    # other direction. Only applies to rows whose status is actually present
+    # and is not itself a negative label — an unlabeled row's meaning is not
+    # asserted either way, so it is not used as evidence here.
+    for record in records:
+        status = record.get("Status") or ""
+        if not status.strip() or _NEGATIVE_STATUS.search(status):
+            continue
+        markers = [
+            value.strip()
+            for value in (record.get("Identifier"), record.get("Range"))
+            if value and value.strip()
+        ]
+        record_numbers = _record_boundary_numbers(record)
+        if not markers and not record_numbers:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", answer):
+            literal_hit = any(marker in sentence for marker in markers)
+            sentence_numbers = set(re.findall(r"\d+(?:\.\d+)?", sentence)) if record_numbers else set()
+            numeric_hit = bool(record_numbers & sentence_numbers)
+            if not (literal_hit or numeric_hit):
+                continue
+            if _FAILING_CLAIM.search(sentence):
+                return True
+    return False
+
+
+def _table_records_evidence_answer(records: list[dict[str, str]]) -> str:
+    """Student-facing summary that only restates table records from evidence."""
+    lines = [
+        "The retrieved table lists these records. Status labels apply only to "
+        "the identifier and range on the same row:",
+        "",
+    ]
+    for record in records:
+        ident = record.get("Identifier") or ""
+        range_text = record.get("Range") or ""
+        status = record.get("Status") or ""
+        parts = [part for part in (ident, range_text, status) if part]
+        if parts:
+            lines.append(f"- {' — '.join(parts)}")
+    lines.append(
+        "The source does not state a passing threshold in those words. "
+        "Do not treat a larger identifier as 'above' or as a passing outcome."
+    )
+    return "\n".join(lines)
+
+
+def _fee_usable_for_question(fee: str | None, title: str, normalized_question: str) -> str | None:
+    """Accept fees only when they belong to the asked service (not Assessment of Fees noise)."""
+    if not fee:
+        return None
+    title_n = _normalize(title)
+    fee_n = _normalize(fee)
+    if fee_n in _UNSPECIFIED_FEE_VALUES or not _looks_like_fee_amount(fee):
         return None
 
     if "assessment of fee" in title_n and not re.search(
@@ -2325,8 +3261,15 @@ def _fallback_answer_from_context(
     if not relevant:
         return OUT_OF_SCOPE_ANSWER, "low", []
 
-    top_score = max(_chunk_score(chunk) for chunk in relevant)
-    confidence = "medium" if top_score >= 0.72 else "low"
+    confidence = (
+        "medium"
+        if (
+            any(_positive_reasons(chunk) for chunk in relevant)
+            or query_matches_retrieval_title(question, relevant)
+            or _chunks_overlap_question_tokens(question, relevant)
+        )
+        else "low"
+    )
 
     answer = format_conversational_fallback(
         question,
@@ -2336,6 +3279,7 @@ def _fallback_answer_from_context(
     )
     if not answer.strip():
         return OUT_OF_SCOPE_ANSWER, "low", []
+    answer = _redact_extraction_artifacts(answer)
 
     # Never expose internal LLM/service status in the student answer.
     if re.search(r"ai answer service is temporarily busy", answer, re.I):
@@ -3331,7 +4275,7 @@ def _page_label(metadata: dict[str, Any]) -> str:
 
 
 def _text_preview(text: str) -> str:
-    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    cleaned = _redact_extraction_artifacts(re.sub(r"\s+", " ", (text or "").strip()))
     if len(cleaned) <= PREVIEW_CHARS:
         return cleaned
     return f"{cleaned[:PREVIEW_CHARS].rstrip()}..."
@@ -3350,7 +4294,11 @@ def _context_filter_reasons(
     score = _chunk_score(chunk)
     if rank == 1:
         reasons.append("keep_rank_1")
-    if top_score - score <= 0.08 and score >= 0.55:
+    # Relative-to-leader window only. The companion `score >= 0.55` floor was a
+    # cosine-scale absolute quality test and is unreachable on the post-rerank
+    # ranking score this reads, so dropping it changes nothing; keeping it would
+    # only imply a quality guarantee that is not there.
+    if top_score - score <= _near_best_score_window(top_score):
         reasons.append("keep_close_to_rank_1")
     if query_domain and _chunk_matches_domain(chunk, query_domain):
         reasons.append(f"keep_same_domain:{query_domain}")
@@ -3360,7 +4308,7 @@ def _context_filter_reasons(
         reasons.append("keep_positive_boost_without_strong_penalty")
     if broad_query and query_domain and _broad_chunk_matches_domain(chunk, query_domain):
         reasons.append(f"keep_broad_domain:{query_domain}")
-    if broad_query and top_score - score <= 0.22 and score >= 0.55 and not _looks_like_noise(chunk):
+    if broad_query and top_score - score <= 0.22 and not _looks_like_noise(chunk):
         reasons.append("keep_broad_relevant_score_window")
     if _has_strong_penalty(chunk):
         reasons.append("drop_strong_penalty")
@@ -3369,23 +4317,50 @@ def _context_filter_reasons(
     return reasons
 
 
+def _near_best_score_window(top_score: float) -> float:
+    """How close a later chunk must be to rank-1 to count as the same cluster.
+
+    On the cosine scale (≤1) this is the original 0.08 absolute window. After
+    reranking, scores run ~1.0–4.7, so the same 0.08 would split a flat cluster
+    of correct sections (measured 2.17–2.24). Use 15% of the leader there.
+    """
+    if top_score > 1.0:
+        return max(0.12, 0.15 * float(top_score))
+    return 0.08
+
+
 def _chunk_score(chunk: RetrievedChunk) -> float:
-    return float(chunk.reranked_score if chunk.reranked_score is not None else chunk.relevance_score)
+    return float(chunk.rerank_score)
 
 
 def _positive_reasons(chunk: RetrievedChunk) -> list[str]:
+    """Rerank reasons that say this chunk is about the question's subject.
+
+    Provenance/citation-hygiene boosts are excluded: they fire on every
+    well-formed chunk, so counting them made every result set look aligned.
+    """
     return [
         reason
         for reason in (chunk.rerank_reasons or [])
-        if reason.startswith("boost_") or reason.endswith("_match") or reason.endswith("_policy")
+        if (reason.startswith("boost_") or reason.endswith("_match") or reason.endswith("_policy"))
+        and reason not in NON_TOPICAL_RERANK_REASONS
     ]
 
 
 def _has_strong_penalty(chunk: RetrievedChunk) -> bool:
+    """True when the reranker judged this chunk to be off-domain noise.
+
+    ``penalty_unrelated_procedure`` is deliberately absent: it fires whenever a
+    non-how-to question meets a chunk containing procedural wording, which is
+    every Citizen's Charter service card. For "How much is the fee for a
+    Transcript of Records?" it lands on five of the top seven chunks including
+    the correct TOR service card at rank 1, so treating it as noise pushed
+    correctly-answered fee questions into the clarification template. It remains
+    a ranking penalty inside the reranker.
+    """
     strong_markers = (
         "penalty_unrequested_",
         "penalty_disciplinary",
-        "penalty_unrelated_procedure",
         "penalty_awards",
         "penalty_retention_awards",
         "penalty_sample_document",
@@ -3502,8 +4477,12 @@ def _title_path_matches_query_intent(chunk: RetrievedChunk, normalized_query: st
     query_tokens = _meaningful_tokens(normalized_query)
     if not query_tokens:
         return False
-    matches = sum(1 for token in query_tokens if token in title_path)
-    return matches >= 2 or (matches >= 1 and _chunk_score(chunk) >= 0.72)
+    matches = [token for token in query_tokens if token in title_path]
+    # One shared token is enough only when it is distinctive. The previous
+    # `_chunk_score(chunk) >= 0.72` companion test read the post-rerank ranking
+    # score, which clears 0.72 for essentially every chunk in production, so a
+    # single generic word such as "document" was accepted as intent alignment.
+    return len(matches) >= 2 or any(token not in _GENERIC_TOPIC_TOKENS for token in matches)
 
 
 def _is_broad_context_query(normalized_query: str) -> bool:
@@ -3601,8 +4580,16 @@ def _charter_metadata_context_lines(metadata: dict[str, Any]) -> list[str]:
     )
     for key, label in mapping:
         value = str(metadata.get(key) or "").strip()
-        if value and value.lower() not in {"none", "null", "n/a", "[needs review]"}:
-            lines.append(f"{label}: {value}")
+        if not value:
+            continue
+        if key == "total_fees":
+            if _documented_zero_fee(value):
+                lines.append(f"{label}: None")
+            elif _looks_like_fee_amount(value):
+                lines.append(f"{label}: {value}")
+            continue
+        if value.lower() not in {"none", "null", "n/a", "[needs review]"}:
+            lines.append(f"{label}: {_redact_extraction_artifacts(value)}")
     for key, label in (
         ("extracted_requirements", "Structured Requirements"),
         ("extracted_steps", "Structured Steps"),
@@ -3613,7 +4600,7 @@ def _charter_metadata_context_lines(metadata: dict[str, Any]) -> list[str]:
         text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=True)
         text = text.strip()
         if text and text not in {"[]", "{}", "null"}:
-            lines.append(f"{label}: {text[:1200]}")
+            lines.append(f"{label}: {_redact_extraction_artifacts(text[:1200])}")
     return lines
 
 

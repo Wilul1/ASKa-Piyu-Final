@@ -8,7 +8,7 @@ import json
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, NamedTuple, Sequence
 
 from app.services.chroma_store import RetrievedChunk, get_knowledge_base_store
 from app.services.qa.conversational_fallback import (
@@ -200,7 +200,9 @@ def answer_qa_question(
             out_of_scope_detected=False,
         )
 
-    retrieval_question = resolve_followup_question(cleaned_question, chat_history)
+    retrieval_question = resolve_followup_question(
+        cleaned_question, chat_history, client_active_service=validated_client_service
+    )
     active_topic = resolve_turn_active_topic(
         cleaned_question, chat_history, client_active_service=validated_client_service
     )
@@ -548,8 +550,28 @@ def answer_qa_question(
             active_topic=active_topic,
         )
         table_records = _structured_table_records_from_text(context)
-        if table_records and _answer_contradicts_table_records(answer, table_records):
+        if table_records and (
+            _answer_contradicts_table_records(answer, table_records)
+            or _answer_synthesizes_unsupported_range(answer, table_records)
+            or _answer_has_unverifiable_mixed_status_claim(answer, table_records)
+        ):
             answer = _table_records_evidence_answer(table_records)
+            table_inversion_corrected = True
+        elif (
+            not table_records
+            and _is_global_classification_query(cleaned_question)
+            and not _evidence_states_single_global_rule(context)
+        ):
+            # No structured rows at all (a derived FAQ's bullet/prose
+            # rendering that the row parser conservatively declined to
+            # interpret, most notably), and the user explicitly asked for a
+            # global classification/range/boundary rule the evidence does
+            # not clearly state as a single statement. Activation depends
+            # only on the fixed user question and the evidence's own shape
+            # — never on the model's generated wording — and the same
+            # ``context`` already handed to generation, never a second
+            # retrieval or an unselected chunk.
+            answer = _apply_conservative_classification_reply(answer)
             table_inversion_corrected = True
     except GroqAnswerError as exc:
         logger.warning(
@@ -702,7 +724,12 @@ def answer_qa_question(
     )
 
 
-def resolve_followup_question(question: str, history: list[Any] | None) -> str:
+def resolve_followup_question(
+    question: str,
+    history: list[Any] | None,
+    *,
+    client_active_service: str | None = None,
+) -> str:
     """Expand follow-ups with the *active* conversational topic.
 
     Active topic = the latest substantive topic-setting user turn (explicit
@@ -768,7 +795,9 @@ def resolve_followup_question(question: str, history: list[Any] | None) -> str:
     if not (followup_prefix or has_pronoun or short_followup or _is_slot_followup_question(cleaned)):
         return cleaned
 
-    topic = resolve_active_topic(history, fallback_user=last_user)
+    topic = resolve_active_topic(
+        history, fallback_user=last_user, client_active_service=client_active_service
+    )
     if not topic:
         return cleaned
     return f"{cleaned}\n\n(Prior question context: {topic})"
@@ -858,13 +887,23 @@ def resolve_active_topic(
         if _is_underspecified_question(content):
             continue
         tokens = _content_tokens(content)
-        if (
-            _is_topic_setting_turn(content)
-            or len(tokens) >= 2
-            or (len(tokens) == 1 and _is_known_service_label(content))
-        ):
+        # A deliberate switch/short label (explicit phrasing, or a bare
+        # known taxonomy label) is a high-confidence signal that always
+        # wins here, canonicalized or not. An ordinary sentence that merely
+        # clears the 2-token bar is the same low-confidence prose the
+        # docstring above says a validated ``client_active_service`` should
+        # take priority over — it only wins on its own, uncanonicalized
+        # wording when no validated client state exists to defer to.
+        high_confidence_label = _is_topic_setting_turn(content) or (
+            len(tokens) == 1 and _is_known_service_label(content)
+        )
+        if high_confidence_label or len(tokens) >= 2:
             canonical = _canonical_service_retrieval_phrase(content)
-            return (canonical or content.strip())[:240]
+            if canonical:
+                return canonical[:240]
+            if not high_confidence_label and client_active_service:
+                return client_active_service[:240]
+            return content.strip()[:240]
     if client_active_service:
         return client_active_service[:240]
     primary_names: list[str] = []
@@ -1068,18 +1107,33 @@ def _active_service_for_response(
     sentence ("How do I enroll as a new student?") rather than a clean
     canonical name.
 
-    Grounded primarily in the *actually selected evidence* — the top
+    A resolved ``active_topic`` that is *already* an exact, validated
+    taxonomy name is unambiguous by construction — it can only get there via
+    an explicit switch, a known short label, or an already-validated
+    ``client_active_service`` (see ``resolve_active_topic``) — so it is
+    trusted directly and is never second-guessed against retrieved
+    evidence. A validated, server-confirmed service identity is the whole
+    point of the client-carried round trip; letting a single imperfectly
+    ranked top chunk override it on a vague slot follow-up (the exact case
+    that mechanism exists for) would silently discard the higher-confidence
+    signal.
+
+    Otherwise grounded in the *actually selected evidence* — the top
     selected chunk's own title/canonical topic — rather than re-parsing the
-    (often ambiguous) question text: a chunk's identity is unambiguous,
-    while a full sentence can name more than one plausible taxonomy service
-    (e.g. "new student" also matches "Freshmen", not only "Registration"),
-    and picking the wrong one here would defeat the point of a client
-    echoing it back later. Falls back to the resolved ``active_topic``
-    string only when no selected evidence is available (e.g. a template
-    answer path with no chunk in scope). A client must only ever be handed
-    back something this backend would also accept and trust on the next
-    turn.
+    (often ambiguous) ``active_topic`` question text: a chunk's identity is
+    unambiguous, while a full sentence can name more than one plausible
+    taxonomy service (e.g. "new student" also matches "Freshmen", not only
+    "Registration"), and picking the wrong one here would defeat the point
+    of a client echoing it back later. Falls back to the resolved
+    ``active_topic`` string only when no selected evidence is available
+    (e.g. a template answer path with no chunk in scope). A client must
+    only ever be handed back something this backend would also accept and
+    trust on the next turn.
     """
+    if active_topic:
+        exact = validate_active_service_identity(_canonical_service_name(active_topic))
+        if exact:
+            return exact
     if selected_context:
         top = selected_context[0]
         metadata = top.metadata or {}
@@ -1096,9 +1150,6 @@ def _active_service_for_response(
                 return names[0]
     if not active_topic:
         return None
-    exact = validate_active_service_identity(_canonical_service_name(active_topic))
-    if exact:
-        return exact
     names = _canonical_service_names_in_text(active_topic)
     return names[0] if names else None
 
@@ -1857,7 +1908,17 @@ def format_collection_context(chunks: list[RetrievedChunk], question: str, inten
                     f"Path: {_hierarchy_path(metadata) or _display_title(chunk)}",
                     f"Page: {_page_label(metadata)}",
                     "Content:",
-                    _redact_extraction_artifacts(chunk.text.strip()),
+                    # Same per-chunk structured-table normalization
+                    # ``format_retrieved_context`` already applies — a
+                    # collection-style question (requirements/policy/
+                    # scholarship/service/office listings) can retrieve a
+                    # chunk containing a status table exactly as easily as a
+                    # normal-QA one, and without this the post-generation
+                    # audit's table parser would find zero rows in the same
+                    # text a direct parse of the chunk succeeds on, since it
+                    # only ever reads rows out of the "Structured table"
+                    # marker this formatting step inserts.
+                    _format_structured_tables(_redact_extraction_artifacts(chunk.text.strip())),
                 ]
             )
         blocks.append("\n".join(lines))
@@ -2883,10 +2944,41 @@ _NEGATIVE_STATUS = re.compile(
     r"\b(?:fail(?:ed|ure)?|conditional|incomplete|dropped|unsatisfactory)\b",
     re.I,
 )
-_PASSING_CLAIM = re.compile(r"\b(?:pass(?:ing|ed)?|successful)\b", re.I)
+_PASSING_CLAIM = re.compile(r"\b(?:pass(?:es|ing|ed)?|successful)\b", re.I)
 _FAILING_CLAIM = re.compile(r"\bfail(?:s|ing|ed)?\b", re.I)
 _AND_ABOVE_CLAIM = re.compile(
-    r"(\d+(?:\.\d{2})?|[A-Za-z]{2,6})\s+and\s+above",
+    r"(\d+(?:\.\d+)?|[A-Za-z]{2,6})\s+and\s+above",
+    re.I,
+)
+# A range phrased as a single open-ended boundary ("69 and below", "80 or
+# above") states only its own edge number literally. A generated answer may
+# instead name the *adjacent* number on the other side of that boundary
+# ("70 and higher", "above 69") without ever repeating the row's own number,
+# so that boundary and its direction are captured separately to derive the
+# adjacent complement value on demand.
+_RANGE_AT_OR_BELOW = re.compile(r"(\d+(?:\.\d+)?)\s*(?:and|or)\s*below\b", re.I)
+_RANGE_AT_OR_ABOVE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:and|or)\s*above\b", re.I)
+# Direction words a sentence uses when it means "greater than" / "less than"
+# a number, regardless of whether that exact number was ever printed in the
+# source table row (e.g. "70 and higher" for a row that only ever says "69").
+_ABOVE_DIRECTION = re.compile(
+    r"\b(?:above|over|greater\s+than|more\s+than|higher\s+than|exceeds?)\b"
+    r"|\band\s+(?:up|higher|above)\b|\bor\s+(?:more|higher|above)\b",
+    re.I,
+)
+_BELOW_DIRECTION = re.compile(
+    r"\b(?:below|under|less\s+than|lower\s+than|at\s+most)\b"
+    r"|\band\s+(?:down|lower|below)\b|\bor\s+(?:less|lower|below)\b",
+    re.I,
+)
+# A claim that one row's status implicitly defines every *other*, unlisted
+# row ("every other score passes") is the same complement-inference error as
+# inverting a single boundary number, just phrased without any number at
+# all. Kept to one sentence (no period in between) so an unrelated mention
+# elsewhere in a long answer cannot coincidentally trip it.
+_RESIDUAL_COMPLEMENT_CLAIM = re.compile(
+    r"\b(?:every\s+other|any\s+other|all\s+other|everything\s+else|anything\s+else|the\s+rest)\b"
+    r"[^.!?]{0,60}?\b(?:pass(?:es|ing|ed)?|fail(?:s|ing|ed)?|successful|unsatisfactory)\b",
     re.I,
 )
 
@@ -2940,8 +3032,22 @@ def _table_record_from_row(row: list[str], header: list[str] | None) -> dict[str
         for label, value in zip(header, row):
             if value:
                 record[label.strip() or "Value"] = value
-    for cell in cells:
+    last_index = len(cells) - 1
+    for index, cell in enumerate(cells):
         role = _infer_table_cell_role(cell)
+        # A cell whose own shape is ambiguous (no digits, so neither a
+        # numeric Identifier nor a Range) falls back to "Status" purely
+        # because it contains letters — correct for a table's *trailing*
+        # cell, but wrong for a *non-numeric key* in an earlier position
+        # (e.g. a bullet row like "Complete — Approved" or "Tier A —
+        # Certified", where the key itself is a plain word or short
+        # phrase, not a number or code). The row's own position resolves
+        # the ambiguity generically, with no institution-specific wording:
+        # the last cell is always the outcome label, and an earlier
+        # ambiguous cell is the row's own key when no numeric Identifier or
+        # Range has already claimed that role.
+        if role == "Status" and index != last_index and "Identifier" not in record and "Range" not in record:
+            role = "Identifier"
         record.setdefault(role, cell)
         if role == "Status":
             record["Status"] = cell
@@ -2963,15 +3069,168 @@ def _format_table_record_line(record: dict[str, str]) -> str:
     return "- " + " — ".join(parts or extra or [record.get("raw") or ""])
 
 
+# --- Flattened-table normalization -----------------------------------------
+#
+# Everything above this line already parses a pipe-delimited row correctly
+# once it exists. What real PDF/OCR-extracted institutional documents do not
+# reliably produce is the pipe itself: a table's columns routinely survive
+# extraction as plain whitespace, a range's own dash gets lost and leaves two
+# bare numbers side by side, a "below/above N" cell gets phrased with the
+# comparison word *before* its number instead of after, and a single row can
+# even land as several consecutive short lines (one field per line). The
+# helpers below rewrite each of those shapes into the same pipe-delimited
+# form the parsing above already understands, so the fallback that depends on
+# seeing rows does not depend on which of these extraction shapes a given
+# source document happened to produce. None of this inspects or rewrites a
+# *generated answer* — it only prepares retrieved source text before the
+# audit reads it, so it cannot loosen how a claim in the model's own answer
+# gets checked.
+_COMPARISON_WORD_THEN_NUMBER = re.compile(
+    r"\b(?:below|under)\s+(\d+(?:\.\d+)?)\b|\b(?:above|over)\s+(\d+(?:\.\d+)?)\b",
+    re.I,
+)
+
+
+def _normalize_comparison_word_order(line: str) -> str:
+    """Rewrite "below N"/"above N" (comparison word before its number) to the
+    "N and below"/"N and above" shape every other range parser in this module
+    already recognizes — a source table cell reading "Below 70" states the
+    exact same boundary as one reading "70 and below", just word-first.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        below_value, above_value = match.groups()
+        if below_value is not None:
+            return f"{below_value} and below"
+        return f"{above_value} and above"
+
+    return _COMPARISON_WORD_THEN_NUMBER.sub(_replace, line)
+
+
+# A line is only ever considered a candidate flattened-table row when it
+# *starts* with a bare identifier-shaped token (a plain or decimal number, or
+# a short all-caps code) — the same leading shape every pipe-delimited fixture
+# already uses for its Identifier column. This alone rules out the vast
+# majority of ordinary prose (a sentence starting mid-clause, a heading, a
+# paragraph). What remains is guarded further below.
+_BARE_LEADING_IDENTIFIER = re.compile(r"^(\d+(?:\.\d+)?|[A-Z]{2,6})[ \t]+(\S.*)$")
+# The remainder after that identifier must *itself* immediately continue in a
+# range-like shape (a bare number, a dash-range, or an already-normalized
+# "N and below/above") for the line to be treated as tabular at all. An
+# ordinary sentence that merely happens to start with a number ("3 out of 5
+# students attended orientation") almost never continues this way — its next
+# token is a word, not another number — so this second gate is what keeps
+# prose from being mistaken for a table row.
+_REMAINDER_STARTS_LIKE_RANGE = re.compile(
+    r"^\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\b"
+    r"|^\d+(?:\.\d+)?\s*(?:and|or)\s*(?:below|above)\b",
+    re.I,
+)
+_BARE_IDENTIFIER_ONLY = re.compile(r"^(?:\d+(?:\.\d+)?|[A-Z]{2,6})$")
+_BARE_RANGE_ONLY = re.compile(
+    r"^\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?$"
+    r"|^\d+(?:\.\d+)?\s*(?:and|or)\s*(?:below|above)$",
+    re.I,
+)
+_BARE_STATUS_ONLY = re.compile(r"^[A-Za-z][A-Za-z /-]*$")
+
+
+def _merge_identifier_range_status_lines(lines: list[str]) -> list[str]:
+    """Fold a bare Identifier / Range / (optional) Status split across
+    consecutive short lines back into one row, mirroring how the same three
+    values would read if a document's table had kept its columns on one
+    line. Only lines that are *exactly* one bare value (nothing else) are
+    ever folded, so this cannot accidentally swallow ordinary paragraph
+    text that merely starts with a short line.
+    """
+    merged: list[str] = []
+    index = 0
+    total = len(lines)
+    while index < total:
+        current = lines[index].strip()
+        if _BARE_IDENTIFIER_ONLY.match(current) and index + 1 < total:
+            next_line = lines[index + 1].strip()
+            if _BARE_RANGE_ONLY.match(next_line):
+                parts = [current, next_line]
+                consumed = 2
+                if index + 2 < total:
+                    third = lines[index + 2].strip()
+                    if third and "|" not in third and _BARE_STATUS_ONLY.match(third):
+                        parts.append(third)
+                        consumed = 3
+                merged.append(" ".join(parts))
+                index += consumed
+                continue
+        merged.append(lines[index])
+        index += 1
+    return merged
+
+
+def _split_flattened_row_remainder(remainder: str) -> list[str]:
+    """The text after a flattened row's leading identifier, as one or more
+    pipe-ready cells.
+
+    Columns separated by two or more spaces (common when a PDF extractor
+    preserves original column alignment) split cleanly. A range whose own
+    separator was lost in extraction, leaving two bare numbers side by side
+    ("90 100"), is rejoined with a dash before anything else runs, so the
+    existing fused range/status splitter (which already understands "90-100
+    Excellent") can take it from there unchanged. Anything else is left as
+    one cell for that same fused splitter to decompose.
+    """
+    remainder = remainder.strip()
+    multi_space_cells = [cell.strip() for cell in re.split(r"[ \t]{2,}", remainder) if cell.strip()]
+    if len(multi_space_cells) >= 2:
+        return multi_space_cells
+    two_bare_numbers = re.match(
+        r"^(\d+(?:\.\d+)?)[ \t]+(\d+(?:\.\d+)?)([ \t]+.*)?$", remainder
+    )
+    if two_bare_numbers:
+        lo, hi, trailing = two_bare_numbers.groups()
+        remainder = f"{lo}-{hi}{trailing or ''}"
+    return [remainder] if remainder else []
+
+
+def _normalize_flattened_table_lines(text: str) -> str:
+    """Rewrite recognizable non-pipe-delimited table rows into pipe-delimited
+    ones, so the existing (unchanged) pipe-based parsing below can see them.
+    Lines that already contain a pipe, or that do not look like tabular data
+    at all, pass through untouched.
+    """
+    lines = [_normalize_comparison_word_order(line) for line in (text or "").splitlines()]
+    lines = _merge_identifier_range_status_lines(lines)
+    rewritten: list[str] = []
+    for line in lines:
+        if "|" in line:
+            rewritten.append(line)
+            continue
+        match = _BARE_LEADING_IDENTIFIER.match(line.strip())
+        if not match:
+            rewritten.append(line)
+            continue
+        identifier, remainder = match.groups()
+        if not _REMAINDER_STARTS_LIKE_RANGE.match(remainder):
+            rewritten.append(line)
+            continue
+        cells = _split_flattened_row_remainder(remainder)
+        if not cells:
+            rewritten.append(line)
+            continue
+        rewritten.append(" | ".join([identifier, *cells]))
+    return "\n".join(rewritten)
+
+
 def _format_structured_tables(text: str) -> str:
     """Rewrite pipe-delimited institutional tables so each row stays associated.
 
     Flattened rows are easy for a model to read backwards (treating a failing
     range as a passing threshold). Each row is one record with inferred
     Identifier / Range / Status roles when no header is present. No
-    institutional facts are invented.
+    institutional facts are invented. A source table whose columns did not
+    survive extraction as literal pipes is normalized to the same shape
+    first (see ``_normalize_flattened_table_lines``) so this still applies.
     """
-    lines = (text or "").splitlines()
+    lines = _normalize_flattened_table_lines(text).splitlines()
     out: list[str] = []
     pending: list[str] = []
 
@@ -2982,11 +3241,27 @@ def _format_structured_tables(text: str) -> str:
             return
         parsed = [[cell.strip() for cell in row.split("|")] for row in pending]
         header: list[str] | None = None
-        data_rows = parsed
         first = parsed[0]
-        if first and not any(re.search(r"\d", cell) for cell in first):
+        remaining = parsed[1:]
+        first_has_digit = any(re.search(r"\d", cell) for cell in first)
+        remaining_has_digit = any(
+            any(re.search(r"\d", cell) for cell in row) for row in remaining
+        )
+        if first and not first_has_digit and remaining_has_digit:
+            # The rest of the table carries a numeric Identifier/Range, and
+            # this row alone does not -- a text header, not a data row.
+            # (A table with *no* numeric column at all -- a purely
+            # categorical bullet list like "Complete -- Approved" -- takes
+            # the other branch below and keeps every row as data instead;
+            # a digit-based check has nothing to compare against there.)
             header = first
-            data_rows = parsed[1:]
+            # A multi-page extraction often repeats the header partway
+            # through a table. Any later row with no digit in any cell is,
+            # by the same test used to recognize the header above, not a
+            # data row either.
+            data_rows = [row for row in remaining if any(re.search(r"\d", cell) for cell in row)]
+        else:
+            data_rows = parsed
         out.append(
             "Structured table (each row is one record; Identifier, Range, and "
             "Status on a row belong only to that row):"
@@ -3011,6 +3286,11 @@ def _format_structured_tables(text: str) -> str:
     for line in lines:
         if "|" in line:
             pending.append(line)
+        elif not line.strip() and pending:
+            # A blank spacer line between rows (a plausible PDF-extraction
+            # artifact) must not split one table into several isolated,
+            # too-short-to-recognize groups.
+            continue
         else:
             _flush()
             out.append(line)
@@ -3047,6 +3327,68 @@ def _record_boundary_numbers(record: dict[str, str]) -> set[str]:
     return set(re.findall(r"\d+(?:\.\d+)?", text))
 
 
+def _format_boundary_number(value: float) -> str:
+    if value == int(value):
+        return str(int(value))
+    return str(value)
+
+
+def _record_range_threshold(record: dict[str, str]) -> tuple[float, str] | None:
+    """A record's own Range/Identifier as a single open-ended threshold.
+
+    Only rows phrased as "N and/or below" or "N and/or above" state just one
+    of their own edge numbers literally (a closed band like "60-74" already
+    states both of its own edges, so it needs no derived complement). Returns
+    ``(boundary, direction)`` with direction ``"at_or_below"`` or
+    ``"at_or_above"``, or ``None`` when the row is not phrased as an
+    open-ended threshold.
+    """
+    text = " ".join(str(record.get(key) or "") for key in ("Range", "Identifier"))
+    match = _RANGE_AT_OR_BELOW.search(text)
+    if match:
+        return float(match.group(1)), "at_or_below"
+    match = _RANGE_AT_OR_ABOVE.search(text)
+    if match:
+        return float(match.group(1)), "at_or_above"
+    return None
+
+
+def _record_status_polarity(status: str | None) -> str | None:
+    if not status or not status.strip():
+        return None
+    return "negative" if _NEGATIVE_STATUS.search(status) else "positive"
+
+
+def _authorized_complement_numbers(records: list[dict[str, str]]) -> set[str]:
+    """Boundary numbers a generated answer may pair with the *opposite*
+    passing/failing claim because another record's own threshold explicitly
+    states that exact complement immediately adjacent to it (e.g. an
+    explicit "70 and above = Passing" row beside "69 and below = Failed").
+    Two rows that already partition the same threshold this way are an
+    explicit textual statement of both sides, not an invented inference.
+    """
+    thresholds: list[tuple[float, str, str]] = []
+    for record in records:
+        threshold = _record_range_threshold(record)
+        polarity = _record_status_polarity(record.get("Status"))
+        if threshold and polarity:
+            thresholds.append((threshold[0], threshold[1], polarity))
+    authorized: set[str] = set()
+    for boundary, direction, polarity in thresholds:
+        adjacent = boundary + 1 if direction == "at_or_below" else boundary - 1
+        opposite_polarity = "positive" if polarity == "negative" else "negative"
+        opposite_direction = "at_or_above" if direction == "at_or_below" else "at_or_below"
+        for other_boundary, other_direction, other_polarity in thresholds:
+            if (
+                other_polarity == opposite_polarity
+                and other_direction == opposite_direction
+                and abs(other_boundary - adjacent) < 1e-9
+            ):
+                authorized.add(_format_boundary_number(boundary))
+                authorized.add(_format_boundary_number(adjacent))
+    return authorized
+
+
 def _answer_contradicts_table_records(answer: str, records: list[dict[str, str]]) -> bool:
     """True when a generated answer inverts a table row's status or invents 'and above'.
 
@@ -3065,6 +3407,21 @@ def _answer_contradicts_table_records(answer: str, records: list[dict[str, str]]
     just "above 69" (or "70 and higher") never reproduces the captured
     marker string verbatim, so whole-string matching alone missed it, even
     though the number "69"/"70" is still literally the row's own boundary.
+
+    A third level closes the gap where the paraphrase names the *adjacent*
+    number instead ("70 and higher" for a row that only ever prints "69"),
+    which is not one of the record's own numbers at all: that adjacent value
+    is derived from the row's own open-ended boundary and only counted when
+    the sentence also uses "above"/"greater than"/"and higher"-style
+    direction language, so an unrelated mention of that number elsewhere
+    cannot false-positive. A boundary (its own number or the derived
+    adjacent one) that another record's own row explicitly assigns the
+    opposite, correct status is treated as authorized — two rows that
+    already state both sides of a threshold are an explicit textual
+    statement, not an invented inference, and summarizing both is allowed.
+    Separately, a claim that one row's status defines *every other* row
+    ("every other score passes") is the same complement error with no
+    number involved at all, so it is caught on its own.
     """
     if not answer or not records:
         return False
@@ -3074,6 +3431,12 @@ def _answer_contradicts_table_records(answer: str, records: list[dict[str, str]]
     ).casefold()
     if _AND_ABOVE_CLAIM.search(answer) and "and above" not in evidence:
         return True
+    if _RESIDUAL_COMPLEMENT_CLAIM.search(answer) and not _RESIDUAL_COMPLEMENT_CLAIM.search(evidence):
+        return True
+
+    authorized = _authorized_complement_numbers(records)
+    sentences = re.split(r"(?<=[.!?])\s+", answer)
+
     for record in records:
         status = record.get("Status") or ""
         if not _NEGATIVE_STATUS.search(status):
@@ -3084,13 +3447,29 @@ def _answer_contradicts_table_records(answer: str, records: list[dict[str, str]]
             if value and value.strip()
         ]
         record_numbers = _record_boundary_numbers(record)
-        if not markers and not record_numbers:
+        threshold = _record_range_threshold(record)
+        complement_number = (
+            _format_boundary_number(threshold[0] + 1)
+            if threshold and threshold[1] == "at_or_below"
+            else None
+        )
+        if not markers and not record_numbers and not complement_number:
             continue
-        for sentence in re.split(r"(?<=[.!?])\s+", answer):
+        for sentence in sentences:
             literal_hit = any(marker in sentence for marker in markers)
-            sentence_numbers = set(re.findall(r"\d+(?:\.\d+)?", sentence)) if record_numbers else set()
+            sentence_numbers = set(re.findall(r"\d+(?:\.\d+)?", sentence))
             numeric_hit = bool(record_numbers & sentence_numbers)
-            if not (literal_hit or numeric_hit):
+            complement_hit = bool(
+                complement_number
+                and complement_number in sentence_numbers
+                and _ABOVE_DIRECTION.search(sentence)
+            )
+            if not (literal_hit or numeric_hit or complement_hit):
+                continue
+            matched_numbers = (record_numbers & sentence_numbers) | (
+                {complement_number} if complement_hit else set()
+            )
+            if matched_numbers and matched_numbers <= authorized:
                 continue
             # Copying the status word ("Conditional Failure is passing") is still
             # an inversion of that row.
@@ -3111,17 +3490,892 @@ def _answer_contradicts_table_records(answer: str, records: list[dict[str, str]]
             if value and value.strip()
         ]
         record_numbers = _record_boundary_numbers(record)
-        if not markers and not record_numbers:
+        threshold = _record_range_threshold(record)
+        complement_number = (
+            _format_boundary_number(threshold[0] - 1)
+            if threshold and threshold[1] == "at_or_above"
+            else None
+        )
+        if not markers and not record_numbers and not complement_number:
             continue
-        for sentence in re.split(r"(?<=[.!?])\s+", answer):
+        for sentence in sentences:
             literal_hit = any(marker in sentence for marker in markers)
-            sentence_numbers = set(re.findall(r"\d+(?:\.\d+)?", sentence)) if record_numbers else set()
+            sentence_numbers = set(re.findall(r"\d+(?:\.\d+)?", sentence))
             numeric_hit = bool(record_numbers & sentence_numbers)
-            if not (literal_hit or numeric_hit):
+            complement_hit = bool(
+                complement_number
+                and complement_number in sentence_numbers
+                and _BELOW_DIRECTION.search(sentence)
+            )
+            if not (literal_hit or numeric_hit or complement_hit):
+                continue
+            matched_numbers = (record_numbers & sentence_numbers) | (
+                {complement_number} if complement_hit else set()
+            )
+            if matched_numbers and matched_numbers <= authorized:
                 continue
             if _FAILING_CLAIM.search(sentence):
                 return True
     return False
+
+
+# A merged multi-row range/category claim ("75 to 100 is Passing", "90 and
+# above is Excellent", "between 60 and 100 is Certified"). Distinct from the
+# single-row complement inference above: this is several *separately*
+# grounded rows synthesized into one broader rule the table never states as
+# a unit. Domain-agnostic on purpose — it matches whatever literal Status
+# text a record actually carries (Certified, Eligible, Excellent, Standard
+# Fee, ...), never a fixed vocabulary of pass/fail words.
+_BOUNDED_RANGE_CLAIM = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:-|–|to|through)\s*(\d+(?:\.\d+)?)",
+    re.I,
+)
+_BOUNDED_BETWEEN_CLAIM = re.compile(
+    r"\bbetween\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)\b",
+    re.I,
+)
+# Two different phrasings of an open-ended claim carry different inclusivity
+# at the number they name: "N and above"/"N or higher"/"at or above N" all
+# name their own *inclusive* edge N directly, exactly like a source row
+# phrased "N and above" would. "above N"/"greater than N" instead name the
+# *excluded* edge — the boundary itself is not part of the claimed span.
+# Earlier code converted that exclusion into a synthetic "N + 1" inclusive
+# edge, which silently assumed every axis is an integer-step grid; a
+# fractional-step axis (e.g. grade points spaced 0.25 apart) made that
+# guess land on a number that is not any real row's edge at all, so the
+# claim was checked against nothing and passed unexamined. The excluded
+# edge is now carried through as-is (`lo_exclusive`/`hi_exclusive`) and
+# resolved later against the source's own actual boundary values — never a
+# hardcoded step. A negative lookbehind keeps "at or above"/"at or below"
+# from also matching the strict pattern for the same number.
+_AT_OR_ABOVE_RANGE_CLAIM = re.compile(
+    r"\bat\s+or\s+above\s+(\d+(?:\.\d+)?)",
+    re.I,
+)
+_AT_OR_BELOW_RANGE_CLAIM = re.compile(
+    r"\bat\s+or\s+below\s+(\d+(?:\.\d+)?)",
+    re.I,
+)
+_UP_TO_RANGE_CLAIM = re.compile(
+    r"\bup\s+to\s+(\d+(?:\.\d+)?)",
+    re.I,
+)
+_FROM_UPWARD_RANGE_CLAIM = re.compile(
+    r"\bfrom\s+(\d+(?:\.\d+)?)\s+upward\b",
+    re.I,
+)
+_STRICT_ABOVE_RANGE_CLAIM = re.compile(
+    r"\b(?<!at or )(?:above|over|greater\s+than|more\s+than|higher\s+than|exceeds?)\s+(\d+(?:\.\d+)?)",
+    re.I,
+)
+_INCLUSIVE_ABOVE_RANGE_CLAIM = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:and|or)\s*(?:up|higher|above|more|greater)\b",
+    re.I,
+)
+_STRICT_BELOW_RANGE_CLAIM = re.compile(
+    r"\b(?<!at or )(?:below|under|less\s+than|lower\s+than)\s+(\d+(?:\.\d+)?)",
+    re.I,
+)
+_INCLUSIVE_BELOW_RANGE_CLAIM = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:and|or)\s*(?:down|lower|below|less)\b",
+    re.I,
+)
+
+
+def _record_interval(record: dict[str, str]) -> tuple[float, float] | None:
+    """A record's own Range/Identifier as a numeric interval, when it states one.
+
+    Reuses the existing open-ended threshold parser for "N and/or
+    below/above" rows, and additionally recognizes a plain closed band like
+    "60-74". A non-numeric identifier (a code such as "INC") yields no
+    interval and is simply excluded from range-merge reasoning — it can
+    still carry a Status label, just never a numeric span.
+    """
+    threshold = _record_range_threshold(record)
+    if threshold:
+        boundary, direction = threshold
+        if direction == "at_or_below":
+            return (float("-inf"), boundary)
+        return (boundary, float("inf"))
+    text = " ".join(str(record.get(key) or "") for key in ("Range", "Identifier"))
+    match = re.search(r"(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)", text)
+    if match:
+        lo, hi = float(match.group(1)), float(match.group(2))
+        return (min(lo, hi), max(lo, hi))
+    return None
+
+
+def _distinct_status_labels(records: list[dict[str, str]]) -> list[str]:
+    """Each record's own literal Status text, longest first.
+
+    Longest-first ordering lets a more specific label (e.g. "Conditional
+    Failure") win over a shorter, coincidentally-contained word when
+    matching an answer sentence against the table's own vocabulary.
+    """
+    seen: set[str] = set()
+    labels: list[str] = []
+    for record in records:
+        status = (record.get("Status") or "").strip()
+        if status and status.casefold() not in seen:
+            seen.add(status.casefold())
+            labels.append(status)
+    labels.sort(key=len, reverse=True)
+    return labels
+
+
+def _literal_status_key(status: str | None) -> str | None:
+    text = (status or "").strip()
+    return text.casefold() or None
+
+
+def _polarity_status_key(status: str | None) -> str | None:
+    """The row's outcome polarity ("positive"/"negative"), reusing the same
+    generic English pass/fail vocabulary already used for the single-row
+    complement check above — never an institution-specific word list. This
+    is a second, parallel grouping key alongside the row's own literal
+    Status text: a claim phrased with generic words ("passing", "failing")
+    rather than the table's own label ("Certified", "Satisfactory") still
+    needs *some* per-row key to check merged claims against, and polarity is
+    the only domain-general stand-in for "good outcome" / "bad outcome".
+    """
+    return _record_status_polarity(status)
+
+
+def _authorized_spans_by_key(
+    records: list[dict[str, str]],
+    key_fn,
+) -> list[tuple[float, float, str]]:
+    """Maximal same-key numeric spans (range axis) a merged claim may cite as
+    grounded, keyed by whatever ``key_fn`` extracts from each record's own
+    Status text — its literal label, or its generic pass/fail polarity.
+
+    Consecutive records (sorted by their own lower bound) are folded into
+    one span only while every one of them maps to the *same* key and each
+    next record's own lower bound picks up where the previous one's upper
+    bound left off (allowing a difference of at most 1, the usual off-by-one
+    style of adjacent integer bands like "84" then "85", as well as scales
+    that touch exactly). A record with a different key, an unresolvable key
+    (blank Status under the literal key, or a Status with no clear polarity
+    under the polarity key), or a numeric gap breaks the run — that row's
+    own range is never silently folded into a neighboring broader claim. An
+    explicit row that already states the combined rule as its own single
+    row (e.g. a table listing both granular tiers and a summary "75 and
+    above = Passing" row) becomes its own directly-supported span the same
+    way — no separate "explicit text" special case is needed.
+    """
+    entries = sorted(
+        (
+            (interval[0], interval[1], key_fn(record.get("Status")))
+            for record in records
+            if (interval := _record_interval(record)) is not None
+        ),
+        key=lambda entry: entry[0],
+    )
+    spans: list[tuple[float, float, str]] = []
+    index = 0
+    total = len(entries)
+    while index < total:
+        lo, hi, key = entries[index]
+        if not key:
+            index += 1
+            continue
+        run_lo, run_hi = lo, hi
+        next_index = index + 1
+        while next_index < total:
+            next_lo, next_hi, next_key = entries[next_index]
+            if next_key != key or next_lo - run_hi > 1 + 1e-9:
+                break
+            run_hi = max(run_hi, next_hi)
+            next_index += 1
+        spans.append((run_lo, run_hi, key))
+        index = next_index
+    return spans
+
+
+def _authorized_range_spans(records: list[dict[str, str]]) -> list[tuple[float, float, str]]:
+    return _authorized_spans_by_key(records, _literal_status_key)
+
+
+def _record_identifier_value(record: dict[str, str]) -> float | None:
+    """A record's own Identifier as a bare numeric code point (e.g. a grade
+    point "4.00"), distinct from its Range. Only a *pure* number counts — a
+    non-numeric code ("INC") is not a point on this axis at all. Kept apart
+    from ``_record_interval`` (the Range axis) because some domains carry
+    two independent numeric axes on the same row (a grade-point identifier
+    *and* a percentage range), moving in opposite directions of "better" —
+    conflating them onto one number line is exactly what let a claim like
+    "4.00 and above" (a grade-point code, where larger means *worse*) get
+    silently checked against percentage-range evidence instead, or against
+    nothing at all.
+    """
+    text = (record.get("Identifier") or "").strip()
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return float(text)
+    return None
+
+
+def _identifier_axis_points(
+    records: list[dict[str, str]],
+) -> list[tuple[float, str | None]]:
+    return [
+        (value, record.get("Status"))
+        for record in records
+        if (value := _record_identifier_value(record)) is not None
+    ]
+
+
+def _axis_bounds(values: list[float]) -> tuple[float, float] | None:
+    finite = [v for v in values if v not in (float("inf"), float("-inf"))]
+    return (min(finite), max(finite)) if finite else None
+
+
+def _claim_targets_axis(lo: float, hi: float, bounds: tuple[float, float] | None) -> bool:
+    """Whether a claim's own finite boundary number(s) plausibly belong to
+    this axis at all, so a claim is only ever checked against an axis its
+    own numbers could realistically be describing — a grade-point claim
+    like "4.00 and above" should never be evaluated against a 0-100
+    percentage axis just because 4.00 is technically less than 100.
+    """
+    if bounds is None:
+        return False
+    axis_lo, axis_hi = bounds
+    points = [value for value in (lo, hi) if value not in (float("inf"), float("-inf"))]
+    if not points:
+        return False
+    margin = max(1.0, (axis_hi - axis_lo) * 0.05)
+    return all(axis_lo - margin <= point <= axis_hi + margin for point in points)
+
+
+def _identifier_axis_supports(
+    lo: float,
+    hi: float,
+    lo_exclusive: bool,
+    hi_exclusive: bool,
+    key_value: str,
+    points: list[tuple[float, str | None]],
+    key_fn,
+) -> bool | None:
+    """Whether every identifier-axis point inside a claimed span agrees with
+    the claimed key. Identifier codes are a *discrete* list the source
+    itself defines (whatever codes it happens to use), not a continuous
+    scale — so unlike the Range axis there is no "gap tolerance" to reason
+    about: every point the claim's span actually covers must agree, full
+    stop. Returns ``None`` (no verdict) when nothing on this axis falls
+    inside the claimed span at all, rather than treating an empty axis as
+    either grounded or contradicted.
+
+    An excluded edge (a claim phrased "above N"/"below N") is compared with
+    a strict inequality against each point's *actual* value instead of
+    guessing a shifted number — correct regardless of whether the axis
+    happens to step by whole numbers, quarters, or any other spacing.
+    """
+    covered = [
+        (value, status)
+        for value, status in points
+        if (value > lo + 1e-9 if lo_exclusive else value >= lo - 1e-9)
+        and (value < hi - 1e-9 if hi_exclusive else value <= hi + 1e-9)
+    ]
+    if not covered:
+        return None
+    for _, status in covered:
+        if key_fn(status) != key_value:
+            return False
+    return True
+
+
+def _range_claim_is_authorized(
+    lo: float, hi: float, label: str, spans: list[tuple[float, float, str]]
+) -> bool:
+    for span_lo, span_hi, span_label in spans:
+        if span_label != label:
+            continue
+        if lo == float("-inf"):
+            if span_lo == float("-inf") and hi <= span_hi + 1e-9:
+                return True
+            continue
+        if hi == float("inf"):
+            if span_hi == float("inf") and lo >= span_lo - 1e-9:
+                return True
+            continue
+        if lo >= span_lo - 1e-9 and hi <= span_hi + 1e-9:
+            return True
+    return False
+
+
+def _extract_range_claims(sentence: str) -> list[tuple[float, float, bool, bool]]:
+    """Numeric spans a clause claims, as ``(lo, hi, lo_exclusive, hi_exclusive)``.
+
+    ``lo_exclusive``/``hi_exclusive`` mark an edge the clause names but does
+    not itself include (an "above N"/"below N" phrasing) — the boundary is
+    carried through literally rather than shifted by a guessed step, so it
+    can later be checked against whichever real values the source actually
+    defines on that axis.
+    """
+    claims: list[tuple[float, float, bool, bool]] = []
+    for match in _BOUNDED_RANGE_CLAIM.finditer(sentence):
+        lo, hi = float(match.group(1)), float(match.group(2))
+        claims.append((min(lo, hi), max(lo, hi), False, False))
+    for match in _BOUNDED_BETWEEN_CLAIM.finditer(sentence):
+        lo, hi = float(match.group(1)), float(match.group(2))
+        claims.append((min(lo, hi), max(lo, hi), False, False))
+    for match in _AT_OR_ABOVE_RANGE_CLAIM.finditer(sentence):
+        claims.append((float(match.group(1)), float("inf"), False, False))
+    for match in _AT_OR_BELOW_RANGE_CLAIM.finditer(sentence):
+        claims.append((float("-inf"), float(match.group(1)), False, False))
+    for match in _STRICT_ABOVE_RANGE_CLAIM.finditer(sentence):
+        claims.append((float(match.group(1)), float("inf"), True, False))
+    for match in _INCLUSIVE_ABOVE_RANGE_CLAIM.finditer(sentence):
+        claims.append((float(match.group(1)), float("inf"), False, False))
+    for match in _STRICT_BELOW_RANGE_CLAIM.finditer(sentence):
+        claims.append((float("-inf"), float(match.group(1)), False, True))
+    for match in _INCLUSIVE_BELOW_RANGE_CLAIM.finditer(sentence):
+        claims.append((float("-inf"), float(match.group(1)), False, False))
+    for match in _UP_TO_RANGE_CLAIM.finditer(sentence):
+        claims.append((float("-inf"), float(match.group(1)), False, False))
+    for match in _FROM_UPWARD_RANGE_CLAIM.finditer(sentence):
+        claims.append((float(match.group(1)), float("inf"), False, False))
+    return claims
+
+
+def _nearest_value_above(boundary: float, values: set[float]) -> float | None:
+    candidates = [value for value in values if value > boundary + 1e-9]
+    return min(candidates) if candidates else None
+
+
+def _nearest_value_below(boundary: float, values: set[float]) -> float | None:
+    candidates = [value for value in values if value < boundary - 1e-9]
+    return max(candidates) if candidates else None
+
+
+def _resolve_exclusive_edges(
+    lo: float,
+    hi: float,
+    lo_exclusive: bool,
+    hi_exclusive: bool,
+    boundary_values: set[float],
+) -> tuple[float, float] | None:
+    """Turn an excluded edge into the source's own next real boundary value
+    on that side, so an "above N"/"below N" claim is compared against
+    whatever the table's rows actually define next — never a hardcoded
+    step. Returns ``None`` when an excluded, finite edge has no real
+    boundary beyond it to resolve against: the interval span check this
+    feeds has nothing concrete to authorize the claim against, so it is
+    left unauthorized on this axis (a separate, direct point-by-point check
+    still covers the identifier axis for exactly this edge).
+    """
+    resolved_lo = lo
+    if lo_exclusive and lo not in (float("-inf"), float("inf")):
+        snapped = _nearest_value_above(lo, boundary_values)
+        if snapped is None:
+            return None
+        resolved_lo = snapped
+    resolved_hi = hi
+    if hi_exclusive and hi not in (float("-inf"), float("inf")):
+        snapped = _nearest_value_below(hi, boundary_values)
+        if snapped is None:
+            return None
+        resolved_hi = snapped
+    return (resolved_lo, resolved_hi)
+
+
+def _sentence_claimed_label(sentence: str, labels: list[str]) -> str | None:
+    folded = sentence.casefold()
+    for label in labels:
+        if re.search(rf"\b{re.escape(label.casefold())}\b", folded):
+            return label.casefold()
+    return None
+
+
+def _sentence_claimed_status(
+    sentence: str, labels: list[str]
+) -> tuple[str, str] | None:
+    """The status a clause is claiming, as ``(kind, value)``.
+
+    Tries the table's own literal vocabulary first (``kind="literal"``) —
+    the more specific, domain-accurate match whenever the answer actually
+    echoes the source's own wording (e.g. "Certified", "Conditional
+    Failure"). Falls back to the same generic English pass/fail polarity
+    words the single-row complement check already uses (``kind="polarity"``,
+    value ``"positive"``/``"negative"``) only when no literal label matched
+    — this is what lets a claim phrased as "...represent passing outcomes"
+    be checked at all against a table whose own Status column never once
+    spells out the word "passing" (e.g. it only ever says "Excellent",
+    "Conditional Failure", "Failed"), which is exactly the shape that let
+    the reported live answer escape a literal-label-only checker.
+    """
+    label = _sentence_claimed_label(sentence, labels)
+    if label:
+        return ("literal", label)
+    if _PASSING_CLAIM.search(sentence):
+        return ("positive", "positive")
+    if _FAILING_CLAIM.search(sentence):
+        return ("negative", "negative")
+    return None
+
+
+def _claim_is_supported(
+    lo: float,
+    hi: float,
+    lo_exclusive: bool,
+    hi_exclusive: bool,
+    claimed: tuple[str, str],
+    records: list[dict[str, str]],
+    range_bounds: tuple[float, float] | None,
+    range_boundary_values: set[float],
+    identifier_points: list[tuple[float, str | None]],
+    identifier_bounds: tuple[float, float] | None,
+) -> bool:
+    """Whether a single claimed span+status is grounded on *every* axis its
+    own numbers plausibly belong to.
+
+    A claim is checked on the Range axis (a table's percentage/score bands)
+    and, independently, on the Identifier axis (a table's own numeric codes,
+    e.g. grade points) whenever its numbers are plausibly that axis's — a
+    row can carry both at once, moving in opposite directions of "better",
+    and a claim naming one axis's numbers must never be silently validated
+    against the other axis's (unrelated) evidence. A claim not plausibly
+    describing either axis has nothing to check it against and is left
+    alone (not this function's concern).
+    """
+    kind, value = claimed
+    key_fn = _literal_status_key if kind == "literal" else _polarity_status_key
+    supported = True
+    if _claim_targets_axis(lo, hi, range_bounds):
+        resolved = _resolve_exclusive_edges(lo, hi, lo_exclusive, hi_exclusive, range_boundary_values)
+        if resolved is None:
+            supported = False
+        else:
+            spans = _authorized_spans_by_key(records, key_fn)
+            if not _range_claim_is_authorized(resolved[0], resolved[1], value, spans):
+                supported = False
+    if _claim_targets_axis(lo, hi, identifier_bounds):
+        result = _identifier_axis_supports(
+            lo, hi, lo_exclusive, hi_exclusive, value, identifier_points, key_fn
+        )
+        if result is False:
+            supported = False
+    return supported
+
+
+class _RecordAxisContext(NamedTuple):
+    range_bounds: tuple[float, float] | None
+    range_boundary_values: set[float]
+    identifier_points: list[tuple[float, str | None]]
+    identifier_bounds: tuple[float, float] | None
+
+
+def _record_axis_context(records: list[dict[str, str]]) -> _RecordAxisContext:
+    """Precompute the Range- and Identifier-axis facts every clause check
+    below needs, once per answer rather than once per clause."""
+    range_boundary_values = {
+        bound
+        for record in records
+        if (interval := _record_interval(record)) is not None
+        for bound in interval
+        if bound not in (float("inf"), float("-inf"))
+    }
+    range_bounds = _axis_bounds(
+        [
+            bound
+            for record in records
+            if (interval := _record_interval(record)) is not None
+            for bound in interval
+        ]
+    )
+    identifier_points = _identifier_axis_points(records)
+    identifier_bounds = _axis_bounds([value for value, _ in identifier_points])
+    return _RecordAxisContext(
+        range_bounds, range_boundary_values, identifier_points, identifier_bounds
+    )
+
+
+def _answer_clauses(answer: str) -> list[str]:
+    """Split a generated answer into clauses for per-claim scrutiny.
+
+    A single sentence often lists more than one row ("80-100 is Certified,
+    and 50-64 is also Certified, but 65-79 is Probationary") — splitting
+    further on comma/semicolon clause boundaries pairs each range mention
+    with the status actually next to it, instead of one status winning for
+    the whole sentence and being checked against every range in it.
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", answer)
+    return [
+        clause
+        for sentence in sentences
+        for clause in re.split(r"[,;]\s*", sentence)
+        if clause.strip()
+    ]
+
+
+def _answer_synthesizes_unsupported_range(answer: str, records: list[dict[str, str]]) -> bool:
+    """True when the answer merges several individually-grounded rows into a
+    broader global range/boundary/category claim no single row (or explicit
+    combined row) actually states.
+
+    Distinct from ``_answer_contradicts_table_records``: that function
+    catches a *single* row's own boundary or status being inverted or
+    paraphrased into its complement. This one catches an answer that is
+    locally accurate about each row it touches but *synthesizes a new,
+    broader rule* by summarizing multiple neighboring rows together — a
+    merge that is only ever legitimate when the rows being merged share the
+    exact same status (their own literal label, or the same generic
+    pass/fail polarity when the claim uses that vocabulary instead) with no
+    gap and no differing/unlabeled row between them, or when the source
+    itself already states the merged rule as one row.
+    """
+    if not answer or not records:
+        return False
+    labels = _distinct_status_labels(records)
+    if not labels:
+        return False
+    axis = _record_axis_context(records)
+    for clause in _answer_clauses(answer):
+        claimed = _sentence_claimed_status(clause, labels)
+        if not claimed:
+            continue
+        for lo, hi, lo_exclusive, hi_exclusive in _extract_range_claims(clause):
+            if not _claim_is_supported(
+                lo,
+                hi,
+                lo_exclusive,
+                hi_exclusive,
+                claimed,
+                records,
+                axis.range_bounds,
+                axis.range_boundary_values,
+                axis.identifier_points,
+                axis.identifier_bounds,
+            ):
+                return True
+    return False
+
+
+def _table_has_mixed_statuses(records: list[dict[str, str]]) -> bool:
+    """True when the structured evidence carries more than one distinct
+    Status label. A single-status table has nothing for a generated answer
+    to get wrong by generalizing across rows, so it needs no extra
+    scrutiny beyond the checks above.
+    """
+    statuses = {
+        key for record in records if (key := _literal_status_key(record.get("Status")))
+    }
+    return len(statuses) > 1
+
+
+def _clause_status_claim_is_grounded(
+    clause: str,
+    claimed: tuple[str, str],
+    records: list[dict[str, str]],
+    axis: _RecordAxisContext,
+) -> bool:
+    """Whether a clause's status claim is *affirmatively* verifiable as
+    grounded, using whichever numeric span it names.
+
+    A recognized comparison phrasing ("above N", "N and below", "at or
+    above N", ...) is resolved exactly as in
+    ``_answer_synthesizes_unsupported_range``. Any other phrasing — a
+    wording this module has never been taught, and never will finish being
+    taught, since English has no fixed list of ways to say "greater than" —
+    is not silently passed through: the plain numbers the clause itself
+    contains are taken as the span at stake (one number as the exact point
+    it names, two or more as the closed interval between the smallest and
+    largest actually written down), and checked the same way every
+    recognized phrasing is. A clause with no number at all can still be
+    grounded when it names exactly one record's own non-numeric key
+    verbatim (e.g. "Tier A", "Complete" — a structured bullet/list row's
+    identifier is not always a number); anything less specific than that
+    has nothing to verify it against and is denied — the policy this
+    function serves only ever runs when the source already carries more
+    than one status, so an unanchored status claim in that shape can never
+    be told apart from an invented one.
+    """
+    range_claims = _extract_range_claims(clause)
+    if range_claims:
+        return all(
+            _claim_is_supported(
+                lo,
+                hi,
+                lo_exclusive,
+                hi_exclusive,
+                claimed,
+                records,
+                axis.range_bounds,
+                axis.range_boundary_values,
+                axis.identifier_points,
+                axis.identifier_bounds,
+            )
+            for lo, hi, lo_exclusive, hi_exclusive in range_claims
+        )
+    numbers = {float(match) for match in re.findall(r"\d+(?:\.\d+)?", clause)}
+    if numbers:
+        lo, hi = min(numbers), max(numbers)
+        return _claim_is_supported(
+            lo,
+            hi,
+            False,
+            False,
+            claimed,
+            records,
+            axis.range_bounds,
+            axis.range_boundary_values,
+            axis.identifier_points,
+            axis.identifier_bounds,
+        )
+    return _clause_matches_exactly_one_non_numeric_record(clause, claimed, records)
+
+
+def _clause_matches_exactly_one_non_numeric_record(
+    clause: str, claimed: tuple[str, str], records: list[dict[str, str]]
+) -> bool:
+    """Whether a number-free clause is anchored to exactly one record via
+    that record's own non-numeric Identifier or Range text appearing
+    verbatim (e.g. "Tier A is Certified" naming the "Tier A" row directly).
+    A structured bullet/list row's own key is not always a number — a
+    request-processing or certification list keys its rows by a plain word
+    or short phrase instead — so this is the same "found a specific,
+    single row and checked its own status" grounding as the numeric axis
+    checks above, just for a non-numeric key. A clause naming zero or more
+    than one record's key is left unanchored (denied), the same as a
+    clause with no number at all.
+    """
+    kind, value = claimed
+    key_fn = _literal_status_key if kind == "literal" else _polarity_status_key
+    candidates = [
+        (marker, record)
+        for record in records
+        for marker in (record.get("Identifier"), record.get("Range"))
+        if marker and marker in clause
+    ]
+    if not candidates:
+        return False
+    candidates.sort(key=lambda pair: len(pair[0]), reverse=True)
+    longest_marker, longest_record = candidates[0]
+    # A shorter matched marker that is itself a substring of the longest
+    # one is not a second, independent record reference — it is only a
+    # fragment of the more specific match already found (e.g. "Tier A"
+    # inside an explicit combined row's own "Tier A and Tier B"). Only a
+    # marker that is genuinely separate from the longest match counts as
+    # ambiguity.
+    distinct_records = {
+        id(record) for marker, record in candidates if marker not in longest_marker
+    }
+    distinct_records.add(id(longest_record))
+    if len(distinct_records) != 1:
+        return False
+    return key_fn(longest_record.get("Status")) == value
+
+
+def _answer_has_unverifiable_mixed_status_claim(
+    answer: str, records: list[dict[str, str]]
+) -> bool:
+    """Policy-level guard for mixed-status structured evidence: once a table
+    carries more than one distinct Status, no sentence may assert a status
+    for a region of it unless that assertion can be *affirmatively*
+    checked against the source's own rows.
+
+    This is deliberately not another entry in the comparison-phrase list
+    above. ``_answer_synthesizes_unsupported_range`` and
+    ``_answer_contradicts_table_records`` each only ever fire once a
+    generated sentence matches a *recognized* pattern and that pattern is
+    then proven wrong — a sentence using a phrasing neither one recognizes
+    is silently let through by both, which is exactly the shape of every
+    live escape reported so far: a new paraphrase of the same unsupported
+    "global passing rule" that happened not to match any pattern yet on
+    file. Rather than adding still another pattern each time a new one
+    surfaces, this function inverts the default for this one high-risk
+    evidence shape (mixed statuses, no row stating an explicit combined
+    rule): a status claim must be *proven grounded*, via a recognized
+    phrasing or, failing that, via the plain numbers the sentence itself
+    contains, or it is treated as an unsupported synthesis regardless of
+    how it is worded. An explicit combined-rule row is not a separate case
+    to special-case here — it is simply one more row a claim can be
+    grounded against, exactly like any granular one.
+    """
+    if not answer or not records or not _table_has_mixed_statuses(records):
+        return False
+    labels = _distinct_status_labels(records)
+    if not labels:
+        return False
+    axis = _record_axis_context(records)
+    for clause in _answer_clauses(answer):
+        claimed = _sentence_claimed_status(clause, labels)
+        if not claimed:
+            continue
+        if not _clause_status_claim_is_grounded(clause, claimed, records, axis):
+            return True
+    return False
+
+
+# --- Query-intent global-classification safety guard ------------------------
+#
+# The checks above all depend on the retrieved evidence parsing into
+# structured rows (``table_records``) — a derived FAQ article can state the
+# exact same facts as free prose or an unlabeled bullet list the row parser
+# conservatively declines to interpret as a table, leaving nothing for those
+# checks to work with. A prior version of this guard tried to close that gap
+# by pattern-matching the *generated answer's* wording for a comparison
+# shape ("above N", "N and above", ...) and verifying it against the
+# evidence phrase by phrase. That approach failed in two directions at once:
+# it still missed paraphrases no pattern was written for ("70+", an
+# enumerated "1.00 ... and 4.00 are passing"), and it could fire on an
+# unrelated, correct procedural answer merely because the model happened to
+# generate broad wording ("All students ...") — because activation depended
+# on the model's own unpredictable output.
+#
+# This version activates on something stable instead: the user's own
+# question, decided before generation ever runs, never the model's wording.
+# A question that explicitly asks for a global classification/range/
+# boundary rule ("what score is considered eligible", "which tiers count as
+# certified", "what is the passing grade") is structurally different from a
+# procedural/service question ("how do I enroll", "what documents do I
+# need") — and that structural difference is what gates this guard, not any
+# word the model later chooses to use. Once gated, the decision is made
+# purely from the evidence's own shape (does it state exactly one
+# comparison/range statement, or none/several — see
+# ``_evidence_states_single_global_rule``), never from the generated
+# answer's specific claim. Enforcement is deliberately blunt: when the
+# evidence does not clearly state one rule, no numeral in the generated
+# answer is trusted for this question, regardless of what it says or how it
+# says it — sidestepping the whack-a-mole of chasing individual paraphrases
+# entirely, rather than trying to catch each new one.
+_CLASSIFICATION_NOUN = (
+    r"range|score|grade|amount|value|tier|tiers|level|levels|category|categories|"
+    r"threshold|boundary|cutoff|criterion|criteria|classification|status"
+)
+_CLASSIFICATION_INTENT_PATTERNS = [
+    # "what/which ... <noun> ... is/are considered/classified as/categorized as"
+    re.compile(
+        rf"\b(?:what|which)\b[^?.!]{{0,40}}\b(?:{_CLASSIFICATION_NOUN})\b[^?.!]{{0,40}}"
+        rf"\b(?:is|are)\s+(?:considered|classified\s+as|categorized\s+as)\b",
+        re.I,
+    ),
+    # "what/which ... <noun> ... counts/count/qualifies/qualify as"
+    re.compile(
+        rf"\b(?:what|which)\b[^?.!]{{0,40}}\b(?:{_CLASSIFICATION_NOUN})\b[^?.!]{{0,40}}"
+        rf"\b(?:counts?|qualif(?:y|ies))\s+as\b",
+        re.I,
+    ),
+    # "what/which ... <noun> ... requires/triggers/needs/warrants"
+    re.compile(
+        rf"\b(?:what|which)\b[^?.!]{{0,40}}\b(?:{_CLASSIFICATION_NOUN})\b[^?.!]{{0,40}}"
+        rf"\b(?:requires?|triggers?|needs?|warrants?)\b",
+        re.I,
+    ),
+    # "what is/are the <adjective> <noun>" (covers "what is the passing grade")
+    re.compile(
+        rf"\bwhat\s+(?:is|are)\s+the\s+\S+\s+(?:{_CLASSIFICATION_NOUN})\b", re.I
+    ),
+    # "what is/are the <noun>" (no adjective — "what is the boundary")
+    re.compile(rf"\bwhat\s+(?:is|are)\s+the\s+(?:{_CLASSIFICATION_NOUN})\b", re.I),
+    # minimum/maximum ... <noun>/qualify
+    re.compile(
+        rf"\b(?:minimum|maximum)\b[^?.!]{{0,40}}\b(?:{_CLASSIFICATION_NOUN}|qualify|qualifies|qualifying)\b",
+        re.I,
+    ),
+    re.compile(r"\bwhat\s+counts\s+as\b", re.I),
+    re.compile(r"\bwhat\s+is\s+considered\b", re.I),
+    re.compile(r"\bwhat\s+qualifies\s+as\b", re.I),
+]
+
+
+def _is_global_classification_query(question: str) -> bool:
+    """Whether the user's own question explicitly asks for a global
+    classification/range/boundary rule, as opposed to a procedural/service
+    question — decided only from the fixed, pre-generation question text,
+    never from anything the model later generates.
+    """
+    text = question or ""
+    return any(pattern.search(text) for pattern in _CLASSIFICATION_INTENT_PATTERNS)
+
+
+_EVIDENCE_RANGE_STATEMENT_PATTERNS = [
+    re.compile(r"\d+(?:\.\d+)?\s*[-–—]\s*\d+(?:\.\d+)?"),
+    re.compile(r"\bat\s+or\s+above\s+\d+(?:\.\d+)?", re.I),
+    re.compile(r"\bat\s+or\s+below\s+\d+(?:\.\d+)?", re.I),
+    re.compile(
+        r"\b(?:above|over|after|greater\s+than|more\s+than|higher\s+than|exceeds?)\s+\d+(?:\.\d+)?",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:below|under|before|less\s+than|lower\s+than)\s+\d+(?:\.\d+)?", re.I
+    ),
+    re.compile(r"\d+(?:\.\d+)?\s*(?:and|or)\s*(?:up|higher|above|more|greater)\b", re.I),
+    re.compile(r"\d+(?:\.\d+)?\s*(?:and|or)\s*(?:down|lower|below|less)\b", re.I),
+    re.compile(r"\bbetween\s+\d+(?:\.\d+)?\s+and\s+\d+(?:\.\d+)?\b", re.I),
+    re.compile(r"\bup\s+to\s+\d+(?:\.\d+)?", re.I),
+]
+
+
+def _count_evidence_range_statements(evidence_text: str) -> int:
+    """How many distinct comparison/range-shaped statements the raw
+    evidence text contains — a purely quantitative count, never an attempt
+    to parse or "understand" whatever table/bullet/prose structure the
+    evidence happens to use. Zero means no boundary is stated at all;
+    exactly one means the evidence states a single, clean global rule;
+    two or more means multiple individual bands/categories are listed
+    (a grading scale, a fee schedule, a deadline table, ...) with no single
+    unifying statement. A source whose evidence states only one such
+    statement and nothing else counts as an explicit combined rule; a
+    source that states an explicit rule *alongside* its own granular
+    breakdown still counts as multiple here and is treated the same as an
+    unstated rule — a deliberately conservative simplification, favoring a
+    safe generic notice over trying to distinguish "the one true summary
+    statement" from "one row among several" by inspecting structure.
+    """
+    return sum(len(pattern.findall(evidence_text)) for pattern in _EVIDENCE_RANGE_STATEMENT_PATTERNS)
+
+
+def _evidence_states_single_global_rule(evidence_text: str) -> bool:
+    return _count_evidence_range_statements(evidence_text) == 1
+
+
+_CLASSIFICATION_FALLBACK_NOTICE = (
+    "The available source lists individual categories/ranges, but it does "
+    "not explicitly state a single overall boundary for that "
+    "classification."
+)
+
+
+# A plain word-presence check (no capturing, no boundary extraction, no
+# exclusivity tracking) — used only to decide *whether to remove a
+# sentence wholesale*, never to determine what it specifically claims or
+# to verify it against evidence. A category-coded boundary ("Tier B and
+# above") names no number at all, so the digit check alone would miss it.
+_COMPARATIVE_WORD_PRESENCE = re.compile(
+    r"\b(?:above|below|over|under|between|through|exceeds?|"
+    r"at\s+least|at\s+most|and\s+above|and\s+below|or\s+more|or\s+less|"
+    r"or\s+higher|or\s+lower|up\s+to|greater\s+than|less\s+than|"
+    r"higher\s+than|lower\s+than)\b",
+    re.I,
+)
+
+
+def _sentence_makes_numeric_or_comparative_claim(sentence: str) -> bool:
+    return bool(re.search(r"\d", sentence)) or bool(_COMPARATIVE_WORD_PRESENCE.search(sentence))
+
+
+def _apply_conservative_classification_reply(answer: str) -> str:
+    """Strip every sentence in ``answer`` that names a number or uses any
+    comparative wording at all, and append the deterministic notice. This
+    is deliberately blunt rather than trying to identify and remove only
+    the specific unsupported phrase: any such sentence, in an answer to a
+    global-classification question this guard has already decided the
+    evidence does not clearly settle, is untrustworthy regardless of how
+    it is worded ("above 69", "70+", an enumerated "1.00 ... and 4.00",
+    "Tier B and above"), so none is preserved. A sentence with neither a
+    number nor comparative wording (routinely true of unrelated grounded
+    content, e.g. a computation-method explanation) is always kept.
+    """
+    if not answer:
+        return _CLASSIFICATION_FALLBACK_NOTICE
+    sentences = re.split(r"(?<=[.!?])\s+", answer)
+    kept = [
+        sentence for sentence in sentences if not _sentence_makes_numeric_or_comparative_claim(sentence)
+    ]
+    remaining = " ".join(part.strip() for part in kept if part.strip()).strip()
+    if remaining:
+        return f"{remaining} {_CLASSIFICATION_FALLBACK_NOTICE}"
+    return _CLASSIFICATION_FALLBACK_NOTICE
 
 
 def _table_records_evidence_answer(records: list[dict[str, str]]) -> str:

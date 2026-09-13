@@ -7,6 +7,8 @@ Does not retune Phase 2A.
 
 from __future__ import annotations
 
+import re
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -15,9 +17,14 @@ from app.services.chroma_store import RetrievedChunk, select_role_visible_hits
 from app.services.qa.groq_answer_service import GroqAnswerError
 from app.services.qa.question_answering import (
     _answer_contradicts_table_records,
+    _answer_has_unverifiable_mixed_status_claim,
+    _answer_synthesizes_unsupported_range,
+    _apply_conservative_classification_reply,
     _canonical_service_names_in_text,
     _confidence_for,
+    _evidence_states_single_global_rule,
     _format_structured_tables,
+    _is_global_classification_query,
     _looks_like_fee_amount,
     _prefer_active_topic_context,
     _redact_extraction_artifacts,
@@ -1456,6 +1463,182 @@ def test_oos_question_does_not_inherit_or_return_a_stale_active_service():
     assert result.active_service is None
 
 
+# ---------------------------------------------------------------------------
+# P0: complement-of-a-table-row inference must not be synthesized as a
+# HIGH-confidence fact ("any grade above 69 is considered passing" from a
+# row that only ever states "69 and below = Failed"). All fixtures below use
+# a fabricated, non-LSPU "Device Certification" domain with a synthetic
+# threshold number (50) so the regression proves the general algorithm, not
+# a memorized institutional value. No numeric policy threshold is encoded in
+# product code by this fix — only generic English status/direction words
+# that were already part of the existing detector.
+# ---------------------------------------------------------------------------
+
+# Only the negative-status row states its own boundary ("50 and below");
+# nothing else in the table mentions the adjacent number "51" at all, which
+# is exactly the shape that let the real paraphrase slip through undetected
+# (the previous fix only worked when some *other* row happened to contain
+# the adjacent number by coincidence).
+SYNTHETIC_ISOLATED_LOWER_BOUND_TABLE = """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 2 > Certification Levels
+
+Score Band Outcome
+1.00 | 90-100 | Excellent
+2.00 | 50 and below | Failed
+"""
+
+# Both sides of the same threshold are stated explicitly by two separate
+# rows: the complement of "50 and below = Failed" is directly, textually
+# given as "51 and above = Certified", not inferred.
+SYNTHETIC_BOTH_SIDES_STATED_TABLE = """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 2 > Certification Levels
+
+1.00 | 51 and above | Certified
+2.00 | 50 and below | Failed
+"""
+
+# A single Incomplete row alongside an ordinary passing band — nothing here
+# states that *every other* row is Passing.
+SYNTHETIC_SPECIAL_STATUS_TABLE = """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 2 > Certification Levels
+
+1.00 | 70-100 | Certified
+INC | Incomplete
+"""
+
+# A positive (">=X = Passing") threshold with nothing else stating the
+# below-threshold side explicitly, for the symmetric direction.
+SYNTHETIC_ISOLATED_UPPER_BOUND_TABLE = """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 2 > Certification Levels
+
+1.00 | 51 and above | Certified
+2.00 | 30-50 | Conditional
+"""
+
+
+@pytest.mark.parametrize(
+    "inverted_answer",
+    [
+        "Any grade above 50 is considered passing.",
+        "A device with a score greater than 50 is passing.",
+        "A score of 51 and higher is passing.",
+        "Anything over 50 is passing certification.",
+    ],
+    ids=[
+        "azure-repro-above-n",
+        "greater-than-n",
+        "n-plus-1-and-higher",
+        "anything-over-n",
+    ],
+)
+def test_isolated_lower_bound_complement_paraphrases_are_caught(inverted_answer):
+    """Reproduces the exact reported Azure failure shape ("any grade above
+    69 is considered passing") with a synthetic number and an isolated
+    "<=X = Failed" row that has no neighboring row mentioning the adjacent
+    number. A "<=X = Failed" row alone must never authorize ">X = Passing",
+    under any of the common paraphrasings of ">X"."""
+    formatted = format_retrieved_context(
+        [_chunk("Device Certification Levels", SYNTHETIC_ISOLATED_LOWER_BOUND_TABLE)]
+    )
+    records = _structured_table_records_from_text(formatted)
+    assert records
+    assert any(r.get("Status") == "Failed" for r in records)
+    assert _answer_contradicts_table_records(inverted_answer, records)
+
+
+def test_isolated_upper_bound_complement_paraphrases_are_caught():
+    """Symmetric direction: a ">=X = Passing/Certified" row alone must not
+    authorize "<X = Failed", under common paraphrasings of "<X", even when
+    the adjacent number is never printed anywhere in the source table."""
+    formatted = format_retrieved_context(
+        [_chunk("Device Certification Levels", SYNTHETIC_ISOLATED_UPPER_BOUND_TABLE)]
+    )
+    records = _structured_table_records_from_text(formatted)
+    assert records
+    for inverted_answer in (
+        "A score of 50 and below fails certification.",
+        "A score of 50 or lower fails.",
+        "Anything under 51 fails.",
+    ):
+        assert _answer_contradicts_table_records(inverted_answer, records), inverted_answer
+
+
+def test_special_status_row_does_not_define_every_other_row():
+    """One Incomplete/Conditional/special-status row must not be used to
+    infer the status of every *other*, unlisted row — a different flavor of
+    complement inference than a numeric boundary, with no number involved
+    at all."""
+    formatted = format_retrieved_context(
+        [_chunk("Device Certification Levels", SYNTHETIC_SPECIAL_STATUS_TABLE)]
+    )
+    records = _structured_table_records_from_text(formatted)
+    assert records
+    assert _answer_contradicts_table_records(
+        "INC means the record is Incomplete. Every other score is passing.",
+        records,
+    )
+    assert _answer_contradicts_table_records(
+        "Aside from Incomplete, all other results are considered successful.",
+        records,
+    )
+    # A plain, correct restatement of the one row that IS labeled must not
+    # be flagged just because the table also has other, unrelated rows.
+    assert not _answer_contradicts_table_records(
+        "INC means the record is Incomplete.",
+        records,
+    )
+
+
+@pytest.mark.parametrize(
+    "grounded_answer",
+    [
+        "Any grade above 50 is considered passing.",
+        "A score of 50 and below fails, and 51 and above is certified.",
+        "A score of 51 and higher is certified.",
+    ],
+)
+def test_explicit_both_sides_summary_is_not_flagged(grounded_answer):
+    """When the source table itself states both sides of a threshold across
+    two rows (one "<=X = Failed", one ">X = Certified"), summarizing either
+    or both sides is grounded, not an invented inference, and must not be
+    flagged or downgraded."""
+    formatted = format_retrieved_context(
+        [_chunk("Device Certification Levels", SYNTHETIC_BOTH_SIDES_STATED_TABLE)]
+    )
+    records = _structured_table_records_from_text(formatted)
+    assert records
+    assert not _answer_contradicts_table_records(grounded_answer, records)
+
+
+def test_azure_repro_phrase_end_to_end_is_corrected_and_capped():
+    """End-to-end reproduction of the exact reported production failure
+    (Azure returning HIGH confidence for a synthesized "any grade above 69
+    is considered passing" claim), using a synthetic non-LSPU table and
+    threshold number. The corrected answer must fall back to the grounded
+    rows and confidence must not remain "high" for a generation the system
+    had to override.
+    """
+    store = RoleAwareStore(
+        [_chunk("Device Certification Levels", SYNTHETIC_ISOLATED_LOWER_BOUND_TABLE)]
+    )
+    result = _ask(
+        store,
+        "What is the passing score for device certification?",
+        groq_return="Any grade above 50 is considered passing.",
+    )
+    assert "above 50 is considered passing" not in result.answer.casefold()
+    assert "Failed" in result.answer
+    assert result.confidence != "high"
+
+
 def test_old_client_without_active_service_field_remains_safe():
     """A client that never sends ``client_active_service`` at all (the
     parameter's default) must behave exactly as before this change —
@@ -1488,3 +1671,2340 @@ def test_old_client_without_active_service_field_remains_safe():
         result = answer_qa_question("Which office handles that?", user_role="student", history=history)
     assert result.sources
     assert "Enrollment" in " ".join(str(s.get("title") or "") for s in result.sources)
+
+
+# ---------------------------------------------------------------------------
+# PROD-P0: carried active_service vs. a crowded, higher-scoring intruder pool
+# (confirmed production failure on commit 059fd1a — see deploy/_prod_reprobe_enroll.py
+# and deploy/_val_active_service_probe.py for the live-traffic reproduction this
+# mirrors).
+# ---------------------------------------------------------------------------
+
+
+class _QueryAwareStore(RoleAwareStore):
+    """``RoleAwareStore`` ranks purely by a fixed score, regardless of the
+    query — fine for most fixtures, but it would make even the *initial*,
+    unambiguous "How do I enroll...?" question retrieve the intruder first,
+    which no real embedding search would do. This adds a small on-topic
+    relevance bonus so a query that actually names a chunk's own title (the
+    topic-setting turn's own wording) ranks it appropriately, while a vague
+    follow-up with no such wording gets no such help — exactly mirroring why
+    the active-topic constraint (not raw relevance) has to carry a vague
+    slot follow-up like "Which office handles that?"."""
+
+    def search(self, question, *, top_k=None, raw_k=None, user_role=None):
+        self.calls.append(
+            {"question": question, "top_k": top_k, "raw_k": raw_k, "user_role": user_role}
+        )
+        normalized_question = (question or "").casefold()
+
+        def _effective_score(chunk: RetrievedChunk) -> float:
+            title = (chunk.title or "").casefold()
+            bonus = 5.0 if title[:6] and title[:6] in normalized_question else 0.0
+            return chunk.rerank_score + bonus
+
+        ranked = sorted(self.chunks, key=_effective_score, reverse=True)
+        return select_role_visible_hits(ranked, user_role=user_role, top_k=top_k or 7)
+
+
+def _crowded_enrollment_pool_with_examination_fee_intruder() -> RoleAwareStore:
+    """A realistic crowded top-k: correct Enrollment/Registrar evidence plus
+    several unrelated office/fee cards, one of which (Examination Fee, under
+    Graduate Studies) outranks it by raw relevance score alone — the shape a
+    vague "which office" query pulls from many charter entries that all
+    carry generic office/fee wording."""
+    return _QueryAwareStore(
+        [
+            _chunk(
+                "Enrollment",
+                "Enrollment. Office / Division Registrar. Fees: PHP 2,000.00. "
+                "Requirements: Report Card, Certificate of Good Moral Character.",
+                score=2.6,
+                extra_meta={"canonical_topic": "Enrollment", "office": "Registrar"},
+            ),
+            _chunk(
+                "Examination Fee",
+                "Examination Fee. Office / Division: Office of the Dean, Graduate "
+                "Studies. Fees: PHP 500.00 per examination.",
+                score=4.9,
+                extra_meta={
+                    "canonical_topic": "Examination Fee",
+                    "office": "Office of the Dean, Graduate Studies",
+                },
+            ),
+            _chunk(
+                "Library Reference Assistance",
+                "Library Reference Assistance. Office / Division: Library. Fees: None.",
+                score=4.2,
+                extra_meta={"canonical_topic": "Library Reference Assistance", "office": "Library"},
+            ),
+            _chunk(
+                "Issuance of Good Moral Certificate (Undergraduate)",
+                "Issuance of Good Moral Certificate. Office / Division: OSA. Fees: None.",
+                score=3.8,
+                extra_meta={
+                    "canonical_topic": "Issuance of Good Moral Certificate",
+                    "office": "OSA",
+                },
+            ),
+        ]
+    )
+
+
+def _run_enrollment_office_chain(
+    store: RoleAwareStore,
+    first_question: str,
+    *,
+    questions: list[str] | None = None,
+) -> tuple[Any, str | None]:
+    """Round-trips ``active_service`` the way the Flutter client does: echo
+    back whatever the previous response returned as the next request's
+    ``client_active_service``. ``questions`` lets a caller reproduce a
+    specific real conversation shape; defaults to the original 6-turn chain."""
+    history: list[dict] = []
+    client_active_service: str | None = None
+    result = None
+    turns = questions if questions is not None else [
+        first_question,
+        "What documents do I need?",
+        "Where do I submit them?",
+        "How long does it take?",
+        "How much does it cost?",
+        "Which office handles that?",
+    ]
+    for question in turns:
+        result = _ask(
+            store,
+            question,
+            history=history,
+            client_active_service=client_active_service,
+            groq_return="The Registrar's Office handles Enrollment.",
+        )
+        history.append({"role": "user", "content": question})
+        history.append({"role": "assistant", "content": result.answer})
+        if result.active_service:
+            client_active_service = result.active_service
+    return result, client_active_service
+
+
+@pytest.mark.parametrize(
+    "first_question",
+    ["How do I enroll?", "How do I enroll as a new student at LSPU?"],
+)
+def test_office_followup_keeps_carried_registration_against_crowded_examination_fee_pool(
+    first_question,
+):
+    """The exact confirmed production failure: after establishing Registration
+    through several ordinary Enrollment follow-ups (the client echoing back
+    the validated active_service each turn, per the Flutter round-trip), a
+    vague "Which office handles that?" turn must not let an unrelated,
+    higher-scoring Examination Fee / Graduate Studies card replace the
+    carried service, and must not drop it to ``None`` either. Covers both
+    reported repro phrasings for the topic-setting turn."""
+    store = _crowded_enrollment_pool_with_examination_fee_intruder()
+    result, client_active_service = _run_enrollment_office_chain(store, first_question)
+    titles = " ".join(str(s.get("title") or "") for s in (result.sources or []))
+    assert client_active_service == "Registration"
+    assert result.active_service == "Registration"
+    assert "Enrollment" in titles
+    assert "Examination Fee" not in titles
+
+
+def test_exact_production_trigger_sequence_keeps_registration_through_fee_then_office():
+    """Reproduces the real deployed turn sequence as closely as possible:
+    a short topic-setting question, two ordinary Enrollment follow-ups,
+    "Does it have a fee?" (a slot-attribute phrasing distinct from "How
+    much does it cost?"), then the vague office follow-up — with the
+    client echoing back the validated ``active_service`` on every turn,
+    exactly as the Flutter app does.
+
+    This intentionally does NOT reuse "How much does it cost?" (already
+    correctly classified as a slot follow-up before this fix) so the test
+    cannot pass merely because that phrasing was already handled — "Does it
+    have a fee?" exercises a different, previously-unprotected turn that
+    still had to fall through to the carried service correctly.
+    """
+    store = _crowded_enrollment_pool_with_examination_fee_intruder()
+    questions = [
+        "How do I enroll?",
+        "What documents do I need?",
+        "Where do I submit them?",
+        "Does it have a fee?",
+        "Which office handles that?",
+    ]
+    result, client_active_service = _run_enrollment_office_chain(
+        store, questions[0], questions=questions
+    )
+    titles = " ".join(str(s.get("title") or "") for s in (result.sources or []))
+
+    # Resolved active topic for the final turn is Registration, not a raw
+    # sentence and not the intruder service.
+    from app.services.qa.question_answering import resolve_turn_active_topic
+
+    replay_history: list[dict] = []
+    for question in questions[:-1]:
+        replay_history.append({"role": "user", "content": question})
+        replay_history.append({"role": "assistant", "content": "The Registrar's Office handles Enrollment."})
+    resolved_topic = resolve_turn_active_topic(
+        "Which office handles that?", replay_history, client_active_service="Registration"
+    )
+    assert resolved_topic == "Registration"
+
+    # Enrollment evidence is retained/preferred; Examination Fee never
+    # becomes the governing context.
+    assert "Enrollment" in titles
+    assert "Examination Fee" not in titles
+    assert client_active_service == "Registration"
+    assert result.active_service == "Registration"
+
+    # The office answer is actually derived from Enrollment evidence: the
+    # LLM is mocked (it always returns the same canned string, so the
+    # *answer text* proves nothing on its own), so what matters is the
+    # *context* it was grounded in for this exact final turn — it must
+    # contain the Enrollment/Registrar evidence and must not contain the
+    # Examination Fee intruder.
+    captured_context: dict[str, str] = {}
+
+    def _capture_context(**kwargs):
+        captured_context["context"] = kwargs.get("context", "")
+        return "The Registrar's Office handles Enrollment."
+
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=_capture_context,
+        ),
+    ):
+        from app.services.qa.question_answering import answer_qa_question
+
+        final_result = answer_qa_question(
+            "Which office handles that?",
+            user_role="student",
+            history=replay_history,
+            client_active_service="Registration",
+        )
+    assert final_result.active_service == "Registration"
+    assert "Enrollment" in captured_context.get("context", "")
+    assert "Examination Fee" not in captured_context.get("context", "")
+
+
+def test_explicit_switch_after_office_followup_still_overrides_carried_registration():
+    """An explicit topic switch must still win over a stale carried
+    Registration/active_service, even against the same crowded pool."""
+    store = _crowded_enrollment_pool_with_examination_fee_intruder()
+    store.chunks.append(
+        _chunk(
+            "Issuance of Transcript of Records",
+            "Transcript of Records. Office / Division: Registrar. Fees: PHP 75.00/page.",
+            score=3.5,
+            extra_meta={
+                "canonical_topic": "Issuance of Transcript of Records",
+                "office": "Registrar",
+            },
+        )
+    )
+    history = [
+        {"role": "user", "content": "How do I enroll as a new student at LSPU?"},
+        {"role": "assistant", "content": "The Registrar's Office handles Enrollment."},
+    ]
+    result = _ask(
+        store,
+        "Now tell me about TOR.",
+        history=history,
+        client_active_service="Registration",
+        groq_return="The Registrar issues the Transcript of Records.",
+    )
+    assert result.active_service and "Transcript" in result.active_service
+    titles = " ".join(str(s.get("title") or "") for s in (result.sources or []))
+    assert "Transcript" in titles
+
+
+def test_invalid_client_active_service_against_crowded_pool_falls_back_safely():
+    """A garbage/spoofed client value must not be trusted, and must not
+    accidentally let the crowded pool's intruder win the office question
+    either — history-based resolution still grounds retrieval correctly."""
+    store = _crowded_enrollment_pool_with_examination_fee_intruder()
+    history = [
+        {"role": "user", "content": "How do I enroll as a new student at LSPU?"},
+        {"role": "assistant", "content": "The Registrar's Office handles Enrollment."},
+    ]
+    result = _ask(
+        store,
+        "Which office handles that?",
+        history=history,
+        client_active_service="Totally Fake Service Nobody Registered",
+        groq_return="The Registrar's Office handles Enrollment.",
+    )
+    titles = " ".join(str(s.get("title") or "") for s in (result.sources or []))
+    assert "Examination Fee" not in titles
+
+
+def test_oos_question_ignores_carried_registration_against_crowded_pool():
+    """An out-of-scope question must not use a stale carried service to
+    answer, and must not echo one back, even with a crowded pool present."""
+    store = _crowded_enrollment_pool_with_examination_fee_intruder()
+    result = _ask(store, "What's the weather today?", client_active_service="Registration")
+    assert result.out_of_scope_detected is True
+    assert result.active_service is None
+
+
+def test_legacy_client_without_active_service_field_against_crowded_pool():
+    """A pre-upgrade client that never sends ``active_service`` at all must
+    still resolve the office question correctly via history-based
+    resolution, even against the crowded intruder pool."""
+    store = _crowded_enrollment_pool_with_examination_fee_intruder()
+    history = [
+        {"role": "assistant", "content": "Go to the Registrar Office with your enrolment slip, "
+                                          "good moral certificate, report card."},
+        {"role": "user", "content": "What documents do I need?"},
+        {"role": "assistant", "content": "The required documents for Enrollment are: Enrolment Slip, "
+                                          "Certificate of Good Moral Character, Report Card."},
+        {"role": "user", "content": "How much does it cost?"},
+        {"role": "assistant", "content": "The listed fee for Enrollment is PHP 2,000.00."},
+    ]
+    result = _ask(store, "Which office handles that?", history=history)
+    titles = " ".join(str(s.get("title") or "") for s in (result.sources or []))
+    assert "Examination Fee" not in titles
+
+
+# ---------------------------------------------------------------------------
+# Unsupported global range/category synthesis (distinct from the single-row
+# complement-inference bug above). Several *individually* grounded table
+# rows must not be synthesized into a broader global range, boundary, or
+# category rule the source never states as a unit. All fixtures are
+# synthetic and non-LSPU, spanning several unrelated domains (scholarship
+# eligibility, fee tiers, device certification, filing deadlines) precisely
+# so the fix is proven generic rather than tied to any one institution's
+# grading policy. The real UNDERGRAD_GRADING_TABLE is exercised once at the
+# end purely as a regression/reproduction case, not as the target of the fix.
+# ---------------------------------------------------------------------------
+
+SYNTHETIC_ELIGIBILITY_TABLE_ADJACENT = """\
+Scholarship Eligibility Bands
+
+Program Handbook > Article 5 > Scholarship Eligibility > Sec. 1 > Eligibility Bands
+
+1.00 | 90-100 | Eligible
+2.00 | 80-89 | Eligible
+3.00 | 60-79 | Not Eligible
+"""
+
+SYNTHETIC_ELIGIBILITY_TABLE_GAP = """\
+Scholarship Eligibility Bands
+
+Program Handbook > Article 5 > Scholarship Eligibility > Sec. 1 > Eligibility Bands
+
+1.00 | 90-100 | Eligible
+2.00 | 60-70 | Eligible
+3.00 | 0-59 | Not Eligible
+"""
+
+SYNTHETIC_FEE_TIER_TABLE = """\
+Late Submission Fee Tiers
+
+Program Handbook > Article 11 > Late Submission > Sec. 3 > Fee Tiers
+
+1.00 | 1-5 | No Fee
+2.00 | 6-10 | Standard Fee
+3.00 | 11-20 | Standard Fee
+4.00 | 21-30 | Premium Fee
+"""
+
+SYNTHETIC_CERT_WITH_PROBATION_TABLE = """\
+Device Certification Bands
+
+Program Handbook > Article 9 > Device Certification > Sec. 4 > Certification Bands
+
+1.00 | 80-100 | Certified
+2.00 | 65-79 | Probationary
+3.00 | 50-64 | Certified
+"""
+
+SYNTHETIC_CERT_CLOSED_TOP_TABLE = """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 5 > Certification Levels
+
+1.00 | 80-100 | Certified
+2.00 | 50-79 | Conditional
+"""
+
+SYNTHETIC_CERT_WITH_EXPLICIT_RULE_TABLE = """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 5 > Certification Levels
+
+1.00 | 80-100 | Certified
+2.00 | 50-79 | Conditional
+5.00 | 80 and above | Certified
+"""
+
+SYNTHETIC_DEADLINE_TABLE = """\
+Appeal Filing Deadline Tiers
+
+Program Handbook > Article 14 > Appeals > Sec. 2 > Filing Deadline Tiers
+
+1.00 | 1-10 | On Time
+2.00 | 11-15 | Grace Period
+"""
+
+
+def _records_for(table_text: str, title: str) -> list[dict[str, str]]:
+    formatted = format_retrieved_context([_chunk(title, table_text)])
+    records = _structured_table_records_from_text(formatted)
+    assert records
+    return records
+
+
+def test_adjacent_same_status_rows_may_be_merged_when_coverage_is_complete():
+    """Two rows sharing the same Status with no gap and nothing else between
+    them are mechanically the same claim as one merged range — summarizing
+    them together is grounded, not synthesized."""
+    records = _records_for(SYNTHETIC_ELIGIBILITY_TABLE_ADJACENT, "Scholarship Eligibility Bands")
+    assert not _answer_synthesizes_unsupported_range(
+        "A score of 80 to 100 is Eligible.", records
+    )
+    assert not _answer_synthesizes_unsupported_range(
+        "A score of 90-100 is Eligible, and 80-89 is also Eligible.", records
+    )
+
+
+def test_gap_between_same_status_ranges_prevents_global_merging():
+    """The same two Eligible bands, but with an unaccounted-for gap between
+    them (71-89 is simply absent from the table) — merging across that gap
+    invents coverage the source never states."""
+    records = _records_for(SYNTHETIC_ELIGIBILITY_TABLE_GAP, "Scholarship Eligibility Bands")
+    assert _answer_synthesizes_unsupported_range(
+        "A score of 60 to 100 is Eligible.", records
+    )
+    # Each row on its own remains fine.
+    assert not _answer_synthesizes_unsupported_range(
+        "A score of 90-100 is Eligible, and 60-70 is also Eligible.", records
+    )
+
+
+def test_different_statuses_are_not_merged_across_a_shared_boundary():
+    """Adjacent Standard Fee bands may be merged, but the claim must not
+    cross into the neighboring Premium Fee band just because it sits right
+    next to them with no numeric gap."""
+    records = _records_for(SYNTHETIC_FEE_TIER_TABLE, "Late Submission Fee Tiers")
+    assert not _answer_synthesizes_unsupported_range(
+        "A fee of 6 to 20 falls under the Standard Fee tier.", records
+    )
+    assert _answer_synthesizes_unsupported_range(
+        "A fee of 6 to 30 falls under the Standard Fee tier.", records
+    )
+
+
+def test_special_status_row_is_not_absorbed_into_a_broad_normal_range():
+    """A Probationary band sits between two Certified bands. Claiming the
+    full 50-100 span is Certified would silently absorb the special row
+    between them — the two Certified bands must stay separate spans."""
+    records = _records_for(SYNTHETIC_CERT_WITH_PROBATION_TABLE, "Device Certification Bands")
+    assert _answer_synthesizes_unsupported_range(
+        "A score of 50 to 100 is Certified.", records
+    )
+    assert not _answer_synthesizes_unsupported_range(
+        "A score of 80-100 is Certified, and 50-64 is also Certified, "
+        "but 65-79 is Probationary.",
+        records,
+    )
+
+
+@pytest.mark.parametrize(
+    "unbounded_claim",
+    ["80 and above is Certified.", "A score above 79 is Certified.", "A score of 80 or higher is Certified."],
+)
+def test_individually_supported_rows_do_not_create_an_unsupported_overall_boundary(
+    unbounded_claim,
+):
+    """Only a closed 80-100 Certified band is stated. Nothing in the table
+    says there is no ceiling — claiming an open-ended "80 and above" rule
+    invents a global boundary the individual row never asserted."""
+    records = _records_for(SYNTHETIC_CERT_CLOSED_TOP_TABLE, "Device Certification Levels")
+    assert _answer_synthesizes_unsupported_range(unbounded_claim, records)
+
+
+def test_explicit_source_rule_row_authorizes_the_same_global_summary():
+    """Same table as above, but the source itself also carries an explicit
+    "80 and above = Certified" row alongside the granular bands. That row
+    is itself directly-supported evidence, so restating it is not a
+    synthesized inference."""
+    records = _records_for(SYNTHETIC_CERT_WITH_EXPLICIT_RULE_TABLE, "Device Certification Levels")
+    assert not _answer_synthesizes_unsupported_range("80 and above is Certified.", records)
+    assert not _answer_synthesizes_unsupported_range("A score above 79 is Certified.", records)
+
+
+def test_deadline_tiers_different_statuses_are_not_merged():
+    """A different, unrelated domain (filing deadlines): an On Time band and
+    a Grace Period band sit right next to each other, but must not be
+    summarized together as a single uniform rule."""
+    records = _records_for(SYNTHETIC_DEADLINE_TABLE, "Appeal Filing Deadline Tiers")
+    assert _answer_synthesizes_unsupported_range(
+        "A submission made on day 1-15 is On Time.", records
+    )
+    assert not _answer_synthesizes_unsupported_range(
+        "A submission made on day 1-10 is On Time.", records
+    )
+
+
+def test_synthesized_range_end_to_end_is_corrected_and_capped():
+    """End-to-end (synthetic domain): the model merges two differently
+    labeled fee bands into one overstated claim. The corrected answer must
+    fall back to the grounded per-row evidence, and confidence must not
+    remain "high" for a generation the system had to override."""
+    store = RoleAwareStore(
+        [_chunk("Late Submission Fee Tiers", SYNTHETIC_FEE_TIER_TABLE)]
+    )
+    result = _ask(
+        store,
+        "What fee applies to a late submission?",
+        groq_return="A fee of 6 to 30 falls under the Standard Fee tier.",
+    )
+    assert "6 to 30 falls under the Standard Fee" not in result.answer
+    assert "Premium Fee" in result.answer
+    assert result.confidence != "high"
+
+
+def test_grading_table_global_range_synthesis_repro():
+    """Reproduction/regression case only (not the implementation target):
+    the real LSPU grading table has several rows with no Status label at
+    all (e.g. 87-89 is the only row actually labeled Satisfactory; 84-86
+    and 90-92 carry no label). An answer must not stretch "Satisfactory"
+    across those unlabeled neighboring rows into one merged range."""
+    records = _records_for(UNDERGRAD_GRADING_TABLE, "Grading System")
+    assert _answer_synthesizes_unsupported_range(
+        "A grade from 84 to 92 is Satisfactory.", records
+    )
+    # Restating each row on its own remains fine.
+    assert not _answer_synthesizes_unsupported_range(
+        "1.00 (99-100) is Excellent. 1.50 (93-95) is Very Satisfactory. "
+        "2.00 (87-89) is Satisfactory.",
+        records,
+    )
+
+
+# ---------------------------------------------------------------------------
+# LIVE-P0: live-generation mixed-status global synthesis escape.
+#
+# Root cause: the post-generation audit had two independent gaps that only
+# show up together, not in isolation, which is why the earlier synthetic
+# unit fixtures (all single-axis, all reusing the record's own exact number
+# string) never exercised them:
+#
+#   1. Number matching was compared as *exact strings* pulled straight out
+#      of regex captures ("4.00" vs a paraphrase written as "4.0" or "4")
+#      never matched, even though they are the same value. A generated
+#      answer trimming a trailing zero silently defeated every number-based
+#      check.
+#   2. A table can carry *two independent numeric axes on the same rows* — a
+#      Range (e.g. a percentage band) and a separate Identifier code (e.g. a
+#      grade point), moving in *opposite* directions of "better". The old
+#      merge/authorization logic only ever reasoned about one shared number
+#      line built out of both fields at once, so an Identifier-axis claim
+#      ("4.00 and above", where a *larger* code is worse) could silently be
+#      checked against Range-axis evidence (or nothing at all) instead of
+#      against the other Identifier-axis rows it actually needed to agree
+#      with.
+#
+# Separately, the blunt whole-answer "and above" guard is defeated the
+# moment *any* row anywhere states an unrelated "X and above" rule (a
+# realistic shape for a real institutional document, which the short
+# synthetic fixtures never included) — at that point only the per-row
+# marker/number matching stood between the claim and going unchecked, and
+# that is exactly where gap #1 and #2 above hid.
+#
+# Fix: numbers are now compared as parsed floats throughout, and the
+# Identifier axis is evaluated as its own independent axis (point coverage,
+# no gap tolerance — an institution's own code list is a discrete set, not a
+# continuous scale) alongside the Range axis (interval spans, gap-aware) —
+# each claim is checked against whichever axis its own numbers plausibly
+# belong to, using either the table's literal Status wording or, when the
+# answer instead uses generic English pass/fail language the table itself
+# never spells out, the same general polarity vocabulary already used for
+# the single-row complement check.
+#
+# All fixtures below are synthetic ("Widget..."), reproducing the *shape* of
+# the reported live failure with fabricated labels/values, never LSPU's
+# grading policy or its exact numbers.
+# ---------------------------------------------------------------------------
+
+SYNTHETIC_MIXED_STATUS_BANDS = """\
+Widget Status Bands
+
+Program Handbook > Article 6 > Widget Status > Sec. 1 > Widget Status Bands
+
+1.00 | 80-100 | Normal
+2.00 | 60-79 | Conditional
+3.00 | 0-59 | Failed
+"""
+
+# Two independent numeric axes on the same rows: a Range (percentage,
+# larger = better) and an Identifier code (grade-point style, larger =
+# worse) — the exact shape that let a claim phrased on the Identifier axis
+# ("3.00 and above") go unchecked against Range-axis-only reasoning. The
+# extra explicit "80 and above | Merit Recognition" row is itself a real,
+# legitimate rule the source states — its presence is what defeats the
+# blunt whole-answer "and above" guard, which is what let the reported live
+# answer through in the first place.
+SYNTHETIC_TWO_AXIS_RUBRIC = """\
+Widget Grading Rubric
+
+Program Handbook > Article 4 > Widget Grading Rubric > Sec. 1 > Widget Grading Rubric
+
+1.00 | 90-100 | Excellent
+2.00 | 75-89 | Good
+3.00 | 60-74 | Conditional
+4.00 | 59 and below | Failed
+80 and above | Merit Recognition
+"""
+
+
+def test_mixed_status_rows_reject_a_through_c_merge():
+    """A → Normal, B → Conditional, C → Failed: a claim spanning all three
+    bands as one uniform "Normal" outcome must be rejected — the middle and
+    tail bands carry different, worse statuses the claim silently erases."""
+    records = _records_for(SYNTHETIC_MIXED_STATUS_BANDS, "Widget Status Bands")
+    assert _answer_synthesizes_unsupported_range("A score of 0 to 100 is Normal.", records)
+    assert _answer_synthesizes_unsupported_range(
+        "Scores from 0 through 100 are Normal.", records
+    )
+
+
+def test_open_ended_claim_blocked_when_trailing_rows_are_special_status():
+    """"B and above are Normal" must be rejected once the Conditional band
+    sits inside that open-ended span — an unbounded claim is only as good as
+    every row it actually reaches, not just the row nearest its edge."""
+    records = _records_for(SYNTHETIC_MIXED_STATUS_BANDS, "Widget Status Bands")
+    assert _answer_synthesizes_unsupported_range("A score of 60 and above is Normal.", records)
+    # The narrower, actually-supported closed claim remains fine (the table
+    # never states an open-ended "80 and above" rule, only a closed 80-100
+    # band, so an unbounded claim still would not be authorized).
+    assert not _answer_synthesizes_unsupported_range("A score of 80 to 100 is Normal.", records)
+
+
+def test_direct_row_contradiction_is_blocked():
+    """A generated summary must not assign a status that contradicts any
+    single covered row on its own, independent of any merging at all."""
+    records = _records_for(SYNTHETIC_MIXED_STATUS_BANDS, "Widget Status Bands")
+    assert _answer_synthesizes_unsupported_range("A score of 60-79 is Normal.", records)
+
+
+def test_all_contiguous_covered_rows_sharing_status_remains_allowed():
+    """The positive control: when every row a claim actually spans agrees on
+    the same status with no gap and nothing special between them, the merge
+    is grounded, not synthesized."""
+    records = _records_for(SYNTHETIC_MIXED_STATUS_BANDS, "Widget Status Bands")
+    assert not _answer_synthesizes_unsupported_range("A score of 80 to 100 is Normal.", records)
+
+
+def test_azure_shape_two_axis_parenthetical_claim_is_blocked():
+    """Reproduces the exact semantic shape of the reported live failure —
+    a claim phrased on a grade-point-style Identifier axis, with a
+    parenthetical citing the specific bands it silently merges, using a
+    generic "passing" claim the table's own Status column never spells out
+    literally (only "Excellent", "Good", "Conditional", "Failed") — with
+    entirely synthetic labels and numbers, not LSPU's grading policy.
+    """
+    records = _records_for(SYNTHETIC_TWO_AXIS_RUBRIC, "Widget Grading Rubric")
+    bad = "Codes of 3.00 and above (60-74 and 4.00) represent passing outcomes."
+    assert _answer_synthesizes_unsupported_range(bad, records)
+    # A paraphrase dropping the trailing zero (the exact live paraphrase
+    # shape) must be caught identically — numbers are compared by value.
+    assert _answer_synthesizes_unsupported_range(
+        "A code of 3.0 and above represents a passing outcome overall.", records
+    )
+    # The correctly-bounded claim over the genuinely non-negative codes
+    # remains fine.
+    good = "Codes of 1.00 and above (90-100 and 2.00, 75-89) represent passing outcomes."
+    assert not _answer_synthesizes_unsupported_range(good, records)
+
+
+def test_azure_shape_old_marker_matching_alone_was_blind_to_the_paraphrase():
+    """Documents the actual root cause: once the table states any unrelated
+    explicit "X and above" rule (a realistic shape for a real institutional
+    document), the blunt whole-answer guard in
+    ``_answer_contradicts_table_records`` is defeated, and a paraphrase that
+    drops the matching row's own exact number string ("3.0" instead of
+    "3.00") also defeats that function's per-row literal/number matching —
+    this is why the earlier synthetic unit tests (which always reused a
+    row's exact number string) never exposed the gap. The new merge-aware,
+    axis-aware, value-based checker below is what actually closes it."""
+    records = _records_for(SYNTHETIC_TWO_AXIS_RUBRIC, "Widget Grading Rubric")
+    paraphrase = "A code of 3.0 and above represents a passing outcome overall."
+    assert not _answer_contradicts_table_records(paraphrase, records)
+    assert _answer_synthesizes_unsupported_range(paraphrase, records)
+
+
+def test_explicit_global_rule_row_with_generic_passing_wording_is_allowed():
+    """When the source itself explicitly states the combined rule as its own
+    row — even phrased with the same generic "passing" wording the rest of
+    the table never uses — restating it is grounded, not synthesized, and a
+    *different*, unstated boundary must still be rejected."""
+    table = UNDERGRAD_GRADING_TABLE + "75 and above | Passing\n"
+    records = _records_for(table, "Grading System")
+    assert not _answer_synthesizes_unsupported_range(
+        "Grades of 75 and above represent passing outcomes.", records
+    )
+    assert _answer_synthesizes_unsupported_range(
+        "Grades of 70 and above represent passing outcomes.", records
+    )
+
+
+def test_azure_shape_end_to_end_is_corrected_and_capped():
+    """End-to-end (synthetic domain): the model produces the same semantic
+    shape as the reported live failure — a two-axis table, an unrelated
+    explicit "and above" rule elsewhere in the source, and a paraphrase that
+    drops a row's exact number string. The corrected answer must fall back
+    to grounded row-by-row evidence, and confidence must not remain "high"
+    for a generation the system had to override."""
+    store = RoleAwareStore([_chunk("Widget Grading Rubric", SYNTHETIC_TWO_AXIS_RUBRIC)])
+    result = _ask(
+        store,
+        "What is the passing code for the widget grading rubric?",
+        groq_return="A code of 3.0 and above represents a passing outcome overall.",
+    )
+    assert "3.0 and above" not in result.answer
+    assert "Failed" in result.answer or "Conditional" in result.answer
+    assert result.confidence != "high"
+
+
+# ---------------------------------------------------------------------------
+# SEMANTIC RANGE-STATUS CONTRADICTION GUARD (Azure re-certification follow-up).
+#
+# Root cause: the live paraphrase "grades at or above 4.00 represent passing
+# performance ... while anything below 4.00 falls into the failed categories"
+# still escaped the merge/axis-aware checker above. That checker was already
+# axis-aware and wording-tolerant for "N and above"/"above N" — but the
+# *boundary arithmetic* itself assumed every axis steps by whole numbers:
+# an exclusive edge ("above N"/"below N") was converted to a synthetic
+# "N + 1"/"N - 1" inclusive edge before checking coverage. That assumption
+# holds for whole-number percentage bands (the only shape the earlier
+# fixtures used), but a grade-point-style identifier axis is commonly spaced
+# in quarters (...3.50, 3.75, 4.00...). "at or above 4.00" additionally
+# matched the *strict* "above" pattern (it contains the substring "above
+# 4.00"), so it was treated as excluding 4.00 and shifted to "5.00 and
+# above" — a number with no row anywhere near it — so the check found
+# nothing to compare against and passed the claim through unexamined.
+# "anything below 4.00" was symmetrically shifted down to "3.00 and below",
+# skipping every real row strictly between 3.00 and 4.00.
+#
+# Fix: an excluded edge is now carried through as-is and resolved against
+# the source's own actual boundary values (the nearest real value on that
+# side), never a hardcoded step — and "at or above"/"at or below" are
+# recognized as their own, already-inclusive phrasing so they are never
+# routed through the exclusive-edge path at all. All fixtures below are
+# synthetic, reproducing only the *shape* of the reported failure.
+# ---------------------------------------------------------------------------
+
+SYNTHETIC_FRACTIONAL_RATING_TABLE = """\
+Widget Reliability Rating
+
+Program Handbook > Article 7 > Widget Reliability > Sec. 2 > Reliability Rating Codes
+
+1.00 | | Excellent
+1.25 | | Excellent
+1.50 | | Very Good
+1.75 | | Very Good
+2.00 | | Good
+2.25 | | Good
+2.50 | | Satisfactory
+2.75 | | Satisfactory
+3.00 | | Fair
+3.25 | | Fair
+3.50 | | Conditional Failure
+3.75 | | Conditional Failure
+4.00 | | Conditional Failure
+"""
+
+SYNTHETIC_REQUEST_APPROVAL_TABLE = """\
+Request Processing Status Tiers
+
+Program Handbook > Article 12 > Request Processing > Sec. 2 > Processing Status Tiers
+
+1.00 | 1-7 | Approved
+2.00 | 8-14 | Pending
+3.00 | 15-30 | Denied
+"""
+
+
+@pytest.mark.parametrize(
+    "paraphrase",
+    [
+        "3.00 and above is passing.",
+        "at or above 3.00 represents a passing status.",
+        "The practical interpretation is that a rating of 3.00 and above is passing.",
+        "Anything from 3.00 upward is passing.",
+        "Values of 3.00 or greater count as passing.",
+    ],
+    ids=[
+        "and-above",
+        "at-or-above",
+        "practical-interpretation-and-above",
+        "from-upward",
+        "or-greater",
+    ],
+)
+def test_fractional_axis_above_paraphrases_all_rejected(paraphrase):
+    """Five different phrasings of the exact same semantic claim ("3.00 and
+    above is passing") on a quarter-point identifier axis where 3.50-4.00 are
+    all "Conditional Failure". Every wording must be rejected identically —
+    the guard must key off the claimed region and status, not the surface
+    phrase used to state it. "at or above 3.00" is the exact shape of the
+    reported live escape: the old code shifted its excluded edge to a number
+    the table never uses and let it through.
+    """
+    records = _records_for(SYNTHETIC_FRACTIONAL_RATING_TABLE, "Widget Reliability Rating")
+    assert _answer_synthesizes_unsupported_range(paraphrase, records)
+
+
+@pytest.mark.parametrize(
+    "paraphrase",
+    ["Anything below 3.75 is passing.", "A rating less than 3.75 is passing."],
+    ids=["below", "less-than"],
+)
+def test_fractional_axis_below_paraphrases_all_rejected(paraphrase):
+    """The inverse direction of the same bug: "below 3.75" excludes 3.75
+    itself, so the nearest real row it actually reaches is 3.50 — still
+    "Conditional Failure". The old "N - 1" shortcut would have landed on
+    2.75, silently skipping the 3.50/3.75 rows entirely."""
+    records = _records_for(SYNTHETIC_FRACTIONAL_RATING_TABLE, "Widget Reliability Rating")
+    assert _answer_synthesizes_unsupported_range(paraphrase, records)
+
+
+def test_fractional_axis_correctly_bounded_claims_remain_allowed():
+    """Positive controls on the same fractional axis: a claim that only ever
+    reaches genuinely same-status rows is still allowed, whether phrased as
+    an inclusive upper bound ("up to") or an explicit closed range
+    ("between"), and restating each row individually is always fine."""
+    records = _records_for(SYNTHETIC_FRACTIONAL_RATING_TABLE, "Widget Reliability Rating")
+    assert not _answer_synthesizes_unsupported_range("Ratings up to 3.25 are passing.", records)
+    assert not _answer_synthesizes_unsupported_range(
+        "Ratings between 1.00 and 2.75 are passing.", records
+    )
+    assert not _answer_synthesizes_unsupported_range(
+        "1.00 is Excellent. 1.25 is Excellent. 1.50 is Very Good.", records
+    )
+    # The same "between" phrasing must still be rejected once its span
+    # actually reaches a conflicting row.
+    assert _answer_synthesizes_unsupported_range(
+        "Ratings between 3.00 and 4.00 are passing.", records
+    )
+
+
+def test_explicit_source_rule_row_authorizes_at_or_above_phrasing_too():
+    """The explicit-open-row authorization already proven for "above N" must
+    hold identically for the newer "at or above N" phrasing — the same
+    grounded row, a different paraphrase of the same inclusive edge."""
+    records = _records_for(SYNTHETIC_CERT_WITH_EXPLICIT_RULE_TABLE, "Device Certification Levels")
+    assert not _answer_synthesizes_unsupported_range("A score at or above 80 is Certified.", records)
+
+
+@pytest.mark.parametrize(
+    "table_text, title, claim",
+    [
+        (
+            SYNTHETIC_ELIGIBILITY_TABLE_ADJACENT,
+            "Scholarship Eligibility Bands",
+            "Scores at or above 80 are Eligible.",
+        ),
+        (
+            SYNTHETIC_ELIGIBILITY_TABLE_GAP,
+            "Scholarship Eligibility Bands",
+            "Scores between 60 and 100 are Eligible.",
+        ),
+        (
+            SYNTHETIC_FEE_TIER_TABLE,
+            "Late Submission Fee Tiers",
+            "Late submissions up to 20 days fall under the Standard Fee tier.",
+        ),
+        (
+            SYNTHETIC_FEE_TIER_TABLE,
+            "Late Submission Fee Tiers",
+            "Late submissions from 6 upward fall under the Standard Fee tier.",
+        ),
+        (
+            SYNTHETIC_REQUEST_APPROVAL_TABLE,
+            "Request Processing Status Tiers",
+            "Requests processed at or above 8 days are Pending.",
+        ),
+        (
+            SYNTHETIC_REQUEST_APPROVAL_TABLE,
+            "Request Processing Status Tiers",
+            "Requests processed up to 7 days are Approved.",
+        ),
+    ],
+    ids=[
+        "eligibility-at-or-above-open-ceiling",
+        "eligibility-between-across-gap",
+        "fee-tier-up-to",
+        "fee-tier-from-upward",
+        "approval-at-or-above-open-ceiling",
+        "approval-up-to-open-floor",
+    ],
+)
+def test_non_grade_domains_reject_the_same_paraphrase_shapes(table_text, title, claim):
+    """The same claimed-region-vs-covered-rows invariant, in domains that
+    have nothing to do with grading: scholarship eligibility, a late fee
+    schedule, and a request-approval status tier. Each claim here either
+    reaches beyond the domain's own stated ceiling/floor or bridges an
+    unstated gap — never a grade, never a hardcoded threshold number."""
+    records = _records_for(table_text, title)
+    assert _answer_synthesizes_unsupported_range(claim, records)
+
+
+def test_non_grade_domains_row_accurate_claims_remain_allowed():
+    """Positive controls in the same non-grade domains: a claim bounded to
+    exactly what the source states, phrased with the newer "between"/"up
+    to" wording, is still allowed."""
+    eligibility = _records_for(SYNTHETIC_ELIGIBILITY_TABLE_ADJACENT, "Scholarship Eligibility Bands")
+    assert not _answer_synthesizes_unsupported_range(
+        "Scores between 80 and 100 are Eligible.", eligibility
+    )
+    deadline = _records_for(SYNTHETIC_DEADLINE_TABLE, "Appeal Filing Deadline Tiers")
+    assert not _answer_synthesizes_unsupported_range(
+        "A submission made between 1 and 10 days is On Time.", deadline
+    )
+    approval = _records_for(SYNTHETIC_REQUEST_APPROVAL_TABLE, "Request Processing Status Tiers")
+    assert not _answer_synthesizes_unsupported_range(
+        "Requests processed between 1 and 7 days are Approved.", approval
+    )
+
+
+# ---------------------------------------------------------------------------
+# MIXED-STATUS STRUCTURED-EVIDENCE FALLBACK (Azure re-certification, round 3).
+#
+# Root cause: every guard above only ever fires once a generated sentence
+# matches a *recognized* comparison phrasing (a fixed regex list — "above",
+# "below", "at or above", "up to", ...) and that specific, parsed claim is
+# then proven wrong. That is precisely why the same live escape kept
+# resurfacing under a new wording each time: a phrasing that matches none of
+# the recognized patterns is silently skipped by *both* checkers above (their
+# loops over "the claims this clause makes" simply never execute), not
+# merely mis-evaluated. Chasing this by adding another pattern every time a
+# new paraphrase is reported is unbounded — natural language has no fixed
+# list of ways to say "greater than".
+#
+# Fix: a new policy-level guard, ``_answer_has_unverifiable_mixed_status_claim``,
+# changes the default for one specific, high-risk evidence shape: once the
+# structured source carries more than one distinct Status, a sentence
+# asserting a status must be *affirmatively proven* grounded — via a
+# recognized phrasing (reusing the exact same checks as above) or, failing
+# that, via the plain numbers the sentence itself contains — rather than
+# merely not-yet-disproven. A sentence with no recognized phrasing and no
+# usable number to anchor it is denied outright. This never depends on
+# knowing what a new comparison word means, so it needs no expansion when
+# the next paraphrase shows up.
+# ---------------------------------------------------------------------------
+
+SYNTHETIC_ABC_DIAGNOSTIC_TABLE = """\
+Widget Diagnostic Codes
+
+Program Handbook > Article 6 > Widget Diagnostics > Sec. 1 > Diagnostic Codes
+
+1.00 | | Normal
+2.00 | | Conditional
+3.00 | | Failed
+"""
+
+SYNTHETIC_SINGLE_STATUS_TABLE = """\
+Widget Compliance Codes
+
+Program Handbook > Article 6 > Widget Diagnostics > Sec. 2 > Compliance Codes
+
+1.00 | | Compliant
+2.00 | | Compliant
+3.00 | | Compliant
+"""
+
+
+
+def test_mixed_status_abc_reproduction_values_below_b_are_normal():
+    """The exact reproduction shape requested: rows A -> Normal, B ->
+    Conditional, C -> Failed. A generated claim merging A and B together as
+    "Normal" must be rejected by the policy guard regardless of the specific
+    comparison wording used."""
+    records = _records_for(SYNTHETIC_ABC_DIAGNOSTIC_TABLE, "Widget Diagnostic Codes")
+    assert _answer_has_unverifiable_mixed_status_claim(
+        "Values below 3.00 are Normal.", records
+    )
+    assert _answer_has_unverifiable_mixed_status_claim(
+        "Values of 2.00 and below are Normal.", records
+    )
+
+
+@pytest.mark.parametrize(
+    "paraphrase",
+    [
+        "Widget codes shy of 3.00 are passing.",
+        "Widget codes south of 3.00 are passing.",
+        "Widget codes north of the halfway mark are passing.",
+        "Codes past 2 are passing.",
+    ],
+    ids=["shy-of", "south-of", "no-numeric-anchor", "bare-integer-past"],
+)
+def test_unrecognized_paraphrases_are_denied_by_default(paraphrase):
+    """None of these phrasings match any comparison pattern this module
+    recognizes ("shy of", "south of", "north of the halfway mark", a bare
+    integer where the table's own numbers carry decimals) — proving the
+    point of the policy guard: it does not need to recognize the wording to
+    deny it. Two of these are not caught by either older checker at all,
+    which is exactly the gap this guard closes."""
+    records = _records_for(SYNTHETIC_ABC_DIAGNOSTIC_TABLE, "Widget Diagnostic Codes")
+    assert _answer_has_unverifiable_mixed_status_claim(paraphrase, records)
+
+
+def test_unrecognized_paraphrases_slip_past_the_older_checkers_alone():
+    """Documents the actual gap: these two phrasings are not flagged by
+    either pre-existing checker on their own — only the new policy guard
+    catches them, because it does not depend on recognizing the specific
+    comparison wording used."""
+    records = _records_for(SYNTHETIC_ABC_DIAGNOSTIC_TABLE, "Widget Diagnostic Codes")
+    for paraphrase in (
+        "Widget codes north of the halfway mark are passing.",
+        "Codes past 2 are passing.",
+    ):
+        assert not _answer_contradicts_table_records(paraphrase, records)
+        assert not _answer_synthesizes_unsupported_range(paraphrase, records)
+        assert _answer_has_unverifiable_mixed_status_claim(paraphrase, records)
+
+
+def test_row_by_row_facts_remain_allowed_under_the_policy():
+    """The policy denies unanchored or multi-row-spanning synthesis, but a
+    plain restatement of each row's own fact — however many rows are
+    listed, one at a time — is always allowed."""
+    records = _records_for(SYNTHETIC_ABC_DIAGNOSTIC_TABLE, "Widget Diagnostic Codes")
+    assert not _answer_has_unverifiable_mixed_status_claim("1.00 is Normal.", records)
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "1.00 is Normal. 2.00 is Conditional. 3.00 is Failed.", records
+    )
+
+
+def test_explicit_combined_rule_row_still_allows_a_global_summary():
+    """When the source itself carries an explicit combined-rule row ("80 and
+    above = Certified"), restating that rule is grounded — it is not a
+    separate case the policy special-cases, just one more row a claim can
+    be checked against, the same as any granular one. Reuses the same
+    two-band-plus-explicit-row fixture already proven for the
+    ``_answer_synthesizes_unsupported_range`` checker above."""
+    records = _records_for(SYNTHETIC_CERT_WITH_EXPLICIT_RULE_TABLE, "Device Certification Levels")
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "A score at or above 80 is Certified.", records
+    )
+    # An entirely unrecognized phrasing of the same, explicitly-stated rule
+    # must be allowed too — grounding does not depend on matching a pattern.
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "Scores clocking in past 80 are Certified.", records
+    )
+    # A different, unstated boundary is still denied.
+    assert _answer_has_unverifiable_mixed_status_claim(
+        "A score at or above 55 is Certified.", records
+    )
+
+
+def test_single_status_table_is_never_subject_to_the_policy():
+    """A table where every row shares the same Status has nothing for a
+    generated answer to get wrong by generalizing across rows — the policy
+    must not fire there even for an entirely unrecognized phrasing."""
+    records = _records_for(SYNTHETIC_SINGLE_STATUS_TABLE, "Widget Compliance Codes")
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "Widget codes north of the halfway mark are passing.", records
+    )
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "Any code from 1.00 and up is Compliant.", records
+    )
+
+
+@pytest.mark.parametrize(
+    "table_text, title, claim",
+    [
+        (
+            SYNTHETIC_ELIGIBILITY_TABLE_ADJACENT,
+            "Scholarship Eligibility Bands",
+            "Eligible status is said to cover the zone bounded by 60 and 100.",
+        ),
+        (
+            SYNTHETIC_REQUEST_APPROVAL_TABLE,
+            "Request Processing Status Tiers",
+            "Requests past the one-week mark are Pending.",
+        ),
+        (
+            SYNTHETIC_CERT_WITH_PROBATION_TABLE,
+            "Device Certification Bands",
+            "Devices south of a 65 score are Certified.",
+        ),
+        (
+            SYNTHETIC_DEADLINE_TABLE,
+            "Appeal Filing Deadline Tiers",
+            "Filings past the first ten days are still On Time.",
+        ),
+        (
+            SYNTHETIC_FEE_TIER_TABLE,
+            "Late Submission Fee Tiers",
+            "The Standard Fee is said to cover the zone bounded by 6 and 30.",
+        ),
+    ],
+    ids=["eligibility", "approval", "certification", "deadline", "fee-tier"],
+)
+def test_non_grade_domains_deny_unrecognized_paraphrases_too(table_text, title, claim):
+    """The same policy, in domains that have nothing to do with grading:
+    eligibility, request approval, device certification, filing deadlines,
+    and a late fee schedule. None of these phrasings ("bounded by X and Y",
+    "past the one-week mark", "south of") match any recognized comparison
+    pattern — the guard denies them anyway because the numbers they do
+    contain span rows with conflicting statuses."""
+    records = _records_for(table_text, title)
+    assert _answer_has_unverifiable_mixed_status_claim(claim, records)
+
+
+def test_mixed_status_end_to_end_replaces_unrecognized_global_claim():
+    """End-to-end (synthetic domain): the model asserts the same
+    unsupported global rule using wording no comparison regex recognizes.
+    The corrected answer must fall back to grounded row-by-row evidence
+    (row facts retained), and confidence must not remain "high" for a
+    generation the system had to override."""
+    store = RoleAwareStore([_chunk("Widget Diagnostic Codes", SYNTHETIC_ABC_DIAGNOSTIC_TABLE)])
+    result = _ask(
+        store,
+        "Which widget diagnostic codes are Normal?",
+        groq_return="Widget codes shy of 3.00 are considered passing overall.",
+    )
+    assert "shy of 3.00" not in result.answer
+    assert "Conditional" in result.answer or "Failed" in result.answer
+    assert "1.00" in result.answer
+    assert result.confidence != "high"
+
+
+# ---------------------------------------------------------------------------
+# LIVE STRUCTURED-EVIDENCE DETECTION (Azure re-certification, round 4).
+#
+# Root cause: every guard above — including the mixed-status policy guard —
+# only ever runs against ``table_records`` parsed out of the retrieved
+# context by ``_structured_table_records_from_text``. That parser only reads
+# rows out of a "Structured table (...)" block, and ``_format_structured_tables``
+# only ever opened that block for a line containing a literal "|" pipe
+# character. A real PDF/OCR-extracted institutional table routinely loses
+# that pipe entirely — columns survive as plain whitespace, a range's own
+# dash gets lost leaving two bare numbers side by side, a "Below N" cell
+# reads comparison-word-first instead of "N and below", and a single row can
+# even land as several short consecutive lines. None of the guards above
+# were wrong; they simply never received any rows at all, so
+# ``table_records`` was empty and the entire
+# ``if table_records and (...)`` gate at the fallback call site short-circuited
+# to False before any of the three checks ran — confidence stayed "high" and
+# the public answer was never replaced with the deterministic listing.
+#
+# Fix: ``_format_structured_tables`` now normalizes each of those flattened
+# shapes into the same pipe-delimited row shape it already parses correctly
+# (see ``_normalize_flattened_table_lines`` and its helpers), before any
+# other parsing runs. A line is only ever treated as a candidate row when it
+# *starts* with a bare identifier-shaped token *and* the very next token
+# continues in a range-like shape — a guard proven below to leave ordinary
+# prose that merely starts with a number untouched.
+# ---------------------------------------------------------------------------
+
+FLATTENED_GRADING_TABLE_NO_DASH_RANGE = """\
+Grading System
+
+Program Handbook > Article 3 > Grading > Sec. 1 > Grading Scale
+
+1.00 95-100
+1.25 92-94
+1.50 89-91
+2.00 83-85
+3.00 77-79
+4.00 70-74 Conditional
+5.00 Below 70 Failed
+"""
+
+FLATTENED_GRADING_TABLE_SPLIT_NUMBERS = """\
+Grading System
+
+Program Handbook > Article 3 > Grading > Sec. 1 > Grading Scale
+
+1.00 90 100 Excellent
+2.00 80 89 Good
+3.00 70 79 Conditional
+4.00 0 69 Failed
+"""
+
+FLATTENED_GRADING_TABLE_MULTI_SPACE = """\
+Grading System
+
+Program Handbook > Article 3 > Grading > Sec. 1 > Grading Scale
+
+1.00    95-100    Excellent
+1.25    92-94     Excellent
+4.00    70-74     Conditional
+5.00    Below 70  Failed
+"""
+
+FLATTENED_GRADING_TABLE_MULTILINE_RECORDS = """\
+Grading System
+
+Program Handbook > Article 3 > Grading > Sec. 1 > Grading Scale
+
+1.00
+95-100
+Excellent
+2.00
+80-94
+Good
+3.00
+Below 80
+Failed
+"""
+
+FLATTENED_GRADING_TABLE_REPEATED_HEADER = """\
+Grading System
+
+Program Handbook > Article 3 > Grading > Sec. 1 > Grading Scale
+
+Code | Range | Status
+1.00 | 95-100 | Excellent
+2.00 | 80-94 | Good
+Code | Range | Status
+3.00 | Below 80 | Failed
+"""
+
+FLATTENED_ELIGIBILITY_TABLE = """\
+Scholarship Eligibility Bands
+
+Program Handbook > Article 5 > Scholarship Eligibility > Sec. 1 > Eligibility Bands
+
+1.00 90-100 Eligible
+2.00 80-89 Eligible
+3.00 60-79 Not Eligible
+"""
+
+FLATTENED_FEE_TABLE = """\
+Late Submission Fee Tiers
+
+Program Handbook > Article 11 > Late Submission > Sec. 3 > Fee Tiers
+
+1.00 1-5 No Fee
+2.00 6-10 Standard Fee
+3.00 11-20 Standard Fee
+4.00 21-30 Premium Fee
+"""
+
+FLATTENED_APPROVAL_TABLE = """\
+Request Processing Status Tiers
+
+Program Handbook > Article 12 > Request Processing > Sec. 2 > Processing Status Tiers
+
+1.00 1-7 Approved
+2.00 8-14 Pending
+3.00 15-30 Denied
+"""
+
+FLATTENED_DEADLINE_TABLE = """\
+Appeal Filing Deadline Tiers
+
+Program Handbook > Article 14 > Appeals > Sec. 2 > Filing Deadline Tiers
+
+1.00 1-10 On Time
+2.00 11-15 Grace Period
+"""
+
+
+@pytest.mark.parametrize(
+    "table_text, title, expected_statuses",
+    [
+        (FLATTENED_GRADING_TABLE_NO_DASH_RANGE, "Grading System", {"conditional", "failed"}),
+        (FLATTENED_GRADING_TABLE_SPLIT_NUMBERS, "Grading System", {"excellent", "good", "conditional", "failed"}),
+        (FLATTENED_GRADING_TABLE_MULTI_SPACE, "Grading System", {"excellent", "conditional", "failed"}),
+        (FLATTENED_GRADING_TABLE_MULTILINE_RECORDS, "Grading System", {"excellent", "good", "failed"}),
+        (FLATTENED_GRADING_TABLE_REPEATED_HEADER, "Grading System", {"excellent", "good", "failed"}),
+        (FLATTENED_ELIGIBILITY_TABLE, "Scholarship Eligibility Bands", {"eligible", "not eligible"}),
+        (FLATTENED_FEE_TABLE, "Late Submission Fee Tiers", {"no fee", "standard fee", "premium fee"}),
+        (FLATTENED_APPROVAL_TABLE, "Request Processing Status Tiers", {"approved", "pending", "denied"}),
+        (FLATTENED_DEADLINE_TABLE, "Appeal Filing Deadline Tiers", {"on time", "grace period"}),
+    ],
+    ids=[
+        "no-dash-range-plus-word-first-below",
+        "range-split-into-two-bare-numbers",
+        "multi-space-columns",
+        "identifier-range-status-split-across-lines",
+        "repeated-header-mixed-into-content",
+        "eligibility-domain",
+        "fee-domain",
+        "approval-domain",
+        "deadline-domain",
+    ],
+)
+def test_flattened_pipe_less_tables_are_recognized_as_structured_rows(
+    table_text, title, expected_statuses
+):
+    """Every one of these fixtures reproduces a real PDF/OCR-extraction shape
+    that has no literal pipe character anywhere — the exact gap that let the
+    live grading answer through with confidence still "high": the
+    structured-table parser found zero rows, so none of the audit checks
+    ever ran. Rows must be detected and every distinct Status recovered
+    regardless of how the source table's columns happened to be flattened."""
+    records = _records_for(table_text, title)
+    assert records
+    statuses = {status.casefold() for r in records if (status := r.get("Status"))}
+    assert statuses == expected_statuses
+
+
+def test_flattened_grading_table_mixed_status_fallback_fires():
+    """The mixed-status policy guard must fire against a *flattened* table
+    exactly as it already does against a pipe-delimited one — the guard
+    itself is unchanged; only the parsing that feeds it needed the fix."""
+    records = _records_for(FLATTENED_GRADING_TABLE_NO_DASH_RANGE, "Grading System")
+    assert _answer_has_unverifiable_mixed_status_claim(
+        "The passing grades are 1.00-3.00. These represent passing outcomes.",
+        records,
+    )
+    # A plain row-by-row restatement remains allowed.
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "4.00 (70-74) is Conditional. 5.00 (70 and below) is Failed.", records
+    )
+
+
+def test_flattened_single_status_table_does_not_unnecessarily_fallback():
+    """A flattened table where every row shares the same Status must not
+    trigger the mixed-status policy, exactly like its pipe-delimited
+    equivalent."""
+    records = _records_for(
+        """\
+Widget Compliance Codes
+
+Program Handbook > Article 6 > Widget Diagnostics > Sec. 2 > Compliance Codes
+
+1.00 90-100 Compliant
+2.00 80-89 Compliant
+3.00 70-79 Compliant
+""",
+        "Widget Compliance Codes",
+    )
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "Any code from 70 and above is Compliant.", records
+    )
+
+
+def test_flattened_explicit_global_rule_row_still_allows_a_global_summary():
+    """A flattened table's own explicit combined-rule row still authorizes
+    restating that rule, the same as the pipe-delimited fixture already
+    proven for this above."""
+    records = _records_for(
+        """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 5 > Certification Levels
+
+1.00 80-100 Certified
+2.00 50-79 Conditional
+5.00 80 and above Certified
+""",
+        "Device Certification Levels",
+    )
+    assert not _answer_has_unverifiable_mixed_status_claim(
+        "A score at or above 80 is Certified.", records
+    )
+    assert _answer_has_unverifiable_mixed_status_claim(
+        "A score at or above 55 is Certified.", records
+    )
+
+
+def test_ordinary_prose_with_leading_numbers_is_never_mistaken_for_a_table():
+    """The false-positive guard: prose that merely starts a sentence with a
+    number, but does not continue in a range-like shape, must never be
+    rewritten into a table row or wrapped in "Structured table" framing —
+    the source text must reach the model unchanged."""
+    prose = (
+        "Enrollment Procedures\n\n"
+        "Program Handbook > Article 2 > Enrollment\n\n"
+        "3 out of 5 students attended the orientation session.\n"
+        "1 form must be submitted at least 30 days before the deadline.\n"
+        "2 copies of the requirements are needed for processing.\n"
+    )
+    formatted = format_retrieved_context([_chunk("Enrollment Procedures", prose)])
+    assert "Structured table" not in formatted
+    assert "3 out of 5 students attended" in formatted
+    records = _structured_table_records_from_text(formatted)
+    assert records == []
+
+
+def test_live_like_grading_regression_end_to_end():
+    """The exact live-reported shape: a flattened grading table (no pipes,
+    a word-first "Below 70" cell, some rows with no written status) and a
+    generated answer merging the passing-looking rows into one global claim.
+    Structured evidence must now be recognized, the mixed-status fallback
+    must fire, the unsupported classification must be removed, row-
+    supported facts must be retained, and confidence must be downgraded."""
+    store = RoleAwareStore(
+        [_chunk("Grading System", FLATTENED_GRADING_TABLE_NO_DASH_RANGE)]
+    )
+    result = _ask(
+        store,
+        "Which grades are considered passing?",
+        groq_return="The passing grades are: 1.00-3.00 — These represent passing outcomes.",
+    )
+    assert "1.00-3.00" not in result.answer or "These represent passing outcomes" not in result.answer
+    assert "Conditional" in result.answer or "Failed" in result.answer
+    assert result.confidence != "high"
+
+
+# ---------------------------------------------------------------------------
+# GENERATION-AUDIT EVIDENCE PLUMBING (Azure re-certification, round 5).
+#
+# Root cause: ``format_retrieved_context`` (the normal-QA context builder)
+# runs each selected chunk's text through ``_format_structured_tables``
+# before building its "Content:" block, which is what inserts the
+# "Structured table (...)" marker every audit check depends on.
+# ``format_collection_context`` — the *other* context builder, used whenever
+# ``detect_collection_intent`` classifies a question as a listing sweep
+# (requirements/policy/scholarship/service/office collections) — built its
+# "Content:" block straight from the chunk's raw text and never called
+# ``_format_structured_tables`` at all. Both builders assign their result to
+# the same ``context`` variable that is later handed to *both*
+# ``generate_groq_answer`` and ``_structured_table_records_from_text`` (the
+# parser every audit check reads from), so whichever builder ran, its output
+# is genuinely the one and only evidence object both generation and the
+# audit see — there is no separate, reduced representation the audit reads
+# instead. The gap was specific to this one builder: a table-bearing chunk
+# retrieved for a collection-style question would reach the model with its
+# pipe structure intact (fine for generation) while the audit's parser saw
+# zero rows in that exact same text, because the "Structured table" marker
+# it looks for was never inserted for this code path.
+#
+# Direct tracing of the normal-QA path (below and via manual instrumentation
+# during this investigation) confirmed it was already sound: the same
+# ``context`` string that is built from ``selected_context`` is passed to
+# generation and independently re-parsed for the audit with matching row
+# counts at every step, and a chunk that loses the relevance contest for
+# ``selected_context`` never reaches either side — there is no case where
+# generation and audit see different evidence sets, and no second retrieval
+# happens for the audit. This is confirmed with a word-overlap store (the
+# same style already used in ``tests/test_qa_multi_facet.py``) so each
+# question part genuinely competes for its own chunk, rather than the
+# fixed-score ``RoleAwareStore`` used elsewhere in this file which returns
+# the same top chunks regardless of the query text.
+# ---------------------------------------------------------------------------
+
+GRADING_TABLE_ELEVEN_ROWS = """\
+Undergraduate Grading System
+
+Program Handbook > Article 5 > Academic Policies > Sec. 2 > Grading System
+
+The table below lists the numerical grade equivalents used to determine a
+student's passing or failing standing for the term.
+
+1.00 | 97-100 | Excellent
+1.25 | 94-96 | Excellent
+1.50 | 91-93 | Very Satisfactory
+1.75 | 88-90 | Very Satisfactory
+2.00 | 85-87 | Satisfactory
+2.25 | 82-84 | Satisfactory
+2.50 | 79-81 | Fairly Satisfactory
+2.75 | 76-78 | Fairly Satisfactory
+3.00 | 75 | Fairly Satisfactory
+4.00 | 70-74 | Conditional Failure
+5.00 | Below 70 | Failed
+"""
+
+GWA_COMPUTATION_PROSE = (
+    "The General Weighted Average (GWA) is computed by multiplying each "
+    "course's credit units by the numerical grade earned, summing these "
+    "products across all enrolled courses, and dividing the total by the "
+    "sum of all credit units for the term."
+)
+
+GRADE_CHANGE_PETITION_PROSE = (
+    "A student who believes a final grade was recorded in error may file a "
+    "grade change petition with the Office of the Registrar within one "
+    "academic year of the grade's posting."
+)
+
+# A second, unrelated table whose own words never overlap the grading
+# question at all -- used to prove a chunk that loses the relevance contest
+# never reaches the audit either, exactly as it never reaches generation.
+UNRELATED_FEE_TABLE = """\
+Laboratory Equipment Damage Fee Schedule
+
+Program Handbook > Article 20 > Laboratory Safety > Sec. 3 > Equipment Damage Fees
+
+1.00 | 1-500 | Minor Damage Fee
+2.00 | 501-2000 | Major Damage Fee
+3.00 | 2001 and above | Full Replacement Cost
+"""
+
+
+class WordOverlapStore:
+    """Word-overlap stand-in for the retriever (the same style already used
+    in ``tests/test_qa_multi_facet.py``), so each facet query in a bundled
+    question genuinely competes for its own best-matching chunk instead of
+    ``RoleAwareStore``'s fixed, query-agnostic top-N."""
+
+    def __init__(self, library: dict[str, "RetrievedChunk"]):
+        self.library = library
+        self.chunk_count = len(library)
+        self.queries: list[str] = []
+
+    _STOPWORDS = {
+        "a", "an", "the", "is", "are", "and", "or", "how", "what", "of", "to",
+        "in", "on", "for", "by", "with", "each", "all", "these", "this",
+    }
+
+    def search(self, question: str, *, top_k=None, raw_k=None, user_role=None):
+        self.queries.append(question)
+        words = set(re.findall(r"[a-z0-9]+", question.lower())) - self._STOPWORDS
+        scored = []
+        for title, chunk in self.library.items():
+            haystack = set(re.findall(r"[a-z0-9]+", f"{title} {chunk.text}".lower())) - self._STOPWORDS
+            overlap = len(words & haystack)
+            if overlap:
+                scored.append((overlap, chunk))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        ranked = [chunk for _, chunk in scored]
+        return select_role_visible_hits(ranked, user_role=user_role, top_k=top_k or 7)
+
+
+def _ask_word_overlap(library: dict, question: str, groq_return: str):
+    store = WordOverlapStore(library)
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value=groq_return,
+        ) as mock_groq,
+    ):
+        result = answer_qa_question(question, user_role="student")
+    generation_context = mock_groq.call_args.kwargs.get("context", "")
+    return result, generation_context, store
+
+
+def test_selected_table_evidence_survives_into_generation_and_audit_context():
+    """The primary pipeline-boundary trace: a structured table chunk, a
+    related prose chunk answering the other half of a bundled question, and
+    a competing/adjacent chunk. The table's rows must reach the model
+    exactly as retrieved, and the audit's structured-row parser must see
+    that *same* text — not a reduced or re-retrieved representation."""
+    library = {
+        "Undergraduate Grading System": _chunk("Undergraduate Grading System", GRADING_TABLE_ELEVEN_ROWS),
+        "General Weighted Average Computation": _chunk(
+            "General Weighted Average Computation", GWA_COMPUTATION_PROSE
+        ),
+        "Grade Change Petition Procedure": _chunk(
+            "Grade Change Petition Procedure", GRADE_CHANGE_PETITION_PROSE
+        ),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What is the passing grade and how is GWA computed?",
+        "Grades from 1.00 to 4.00 are considered passing. GWA is computed by weighted average of grades.",
+    )
+    assert "Undergraduate Grading System" in generation_context
+    assert "Structured table" in generation_context
+    audit_records = _structured_table_records_from_text(generation_context)
+    assert len(audit_records) == 11
+    statuses = {r.get("Status") for r in audit_records if r.get("Status")}
+    assert {"Conditional Failure", "Failed"} <= statuses
+    # The unsupported "1.00 to 4.00" merge (Conditional Failure at 4.00 is
+    # not passing) must trigger the fallback and downgrade confidence.
+    assert "1.00 to 4.00" not in result.answer or "considered passing" not in result.answer
+    assert "Conditional" in result.answer or "Failed" in result.answer
+    assert result.confidence != "high"
+
+
+def test_unselected_table_evidence_is_not_secretly_introduced_into_audit():
+    """A second table chunk whose own words never overlap the question at
+    all must lose the relevance contest for ``selected_context`` -- and,
+    because the audit reads the same ``context`` used for generation rather
+    than re-retrieving anything, its rows must never reach the audit
+    either."""
+    library = {
+        "Undergraduate Grading System": _chunk("Undergraduate Grading System", GRADING_TABLE_ELEVEN_ROWS),
+        "General Weighted Average Computation": _chunk(
+            "General Weighted Average Computation", GWA_COMPUTATION_PROSE
+        ),
+        "Laboratory Equipment Damage Fee Schedule": _chunk(
+            "Laboratory Equipment Damage Fee Schedule", UNRELATED_FEE_TABLE
+        ),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What is the passing grade and how is GWA computed?",
+        "Grades from 1.00 to 4.00 are considered passing.",
+    )
+    assert "Laboratory Equipment Damage Fee Schedule" not in generation_context
+    audit_records = _structured_table_records_from_text(generation_context)
+    statuses = {r.get("Status") for r in audit_records if r.get("Status")}
+    assert "Full Replacement Cost" not in statuses
+    assert "Minor Damage Fee" not in statuses
+    # The grading table's own audit outcome is unaffected by the unrelated
+    # table's absence.
+    assert result.confidence != "high"
+
+
+def test_ordinary_prose_only_context_behaves_normally():
+    """A question whose evidence is pure prose (no structured table
+    anywhere) must not be affected by any of this -- no fallback, no forced
+    row-listing, confidence driven only by normal retrieval quality."""
+    library = {
+        "General Weighted Average Computation": _chunk(
+            "General Weighted Average Computation", GWA_COMPUTATION_PROSE
+        ),
+        "Grade Change Petition Procedure": _chunk(
+            "Grade Change Petition Procedure", GRADE_CHANGE_PETITION_PROSE
+        ),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "How is GWA computed?",
+        "GWA is computed by multiplying credit units by grades and dividing by total units.",
+    )
+    assert "Structured table" not in generation_context
+    assert _structured_table_records_from_text(generation_context) == []
+    assert "multiplying credit units" in result.answer
+
+
+def test_multiple_selected_chunks_remain_correctly_bounded_and_separated():
+    """Two structured tables both selected for the same answer (a bundled
+    question spanning two different tables) must never have their rows
+    cross-contaminate -- each table's own Identifier/Range/Status stays
+    associated only with its own chunk."""
+    library = {
+        "Undergraduate Grading System": _chunk("Undergraduate Grading System", GRADING_TABLE_ELEVEN_ROWS),
+        "Laboratory Equipment Damage Fee Schedule": _chunk(
+            "Laboratory Equipment Damage Fee Schedule", UNRELATED_FEE_TABLE
+        ),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What is the passing grade and what is the laboratory equipment damage fee?",
+        "Grades of 1.00 to 3.00 are passing. Damage fees range from 1 to 2000.",
+    )
+    audit_records = _structured_table_records_from_text(generation_context)
+    grading_statuses = {r.get("Status") for r in audit_records if r.get("Identifier") in {"1.00", "4.00", "5.00"} and r.get("Status") in {"Excellent", "Conditional Failure", "Failed"}}
+    fee_statuses = {r.get("Status") for r in audit_records if r.get("Status") in {"Minor Damage Fee", "Major Damage Fee", "Full Replacement Cost"}}
+    assert "Excellent" in grading_statuses or "Conditional Failure" in grading_statuses
+    assert fee_statuses  # the fee table's own rows are present and distinct
+    assert not (grading_statuses & fee_statuses)
+
+
+def test_explicit_global_source_rule_still_works_end_to_end():
+    """The source's own explicit combined-rule row must still authorize a
+    global summary end-to-end, through the real selection/context/audit
+    path, not just the unit-level checker."""
+    table = """\
+Device Certification Levels
+
+Program Handbook > Article 9 > Device Certification > Sec. 5 > Certification Levels
+
+1.00 | 80-100 | Certified
+2.00 | 50-79 | Conditional
+5.00 | 80 and above | Certified
+"""
+    library = {"Device Certification Levels": _chunk("Device Certification Levels", table)}
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What device certification levels are Certified?",
+        "A score at or above 80 is Certified.",
+    )
+    assert "Structured table" in generation_context
+    assert "at or above 80" in result.answer
+    assert result.confidence != "medium" or "at or above 80" in result.answer
+
+
+def test_single_status_structured_evidence_does_not_unnecessarily_fallback():
+    """A structured table where every row shares the same Status must not
+    trigger the fallback end-to-end, even though it is genuinely structured
+    evidence."""
+    table = """\
+Widget Compliance Codes
+
+Program Handbook > Article 6 > Widget Diagnostics > Sec. 2 > Compliance Codes
+
+1.00 | 90-100 | Compliant
+2.00 | 80-89 | Compliant
+3.00 | 70-79 | Compliant
+"""
+    library = {"Widget Compliance Codes": _chunk("Widget Compliance Codes", table)}
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What widget compliance codes are Compliant?",
+        "Codes from 70 to 100 are Compliant.",
+    )
+    assert "Codes from 70 to 100 are Compliant." in result.answer
+
+
+def test_non_grade_domain_collection_style_question_preserves_table_structure():
+    """The exact ``format_collection_context`` gap, in a non-grade domain: a
+    "what are the requirements" collection-style question (which routes
+    through the *other* context builder) that happens to retrieve a
+    structured eligibility table. The table's Structured-table marker, and
+    therefore the audit, must survive that builder too."""
+    table = """\
+Scholarship Eligibility Bands
+
+Program Handbook > Article 5 > Scholarship Eligibility > Sec. 1 > Eligibility Bands
+
+1.00 | 90-100 | Eligible
+2.00 | 80-89 | Eligible
+3.00 | 60-79 | Not Eligible
+"""
+    library = {
+        "Scholarship Eligibility Bands": _chunk("Scholarship Eligibility Bands", table),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What are the scholarship eligibility requirements?",
+        "Eligible status is said to cover the zone bounded by 60 and 100.",
+    )
+    assert "Structured table" in generation_context
+    audit_records = _structured_table_records_from_text(generation_context)
+    assert len(audit_records) == 3
+    statuses = {r.get("Status") for r in audit_records if r.get("Status")}
+    assert statuses == {"Eligible", "Not Eligible"}
+    assert "bounded by 60 and 100" not in result.answer
+    assert result.confidence != "high"
+
+
+def test_live_grading_and_gwa_question_reproduction():
+    """The exact live Azure regression trigger. Not a grading-specific
+    behavior test -- the assertions only check the general pipeline
+    invariant (structured evidence recognized end to end, mixed-status
+    fallback fires, confidence downgraded), using this specific question
+    only as the reproduction shape reported."""
+    library = {
+        "Undergraduate Grading System": _chunk("Undergraduate Grading System", GRADING_TABLE_ELEVEN_ROWS),
+        "General Weighted Average Computation": _chunk(
+            "General Weighted Average Computation", GWA_COMPUTATION_PROSE
+        ),
+    }
+    bad_answer = (
+        "The passing grades are: 1.00 - 4.00 — These represent passing outcomes."
+    )
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What is the passing grade and how is GWA computed?",
+        bad_answer,
+    )
+    audit_records = _structured_table_records_from_text(generation_context)
+    assert len(audit_records) == 11
+    assert _answer_has_unverifiable_mixed_status_claim(bad_answer, audit_records)
+    assert "These represent passing outcomes" not in result.answer
+    assert "Conditional" in result.answer or "Failed" in result.answer
+    assert result.confidence != "high"
+
+
+# ---------------------------------------------------------------------------
+# UNSAFE BULLET DETECTION REMOVED (Azure re-certification, round 7).
+#
+# The round-6 bullet/dash-list structured-evidence detector
+# (``_normalize_bullet_list_rows`` and its helpers) has been removed
+# entirely. It could not tell a genuine status/category table apart from an
+# ordinary two-column reference list ("Clearance — Accounting Office",
+# "Student ID — OSAS / BAO", "Requirement — SF-Form-002 ICTS") using shape
+# alone, because both have the exact same shape: short fields, a consistent
+# field count, a dash/colon separator, repeated across consecutive lines.
+# Live Enrollment/support content of that ordinary reference-list shape was
+# being misclassified as a structured status table, and once misclassified,
+# a correct, on-topic generated answer was being wholesale replaced by the
+# generic "The retrieved table lists these records..." fallback text —
+# a false positive far more damaging than the missed grading detection it
+# was trying to fix.
+#
+# Removed: ``_normalize_bullet_list_rows``, ``_merge_bullet_continuations``,
+# ``_merge_adjacent_bare_number_fields``, ``_bullet_line_fields``,
+# ``_field_looks_like_row_cell``, ``_bullet_group_is_structured``, and the
+# ``_BULLET_*`` regexes, plus their wiring into ``_format_structured_tables``.
+#
+# Kept (narrow, safe on their own, not implicated in the false positives):
+# the header-vs-data heuristic fix for an all-non-numeric *pipe*-delimited
+# table (still gated on a literal "|", which ordinary prose never contains),
+# the positional Identifier/Status role-inference fix in
+# ``_table_record_from_row`` (same "|"-only gate), and the non-numeric
+# record-anchor grounding path in the mixed-status policy guard (only ever
+# runs once records already exist — it cannot cause a false *detection*).
+#
+# The grading-table detection gap this was trying to close is NOT
+# reintroduced by anything below — it simply does not exist any more,
+# exactly as it did not before round 6. See this session's report for the
+# architectural finding on why no further heuristic was implemented instead.
+# ---------------------------------------------------------------------------
+
+ENROLLMENT_CLEARANCE_REFERENCE_LIST = """\
+Enrollment Clearance Requirements
+
+Program Handbook > Article 2 > Enrollment > Sec. 1 > Clearance Requirements
+
+- Clearance — Accounting Office
+- Student ID — OSAS / BAO
+- Requirement — SF-Form-002 ICTS
+
+Office: Registrar
+"""
+
+GOOD_MORAL_REFERENCE_LIST = """\
+Good Moral Certificate
+
+Student Services > Good Moral Certificate
+
+- Request Form — OSAS
+- Clearance — Accounting Office
+- Processing — Office of the Registrar
+
+Office: Office of the Registrar
+"""
+
+
+def test_ordinary_reference_list_bullets_are_not_interpreted_as_structured_table():
+    """The exact reported false-positive shape: a short "item — office" or
+    "item — form" reference list. It must never produce structured rows —
+    this shape is indistinguishable, by structure alone, from a genuine
+    status table, which is exactly why the broad bullet detector had to be
+    removed rather than tightened further."""
+    formatted = format_retrieved_context(
+        [_chunk("Enrollment Clearance Requirements", ENROLLMENT_CLEARANCE_REFERENCE_LIST)]
+    )
+    assert "Structured table" not in formatted
+    assert "Accounting Office" in formatted
+    assert _structured_table_records_from_text(formatted) == []
+
+
+def test_enrollment_first_turn_answer_is_not_replaced_by_structured_fallback():
+    """A correct, on-topic Enrollment answer grounded in a reference-list
+    style chunk must reach the user unchanged — not replaced by the generic
+    row-listing fallback text."""
+    store = RoleAwareStore(
+        [_chunk("Enrollment Clearance Requirements", ENROLLMENT_CLEARANCE_REFERENCE_LIST)]
+    )
+    good_answer = (
+        "To enroll, secure clearance from the Accounting Office, present your "
+        "Student ID from OSAS/BAO, and submit SF-Form-002 to ICTS. Coordinate "
+        "with the Office of the Registrar for your enrollment record."
+    )
+    result = _ask(store, "What are the requirements to enroll?", groq_return=good_answer)
+    assert result.answer == good_answer
+    assert "retrieved table lists these records" not in result.answer.lower()
+
+
+def test_enrollment_office_followup_still_returns_registrar():
+    """A follow-up asking which office handles enrollment must still
+    surface the Registrar, unchanged by any structured-evidence audit."""
+    store = RoleAwareStore(
+        [_chunk("Enrollment Clearance Requirements", ENROLLMENT_CLEARANCE_REFERENCE_LIST)]
+    )
+    good_answer = "The Office of the Registrar handles enrollment records and processing."
+    result = _ask(store, "Which office handles enrollment?", groq_return=good_answer)
+    assert "Registrar" in result.answer
+    assert result.answer == good_answer
+
+
+def test_good_moral_answer_is_not_replaced_by_structured_fallback():
+    """A correct Good Moral Certificate answer, grounded in the same
+    reference-list chunk shape, must not be replaced by the generic
+    row-listing fallback."""
+    store = RoleAwareStore([_chunk("Good Moral Certificate", GOOD_MORAL_REFERENCE_LIST)])
+    good_answer = (
+        "Request the Good Moral Certificate form from OSAS, secure clearance "
+        "from the Accounting Office, and have it processed at the Office of "
+        "the Registrar."
+    )
+    result = _ask(store, "How do I get a Good Moral Certificate?", groq_return=good_answer)
+    assert result.answer == good_answer
+    assert "retrieved table lists these records" not in result.answer.lower()
+
+
+def test_existing_pipe_table_structured_cases_still_work():
+    """A genuine pipe-delimited grading table (the original, validated
+    representation) must still be recognized and still trigger the
+    mixed-status fallback for an unsupported global claim -- proving the
+    removal did not regress the core, previously-validated mechanism."""
+    records = _records_for(UNDERGRAD_GRADING_TABLE, "Grading System")
+    assert records
+    assert _answer_synthesizes_unsupported_range(
+        "A grade from 84 to 92 is Satisfactory.", records
+    )
+
+
+@pytest.mark.parametrize(
+    "table_text, title, claim",
+    [
+        (SYNTHETIC_ELIGIBILITY_TABLE_ADJACENT, "Scholarship Eligibility Bands", "Scores at or above 80 are Eligible."),
+        (SYNTHETIC_FEE_TIER_TABLE, "Late Submission Fee Tiers", "A fee of 6 to 30 falls under the Standard Fee tier."),
+        (SYNTHETIC_REQUEST_APPROVAL_TABLE, "Request Processing Status Tiers", "Requests processed at or above 8 days are Pending."),
+    ],
+    ids=["eligibility", "fee-tier", "approval"],
+)
+def test_non_grade_pipe_table_structured_cases_still_work(table_text, title, claim):
+    """Non-grade pipe-delimited structured cases (eligibility, fees,
+    approval status) must still be detected and still reject an
+    unsupported synthesized claim after the bullet-detector removal."""
+    records = _records_for(table_text, title)
+    assert records
+    assert _answer_synthesizes_unsupported_range(claim, records)
+
+
+def test_audit_cannot_use_evidence_unavailable_to_the_generator():
+    """The generation-audit evidence-plumbing invariant, reconfirmed after
+    the bullet-detector removal: a chunk that loses the relevance contest
+    for selected context must never reach the audit either."""
+    library = {
+        "Undergraduate Grading System": _chunk("Undergraduate Grading System", GRADING_TABLE_ELEVEN_ROWS),
+        "General Weighted Average Computation": _chunk(
+            "General Weighted Average Computation", GWA_COMPUTATION_PROSE
+        ),
+        "Laboratory Equipment Damage Fee Schedule": _chunk(
+            "Laboratory Equipment Damage Fee Schedule",
+            "Laboratory Equipment Damage Fee Schedule\n\n"
+            "Program Handbook > Article 20 > Laboratory Safety > Sec. 3 > Equipment Damage Fees\n\n"
+            "1.00 | 1-500 | Minor Damage Fee\n"
+            "2.00 | 501-2000 | Major Damage Fee\n"
+            "3.00 | 2001 and above | Full Replacement Cost\n",
+        ),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What is the passing grade and how is GWA computed?",
+        "Grades from 1.00 to 4.00 are considered passing.",
+    )
+    assert "Laboratory Equipment Damage Fee Schedule" not in generation_context
+    audit_records = _structured_table_records_from_text(generation_context)
+    statuses = {r.get("Status") for r in audit_records if r.get("Status")}
+    assert "Full Replacement Cost" not in statuses
+    assert result.confidence != "high"
+
+
+def test_generation_and_audit_operate_from_the_same_selected_evidence():
+    """Generation and audit must read the identical evidence string -- the
+    pipe-delimited grading table reaching the model must be the exact same
+    text the audit re-parses, with a matching row count."""
+    library = {"Grading System": _chunk("Grading System", UNDERGRAD_GRADING_TABLE)}
+    result, generation_context, _ = _ask_word_overlap(
+        library, "What is the passing grade?", "A grade from 84 to 92 is Satisfactory."
+    )
+    audit_records = _structured_table_records_from_text(generation_context)
+    direct_records = _records_for(UNDERGRAD_GRADING_TABLE, "Grading System")
+    assert len(audit_records) == len(direct_records)
+    assert "Structured table" in generation_context
+
+
+# ---------------------------------------------------------------------------
+# PIPE-TABLE PRODUCTION PATH AUDIT (Azure re-certification, round 8).
+#
+# Finding: production's actual retrieved/selected evidence for "What is the
+# passing grade and how is GWA computed?" is the *pipe-delimited* handbook
+# chunk (title "Grading System", chapter "Undergraduate Academic Policies") —
+# not the bullet/em-dash FAQ article, which is a *separate*, unselected
+# stored object and is never forced into selection here. The fixture below
+# (``REAL_PIPE_GRADING_TABLE``) is the verbatim text of that chunk, pulled
+# directly from the local Chroma store as a read-only architecture-inspection
+# step (never modified, no reindex, no ingestion change).
+#
+# Tracing the *full* ``answer_qa_question`` path with this exact text
+# (selection → generation context → audit input → row extraction →
+# mixed-status detection → fallback → confidence) end to end, repeatedly and
+# under several realistic conditions (a lone chunk, several genuine
+# grading-adjacent chunks selected alongside it, an unselected bullet FAQ
+# article present in the retrieval pool but not chosen), found no
+# divergence: rows are extracted, mixed statuses are detected, the
+# unsupported "any score above 69" claim is replaced by the grounded
+# row-listing, and confidence is downgraded. The mechanism already
+# implemented in this working tree — never yet deployed, per every prior
+# round's explicit "do not deploy" — already protects this exact
+# production-shaped path. The tests below lock that in as a permanent
+# regression, and separately reconfirm every safety invariant from the
+# round-7 false-positive removal still holds under this same production
+# shape.
+# ---------------------------------------------------------------------------
+
+REAL_PIPE_GRADING_TABLE = """\
+Grading System
+
+Undergraduate Academic Policies > Article 7 > Grading System and Other Grade-related Concerns > Sec. 1 > Grading System
+
+The grading system is expressed in Arabic numerals
+and is recorded by the Office of the Registrar. The following are the
+grades used and their equivalents in percent and respective descrip-
+tions.
+Average Equivalent Grade Description
+1.00 | 99-100 | Excellent
+1.25 | 96-98
+1.50 | 93-95 | Very Satisfactory
+1.75 | 90-92
+2.00 | 87-89 | Satisfactory
+2.25 | 84-86
+2.50 | 81-83 | Fairly Satisfactory
+2.75 | 78-80
+3.00 | 75-77
+4.00 | 70-74 | Conditional Failure
+5.00 | 69 and below Failed
+INC | Incomplete
+DRP | Officially Dropped
+"""
+
+REAL_GWA_PROSE = (
+    "The General Weighted Average or GWA of students refers to the weighted "
+    "average of grades in all academic courses taken in a given semester."
+)
+
+# The separate, unselected bullet/em-dash FAQ article Azure identified as a
+# *different* stored object. It is included in the retrieval pool in the
+# "unselected evidence" test below with no keyword overlap, so it loses the
+# relevance contest on its own -- it is never forced out or specially
+# excluded, and its bullet formatting is irrelevant here since it never
+# reaches selection.
+UNDERGRADUATE_GRADING_FAQ_BULLET_ARTICLE = """\
+Academic Scale Quick Reference
+
+Student Portal Help > Quick Reference
+
+- 1.00 — 99–100 — Excellent
+- 1.25 — 96–98
+- 1.50 — 93–95 — Very Satisfactory
+- 4.00 — 70–74 — Conditional Failure
+- 5.00 — 69 and below — Failed
+"""
+
+
+def test_production_shaped_pipe_table_context_is_parsed():
+    """Requirement 1: the wrapped generation context built from the real,
+    verbatim handbook pipe-table text is parsed into structured rows."""
+    library = {"Grading System": _chunk("Grading System", REAL_PIPE_GRADING_TABLE)}
+    _, generation_context, _ = _ask_word_overlap(
+        library,
+        "What is the passing grade and how is GWA computed?",
+        "A grade from 87 to 89 is Satisfactory.",
+    )
+    assert "Structured table" in generation_context
+    audit_records = _structured_table_records_from_text(generation_context)
+    assert len(audit_records) == 13
+
+
+def test_production_shaped_mixed_statuses_detected():
+    """Requirement 2: mixed statuses are detected from that wrapped
+    context — the real table carries Excellent, Very Satisfactory,
+    Satisfactory, Fairly Satisfactory, Conditional Failure, Failed,
+    Incomplete, and Officially Dropped, all distinct."""
+    records = _records_for(REAL_PIPE_GRADING_TABLE, "Grading System")
+    statuses = {r.get("Status") for r in records if r.get("Status")}
+    assert {"Conditional Failure", "Failed", "Excellent", "Satisfactory"} <= statuses
+    assert _answer_has_unverifiable_mixed_status_claim(
+        "A passing grade would be any score above 69.", records
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_answer",
+    [
+        "A passing grade would be any score above 69.",
+        "The passing range consists of grades 1.00 through 4.00.",
+        "Grades of 1.00 and above (up to 4.00) are considered passing.",
+    ],
+)
+def test_production_shaped_unsupported_global_claim_is_replaced_and_downgraded(bad_answer):
+    """Requirements 3-4: an unsupported synthesized global passing rule,
+    generated over the real production-shaped selected evidence, is
+    blocked and replaced by the grounded row listing, with confidence
+    downgraded from "high"."""
+    library = {
+        "Grading System": _chunk("Grading System", REAL_PIPE_GRADING_TABLE, score=4.9),
+        "GWA": _chunk("GWA", REAL_GWA_PROSE, score=4.8),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library, "What is the passing grade and how is GWA computed?", bad_answer
+    )
+    assert "Grading System" in [s for s in (r["title"] for r in result.sources)]
+    assert bad_answer not in result.answer
+    assert "Conditional" in result.answer or "Failed" in result.answer
+    assert result.confidence != "high"
+
+
+def test_production_shaped_explicit_global_rule_remains_allowed():
+    """Requirement 5: if the source itself states a combined rule as its
+    own row, restating it end to end is still allowed, not replaced. Uses
+    the table's own percentage (Range) axis, where the real table's grade
+    bands actually live, rather than its GPA-style Identifier axis, whose
+    numbers ("1.00".."5.00") share the same numeric scale a naive Range
+    open-threshold row would collide with in this particular table."""
+    table_with_explicit_rule = REAL_PIPE_GRADING_TABLE + "75-100 | Passing\n"
+    library = {"Grading System": _chunk("Grading System", table_with_explicit_rule, score=4.9)}
+    result, generation_context, _ = _ask_word_overlap(
+        library,
+        "What is the passing grade?",
+        "Grades from 75 to 100 are Passing.",
+    )
+    assert result.answer == "Grades from 75 to 100 are Passing."
+    assert result.confidence == "high"
+
+
+def test_production_shaped_ordinary_enrollment_context_does_not_fallback():
+    """Requirement 6: ordinary Enrollment reference-list content, run
+    through this exact same production-shaped path (real selection,
+    generation, and audit call sites), must not trigger the structured
+    fallback."""
+    library = {
+        "Enrollment Clearance Requirements": _chunk(
+            "Enrollment Clearance Requirements", ENROLLMENT_CLEARANCE_REFERENCE_LIST
+        ),
+    }
+    good_answer = (
+        "To enroll, secure clearance from the Accounting Office, present your "
+        "Student ID from OSAS/BAO, and submit SF-Form-002 to ICTS."
+    )
+    result, generation_context, _ = _ask_word_overlap(
+        library, "What are the requirements to enroll?", good_answer
+    )
+    assert result.answer == good_answer
+    assert "Structured table" not in generation_context
+
+
+def test_production_shaped_good_moral_context_remains_unaffected():
+    """Requirement 7: the Good Moral Certificate reference-list content
+    must remain unaffected by the structured audit under this same
+    production-shaped path."""
+    library = {"Good Moral Certificate": _chunk("Good Moral Certificate", GOOD_MORAL_REFERENCE_LIST)}
+    good_answer = (
+        "Request the Good Moral Certificate form from OSAS, secure clearance "
+        "from the Accounting Office, and have it processed at the Office of "
+        "the Registrar."
+    )
+    result, generation_context, _ = _ask_word_overlap(
+        library, "How do I get a Good Moral Certificate?", good_answer
+    )
+    assert result.answer == good_answer
+    assert "Structured table" not in generation_context
+
+
+def test_production_shaped_audit_does_not_introduce_unselected_faq_evidence():
+    """Requirement 8: the separate, unselected bullet/em-dash FAQ article
+    must never leak into the audit, even though it describes the exact
+    same underlying grading facts and is present in the retrieval pool --
+    it simply loses the relevance contest on its own (no keyword overlap
+    with the question) and is never forced out or force-included."""
+    library = {
+        "Grading System": _chunk("Grading System", REAL_PIPE_GRADING_TABLE, score=4.9),
+        "GWA": _chunk("GWA", REAL_GWA_PROSE, score=4.8),
+        "Academic Scale Quick Reference": _chunk(
+            "Academic Scale Quick Reference", UNDERGRADUATE_GRADING_FAQ_BULLET_ARTICLE, score=1.0
+        ),
+    }
+    bad_answer = "A passing grade would be any score above 69."
+    result, generation_context, store = _ask_word_overlap(
+        library, "What is the passing grade and how is GWA computed?", bad_answer
+    )
+    assert "Academic Scale Quick Reference" not in generation_context
+    assert "Student Portal Help" not in generation_context
+    audit_records = _structured_table_records_from_text(generation_context)
+    assert len(audit_records) == 13
+    assert "Conditional" in result.answer or "Failed" in result.answer
+    assert result.confidence != "high"
+
+
+# ---------------------------------------------------------------------------
+# QUERY-INTENT GLOBAL-CLASSIFICATION SAFETY (Azure re-certification, round 10).
+#
+# The round-9 guard activated from the *generated answer's* wording (a
+# comparison-shape regex family) and tried to verify each specific claim
+# phrase-by-phrase against the evidence. Azure proved this unsafe in both
+# directions: it still missed paraphrases no pattern was written for ("70+",
+# an enumerated "1.00 ... and 4.00 are passing"), and it could fire on a
+# correct, unrelated Enrollment answer merely because Groq generated broad
+# wording ("All students ..."), since activation depended on the model's
+# unpredictable output rather than anything stable.
+#
+# This version activates on the *user's own question* instead — fixed,
+# known before generation ever runs, and never influenced by what the model
+# later says. ``_is_global_classification_query`` recognizes the structural
+# shape of a question asking for a global classification/range/boundary
+# ("what score is considered eligible", "which tiers count as certified",
+# "what is the passing grade") and is completely blind to procedural/
+# service questions ("how do I enroll", "what documents do I need"),
+# regardless of any word the eventual answer contains. Once gated, the
+# decision is made purely from the evidence's own shape
+# (``_evidence_states_single_global_rule`` — a plain count of comparison/
+# range-shaped statements, never row parsing or "understanding" a table):
+# exactly one such statement is treated as an explicit combined rule and the
+# answer is left alone; zero or several are treated as "no single global
+# rule stated" and every numeric or comparative sentence in the answer is
+# replaced with a fixed, generic notice — regardless of its specific
+# wording, closing the paraphrase-chasing gap by never trying to match
+# specific wording at all.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "question, expected",
+    [
+        ("What score is considered eligible?", True),
+        ("Which tiers count as certified?", True),
+        ("What range is considered on time?", True),
+        ("What amount requires extra approval?", True),
+        ("What is the passing grade and how is GWA computed?", True),
+        ("What is the minimum score to qualify?", True),
+        ("How do I enroll?", False),
+        ("What documents do I need?", False),
+        ("Where can I go?", False),
+        ("Does it have a fee?", False),
+        ("Which office handles it?", False),
+        ("How do I request a certificate?", False),
+        ("What are the requirements?", False),
+    ],
+)
+def test_query_intent_classification_shape(question, expected):
+    """The activation gate depends only on the user's own question shape --
+    verified directly against every example named in the requirements,
+    both the classification-intent triggers and the procedural
+    non-triggers."""
+    assert _is_global_classification_query(question) is expected
+
+
+@pytest.mark.parametrize(
+    "domain, question, evidence_text, unsupported_claim",
+    [
+        (
+            "eligibility",
+            "What score is considered eligible?",
+            "90-100 — Eligible\n80-89 — Conditional\nBelow 80 — Ineligible",
+            "Everyone scoring 80 or above is eligible.",
+        ),
+        (
+            "certification",
+            "Which tiers count as certified?",
+            "Tier A — Certified\nTier B — Conditional\nTier C — Not Certified",
+            "Tier B and above are certified.",
+        ),
+        (
+            "deadline",
+            "What range is considered on time?",
+            "Before March 15 — On Time\nMarch 16 to April 1 — Late\nAfter April 1 — Closed",
+            "Anything before April 1 is automatically accepted.",
+        ),
+        (
+            "fees",
+            "What amount requires extra approval?",
+            "Photocopy — 5 pesos per page\nCertification — 50 pesos\nAuthentication — 100 pesos",
+            "All requests above 500 require additional approval.",
+        ),
+    ],
+    ids=["eligibility", "certification", "deadline", "fees"],
+)
+def test_classification_intent_with_no_explicit_rule_triggers_conservative_reply(
+    domain, question, evidence_text, unsupported_claim
+):
+    """Test cases A-D: a global-classification question, evidence that only
+    lists individual categories/ranges with no single unifying statement --
+    the conservative reply activates and the specific unsupported claim
+    never survives, regardless of whether the boundary is numeric or a
+    short category code."""
+    assert _is_global_classification_query(question)
+    assert not _evidence_states_single_global_rule(evidence_text)
+    revised = _apply_conservative_classification_reply(unsupported_claim)
+    assert unsupported_claim not in revised
+    assert "does not explicitly state" in revised
+
+
+def test_explicit_global_rule_allows_the_normal_answer():
+    """Test case E: when the evidence itself states exactly one combined
+    rule, the classification question does not trigger the conservative
+    path at all -- the normal generated answer stands."""
+    question = "What score is considered eligible?"
+    evidence_text = "Scores of 90 and above are eligible for the award."
+    assert _is_global_classification_query(question)
+    assert _evidence_states_single_global_rule(evidence_text)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How do I enroll?",
+        "What documents do I need?",
+        "Where can I go?",
+        "Does it have a fee?",
+        "Which office handles it?",
+        "How do I request a certificate?",
+        "What are the requirements?",
+    ],
+    ids=["F", "G", "H", "I", "J", "K", "L"],
+)
+def test_procedural_intent_never_activates_the_guard(question):
+    """Test cases F-L: procedural/service questions never activate this
+    guard, regardless of what evidence happens to be selected."""
+    assert not _is_global_classification_query(question)
+
+
+def test_critical_enrollment_false_positive_reproduction():
+    """The exact reported false positive: Groq generates broad wording
+    ("All students must complete...") in response to a purely procedural
+    Enrollment question. The guard must not activate merely because of
+    that wording -- activation depends only on the user's query being
+    classification-shaped, which this one is not."""
+    store = RoleAwareStore(
+        [_chunk("Enrollment Clearance Requirements", ENROLLMENT_CLEARANCE_REFERENCE_LIST)]
+    )
+    broad_wording_answer = (
+        "All students must complete clearance from the Accounting Office, "
+        "present a Student ID from OSAS/BAO, and submit SF-Form-002 to ICTS "
+        "before enrollment is finalized."
+    )
+    result = _ask(store, "How do I enroll?", groq_return=broad_wording_answer)
+    assert result.answer == broad_wording_answer
+
+
+def test_good_moral_procedural_answer_is_never_rewritten():
+    """A Good Moral Certificate procedural answer must never be rewritten
+    by this guard either, regardless of generated wording."""
+    store = RoleAwareStore([_chunk("Good Moral Certificate", GOOD_MORAL_REFERENCE_LIST)])
+    broad_wording_answer = (
+        "All students requesting a Good Moral Certificate must secure "
+        "clearance from the Accounting Office and have it processed at the "
+        "Office of the Registrar."
+    )
+    result = _ask(store, "How do I get a Good Moral Certificate?", groq_return=broad_wording_answer)
+    assert result.answer == broad_wording_answer
+
+
+@pytest.mark.parametrize(
+    "bad_answer",
+    [
+        "A passing grade would be any score above 69. GWA is the weighted average of all grades.",
+        "A passing grade is 70+. GWA is the weighted average of all grades.",
+        "The passing grades are 1.00, 2.00, 3.00, and 4.00. GWA is the weighted average of all grades.",
+        "The passing range is 1.00 through 4.00. GWA is the weighted average of all grades.",
+        "Grades of 1.00 or greater are passing. GWA is the weighted average of all grades.",
+    ],
+    ids=["above-69", "70-plus", "enumerated-list", "through-phrasing", "or-greater"],
+)
+def test_real_faq_selected_grading_reproduction_blocks_every_paraphrase(bad_answer):
+    """The real Azure reproduction: the selected evidence is the derived
+    FAQ's bullet/em-dash representation (the handbook pipe-table chunk is
+    not included in this retrieval pool at all -- never forced into
+    selection). The structured-row parser is allowed to remain at 0 rows;
+    no bullet/table reconstruction is added or needed. Every semantic
+    equivalent of the unsupported passing-boundary claim is blocked
+    uniformly -- not just the one paraphrase previously reported -- because
+    detection never depends on matching the specific wording used. The
+    grounded GWA sentence remains usable, and confidence is downgraded."""
+    faq_bullet_text = """\
+Undergraduate Grading System
+
+Frequently Asked Questions > Passing Grade and GWA
+
+- 1.00 — 99–100 — Excellent
+- 1.25 — 96–98
+- 1.50 — 93–95 — Very Satisfactory
+- 4.00 — 70–74 — Conditional Failure
+- 5.00 — 69 and below — Failed
+"""
+    library = {
+        "Undergraduate Grading System": _chunk(
+            "Undergraduate Grading System", faq_bullet_text, score=4.9
+        ),
+        "GWA": _chunk("GWA", GWA_COMPUTATION_PROSE, score=4.8),
+    }
+    result, generation_context, _ = _ask_word_overlap(
+        library, "What is the passing grade and how is GWA computed?", bad_answer
+    )
+    audit_records = _structured_table_records_from_text(generation_context)
+    assert audit_records == []
+    for fragment in ("above 69", "70+", "1.00, 2.00, 3.00, and 4.00", "1.00 through 4.00", "or greater"):
+        assert fragment not in result.answer
+    assert "weighted average of all grades" in result.answer
+    assert "does not explicitly state" in result.answer
+    assert result.confidence != "high"

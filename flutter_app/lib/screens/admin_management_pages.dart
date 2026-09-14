@@ -543,11 +543,15 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
 class OfficeAssignedTicketsPage extends StatefulWidget {
   final String initialStatusFilter;
   final String initialSearch;
+  /// Seeded tickets skip network load. Widget tests only.
+  @visibleForTesting
+  final List<Map<String, dynamic>>? debugTickets;
 
   const OfficeAssignedTicketsPage({
     super.key,
     this.initialStatusFilter = 'All',
     this.initialSearch = '',
+    this.debugTickets,
   });
 
   @override
@@ -570,6 +574,15 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
     _statusFilter = widget.initialStatusFilter;
     _searchCtrl.text = widget.initialSearch;
     _searchCtrl.addListener(() => setState(() {}));
+    final seeded = widget.debugTickets;
+    if (seeded != null) {
+      _requestedInitialLoad = true;
+      _tickets.addAll(
+        seeded.map(
+          (item) => _AdminTicketEntry.fromJson(Map<String, dynamic>.from(item)),
+        ),
+      );
+    }
   }
 
   @override
@@ -637,13 +650,14 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
 
   Future<_AdminTicketEntry> _replyToTicket(
     _AdminTicketEntry ticket,
-    String message,
-  ) async {
+    String message, {
+    bool isInternal = false,
+  }) async {
     final result = await ApiClient.send(
       method: 'POST',
       url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/replies',
       headers: {...AuthScope.of(context).ticketHeaders()},
-      jsonBody: {'message': message},
+      jsonBody: {'message': message, 'is_internal': isInternal},
     );
     final data = _decodeObject(result.body);
     final statusCode = result.statusCode;
@@ -666,21 +680,6 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
     });
   }
 
-  Future<void> _openTicketDetails(_AdminTicketEntry ticket) async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => _AdminTicketDetailsDialog(
-        ticket: ticket,
-        offices: const [],
-        controlsTitle: 'Office controls',
-        replyHint: 'Write an office reply',
-        allowReassignment: false,
-        onUpdate: (payload) => _patchTicket(ticket, payload),
-        onReply: (message) => _replyToTicket(ticket, message),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final officeName =
@@ -698,42 +697,25 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
       current: StudentNavItem.officeAssignedTickets,
       title: 'Assigned Tickets',
       description: 'Manage tickets routed to $officeName.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_loading) const LinearProgressIndicator(minHeight: 3),
-          if (_error != null)
-            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
-          _AdminTicketSummary(tickets: _tickets),
-          const SizedBox(height: 16),
-          _AdminTicketFilters(
-            searchCtrl: _searchCtrl,
-            statusFilter: _statusFilter,
-            priorityFilter: _priorityFilter,
-            officeFilter: 'All',
-            officeOptions: const ['All'],
-            showOfficeFilter: false,
-            onStatusChanged: (value) => setState(() => _statusFilter = value),
-            onPriorityChanged: (value) =>
-                setState(() => _priorityFilter = value),
-            onOfficeChanged: (_) {},
-            onRefresh: _loadTickets,
-            isRefreshing: _loading,
-          ),
-          const SizedBox(height: 16),
-          if (_loading && _tickets.isEmpty)
-            const _AdminTicketState(
-              icon: Icons.sync_rounded,
-              title: 'Loading tickets',
-              message: 'Fetching assigned tickets.',
-            )
-          else
-            _AdminTicketList(
-              tickets: filteredTickets,
-              hasAnyTickets: _tickets.isNotEmpty,
-              onTicketTap: _openTicketDetails,
-            ),
-        ],
+      fillBody: true,
+      child: _StaffTicketConsole(
+        tickets: _tickets,
+        filteredTickets: filteredTickets,
+        searchCtrl: _searchCtrl,
+        statusFilter: _statusFilter,
+        onStatusChanged: (value) => setState(() => _statusFilter = value),
+        priorityFilter: _priorityFilter,
+        onPriorityChanged: (value) => setState(() => _priorityFilter = value),
+        loading: _loading,
+        error: _error,
+        onRefresh: widget.debugTickets == null ? _loadTickets : () async {},
+        officeOptions: const [],
+        allowReassignment: false,
+        listTitle: 'Assigned Tickets',
+        replyHint: 'Write a reply…',
+        onUpdate: _patchTicket,
+        onReply: _replyToTicket,
+        onTicketChanged: _replaceTicket,
       ),
     );
   }
@@ -3076,6 +3058,7 @@ class OfficeScaffold extends StatelessWidget {
   final String title;
   final String description;
   final Widget child;
+  final bool fillBody;
 
   const OfficeScaffold({
     super.key,
@@ -3083,6 +3066,7 @@ class OfficeScaffold extends StatelessWidget {
     required this.title,
     required this.description,
     required this.child,
+    this.fillBody = false,
   });
 
   @override
@@ -3134,40 +3118,86 @@ class OfficeScaffold extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
-        final content = StudentPage(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              StudentPanel(
-                child: Row(
-                  children: [
-                    const StudentIconBox(
-                      icon: Icons.business_center_rounded,
-                      color: DesignTokens.maroon,
-                      size: 52,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: StudentSectionTitle(
-                        title: title,
-                        subtitle: description,
+        final Widget content;
+        if (fillBody) {
+          content = ColoredBox(
+            color: DesignTokens.adminSurface,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    isWide ? 20 : 14,
+                    isWide ? 16 : 12,
+                    isWide ? 20 : 14,
+                    8,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: DesignTokens.ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 4),
+                      Text(
+                        description,
+                        style: const TextStyle(
+                          color: DesignTokens.muted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 18),
-              child,
-            ],
-          ),
-        );
+                Expanded(child: child),
+              ],
+            ),
+          );
+        } else {
+          content = StudentPage(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                StudentPanel(
+                  child: Row(
+                    children: [
+                      const StudentIconBox(
+                        icon: Icons.business_center_rounded,
+                        color: DesignTokens.maroon,
+                        size: 52,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: StudentSectionTitle(
+                          title: title,
+                          subtitle: description,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                child,
+              ],
+            ),
+          );
+        }
 
         if (isWide) {
           return Scaffold(
-            backgroundColor: DesignTokens.bgGrey,
+            backgroundColor: DesignTokens.adminSurface,
             body: Row(
               children: [
-                SizedBox(width: 220, child: AppSidebar(current: current)),
+                SizedBox(
+                  width: DesignTokens.adminSidebarWidth,
+                  child: AppSidebar(current: current),
+                ),
                 Expanded(child: content),
               ],
             ),
@@ -3175,8 +3205,11 @@ class OfficeScaffold extends StatelessWidget {
         }
 
         return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
-          drawer: Drawer(child: AppSidebar(current: current)),
+          backgroundColor: DesignTokens.adminSurface,
+          drawer: Drawer(
+            backgroundColor: DesignTokens.adminSidebarBg,
+            child: AppSidebar(current: current),
+          ),
           appBar: AppBar(title: Text(title)),
           body: content,
         );
@@ -4850,6 +4883,41 @@ class _AdminTicketEntry {
     final matchesOffice =
         officeFilter == 'All' || assignedOffice == officeFilter;
     return matchesQuery && matchesStatus && matchesPriority && matchesOffice;
+  }
+
+  _RequesterProfile get requesterProfile =>
+      _RequesterProfile.fromTicketText('$description\n$subject');
+}
+
+class _RequesterProfile {
+  final String? studentNumber;
+  final String? campus;
+  final String? program;
+
+  const _RequesterProfile({this.studentNumber, this.campus, this.program});
+
+  factory _RequesterProfile.fromTicketText(String text) {
+    String? capture(List<String> labels) {
+      for (final label in labels) {
+        final match = RegExp(
+          '$label\\s*[:\\-]\\s*(.+?)(?=\\s*(?:Student number|Student No|Student ID|Campus|Program|Course)\\s*[:\\-]|\$)',
+          caseSensitive: false,
+          dotAll: true,
+        ).firstMatch(text);
+        var value = match?.group(1)?.split(RegExp(r'[\n|]')).first.trim();
+        if (value != null && value.endsWith('.')) {
+          value = value.substring(0, value.length - 1).trim();
+        }
+        if (value != null && value.isNotEmpty) return value;
+      }
+      return null;
+    }
+
+    return _RequesterProfile(
+      studentNumber: capture(const ['Student number', 'Student No', 'Student ID']),
+      campus: capture(const ['Campus']),
+      program: capture(const ['Program', 'Course']),
+    );
   }
 }
 

@@ -7,6 +7,8 @@ class _StaffTicketConsole extends StatefulWidget {
   final TextEditingController searchCtrl;
   final String statusFilter;
   final ValueChanged<String> onStatusChanged;
+  final String priorityFilter;
+  final ValueChanged<String>? onPriorityChanged;
   final bool loading;
   final String? error;
   final Future<void> Function() onRefresh;
@@ -24,7 +26,6 @@ class _StaffTicketConsole extends StatefulWidget {
     bool isInternal,
   }) onReply;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
-  final void Function(_AdminTicketEntry ticket)? onOpenNarrowDetails;
 
   const _StaffTicketConsole({
     required this.tickets,
@@ -32,6 +33,8 @@ class _StaffTicketConsole extends StatefulWidget {
     required this.searchCtrl,
     required this.statusFilter,
     required this.onStatusChanged,
+    this.priorityFilter = 'All',
+    this.onPriorityChanged,
     required this.loading,
     required this.error,
     required this.onRefresh,
@@ -42,7 +45,6 @@ class _StaffTicketConsole extends StatefulWidget {
     required this.onUpdate,
     required this.onReply,
     required this.onTicketChanged,
-    this.onOpenNarrowDetails,
   });
 
   @override
@@ -125,12 +127,18 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
     }
   }
 
-  void _selectTicket(_AdminTicketEntry ticket, {required bool wide}) {
-    if (!wide && widget.onOpenNarrowDetails != null) {
-      widget.onOpenNarrowDetails!(ticket);
-      return;
-    }
+  void _selectTicket(_AdminTicketEntry ticket) {
     setState(() => _selectedId = ticket.id);
+  }
+
+  Map<String, int> get _statusCounts {
+    final all = widget.tickets;
+    return {
+      'All': all.length,
+      'Open': all.where((t) => t.status == 'Open').length,
+      'In Progress': all.where((t) => t.status == 'In Progress').length,
+      'Resolved': all.where((t) => t.status == 'Resolved').length,
+    };
   }
 
   @override
@@ -139,6 +147,7 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 980;
         final pageTickets = _pageSlice(widget.filteredTickets, _page, _pageSize);
+        final selected = _selected;
         final listPane = _StaffTicketListPane(
           title: widget.listTitle,
           searchCtrl: widget.searchCtrl,
@@ -147,17 +156,45 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
             setState(() => _page = 0);
             widget.onStatusChanged(value);
           },
+          priorityFilter: widget.priorityFilter,
+          onPriorityChanged: widget.onPriorityChanged == null
+              ? null
+              : (value) {
+                  setState(() => _page = 0);
+                  widget.onPriorityChanged!(value);
+                },
+          statusCounts: _statusCounts,
           tickets: pageTickets,
           allFilteredCount: widget.filteredTickets.length,
-          selectedId: wide ? _selectedId : null,
+          selectedId: _selectedId,
           loading: widget.loading,
           hasAnyTickets: widget.tickets.isNotEmpty,
           page: _page,
           pageSize: _pageSize,
           onPageChanged: (page) => setState(() => _page = page),
           onRefresh: widget.onRefresh,
-          onSelect: (ticket) => _selectTicket(ticket, wide: wide),
+          onSelect: _selectTicket,
         );
+
+        Widget threadFor(_AdminTicketEntry ticket, {required bool showBack}) {
+          return _StaffTicketThreadPane(
+            key: ValueKey('thread-${ticket.id}'),
+            ticket: ticket,
+            replyHint: widget.replyHint,
+            officeOptions: widget.officeOptions,
+            allowReassignment: widget.allowReassignment,
+            onUpdate: (payload) => widget.onUpdate(ticket, payload),
+            onReply: (message, {bool isInternal = false}) => widget.onReply(
+              ticket,
+              message,
+              isInternal: isInternal,
+            ),
+            onTicketChanged: widget.onTicketChanged,
+            onClearSelection: () => setState(() => _selectedId = null),
+            showBackButton: showBack,
+            embedDetails: !wide,
+          );
+        }
 
         if (!wide) {
           return Column(
@@ -169,7 +206,11 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                   child: _AdminNotice(message: widget.error!),
                 ),
-              Expanded(child: listPane),
+              Expanded(
+                child: selected == null
+                    ? listPane
+                    : threadFor(selected, showBack: true),
+              ),
             ],
           );
         }
@@ -177,7 +218,6 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
         final widths = _effectiveWidths(constraints.maxWidth);
         final listWidth = widths.$1;
         final detailsWidth = widths.$2;
-        final selected = _selected;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -207,24 +247,7 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
                   Expanded(
                     child: selected == null
                         ? const _StaffEmptyCenter()
-                        : _StaffTicketThreadPane(
-                            key: ValueKey('thread-${selected.id}'),
-                            ticket: selected,
-                            replyHint: widget.replyHint,
-                            officeOptions: widget.officeOptions,
-                            allowReassignment: widget.allowReassignment,
-                            onUpdate: (payload) =>
-                                widget.onUpdate(selected, payload),
-                            onReply: (message, {bool isInternal = false}) =>
-                                widget.onReply(
-                              selected,
-                              message,
-                              isInternal: isInternal,
-                            ),
-                            onTicketChanged: widget.onTicketChanged,
-                            onClearSelection: () =>
-                                setState(() => _selectedId = null),
-                          ),
+                        : threadFor(selected, showBack: false),
                   ),
                   _PaneResizeHandle(
                     onDrag: (delta) =>
@@ -340,6 +363,9 @@ class _StaffTicketListPane extends StatelessWidget {
   final TextEditingController searchCtrl;
   final String statusFilter;
   final ValueChanged<String> onStatusChanged;
+  final String priorityFilter;
+  final ValueChanged<String>? onPriorityChanged;
+  final Map<String, int> statusCounts;
   final List<_AdminTicketEntry> tickets;
   final int allFilteredCount;
   final String? selectedId;
@@ -356,6 +382,9 @@ class _StaffTicketListPane extends StatelessWidget {
     required this.searchCtrl,
     required this.statusFilter,
     required this.onStatusChanged,
+    required this.priorityFilter,
+    required this.onPriorityChanged,
+    required this.statusCounts,
     required this.tickets,
     required this.allFilteredCount,
     required this.selectedId,
@@ -404,7 +433,7 @@ class _StaffTicketListPane extends StatelessWidget {
           child: TextField(
             controller: searchCtrl,
             decoration: _adminInputDecoration(
-              hintText: 'Search ticket ID, subject, office…',
+              hintText: 'Search ticket ID, subject, or requester…',
             ),
           ),
         ),
@@ -416,19 +445,40 @@ class _StaffTicketListPane extends StatelessWidget {
             runSpacing: 8,
             children: [
               for (final status in const [
+                'All',
                 'Open',
                 'In Progress',
                 'Resolved',
-                'All',
               ])
                 _StaffFilterPill(
-                  label: status,
+                  label: '$status (${statusCounts[status] ?? 0})',
                   selected: statusFilter == status,
                   onTap: () => onStatusChanged(status),
                 ),
             ],
           ),
         ),
+        if (onPriorityChanged != null) ...[
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: DropdownButtonFormField<String>(
+              value: priorityFilter,
+              isDense: true,
+              decoration: _adminInputDecoration(hintText: 'Priority'),
+              items: const [
+                DropdownMenuItem(value: 'All', child: Text('All priorities')),
+                DropdownMenuItem(value: 'Low', child: Text('Low')),
+                DropdownMenuItem(value: 'Medium', child: Text('Medium')),
+                DropdownMenuItem(value: 'High', child: Text('High')),
+                DropdownMenuItem(value: 'Urgent', child: Text('Urgent')),
+              ],
+              onChanged: (value) {
+                if (value != null) onPriorityChanged!(value);
+              },
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         Expanded(
           child: tickets.isEmpty
@@ -473,8 +523,8 @@ class _StaffTicketListPane extends StatelessWidget {
               Expanded(
                 child: Text(
                   allFilteredCount == 0
-                      ? '0 tickets'
-                      : '$start–$end of $allFilteredCount tickets',
+                      ? 'Showing 0 tickets'
+                      : 'Showing $start–$end of $allFilteredCount tickets',
                   style: const TextStyle(
                     color: DesignTokens.muted,
                     fontSize: 12,
@@ -562,7 +612,7 @@ class _StaffTicketListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: selected ? const Color(0xFFF8E8EA) : Colors.white,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
@@ -573,12 +623,39 @@ class _StaffTicketListCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: selected ? DesignTokens.maroon : DesignTokens.border,
-              width: selected ? 1.6 : 1,
+              width: selected ? 1.4 : 1,
             ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      ticket.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected
+                            ? DesignTokens.maroon
+                            : DesignTokens.muted,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _adminFormatDate(ticket.createdAt),
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
               Text(
                 ticket.subject,
                 maxLines: 2,
@@ -592,11 +669,13 @@ class _StaffTicketListCard extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                '${ticket.id}  ·  ${_adminFormatDate(ticket.createdAt)}',
+                ticket.userName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: DesignTokens.muted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 8),
@@ -604,7 +683,7 @@ class _StaffTicketListCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      ticket.assignedOffice,
+                      ticket.category,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -638,6 +717,8 @@ class _StaffTicketThreadPane extends StatefulWidget {
   }) onReply;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
   final VoidCallback onClearSelection;
+  final bool showBackButton;
+  final bool embedDetails;
 
   const _StaffTicketThreadPane({
     super.key,
@@ -649,6 +730,8 @@ class _StaffTicketThreadPane extends StatefulWidget {
     required this.onReply,
     required this.onTicketChanged,
     required this.onClearSelection,
+    this.showBackButton = false,
+    this.embedDetails = false,
   });
 
   @override
@@ -665,6 +748,9 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
   bool _saving = false;
   bool _refreshing = false;
   bool _asInternalNote = false;
+  int _centerTab = 0;
+  List<Map<String, dynamic>> _auditEvents = const [];
+  bool _loadingAudit = false;
   Timer? _pollTimer;
 
   static const _quickReplies = <String>[
@@ -695,6 +781,8 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
       _error = null;
       _pendingAttachmentName = null;
       _asInternalNote = false;
+      _centerTab = 0;
+      _auditEvents = const [];
     } else if (widget.ticket.updatedAt != _ticket.updatedAt ||
         widget.ticket.messages.length != _ticket.messages.length) {
       _ticket = widget.ticket;
@@ -842,6 +930,48 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
       // best-effort
     } finally {
       _refreshing = false;
+    }
+  }
+
+  Future<void> _loadAudit() async {
+    setState(() => _loadingAudit = true);
+    try {
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}/audit',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      if (!mounted) return;
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        setState(() {
+          _auditEvents = const [];
+          _loadingAudit = false;
+        });
+        return;
+      }
+      final decoded = jsonDecode(result.body);
+      final items = decoded is List ? decoded : const [];
+      setState(() {
+        _auditEvents = items
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+        _loadingAudit = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _auditEvents = const [];
+          _loadingAudit = false;
+        });
+      }
+    }
+  }
+
+  void _selectCenterTab(int index) {
+    setState(() => _centerTab = index);
+    if (index == 2 && _auditEvents.isEmpty && !_loadingAudit) {
+      _loadAudit();
     }
   }
 
@@ -1018,16 +1148,18 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextButton(
-                  onPressed: widget.onClearSelection,
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                if (widget.showBackButton) ...[
+                  TextButton(
+                    onPressed: widget.onClearSelection,
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Back to tickets'),
                   ),
-                  child: const Text('Back to tickets'),
-                ),
-                const SizedBox(height: 8),
+                  const SizedBox(height: 8),
+                ],
                 Text(
                   _ticket.id,
                   style: const TextStyle(
@@ -1055,6 +1187,12 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
                     _AdminPriorityChip(priority: _ticket.priority),
                   ],
                 ),
+                const SizedBox(height: 14),
+                _StaffCenterTabs(
+                  index: _centerTab,
+                  onChanged: _selectCenterTab,
+                  includeDetails: widget.embedDetails,
+                ),
               ],
             ),
           ),
@@ -1064,125 +1202,24 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
               controller: _scrollCtrl,
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
               children: [
-                if (_ticket.description.trim().isNotEmpty) ...[
-                  const Text(
-                    'Description',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _AdminTextPanel(text: _ticket.description),
-                  const SizedBox(height: 16),
-                ],
-                const Text(
-                  'Conversation',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _AdminConversationTimeline(messages: _ticket.messages),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Attachments',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '${_ticket.attachments.length}',
-                      style: const TextStyle(
-                        color: DesignTokens.muted,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (_ticket.attachments.isEmpty)
-                  const Text(
-                    'No files yet. Use the image or paperclip buttons below.',
-                    style: TextStyle(
-                      color: DesignTokens.muted,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                    ),
+                if (_centerTab == 0) ..._conversationTab(),
+                if (_centerTab == 1 && widget.embedDetails)
+                  _StaffTicketDetailsPane(
+                    ticket: _ticket,
+                    officeOptions: widget.officeOptions,
+                    allowReassignment: widget.allowReassignment,
+                    onUpdate: widget.onUpdate,
+                    onTicketChanged: widget.onTicketChanged,
+                    embedded: true,
                   )
-                else
-                  ..._ticket.attachments.map(
-                    (file) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Material(
-                        color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(10),
-                        child: InkWell(
-                          onTap: () => _downloadAttachment(file),
-                          borderRadius: BorderRadius.circular(10),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  file.isImage
-                                      ? Icons.image
-                                      : Icons.picture_as_pdf,
-                                  size: 18,
-                                  color: DesignTokens.maroon,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        file.originalFilename,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                      Text(
-                                        '${(file.sizeBytes / 1024).toStringAsFixed(0)} KB · ${_adminFormatDate(file.createdAt)}',
-                                        style: const TextStyle(
-                                          color: DesignTokens.muted,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const Text(
-                                  'Download',
-                                  style: TextStyle(
-                                    color: DesignTokens.maroon,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                else if (_centerTab == 1)
+                  ..._detailsTab()
+                else if (_centerTab == 2)
+                  ..._historyTab(),
               ],
             ),
           ),
+          if (_centerTab == 0)
           Container(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
             decoration: const BoxDecoration(
@@ -1282,6 +1319,308 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
           ),
         ],
       ),
+    );
+  }
+
+  List<Widget> _conversationTab() {
+    final thread = <_AdminTicketMessage>[
+      if (_ticket.description.trim().isNotEmpty &&
+          _ticket.messages.every((m) => m.message.trim() != _ticket.description.trim()))
+        _AdminTicketMessage(
+          id: 'original',
+          ticketId: _ticket.id,
+          senderId: _ticket.userId,
+          senderRole: 'student',
+          senderName: _ticket.userName,
+          message: _ticket.description,
+          createdAt: _ticket.createdAt,
+        ),
+      ..._ticket.messages,
+    ];
+    return [
+      if (thread.isEmpty)
+        const Text(
+          'No conversation yet.',
+          style: TextStyle(
+            color: DesignTokens.muted,
+            fontWeight: FontWeight.w600,
+          ),
+        )
+      else
+        ...thread.map(
+          (message) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _StaffThreadBubble(message: message),
+          ),
+        ),
+      if (_ticket.attachments.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        const Text(
+          'Attachments',
+          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+        ),
+        const SizedBox(height: 8),
+        ..._ticket.attachments.map(
+          (file) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                onTap: () => _downloadAttachment(file),
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Text(
+                    file.originalFilename,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _detailsTab() {
+    final profile = _ticket.requesterProfile;
+    return [
+      _StaffDetailRow(label: 'Requester', value: _ticket.userName),
+      const SizedBox(height: 10),
+      _StaffDetailRow(label: 'Email', value: _ticket.userEmail ?? '—'),
+      const SizedBox(height: 10),
+      _StaffDetailRow(label: 'Category', value: _ticket.category),
+      const SizedBox(height: 10),
+      _StaffDetailRow(label: 'Assigned office', value: _ticket.assignedOffice),
+      if (profile.studentNumber != null) ...[
+        const SizedBox(height: 10),
+        _StaffDetailRow(label: 'Student Number', value: profile.studentNumber!),
+      ],
+      if (profile.campus != null) ...[
+        const SizedBox(height: 10),
+        _StaffDetailRow(label: 'Campus', value: profile.campus!),
+      ],
+      if (profile.program != null) ...[
+        const SizedBox(height: 10),
+        _StaffDetailRow(label: 'Program', value: profile.program!),
+      ],
+      if (_ticket.description.trim().isNotEmpty) ...[
+        const SizedBox(height: 16),
+        const Text(
+          'Original request',
+          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+        ),
+        const SizedBox(height: 8),
+        _AdminTextPanel(text: _ticket.description),
+      ],
+    ];
+  }
+
+  List<Widget> _historyTab() {
+    if (_loadingAudit) {
+      return const [
+        Padding(
+          padding: EdgeInsets.only(top: 24),
+          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        ),
+      ];
+    }
+    if (_auditEvents.isEmpty) {
+      return const [
+        Text(
+          'No history events yet.',
+          style: TextStyle(
+            color: DesignTokens.muted,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ];
+    }
+    return [
+      for (final event in _auditEvents)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: DesignTokens.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  (event['action'] ?? 'update').toString(),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                if ((event['field_name'] ?? '').toString().isNotEmpty)
+                  Text(
+                    '${event['field_name']}: ${event['old_value'] ?? '—'} → ${event['new_value'] ?? '—'}',
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      fontSize: 12,
+                    ),
+                  ),
+                Text(
+                  _adminFormatFullDate(_adminParseDate(event['created_at'])),
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ];
+  }
+}
+
+class _StaffCenterTabs extends StatelessWidget {
+  final int index;
+  final ValueChanged<int> onChanged;
+  final bool includeDetails;
+
+  const _StaffCenterTabs({
+    required this.index,
+    required this.onChanged,
+    required this.includeDetails,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = includeDetails
+        ? const ['Conversation', 'Details', 'History']
+        : const ['Conversation', 'Details', 'History'];
+    return Row(
+      children: [
+        for (var i = 0; i < labels.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(right: 18),
+            child: InkWell(
+              onTap: () => onChanged(i),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    labels[i],
+                    style: TextStyle(
+                      color: index == i
+                          ? DesignTokens.maroon
+                          : DesignTokens.muted,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    height: 2,
+                    width: 28,
+                    color: index == i
+                        ? DesignTokens.maroon
+                        : Colors.transparent,
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _StaffThreadBubble extends StatelessWidget {
+  final _AdminTicketMessage message;
+
+  const _StaffThreadBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final isStudent = message.senderRole.toLowerCase() == 'student';
+    final initials = message.senderName.trim().isEmpty
+        ? '?'
+        : message.senderName
+            .trim()
+            .split(RegExp(r'\s+'))
+            .take(2)
+            .map((part) => part[0].toUpperCase())
+            .join();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 16,
+          backgroundColor:
+              isStudent ? const Color(0xFFE2E8F0) : const Color(0xFFF3D5D8),
+          child: Text(
+            initials,
+            style: TextStyle(
+              color: isStudent ? DesignTokens.ink : DesignTokens.maroon,
+              fontWeight: FontWeight.w800,
+              fontSize: 11,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${message.senderName}${isStudent ? '' : ' · Office'}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _adminFormatDate(message.createdAt),
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isStudent ? Colors.white : const Color(0xFFFBE8D8),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isStudent
+                        ? DesignTokens.border
+                        : const Color(0xFFF4C7A5),
+                  ),
+                ),
+                child: Text(
+                  message.message,
+                  style: const TextStyle(
+                    height: 1.45,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1431,26 +1770,23 @@ class _StaffReplyToolbar extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
           ),
         ),
-        const SizedBox(width: 4),
-        Tooltip(
-          message: 'Send reply',
-          child: Material(
-            color: saving
-                ? const Color(0xFFE2E8F0)
-                : DesignTokens.maroon.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(10),
-            child: InkWell(
-              onTap: saving ? null : onSend,
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: saving ? null : onSend,
+          style: FilledButton.styleFrom(
+            backgroundColor: DesignTokens.maroon,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: const Color(0xFFE2E8F0),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            visualDensity: VisualDensity.compact,
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Icon(
-                  Icons.send,
-                  size: 20,
-                  color: saving ? DesignTokens.muted : DesignTokens.maroon,
-                ),
-              ),
             ),
+          ),
+          icon: const Icon(Icons.send, size: 16),
+          label: const Text(
+            'Send Reply',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
           ),
         ),
       ],
@@ -1493,6 +1829,8 @@ class _StaffTicketDetailsPane extends StatefulWidget {
       onUpdate;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
 
+  final bool embedded;
+
   const _StaffTicketDetailsPane({
     super.key,
     required this.ticket,
@@ -1500,6 +1838,7 @@ class _StaffTicketDetailsPane extends StatefulWidget {
     required this.allowReassignment,
     required this.onUpdate,
     required this.onTicketChanged,
+    this.embedded = false,
   });
 
   @override
@@ -1548,15 +1887,17 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
     super.dispose();
   }
 
-  Future<void> _save() async {
+  Future<void> _save({String? status, String? priority}) async {
     setState(() {
       _saving = true;
       _error = null;
+      if (status != null) _status = status;
+      if (priority != null) _priority = priority;
     });
     try {
       final updated = await widget.onUpdate({
-        'status': _status,
-        'priority': _priority,
+        'status': status ?? _status,
+        'priority': priority ?? _priority,
         if (widget.allowReassignment) 'assigned_office': _office,
         if (widget.allowReassignment) 'category': _categoryCtrl.text.trim(),
       });
@@ -1577,11 +1918,16 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
         _mergeOption(const ['Low', 'Medium', 'High', 'Urgent'], _priority);
     final offices = _mergeOption(widget.officeOptions, _office);
 
+    final profile = _ticket.requesterProfile;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      shrinkWrap: widget.embedded,
+      physics: widget.embedded
+          ? const NeverScrollableScrollPhysics()
+          : const AlwaysScrollableScrollPhysics(),
       children: [
         const Text(
-          'Ticket details',
+          'Ticket Details',
           style: TextStyle(
             fontWeight: FontWeight.w900,
             fontSize: 15,
@@ -1593,19 +1939,19 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
           label: 'Status',
           value: _status,
           values: statuses,
-          onChanged: (value) => setState(() => _status = value),
+          onChanged: (value) => _save(status: value),
         ),
         const SizedBox(height: 12),
         _AdminFilterDropdown(
           label: 'Priority',
           value: _priority,
           values: priorities,
-          onChanged: (value) => setState(() => _priority = value),
+          onChanged: (value) => _save(priority: value),
         ),
         if (widget.allowReassignment) ...[
           const SizedBox(height: 12),
           _AdminFilterDropdown(
-            label: 'Assigned office',
+            label: 'Assigned Office',
             value: _office,
             values: offices.isEmpty ? [_office] : offices,
             onChanged: (value) => setState(() => _office = value),
@@ -1617,16 +1963,14 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
           ),
         ] else ...[
           const SizedBox(height: 16),
-          _StaffDetailRow(label: 'Assigned office', value: _ticket.assignedOffice),
+          _StaffDetailRow(label: 'Assigned Office', value: _ticket.assignedOffice),
           const SizedBox(height: 10),
           _StaffDetailRow(label: 'Category', value: _ticket.category),
         ],
         const SizedBox(height: 16),
         _StaffDetailRow(label: 'Requester', value: _ticket.userName),
-        if ((_ticket.userEmail ?? '').isNotEmpty) ...[
-          const SizedBox(height: 10),
-          _StaffDetailRow(label: 'Email', value: _ticket.userEmail!),
-        ],
+        const SizedBox(height: 10),
+        _StaffDetailRow(label: 'Email', value: _ticket.userEmail ?? '—'),
         const SizedBox(height: 10),
         _StaffDetailRow(
           label: 'Created',
@@ -1636,6 +1980,21 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
         _StaffDetailRow(
           label: 'Updated',
           value: _adminFormatFullDate(_ticket.updatedAt),
+        ),
+        const SizedBox(height: 10),
+        _StaffDetailRow(
+          label: 'Student Number',
+          value: profile.studentNumber ?? '—',
+        ),
+        const SizedBox(height: 10),
+        _StaffDetailRow(
+          label: 'Campus',
+          value: profile.campus ?? '—',
+        ),
+        const SizedBox(height: 10),
+        _StaffDetailRow(
+          label: 'Program',
+          value: profile.program ?? '—',
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
@@ -1648,37 +2007,21 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
             ),
           ),
         ],
-        const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _saving ? null : _save,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: DesignTokens.maroon,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-            child: Text(_saving ? 'Saving…' : 'Save changes'),
-          ),
-        ),
-        const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: DesignTokens.border),
-          ),
-          child: const Text(
-            'Your information is secure. Ticket replies stay inside ASKa-Piyu.',
-            style: TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12,
-              height: 1.4,
-              fontWeight: FontWeight.w600,
+        if (widget.allowReassignment) ...[
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _saving ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: DesignTokens.maroon,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: Text(_saving ? 'Saving…' : 'Save changes'),
             ),
           ),
-        ),
+        ],
       ],
     );
   }

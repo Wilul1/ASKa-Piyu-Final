@@ -456,7 +456,14 @@ def answer_qa_question(
         )
         return QAResult(
             answer=answer,
-            sources=sources,
+            # Evidence was judged too weak/inconsistent to answer from (that is
+            # exactly why this branch asks the user to clarify instead) — the
+            # candidate chunks may still be named as an example inside the
+            # clarifying text above, but must not also be handed back as
+            # citations, or a stale prior-topic chunk that merely survived
+            # retrieval looks like relevant, cited evidence for a question it
+            # was never actually evidence for.
+            sources=[],
             confidence="low",
             retrieved_chunks=retrieved_debug,
             normalized_query=prepared_query.normalized_query,
@@ -791,7 +798,17 @@ def resolve_followup_question(
         and not has_pronoun
         and len(cleaned.split()) > 6
     )
-    short_followup = len(cleaned.split()) <= 8 and not standalone
+    # A short question that already names its own service/subject stands on
+    # its own even under the 8-word bar ("Who won the latest NBA game?" is 6
+    # words but fully self-contained) — without this guard, the word-count
+    # heuristic alone misclassified it as a follow-up and grafted the prior
+    # turn's active service onto it, dragging stale institutional context
+    # into a clearly unrelated new question purely because it was short.
+    short_followup = (
+        len(cleaned.split()) <= 8
+        and not standalone
+        and not _question_names_a_service_or_subject(cleaned)
+    )
     if not (followup_prefix or has_pronoun or short_followup or _is_slot_followup_question(cleaned)):
         return cleaned
 

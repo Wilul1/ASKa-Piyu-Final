@@ -1969,6 +1969,105 @@ def test_legacy_client_without_active_service_field_against_crowded_pool():
 
 
 # ---------------------------------------------------------------------------
+# General conversation-state / scope-boundary regression: a confirmed
+# production failure where a SHORT, self-contained, out-of-scope question
+# ("Who won the latest NBA game?") following a valid Enrollment/Registration
+# conversation kept the stale active_service and reused Enrollment context
+# instead of clearing to None. The root cause is generic, not NBA-specific:
+# ``resolve_followup_question``'s word-count-only ``short_followup`` heuristic
+# (<=8 words) misclassified ANY short standalone new-topic question as a
+# follow-up whenever it had no explicit follow-up prefix or pronoun, and
+# grafted the prior turn's resolved topic onto its retrieval text via
+# "(Prior question context: ...)" — even though the question already named
+# its own distinct subject. That injected text then made retrieval/scoring
+# treat the stale service as relevant evidence for the new, unrelated
+# question. None of these examples use sports/NBA wording, so the coverage
+# below cannot pass merely by special-casing that one repro sentence.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "standalone_question",
+    [
+        "Who directs the newest Marvel movie?",
+        "What is the boiling point of mercury?",
+        "Who painted the Mona Lisa?",
+        "What causes volcanic eruptions?",
+    ],
+)
+def test_short_standalone_new_topic_question_does_not_graft_prior_context(standalone_question):
+    """A short (<=8 word) question that already names its own subject must
+    not have a prior conversational topic appended to its retrieval text,
+    regardless of word count — this is the exact mechanism behind the
+    confirmed production regression."""
+    history = [
+        {"role": "user", "content": "How do I enroll?"},
+        {"role": "assistant", "content": "Go to the Registrar Office with your requirements."},
+    ]
+    resolved = resolve_followup_question(
+        standalone_question, history, client_active_service="Registration"
+    )
+    assert resolved == standalone_question
+    assert "Prior question context" not in resolved
+
+
+@pytest.mark.parametrize(
+    "starting_question,starting_answer,oos_question",
+    [
+        (
+            "How do I enroll?",
+            "Go to the Registrar Office with your requirements.",
+            "Who directs the newest Marvel movie?",
+        ),
+        (
+            "How do I get a Good Moral Certificate?",
+            "Go to the OSA for a Good Moral Certificate.",
+            "What is the boiling point of mercury?",
+        ),
+    ],
+    ids=["from-registration", "from-good-moral"],
+)
+def test_confidently_oos_short_question_clears_stale_active_service(
+    starting_question, starting_answer, oos_question
+):
+    """D & E: a confirmed-valid active_service from a prior turn (starting
+    from two different services, so the fix is not Registration-specific)
+    must not survive into a clearly unrelated, short, out-of-scope current
+    question — the response must not keep echoing the stale service or its
+    context as if it were relevant evidence, even though neither OOS example
+    appears on any hardcoded keyword list."""
+    store = RoleAwareStore(
+        [
+            _chunk(
+                "Enrollment",
+                "Enrollment. Office / Division Registrar. Fees: PHP 2,000.00.",
+                score=3.0,
+                # Hygiene-only reason (excluded from ``_positive_reasons``), not
+                # the default subject-level "*_match" reasons ``_chunk()``
+                # otherwise supplies — this simulates a chunk a real reranker
+                # found no genuine topical support for.
+                reasons=["boost_valid_source_metadata"],
+                extra_meta={"canonical_topic": "Enrollment", "office": "Registrar"},
+            )
+        ]
+    )
+    history = [
+        {"role": "user", "content": starting_question},
+        {"role": "assistant", "content": starting_answer},
+    ]
+    result = _ask(
+        store,
+        oos_question,
+        history=history,
+        client_active_service="Registration",
+        groq_return="I don't have information about that in the university knowledge base.",
+    )
+    assert result.active_service is None
+    titles = " ".join(str(s.get("title") or "") for s in (result.sources or []))
+    assert "Enrollment" not in titles
+
+
+# ---------------------------------------------------------------------------
 # Unsupported global range/category synthesis (distinct from the single-row
 # complement-inference bug above). Several *individually* grounded table
 # rows must not be synthesized into a broader global range, boundary, or

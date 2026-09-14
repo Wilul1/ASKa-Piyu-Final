@@ -62,6 +62,7 @@ void main() {
     Size size = const Size(1400, 1000),
     List<Map<String, dynamic>>? tickets,
     String search = '',
+    String? initialSelectedTicketId,
   }) async {
     await tester.binding.setSurfaceSize(size);
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -80,6 +81,7 @@ void main() {
         child: MaterialApp(
           home: OfficeAssignedTicketsPage(
             initialSearch: search,
+            initialSelectedTicketId: initialSelectedTicketId,
             debugTickets: tickets ??
                 [
                   ticketJson(
@@ -191,6 +193,19 @@ void main() {
     expect(find.text('Back to tickets'), findsOneWidget);
     expect(find.text('Conversation'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('initialSelectedTicketId selects the ticket inline', (tester) async {
+    await pumpWorkspace(
+      tester,
+      initialSelectedTicketId: 'TK-20260824-07BA4C',
+    );
+
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.text('Conversation'), findsOneWidget);
+    expect(find.text('Send Reply'), findsOneWidget);
+    expect(find.text('Ticket Details'), findsOneWidget);
+    expect(find.text('Select a ticket to view the conversation.'), findsNothing);
   });
 }
 

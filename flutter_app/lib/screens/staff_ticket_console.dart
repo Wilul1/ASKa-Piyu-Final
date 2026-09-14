@@ -130,6 +130,7 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
         (widget.filteredTickets.length / _pageSize).ceil().clamp(1, 9999);
     if (_page >= totalPages) _page = totalPages - 1;
     if (_selectedId != null &&
+        widget.tickets.isNotEmpty &&
         !widget.filteredTickets.any((t) => t.id == _selectedId) &&
         !widget.tickets.any((t) => t.id == _selectedId)) {
       _selectedId = null;

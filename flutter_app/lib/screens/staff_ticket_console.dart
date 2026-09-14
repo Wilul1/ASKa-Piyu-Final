@@ -26,6 +26,7 @@ class _StaffTicketConsole extends StatefulWidget {
     bool isInternal,
   }) onReply;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
+  final String? initialSelectedId;
 
   const _StaffTicketConsole({
     required this.tickets,
@@ -45,6 +46,7 @@ class _StaffTicketConsole extends StatefulWidget {
     required this.onUpdate,
     required this.onReply,
     required this.onTicketChanged,
+    this.initialSelectedId,
   });
 
   @override
@@ -55,6 +57,13 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
   String? _selectedId;
   int _page = 0;
   static const int _pageSize = 8;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedId = widget.initialSelectedId;
+    _syncPageToSelection();
+  }
 
   /// Side pane widths (wide layout only). Kept within min/max so panes never vanish.
   double _listWidth = 320;
@@ -125,6 +134,15 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
         !widget.tickets.any((t) => t.id == _selectedId)) {
       _selectedId = null;
     }
+    _syncPageToSelection();
+  }
+
+  void _syncPageToSelection() {
+    final id = _selectedId;
+    if (id == null) return;
+    final index = widget.filteredTickets.indexWhere((ticket) => ticket.id == id);
+    if (index < 0) return;
+    _page = index ~/ _pageSize;
   }
 
   void _selectTicket(_AdminTicketEntry ticket) {

@@ -342,7 +342,19 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
 }
 
 class OfficeDashboardPage extends StatefulWidget {
-  const OfficeDashboardPage({super.key});
+  /// Seeded tickets skip network load. Widget tests only.
+  @visibleForTesting
+  final List<Map<String, dynamic>>? debugTickets;
+
+  /// Frozen clock for widget tests.
+  @visibleForTesting
+  final DateTime? debugNow;
+
+  const OfficeDashboardPage({
+    super.key,
+    this.debugTickets,
+    this.debugNow,
+  });
 
   @override
   State<OfficeDashboardPage> createState() => _OfficeDashboardPageState();
@@ -353,6 +365,20 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
   bool _loading = false;
   String? _error;
   bool _requestedInitialLoad = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final seeded = widget.debugTickets;
+    if (seeded != null) {
+      _requestedInitialLoad = true;
+      _tickets.addAll(
+        seeded.map(
+          (item) => _AdminTicketEntry.fromJson(Map<String, dynamic>.from(item)),
+        ),
+      );
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -391,147 +417,102 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
     }
   }
 
+  int get _openCount =>
+      _tickets.where((ticket) => ticket.status == 'Open').length;
+
+  int get _inProgressCount =>
+      _tickets.where((ticket) => ticket.status == 'In Progress').length;
+
+  int get _closedCount => _tickets
+      .where((ticket) =>
+          ticket.status == 'Closed' || ticket.status == 'Resolved')
+      .length;
+
+  int get _highPriorityCount => _tickets
+      .where((ticket) =>
+          ticket.priority == 'High' || ticket.priority == 'Urgent')
+      .length;
+
+  List<_AdminTicketEntry> get _recentTickets {
+    final items = [..._tickets]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return items.take(8).toList();
+  }
+
+  void _openAssignedTickets({String? ticketId}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => OfficeAssignedTicketsPage(
+          initialSelectedTicketId: ticketId,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final officeName =
         AuthScope.of(context).currentUser?.officeName ?? 'Office';
-    final open = _tickets.where((ticket) => ticket.status == 'Open').length;
-    final progress =
-        _tickets.where((ticket) => ticket.status == 'In Progress').length;
-    final closed = _tickets.where((ticket) => ticket.status == 'Closed').length;
-    final highPriority = _tickets
-        .where((ticket) =>
-            ticket.priority == 'High' || ticket.priority == 'Urgent')
-        .length;
-    final repliesSent = _tickets.fold<int>(
-      0,
-      (total, ticket) =>
-          total +
-          ticket.messages
-              .where((message) => message.senderRole.toLowerCase() == 'office')
-              .length,
-    );
-    final needsAttention = _tickets
-        .where((ticket) =>
-            ticket.status == 'Open' || ticket.status == 'In Progress')
-        .toList()
-      ..sort((a, b) {
-        int rank(_AdminTicketEntry t) {
-          if (t.priority == 'Urgent') return 0;
-          if (t.priority == 'High') return 1;
-          if (t.status == 'Open') return 2;
-          return 3;
-        }
-
-        final byPriority = rank(a).compareTo(rank(b));
-        if (byPriority != 0) return byPriority;
-        return b.updatedAt.compareTo(a.updatedAt);
-      });
-
-    final cards = [
-      _AdminMetricData(
-          'Assigned Tickets', '${_tickets.length}', Icons.assignment_rounded),
-      _AdminMetricData('Open', '$open', Icons.mark_email_unread_rounded,
-          statusFilter: 'Open'),
-      _AdminMetricData('In Progress', '$progress', Icons.timelapse_rounded,
-          statusFilter: 'In Progress'),
-      _AdminMetricData('Closed', '$closed', Icons.check_circle_rounded,
-          statusFilter: 'Closed'),
-      _AdminMetricData(
-          'High Priority', '$highPriority', Icons.priority_high_rounded),
-      _AdminMetricData('Replies Sent', '$repliesSent', Icons.forum_rounded),
-    ];
-
-    void openAssigned({String status = 'All'}) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => OfficeAssignedTicketsPage(
-            initialStatusFilter: status,
-          ),
-        ),
-      );
-    }
+    final now = widget.debugNow ?? DateTime.now();
 
     return OfficeScaffold(
       current: StudentNavItem.officeDashboard,
       title: 'Office Dashboard',
       description: 'Overview of workload for $officeName.',
+      fillBody: true,
+      showHeader: false,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_loading) const LinearProgressIndicator(minHeight: 3),
           if (_error != null)
-            _AdminNotice(icon: Icons.info_outline_rounded, message: _error!),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 900
-                  ? 3
-                  : constraints.maxWidth >= 560
-                      ? 2
-                      : 1;
-              return StudentResponsiveWrap(
-                columns: columns,
-                spacing: 14,
-                children: cards
-                    .map((card) => _AdminMetricCard(
-                          data: card,
-                          onTap: () => openAssigned(
-                            status: card.statusFilter ?? 'All',
-                          ),
-                        ))
-                    .toList(),
-              );
-            },
-          ),
-          const SizedBox(height: 18),
-          StudentPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: StudentSectionTitle(
-                        title: 'Needs attention',
-                        subtitle:
-                            'Open and in-progress tickets that still need office action.',
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () => openAssigned(),
-                      icon: const Icon(Icons.assignment_turned_in_rounded,
-                          size: 18),
-                      label: const Text('Open assigned tickets'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: DesignTokens.maroon,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (_loading && _tickets.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 18),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else if (needsAttention.isEmpty)
-                  const _AdminTicketState(
-                    icon: Icons.check_circle_outline_rounded,
-                    title: 'Nothing needs attention',
-                    message:
-                        'No open or in-progress tickets right now. Use Assigned Tickets to browse the full history.',
-                  )
-                else
-                  ...needsAttention.take(4).map(
-                        (ticket) => _OfficeAttentionRow(
-                          ticket: ticket,
-                          onOpenQueue: () => openAssigned(
-                            status: ticket.status,
-                          ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: _AdminNotice(
+                icon: Icons.info_outline_rounded,
+                message: _error!,
+              ),
+            ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 900;
+                return SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    wide ? 24 : 14,
+                    wide ? 20 : 14,
+                    wide ? 24 : 14,
+                    24,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1180),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _OfficeDashboardHeader(
+                          officeName: officeName,
+                          now: now,
                         ),
-                      ),
-              ],
+                        const SizedBox(height: 18),
+                        _OfficeDashboardStatsRow(
+                          assigned: _tickets.length,
+                          open: _openCount,
+                          inProgress: _inProgressCount,
+                          closed: _closedCount,
+                          highPriority: _highPriorityCount,
+                        ),
+                        const SizedBox(height: 18),
+                        _OfficeRecentTicketsPanel(
+                          tickets: _recentTickets,
+                          onViewAll: () => _openAssignedTickets(),
+                          onOpenTicket: (ticket) =>
+                              _openAssignedTickets(ticketId: ticket.id),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -543,6 +524,7 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
 class OfficeAssignedTicketsPage extends StatefulWidget {
   final String initialStatusFilter;
   final String initialSearch;
+  final String? initialSelectedTicketId;
   /// Seeded tickets skip network load. Widget tests only.
   @visibleForTesting
   final List<Map<String, dynamic>>? debugTickets;
@@ -551,6 +533,7 @@ class OfficeAssignedTicketsPage extends StatefulWidget {
     super.key,
     this.initialStatusFilter = 'All',
     this.initialSearch = '',
+    this.initialSelectedTicketId,
     this.debugTickets,
   });
 
@@ -716,6 +699,7 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
         onUpdate: _patchTicket,
         onReply: _replyToTicket,
         onTicketChanged: _replaceTicket,
+        initialSelectedId: widget.initialSelectedTicketId,
       ),
     );
   }
@@ -3059,6 +3043,7 @@ class OfficeScaffold extends StatelessWidget {
   final String description;
   final Widget child;
   final bool fillBody;
+  final bool showHeader;
 
   const OfficeScaffold({
     super.key,
@@ -3067,6 +3052,7 @@ class OfficeScaffold extends StatelessWidget {
     required this.description,
     required this.child,
     this.fillBody = false,
+    this.showHeader = true,
   });
 
   @override
@@ -3125,36 +3111,37 @@ class OfficeScaffold extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    isWide ? 20 : 14,
-                    isWide ? 16 : 12,
-                    isWide ? 20 : 14,
-                    8,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: DesignTokens.ink,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
+                if (showHeader)
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      isWide ? 20 : 14,
+                      isWide ? 16 : 12,
+                      isWide ? 20 : 14,
+                      8,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            color: DesignTokens.ink,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        description,
-                        style: const TextStyle(
-                          color: DesignTokens.muted,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                        const SizedBox(height: 4),
+                        Text(
+                          description,
+                          style: const TextStyle(
+                            color: DesignTokens.muted,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
                 Expanded(child: child),
               ],
             ),
@@ -3264,6 +3251,623 @@ class _AdminMetricCard extends StatelessWidget {
   }
 }
 
+class _OfficeDashboardHeader extends StatelessWidget {
+  final String officeName;
+  final DateTime now;
+
+  const _OfficeDashboardHeader({
+    required this.officeName,
+    required this.now,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'WELCOME BACK',
+                style: TextStyle(
+                  color: DesignTokens.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Office Dashboard',
+                style: TextStyle(
+                  color: DesignTokens.ink,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  height: 1.1,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Overview of workload for $officeName.',
+                style: const TextStyle(
+                  color: DesignTokens.muted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        _OfficeDashboardClock(now: now),
+      ],
+    );
+  }
+}
+
+class _OfficeDashboardClock extends StatelessWidget {
+  final DateTime now;
+
+  const _OfficeDashboardClock({required this.now});
+
+  @override
+  Widget build(BuildContext context) {
+    final local = now.toLocal();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: DesignTokens.border),
+        boxShadow: DesignTokens.softShadow(0.04),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            _officeDashboardDateLine(local),
+            style: const TextStyle(
+              color: DesignTokens.ink,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _officeDashboardTimeLine(local),
+            style: const TextStyle(
+              color: DesignTokens.muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfficeDashboardStatsRow extends StatelessWidget {
+  final int assigned;
+  final int open;
+  final int inProgress;
+  final int closed;
+  final int highPriority;
+
+  const _OfficeDashboardStatsRow({
+    required this.assigned,
+    required this.open,
+    required this.inProgress,
+    required this.closed,
+    required this.highPriority,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = [
+      _OfficeDashboardStatData(
+        label: 'Assigned Tickets',
+        value: '$assigned',
+        subtitle: 'Tickets assigned to your office',
+        accent: const Color(0xFF7A1218),
+      ),
+      _OfficeDashboardStatData(
+        label: 'Open Tickets',
+        value: '$open',
+        subtitle: 'Awaiting action',
+        accent: const Color(0xFF3B82F6),
+      ),
+      _OfficeDashboardStatData(
+        label: 'In Progress',
+        value: '$inProgress',
+        subtitle: 'Currently being handled',
+        accent: const Color(0xFFF59E0B),
+      ),
+      _OfficeDashboardStatData(
+        label: 'Closed Tickets',
+        value: '$closed',
+        subtitle: 'Resolved tickets',
+        accent: const Color(0xFF22C55E),
+      ),
+      _OfficeDashboardStatData(
+        label: 'High Priority',
+        value: '$highPriority',
+        subtitle: 'Requires immediate attention',
+        accent: const Color(0xFFEF4444),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final columns = width >= 1080
+            ? 5
+            : width >= 820
+                ? 3
+                : width >= 520
+                    ? 2
+                    : 1;
+        const gap = 12.0;
+        final cardWidth = columns == 1
+            ? width
+            : (width - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: stats
+              .map(
+                (stat) => SizedBox(
+                  width: cardWidth,
+                  child: _OfficeDashboardStatCard(data: stat),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+}
+
+class _OfficeDashboardStatData {
+  final String label;
+  final String value;
+  final String subtitle;
+  final Color accent;
+
+  const _OfficeDashboardStatData({
+    required this.label,
+    required this.value,
+    required this.subtitle,
+    required this.accent,
+  });
+}
+
+class _OfficeDashboardStatCard extends StatelessWidget {
+  final _OfficeDashboardStatData data;
+
+  const _OfficeDashboardStatCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: DesignTokens.border),
+        boxShadow: DesignTokens.softShadow(0.035),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(height: 3, color: data.accent),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  data.label,
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  data.value,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  data.subtitle,
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfficeRecentTicketsPanel extends StatelessWidget {
+  final List<_AdminTicketEntry> tickets;
+  final VoidCallback onViewAll;
+  final ValueChanged<_AdminTicketEntry> onOpenTicket;
+
+  const _OfficeRecentTicketsPanel({
+    required this.tickets,
+    required this.onViewAll,
+    required this.onOpenTicket,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DesignTokens.border),
+        boxShadow: DesignTokens.softShadow(0.03),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Recent Tickets',
+                      style: TextStyle(
+                        color: DesignTokens.ink,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Latest tickets assigned to your office.',
+                      style: TextStyle(
+                        color: DesignTokens.muted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: onViewAll,
+                style: TextButton.styleFrom(
+                  foregroundColor: DesignTokens.maroon,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: const Text(
+                  'View all tickets →',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (tickets.isEmpty)
+            const _OfficeRecentTicketsEmpty()
+          else
+            LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth < 760) {
+                  return Column(
+                    children: [
+                      for (var i = 0; i < tickets.length; i++)
+                        _OfficeRecentTicketCard(
+                          index: i + 1,
+                          ticket: tickets[i],
+                          onTap: () => onOpenTicket(tickets[i]),
+                        ),
+                    ],
+                  );
+                }
+                return _OfficeRecentTicketsTable(
+                  tickets: tickets,
+                  onOpenTicket: onOpenTicket,
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfficeRecentTicketsEmpty extends StatelessWidget {
+  const _OfficeRecentTicketsEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 48),
+      child: Column(
+        children: [
+          Icon(
+            Icons.description_outlined,
+            size: 34,
+            color: Color(0xFFCBD5E1),
+          ),
+          SizedBox(height: 12),
+          Text(
+            'No recent tickets',
+            style: TextStyle(
+              color: DesignTokens.ink,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          SizedBox(height: 6),
+          Text(
+            'Tickets assigned to your office will appear here.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: DesignTokens.muted,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfficeRecentTicketsTable extends StatelessWidget {
+  final List<_AdminTicketEntry> tickets;
+  final ValueChanged<_AdminTicketEntry> onOpenTicket;
+
+  const _OfficeRecentTicketsTable({
+    required this.tickets,
+    required this.onOpenTicket,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(8, 0, 8, 8),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 36,
+                child: Text('#', style: _kTableHeader),
+              ),
+              Expanded(
+                flex: 4,
+                child: Text('TITLE', style: _kTableHeader),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text('STATUS', style: _kTableHeader),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text('PRIORITY', style: _kTableHeader),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text('REQUESTER', style: _kTableHeader),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text('DATE ASSIGNED', style: _kTableHeader),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: DesignTokens.border),
+        for (var i = 0; i < tickets.length; i++) ...[
+          _OfficeRecentTicketRow(
+            index: i + 1,
+            ticket: tickets[i],
+            onTap: () => onOpenTicket(tickets[i]),
+          ),
+          if (i != tickets.length - 1)
+            const Divider(height: 1, color: DesignTokens.border),
+        ],
+      ],
+    );
+  }
+}
+
+const TextStyle _kTableHeader = TextStyle(
+  color: DesignTokens.muted,
+  fontSize: 11,
+  fontWeight: FontWeight.w800,
+  letterSpacing: 0.4,
+);
+
+class _OfficeRecentTicketRow extends StatelessWidget {
+  final int index;
+  final _AdminTicketEntry ticket;
+  final VoidCallback onTap;
+
+  const _OfficeRecentTicketRow({
+    required this.index,
+    required this.ticket,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 36,
+                child: Text(
+                  '$index',
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 4,
+                child: Text(
+                  ticket.subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _AdminStatusChip(status: ticket.status),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _AdminPriorityChip(priority: ticket.priority),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  ticket.userName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  _adminFormatAssignedDate(ticket.createdAt),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OfficeRecentTicketCard extends StatelessWidget {
+  final int index;
+  final _AdminTicketEntry ticket;
+  final VoidCallback onTap;
+
+  const _OfficeRecentTicketCard({
+    required this.index,
+    required this.ticket,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '#$index  ${ticket.subject}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    _AdminStatusChip(status: ticket.status),
+                    _AdminPriorityChip(priority: ticket.priority),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  ticket.userName,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _adminFormatAssignedDate(ticket.createdAt),
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AdminTicketSummary extends StatelessWidget {
   final List<_AdminTicketEntry> tickets;
 
@@ -3297,88 +3901,6 @@ class _AdminTicketSummary extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _OfficeAttentionRow extends StatelessWidget {
-  final _AdminTicketEntry ticket;
-  final VoidCallback onOpenQueue;
-
-  const _OfficeAttentionRow({
-    required this.ticket,
-    required this.onOpenQueue,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onOpenQueue,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          Text(
-                            ticket.id,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 12,
-                              color: DesignTokens.muted,
-                            ),
-                          ),
-                          _AdminStatusChip(status: ticket.status),
-                          _AdminPriorityChip(priority: ticket.priority),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        ticket.subject,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: DesignTokens.ink,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${ticket.userName} · ${ticket.category}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: DesignTokens.muted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Icon(Icons.chevron_right_rounded,
-                    color: DesignTokens.muted),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -5486,6 +6008,35 @@ String _adminFormatDate(DateTime date) {
     'Dec',
   ];
   return '${months[date.month - 1]} ${date.day}';
+}
+
+String _adminFormatAssignedDate(DateTime date) {
+  final local = date.toLocal();
+  return '${_adminFormatDate(local)}, ${local.year}';
+}
+
+String _officeDashboardDateLine(DateTime date) {
+  const weekdays = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  return '${weekdays[date.weekday - 1]}, ${_adminFormatDate(date)}, ${date.year}';
+}
+
+String _officeDashboardTimeLine(DateTime date) {
+  final hour = date.hour == 0
+      ? 12
+      : date.hour > 12
+          ? date.hour - 12
+          : date.hour;
+  final minute = date.minute.toString().padLeft(2, '0');
+  final meridiem = date.hour >= 12 ? 'PM' : 'AM';
+  return '$hour:$minute $meridiem';
 }
 
 String _adminFormatFullDate(DateTime date) {

@@ -68,6 +68,13 @@ void main() {
     bool loading = false,
     String? error,
     String officeName = 'Office of Student Affairs (OSA)',
+    Future<Map<String, dynamic>> Function({
+      required bool staff,
+      required String fullName,
+      required String email,
+      required String password,
+    })?
+    debugCreateAccount,
   }) async {
     await tester.binding.setSurfaceSize(size);
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -75,10 +82,9 @@ void main() {
     final controller = AuthController(
       service: _FakeAuthService(_officeUser(officeName: officeName)),
     );
-    await controller.login(const LoginRequest(
-      email: 'office@example.edu',
-      password: 'password',
-    ));
+    await controller.login(
+      const LoginRequest(email: 'office@example.edu', password: 'password'),
+    );
 
     await tester.pumpWidget(
       AuthScope(
@@ -88,12 +94,64 @@ void main() {
             debugUsers: users,
             debugLoading: loading,
             debugError: error,
+            debugCreateAccount: debugCreateAccount,
           ),
         ),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
+  }
+
+  Future<void> openCreateMenu(
+    WidgetTester tester, {
+    required Key itemKey,
+  }) async {
+    await tester.tap(find.byKey(const Key('office-add-account')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(itemKey));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> fillCreateForm(
+    WidgetTester tester, {
+    String name = 'New Person',
+    String email = 'new.person@example.edu',
+    String password = 'TempPass1234',
+  }) async {
+    await tester.enterText(
+      find.byKey(const Key('office-account-create-name')),
+      name,
+    );
+    await tester.enterText(
+      find.byKey(const Key('office-account-create-email')),
+      email,
+    );
+    await tester.enterText(
+      find.byKey(const Key('office-account-create-password')),
+      password,
+    );
+    await tester.pump();
+  }
+
+  void expectRightSideDrawer() {
+    expect(
+      find.byKey(const Key('office-account-create-drawer')),
+      findsOneWidget,
+    );
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('New office staff login'), findsNothing);
+    expect(find.text('New faculty login'), findsNothing);
+    expect(find.text('Create staff login'), findsNothing);
+    expect(find.text('Create faculty login'), findsNothing);
+    final align =
+        find
+                .byKey(const Key('office-account-create-align'))
+                .evaluate()
+                .single
+                .widget
+            as Align;
+    expect(align.alignment, Alignment.centerRight);
   }
 
   testWidgets('Office Account page renders', (tester) async {
@@ -120,7 +178,10 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('College of Computer Studies (CCS)'), findsNothing);
+    expect(
+      find.textContaining('College of Computer Studies (CCS)'),
+      findsNothing,
+    );
   });
 
   testWidgets('Office Staff accounts render from fixture data', (tester) async {
@@ -147,7 +208,10 @@ void main() {
   testWidgets('staff search filters independently of faculty', (tester) async {
     await pumpAccount(tester, users: sampleUsers());
 
-    await tester.enterText(find.byKey(const Key('office-staff-search')), 'maria');
+    await tester.enterText(
+      find.byKey(const Key('office-staff-search')),
+      'maria',
+    );
     await tester.pump();
 
     expect(find.text('Maria Santos'), findsOneWidget);
@@ -178,8 +242,9 @@ void main() {
     expect(find.text('Inactive'), findsNWidgets(2));
   });
 
-  testWidgets('office account does not invent edit or deactivate actions',
-      (tester) async {
+  testWidgets('office account does not invent edit or deactivate actions', (
+    tester,
+  ) async {
     await pumpAccount(tester, users: sampleUsers());
 
     expect(find.text('Edit'), findsNothing);
@@ -187,34 +252,318 @@ void main() {
     expect(find.text('Activate'), findsNothing);
   });
 
-  testWidgets('Add Account opens the existing staff creation dialog',
-      (tester) async {
+  testWidgets('Add Account → Office Staff opens a right-side drawer', (
+    tester,
+  ) async {
     await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
 
-    await tester.tap(find.byKey(const Key('office-add-account')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('add-office-staff')));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text('New office staff login'), findsOneWidget);
+    expectRightSideDrawer();
+    expect(find.text('Add Office Staff Account'), findsOneWidget);
+    expect(
+      find.text(
+        'Create a new office staff login for your office. They can sign in to manage tickets, knowledge base, and other office tools.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Full name'), findsOneWidget);
+    expect(find.text('Enter full name'), findsOneWidget);
+    expect(find.text("Use the staff member's complete name."), findsOneWidget);
+    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Enter email address'), findsOneWidget);
+    expect(find.text('Use a valid email address.'), findsOneWidget);
+    expect(find.text('Use a valid institutional email.'), findsNothing);
     expect(find.text('Temporary password'), findsOneWidget);
-    expect(find.text('Create staff login'), findsOneWidget);
+    expect(find.text('Enter temporary password'), findsOneWidget);
+    expect(
+      find.text('At least 10 characters, with a letter and a number.'),
+      findsOneWidget,
+    );
+    expect(find.text('Create Office Staff Account'), findsOneWidget);
+    expect(find.text('USER ACCOUNTS'), findsOneWidget);
+    expect(find.text('Office Staff Accounts'), findsOneWidget);
+    expect(find.text('Maria Santos'), findsOneWidget);
   });
 
-  testWidgets('Add Account opens the existing faculty creation dialog',
-      (tester) async {
+  testWidgets('Staff Cancel and close X dismiss the drawer', (tester) async {
     await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
 
-    await tester.tap(find.byKey(const Key('office-add-account')));
+    await tester.tap(find.byKey(const Key('office-account-create-cancel')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('add-office-faculty')));
+    expect(find.byKey(const Key('office-account-create-drawer')), findsNothing);
+    expect(find.text('Add Office Staff Account'), findsNothing);
+
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
+    await tester.tap(find.byKey(const Key('office-account-create-close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('office-account-create-drawer')), findsNothing);
+    expect(find.text('Maria Santos'), findsOneWidget);
+  });
+
+  testWidgets('Staff drawer validation remains functional', (tester) async {
+    await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
+
+    await tester.tap(find.byKey(const Key('office-account-create-submit')));
+    await tester.pump();
+    expect(find.text('Enter a name.'), findsOneWidget);
+    expect(find.text('Enter an email.'), findsOneWidget);
+    expect(find.text('Use at least 10 characters.'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('office-account-create-name')),
+      'New Staff',
+    );
+    await tester.enterText(
+      find.byKey(const Key('office-account-create-email')),
+      'not-an-email',
+    );
+    await tester.enterText(
+      find.byKey(const Key('office-account-create-password')),
+      'abcdefghij',
+    );
+    await tester.tap(find.byKey(const Key('office-account-create-submit')));
+    await tester.pump();
+    expect(find.text('Enter a valid email.'), findsOneWidget);
+    expect(find.text('Include a letter and a number.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('office-account-create-drawer')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Staff password visibility toggle works', (tester) async {
+    await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
+
+    final passwordFinder = find.descendant(
+      of: find.byKey(const Key('office-account-create-password')),
+      matching: find.byType(TextField),
+    );
+    expect(tester.widget<TextField>(passwordFinder).obscureText, isTrue);
+
+    final toggle = find.byKey(
+      const Key('office-account-create-password-toggle'),
+    );
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(tester.widget<TextField>(passwordFinder).obscureText, isFalse);
+  });
+
+  testWidgets('Staff submission uses the existing create flow', (tester) async {
+    var called = false;
+    late bool staffFlag;
+    late String capturedName;
+    late String capturedEmail;
+    late String capturedPassword;
+
+    await pumpAccount(
+      tester,
+      users: sampleUsers(),
+      debugCreateAccount: ({
+        required staff,
+        required fullName,
+        required email,
+        required password,
+      }) async {
+        called = true;
+        staffFlag = staff;
+        capturedName = fullName;
+        capturedEmail = email;
+        capturedPassword = password;
+        return userJson(
+          id: 'staff-new',
+          name: fullName,
+          email: email,
+          role: 'office',
+        );
+      },
+    );
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
+    await fillCreateForm(
+      tester,
+      name: 'Jordan Cruz',
+      email: 'jordan.cruz@example.edu',
+      password: 'TempPass1234',
+    );
+    await tester.tap(find.byKey(const Key('office-account-create-submit')));
     await tester.pumpAndSettle();
 
-    expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text('New faculty login'), findsOneWidget);
-    expect(find.text('Create faculty login'), findsOneWidget);
+    expect(called, isTrue);
+    expect(staffFlag, isTrue);
+    expect(capturedName, 'Jordan Cruz');
+    expect(capturedEmail, 'jordan.cruz@example.edu');
+    expect(capturedPassword, 'TempPass1234');
+    expect(find.byKey(const Key('office-account-create-drawer')), findsNothing);
+    expect(
+      find.text(
+        'Office staff login created for jordan.cruz@example.edu. '
+        'They will open this office workspace on sign-in.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Maria Santos'), findsOneWidget);
+  });
+
+  testWidgets('Add Account → Faculty opens a right-side drawer', (
+    tester,
+  ) async {
+    await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-faculty'));
+
+    expectRightSideDrawer();
+    expect(find.text('Add Faculty Account'), findsOneWidget);
+    expect(
+      find.text(
+        'Create a new faculty login. Faculty accounts can sign in and use faculty Knowledge Base tools. They do not open the office ticket console.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Full name'), findsOneWidget);
+    expect(
+      find.text("Use the faculty member's complete name."),
+      findsOneWidget,
+    );
+    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Temporary password'), findsOneWidget);
+    expect(find.text('Create Faculty Account'), findsOneWidget);
+    expect(find.text('USER ACCOUNTS'), findsOneWidget);
+    expect(find.text('Faculty Accounts'), findsOneWidget);
+    expect(find.text('Ana Reyes'), findsOneWidget);
+  });
+
+  testWidgets('Faculty Cancel and close X dismiss the drawer', (tester) async {
+    await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-faculty'));
+
+    await tester.tap(find.byKey(const Key('office-account-create-close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('office-account-create-drawer')), findsNothing);
+
+    await openCreateMenu(tester, itemKey: const Key('add-office-faculty'));
+    await tester.tap(find.byKey(const Key('office-account-create-cancel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('office-account-create-drawer')), findsNothing);
+    expect(find.text('Ana Reyes'), findsOneWidget);
+  });
+
+  testWidgets('Faculty drawer validation remains functional', (tester) async {
+    await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-faculty'));
+
+    await tester.tap(find.byKey(const Key('office-account-create-submit')));
+    await tester.pump();
+    expect(find.text('Enter a name.'), findsOneWidget);
+    expect(find.text('Enter an email.'), findsOneWidget);
+    expect(find.text('Use at least 10 characters.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('office-account-create-drawer')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Faculty password visibility toggle works', (tester) async {
+    await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-faculty'));
+
+    final passwordFinder = find.descendant(
+      of: find.byKey(const Key('office-account-create-password')),
+      matching: find.byType(TextField),
+    );
+    expect(tester.widget<TextField>(passwordFinder).obscureText, isTrue);
+    final toggle = find.byKey(
+      const Key('office-account-create-password-toggle'),
+    );
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(tester.widget<TextField>(passwordFinder).obscureText, isFalse);
+  });
+
+  testWidgets('Faculty submission uses the existing create flow', (
+    tester,
+  ) async {
+    var called = false;
+    late bool staffFlag;
+
+    await pumpAccount(
+      tester,
+      users: sampleUsers(),
+      debugCreateAccount: ({
+        required staff,
+        required fullName,
+        required email,
+        required password,
+      }) async {
+        called = true;
+        staffFlag = staff;
+        return userJson(
+          id: 'faculty-new',
+          name: fullName,
+          email: email,
+          role: 'faculty',
+        );
+      },
+    );
+    await openCreateMenu(tester, itemKey: const Key('add-office-faculty'));
+    await fillCreateForm(
+      tester,
+      name: 'Prof. Santos',
+      email: 'prof.santos@example.edu',
+    );
+    await tester.tap(find.byKey(const Key('office-account-create-submit')));
+    await tester.pumpAndSettle();
+
+    expect(called, isTrue);
+    expect(staffFlag, isFalse);
+    expect(find.byKey(const Key('office-account-create-drawer')), findsNothing);
+    expect(
+      find.text(
+        'Faculty login created for prof.santos@example.edu. '
+        'Share the temporary password securely.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Ana Reyes'), findsOneWidget);
+  });
+
+  testWidgets('search still works after closing the staff drawer', (
+    tester,
+  ) async {
+    await pumpAccount(tester, users: sampleUsers());
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
+    await tester.tap(find.byKey(const Key('office-account-create-cancel')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('office-staff-search')),
+      'maria',
+    );
+    await tester.pump();
+    expect(find.text('Maria Santos'), findsOneWidget);
+    expect(find.text('Inactive Staff'), findsNothing);
+    expect(find.text('Ana Reyes'), findsOneWidget);
+  });
+
+  testWidgets('narrow layout drawer does not overflow', (tester) async {
+    await pumpAccount(tester, users: sampleUsers(), size: const Size(400, 900));
+    await openCreateMenu(tester, itemKey: const Key('add-office-staff'));
+
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const Key('office-account-create-drawer')),
+      findsOneWidget,
+    );
+    expect(find.text('Add Office Staff Account'), findsOneWidget);
+    expect(find.text('Create Office Staff Account'), findsOneWidget);
+    final drawerBox = tester.getSize(
+      find.byKey(const Key('office-account-create-drawer')),
+    );
+    expect(drawerBox.width, lessThanOrEqualTo(400));
   });
 
   testWidgets('empty states render for staff and faculty', (tester) async {
@@ -226,8 +575,9 @@ void main() {
     expect(find.text('Ana Reyes'), findsNothing);
   });
 
-  testWidgets('no search results state renders without fake rows',
-      (tester) async {
+  testWidgets('no search results state renders without fake rows', (
+    tester,
+  ) async {
     await pumpAccount(tester, users: sampleUsers());
 
     await tester.enterText(
@@ -250,11 +600,7 @@ void main() {
   });
 
   testWidgets('error state does not break layout', (tester) async {
-    await pumpAccount(
-      tester,
-      users: const [],
-      error: 'Could not load users.',
-    );
+    await pumpAccount(tester, users: const [], error: 'Could not load users.');
 
     expect(find.text('Could not load users.'), findsOneWidget);
     expect(find.text('No office staff accounts yet'), findsOneWidget);
@@ -262,11 +608,7 @@ void main() {
   });
 
   testWidgets('narrow layout has no overflow', (tester) async {
-    await pumpAccount(
-      tester,
-      users: sampleUsers(),
-      size: const Size(400, 900),
-    );
+    await pumpAccount(tester, users: sampleUsers(), size: const Size(400, 900));
 
     expect(tester.takeException(), isNull);
     expect(find.text('Account'), findsWidgets);
@@ -288,13 +630,10 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final controller = AuthController(
-      service: _FakeAuthService(_adminUser()),
+    final controller = AuthController(service: _FakeAuthService(_adminUser()));
+    await controller.login(
+      const LoginRequest(email: 'admin@example.edu', password: 'password'),
     );
-    await controller.login(const LoginRequest(
-      email: 'admin@example.edu',
-      password: 'password',
-    ));
 
     await tester.pumpWidget(
       AuthScope(

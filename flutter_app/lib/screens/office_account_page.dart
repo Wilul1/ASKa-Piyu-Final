@@ -15,11 +15,23 @@ class OfficeFacultyAccountsPage extends StatefulWidget {
   @visibleForTesting
   final String? debugError;
 
+  /// Intercepts account creation in widget tests. Production remains
+  /// `POST /auth/office-accounts` and `POST /auth/faculty-accounts`.
+  @visibleForTesting
+  final Future<Map<String, dynamic>> Function({
+    required bool staff,
+    required String fullName,
+    required String email,
+    required String password,
+  })?
+  debugCreateAccount;
+
   const OfficeFacultyAccountsPage({
     super.key,
     this.debugUsers,
     this.debugLoading = false,
     this.debugError,
+    this.debugCreateAccount,
   });
 
   @override
@@ -77,9 +89,7 @@ class _OfficeFacultyAccountsPageState extends State<OfficeFacultyAccountsPage> {
   }
 
   void _replaceUsers(List<Map<String, dynamic>> raw) {
-    final users = raw
-        .map((item) => _AdminUserEntry.fromJson(item))
-        .toList();
+    final users = raw.map((item) => _AdminUserEntry.fromJson(item)).toList();
     _staff
       ..clear()
       ..addAll(users.where((user) => user.role == 'office'));
@@ -126,17 +136,59 @@ class _OfficeFacultyAccountsPageState extends State<OfficeFacultyAccountsPage> {
   }
 
   List<_AdminUserEntry> get _visibleStaff =>
-      _staff.where((user) => user.matchesNameOrEmail(_staffSearchCtrl.text)).toList();
+      _staff
+          .where((user) => user.matchesNameOrEmail(_staffSearchCtrl.text))
+          .toList();
 
-  List<_AdminUserEntry> get _visibleFaculty => _faculty
-      .where((user) => user.matchesNameOrEmail(_facultySearchCtrl.text))
-      .toList();
+  List<_AdminUserEntry> get _visibleFaculty =>
+      _faculty
+          .where((user) => user.matchesNameOrEmail(_facultySearchCtrl.text))
+          .toList();
 
-  Future<void> _openCreateDialog({required bool staff}) async {
-    final created = await showDialog<_AdminUserEntry>(
+  Future<void> _openCreateDrawer({required bool staff}) async {
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final created = await showGeneralDialog<_AdminUserEntry>(
       context: context,
-      builder: (_) => _OfficeCreateAccountDialog(createStaff: staff),
+      barrierDismissible: false,
+      barrierLabel: staff ? 'Add Office Staff Account' : 'Add Faculty Account',
+      barrierColor: Colors.black.withValues(alpha: 0.32),
+      transitionDuration: const Duration(milliseconds: 280),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        return Align(
+          key: const Key('office-account-create-align'),
+          alignment: Alignment.centerRight,
+          child: _OfficeAccountCreationDrawer(
+            createStaff: staff,
+            onCreate: ({required fullName, required email, required password}) {
+              return _submitOfficeAccountCreate(
+                dialogContext,
+                staff: staff,
+                fullName: fullName,
+                email: email,
+                password: password,
+              );
+            },
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(curved),
+          child: child,
+        );
+      },
     );
+    if (previousFocus != null && previousFocus.canRequestFocus) {
+      previousFocus.requestFocus();
+    }
     if (created == null || !mounted) return;
     await _load();
     if (!mounted) return;
@@ -153,13 +205,47 @@ class _OfficeFacultyAccountsPageState extends State<OfficeFacultyAccountsPage> {
     );
   }
 
+  Future<_AdminUserEntry> _submitOfficeAccountCreate(
+    BuildContext dialogContext, {
+    required bool staff,
+    required String fullName,
+    required String email,
+    required String password,
+  }) async {
+    final debugCreate = widget.debugCreateAccount;
+    if (debugCreate != null) {
+      final raw = await debugCreate(
+        staff: staff,
+        fullName: fullName,
+        email: email,
+        password: password,
+      );
+      return _AdminUserEntry.fromJson(raw);
+    }
+    if (staff) {
+      return _createOfficeStaffAccountRequest(
+        dialogContext,
+        fullName: fullName,
+        email: email,
+        password: password,
+      );
+    }
+    return _createFacultyAccountRequest(
+      dialogContext,
+      fullName: fullName,
+      email: email,
+      password: password,
+    );
+  }
+
   void _focusGroup(_OfficeAccountGroup group, {required bool scrollToPanel}) {
     setState(() => _focusedGroup = group);
     if (!scrollToPanel) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final target = group == _OfficeAccountGroup.staff
-          ? _staffPanelKey.currentContext
-          : _facultyPanelKey.currentContext;
+      final target =
+          group == _OfficeAccountGroup.staff
+              ? _staffPanelKey.currentContext
+              : _facultyPanelKey.currentContext;
       if (target == null) return;
       Scrollable.ensureVisible(
         target,
@@ -205,17 +291,16 @@ class _OfficeFacultyAccountsPageState extends State<OfficeFacultyAccountsPage> {
                       children: [
                         _OfficeAccountHeader(
                           officeName: officeName,
-                          onCreateStaff: () => _openCreateDialog(staff: true),
-                          onCreateFaculty: () =>
-                              _openCreateDialog(staff: false),
+                          onCreateStaff: () => _openCreateDrawer(staff: true),
+                          onCreateFaculty:
+                              () => _openCreateDrawer(staff: false),
                         ),
                         const SizedBox(height: 16),
                         _OfficeAccountTypeControl(
                           focused: _focusedGroup,
-                          onChanged: (group) => _focusGroup(
-                            group,
-                            scrollToPanel: wide,
-                          ),
+                          onChanged:
+                              (group) =>
+                                  _focusGroup(group, scrollToPanel: wide),
                         ),
                         if (_error != null) ...[
                           const SizedBox(height: 14),
@@ -225,8 +310,7 @@ class _OfficeFacultyAccountsPageState extends State<OfficeFacultyAccountsPage> {
                           ),
                         ],
                         const SizedBox(height: 16),
-                        if (wide ||
-                            _focusedGroup == _OfficeAccountGroup.staff)
+                        if (wide || _focusedGroup == _OfficeAccountGroup.staff)
                           _OfficeAccountPanel(
                             key: _staffPanelKey,
                             title: 'Office Staff Accounts',
@@ -343,18 +427,19 @@ class _OfficeAccountHeader extends StatelessWidget {
             if (value == 'staff') onCreateStaff();
             if (value == 'faculty') onCreateFaculty();
           },
-          itemBuilder: (context) => const [
-            PopupMenuItem<String>(
-              key: Key('add-office-staff'),
-              value: 'staff',
-              child: Text('Office Staff'),
-            ),
-            PopupMenuItem<String>(
-              key: Key('add-office-faculty'),
-              value: 'faculty',
-              child: Text('Faculty'),
-            ),
-          ],
+          itemBuilder:
+              (context) => const [
+                PopupMenuItem<String>(
+                  key: Key('add-office-staff'),
+                  value: 'staff',
+                  child: Text('Office Staff'),
+                ),
+                PopupMenuItem<String>(
+                  key: Key('add-office-faculty'),
+                  value: 'faculty',
+                  child: Text('Faculty'),
+                ),
+              ],
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
             decoration: BoxDecoration(
@@ -533,11 +618,7 @@ class _OfficeAccountPanel extends StatelessWidget {
               if (stacked) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    heading,
-                    const SizedBox(height: 12),
-                    searchField,
-                  ],
+                  children: [heading, const SizedBox(height: 12), searchField],
                 );
               }
               return Row(
@@ -573,10 +654,7 @@ class _OfficeAccountPanel extends StatelessWidget {
 class _OfficeAccountSearchField extends StatelessWidget {
   final TextEditingController controller;
 
-  const _OfficeAccountSearchField({
-    super.key,
-    required this.controller,
-  });
+  const _OfficeAccountSearchField({super.key, required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -588,7 +666,10 @@ class _OfficeAccountSearchField extends StatelessWidget {
         isDense: true,
         filled: true,
         fillColor: const Color(0xFFF8FAFC),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: DesignTokens.border),
@@ -610,10 +691,7 @@ class _OfficeAccountState extends StatelessWidget {
   final String title;
   final String body;
 
-  const _OfficeAccountState({
-    required this.title,
-    required this.body,
-  });
+  const _OfficeAccountState({required this.title, required this.body});
 
   @override
   Widget build(BuildContext context) {
@@ -651,10 +729,7 @@ class _OfficeAccountTable extends StatelessWidget {
   final List<_AdminUserEntry> users;
   final String roleLabel;
 
-  const _OfficeAccountTable({
-    required this.users,
-    required this.roleLabel,
-  });
+  const _OfficeAccountTable({required this.users, required this.roleLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -790,10 +865,7 @@ class _OfficeAccountCardList extends StatelessWidget {
   final List<_AdminUserEntry> users;
   final String roleLabel;
 
-  const _OfficeAccountCardList({
-    required this.users,
-    required this.roleLabel,
-  });
+  const _OfficeAccountCardList({required this.users, required this.roleLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -919,58 +991,85 @@ class _OfficeAccountStatusBadge extends StatelessWidget {
   }
 }
 
-class _OfficeCreateAccountDialog extends StatefulWidget {
+class _OfficeAccountCreationDrawer extends StatefulWidget {
   final bool createStaff;
+  final Future<_AdminUserEntry> Function({
+    required String fullName,
+    required String email,
+    required String password,
+  })
+  onCreate;
 
-  const _OfficeCreateAccountDialog({required this.createStaff});
+  const _OfficeAccountCreationDrawer({
+    required this.createStaff,
+    required this.onCreate,
+  });
 
   @override
-  State<_OfficeCreateAccountDialog> createState() =>
-      _OfficeCreateAccountDialogState();
+  State<_OfficeAccountCreationDrawer> createState() =>
+      _OfficeAccountCreationDrawerState();
 }
 
-class _OfficeCreateAccountDialogState extends State<_OfficeCreateAccountDialog> {
+class _OfficeAccountCreationDrawerState
+    extends State<_OfficeAccountCreationDrawer> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _nameFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
   bool _creating = false;
+  bool _passwordVisible = false;
   String? _formError;
+
+  bool get _staff => widget.createStaff;
+
+  String get _title =>
+      _staff ? 'Add Office Staff Account' : 'Add Faculty Account';
+
+  String get _description =>
+      _staff
+          ? 'Create a new office staff login for your office. They can sign in to manage tickets, knowledge base, and other office tools.'
+          : 'Create a new faculty login. Faculty accounts can sign in and use faculty Knowledge Base tools. They do not open the office ticket console.';
+
+  String get _nameHelper =>
+      _staff
+          ? "Use the staff member's complete name."
+          : "Use the faculty member's complete name.";
+
+  String get _submitLabel =>
+      _staff ? 'Create Office Staff Account' : 'Create Faculty Account';
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
+    _nameFocus.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
+  void _close() {
+    if (_creating) return;
+    Navigator.of(context).pop();
+  }
+
   Future<void> _submit() async {
+    if (_creating) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() {
       _creating = true;
       _formError = null;
     });
     try {
-      final fullName = _nameCtrl.text.trim();
-      final email = _emailCtrl.text.trim();
-      final password = _passwordCtrl.text;
-      final _AdminUserEntry created;
-      if (widget.createStaff) {
-        created = await _createOfficeStaffAccountRequest(
-          context,
-          fullName: fullName,
-          email: email,
-          password: password,
-        );
-      } else {
-        created = await _createFacultyAccountRequest(
-          context,
-          fullName: fullName,
-          email: email,
-          password: password,
-        );
-      }
+      final created = await widget.onCreate(
+        fullName: _nameCtrl.text.trim(),
+        email: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text,
+      );
       if (!mounted) return;
       Navigator.of(context).pop(created);
     } catch (error) {
@@ -981,97 +1080,328 @@ class _OfficeCreateAccountDialogState extends State<_OfficeCreateAccountDialog> 
     }
   }
 
+  double _drawerWidth(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width < 560) return width;
+    if (width < 900) return (width * 0.72).clamp(360.0, 520.0);
+    return 480;
+  }
+
+  InputDecoration _fieldDecoration({
+    required String hint,
+    String? helper,
+    Widget? suffixIcon,
+  }) {
+    const radius = BorderRadius.all(Radius.circular(10));
+    return InputDecoration(
+      hintText: hint,
+      helperText: helper,
+      helperMaxLines: 2,
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: Colors.white,
+      hintStyle: const TextStyle(
+        color: Color(0xFF94A3B8),
+        fontWeight: FontWeight.w500,
+        fontSize: 14,
+      ),
+      helperStyle: const TextStyle(
+        color: DesignTokens.muted,
+        fontWeight: FontWeight.w500,
+        fontSize: 12,
+        height: 1.35,
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: Color(0xFFD9DEE7)),
+      ),
+      enabledBorder: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: Color(0xFFD9DEE7)),
+      ),
+      focusedBorder: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: DesignTokens.maroon, width: 1.4),
+      ),
+      errorBorder: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: Color(0xFFB91C1C)),
+      ),
+      focusedErrorBorder: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: Color(0xFFB91C1C), width: 1.4),
+      ),
+    );
+  }
+
+  Widget _label(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Text(
+            text,
+            style: const TextStyle(
+              color: DesignTokens.ink,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+          const Text(
+            ' *',
+            style: TextStyle(
+              color: DesignTokens.maroon,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final staff = widget.createStaff;
-    return AlertDialog(
-      title: Text(staff ? 'New office staff login' : 'New faculty login'),
-      content: SizedBox(
-        width: 420,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextFormField(
-                controller: _nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Full name',
-                  border: OutlineInputBorder(),
+    final width = _drawerWidth(context);
+    return Material(
+      key: const Key('office-account-create-drawer'),
+      color: Colors.white,
+      elevation: 18,
+      shadowColor: Colors.black.withValues(alpha: 0.18),
+      child: SizedBox(
+        width: width,
+        height: double.infinity,
+        child: SafeArea(
+          left: false,
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 18, 12, 0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _title,
+                          style: const TextStyle(
+                            color: DesignTokens.ink,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('office-account-create-close'),
+                        tooltip: 'Close',
+                        onPressed: _creating ? null : _close,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
                 ),
-                validator: (value) => (value == null || value.trim().isEmpty)
-                    ? 'Enter a name.'
-                    : null,
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _emailCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                  child: Text(
+                    _description,
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      height: 1.45,
+                    ),
+                  ),
                 ),
-                validator: (value) {
-                  final text = value?.trim() ?? '';
-                  if (text.isEmpty) return 'Enter an email.';
-                  if (!text.contains('@')) return 'Enter a valid email.';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _passwordCtrl,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Temporary password',
-                  helperText:
-                      'At least 10 characters, with a letter and a number.',
-                  border: OutlineInputBorder(),
+                Expanded(
+                  child: Form(
+                    key: _formKey,
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+                      children: [
+                        _label('Full name'),
+                        TextFormField(
+                          key: const Key('office-account-create-name'),
+                          controller: _nameCtrl,
+                          focusNode: _nameFocus,
+                          autofocus: true,
+                          enabled: !_creating,
+                          textInputAction: TextInputAction.next,
+                          textCapitalization: TextCapitalization.words,
+                          onFieldSubmitted: (_) => _emailFocus.requestFocus(),
+                          decoration: _fieldDecoration(
+                            hint: 'Enter full name',
+                            helper: _nameHelper,
+                          ),
+                          validator:
+                              (value) =>
+                                  (value == null || value.trim().isEmpty)
+                                      ? 'Enter a name.'
+                                      : null,
+                        ),
+                        const SizedBox(height: 16),
+                        _label('Email'),
+                        TextFormField(
+                          key: const Key('office-account-create-email'),
+                          controller: _emailCtrl,
+                          focusNode: _emailFocus,
+                          enabled: !_creating,
+                          keyboardType: TextInputType.emailAddress,
+                          autocorrect: false,
+                          textInputAction: TextInputAction.next,
+                          onFieldSubmitted:
+                              (_) => _passwordFocus.requestFocus(),
+                          decoration: _fieldDecoration(
+                            hint: 'Enter email address',
+                            helper: 'Use a valid email address.',
+                          ),
+                          validator: (value) {
+                            final text = value?.trim() ?? '';
+                            if (text.isEmpty) return 'Enter an email.';
+                            if (!text.contains('@')) {
+                              return 'Enter a valid email.';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        _label('Temporary password'),
+                        TextFormField(
+                          key: const Key('office-account-create-password'),
+                          controller: _passwordCtrl,
+                          focusNode: _passwordFocus,
+                          enabled: !_creating,
+                          obscureText: !_passwordVisible,
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _submit(),
+                          decoration: _fieldDecoration(
+                            hint: 'Enter temporary password',
+                            helper:
+                                'At least 10 characters, with a letter and a number.',
+                            suffixIcon: IconButton(
+                              key: const Key(
+                                'office-account-create-password-toggle',
+                              ),
+                              tooltip:
+                                  _passwordVisible
+                                      ? 'Hide password'
+                                      : 'Show password',
+                              onPressed:
+                                  _creating
+                                      ? null
+                                      : () => setState(
+                                        () =>
+                                            _passwordVisible =
+                                                !_passwordVisible,
+                                      ),
+                              icon: Icon(
+                                _passwordVisible
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                              ),
+                            ),
+                          ),
+                          validator: (value) {
+                            final text = value ?? '';
+                            if (text.length < 10) {
+                              return 'Use at least 10 characters.';
+                            }
+                            if (!RegExp(r'[A-Za-z]').hasMatch(text) ||
+                                !RegExp(r'\d').hasMatch(text)) {
+                              return 'Include a letter and a number.';
+                            }
+                            return null;
+                          },
+                        ),
+                        if (_formError != null) ...[
+                          const SizedBox(height: 16),
+                          Text(
+                            _formError!,
+                            style: const TextStyle(
+                              color: Color(0xFFB91C1C),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
-                validator: (value) {
-                  final text = value ?? '';
-                  if (text.length < 10) return 'Use at least 10 characters.';
-                  if (!RegExp(r'[A-Za-z]').hasMatch(text) ||
-                      !RegExp(r'\d').hasMatch(text)) {
-                    return 'Include a letter and a number.';
-                  }
-                  return null;
-                },
-              ),
-              if (_formError != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  _formError!,
-                  style: const TextStyle(
-                    color: Color(0xFFB91C1C),
-                    fontWeight: FontWeight.w700,
+                const Divider(height: 1, color: Color(0xFFE8EDF3)),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 20),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          key: const Key('office-account-create-cancel'),
+                          onPressed: _creating ? null : _close,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: DesignTokens.maroon,
+                            side: const BorderSide(color: DesignTokens.maroon),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          key: const Key('office-account-create-submit'),
+                          onPressed: _creating ? null : _submit,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: DesignTokens.maroon,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: const Color(0xFF9A4A50),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 14,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child:
+                              _creating
+                                  ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                  : Text(
+                                    _submitLabel,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
-            ],
+            ),
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _creating ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _creating ? null : _submit,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: DesignTokens.maroon,
-            foregroundColor: Colors.white,
-          ),
-          child: Text(
-            _creating
-                ? 'Creating...'
-                : staff
-                    ? 'Create staff login'
-                    : 'Create faculty login',
-          ),
-        ),
-      ],
     );
   }
 }

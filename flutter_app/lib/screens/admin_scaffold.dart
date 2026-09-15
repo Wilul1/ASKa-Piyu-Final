@@ -14,6 +14,7 @@ class AdminScaffold extends StatelessWidget {
   final List<Widget>? actions;
   /// When true, child fills the body (for split-pane ticket console).
   final bool fillBody;
+  final bool showHeader;
 
   const AdminScaffold({
     super.key,
@@ -23,6 +24,7 @@ class AdminScaffold extends StatelessWidget {
     required this.child,
     this.actions,
     this.fillBody = false,
+    this.showHeader = true,
   });
 
   @override
@@ -75,43 +77,44 @@ class AdminScaffold extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    isWide ? 20 : 14,
-                    isWide ? 16 : 12,
-                    isWide ? 20 : 14,
-                    10,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              style: const TextStyle(
-                                color: DesignTokens.ink,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w900,
+                if (showHeader)
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      isWide ? 20 : 14,
+                      isWide ? 16 : 12,
+                      isWide ? 20 : 14,
+                      10,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                style: const TextStyle(
+                                  color: DesignTokens.ink,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              description,
-                              style: const TextStyle(
-                                color: DesignTokens.muted,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                              const SizedBox(height: 4),
+                              Text(
+                                description,
+                                style: const TextStyle(
+                                  color: DesignTokens.muted,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      if (actions != null) ...actions!,
-                    ],
+                        if (actions != null) ...actions!,
+                      ],
+                    ),
                   ),
-                ),
                 Expanded(child: child),
               ],
             ),

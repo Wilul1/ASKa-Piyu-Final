@@ -52,8 +52,13 @@ if ! tar -tzf "$OUT/data_volumes.tgz" >/dev/null; then
 fi
 
 # Empty kb_media is valid, but the directory itself must still be in the archive.
-# grep returns 1 when there are no matches; do not let pipefail abort a 0-file backup.
-if ! tar -tzf "$OUT/data_volumes.tgz" | grep -E -q '^kb_media(/|$)'; then
+# Read the full listing with awk (do not use grep -q here): under pipefail,
+# grep -q exits at the first match and tar then SIGPIPEs, which looks like
+# "kb_media missing" even when the archive is complete.
+if ! tar -tzf "$OUT/data_volumes.tgz" | awk '
+  $0 == "kb_media" || $0 == "kb_media/" || index($0, "kb_media/") == 1 { found = 1 }
+  END { exit found ? 0 : 1 }
+'; then
   echo "ERROR: $OUT/data_volumes.tgz does not contain kb_media. Refusing to report success." >&2
   echo "KB_MEDIA_BACKUP_OK=NO" >&2
   exit 1

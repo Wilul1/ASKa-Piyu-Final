@@ -6,6 +6,7 @@ import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
 import '../services/admin_article_service.dart';
 import 'admin_scaffold.dart';
+import 'knowledge_article_create_page.dart';
 import 'knowledge_article_edit_page.dart';
 import 'login_page.dart';
 import 'office_scaffold.dart';
@@ -21,6 +22,8 @@ class KnowledgeArticlesPage extends StatefulWidget {
     this.debugArticles,
     this.debugLoading = false,
     this.debugError,
+    this.debugCreateArticle,
+    this.debugOfficeNames,
   });
 
   final String? focusArticleId;
@@ -34,6 +37,15 @@ class KnowledgeArticlesPage extends StatefulWidget {
 
   @visibleForTesting
   final String? debugError;
+
+  /// Intercepts article creation in widget tests.
+  @visibleForTesting
+  final Future<AdminArticle> Function(Map<String, dynamic> payload)?
+      debugCreateArticle;
+
+  /// Seeded office names for the create page in widget tests.
+  @visibleForTesting
+  final List<String>? debugOfficeNames;
 
   @override
   State<KnowledgeArticlesPage> createState() => _KnowledgeArticlesPageState();
@@ -277,19 +289,39 @@ class _KnowledgeArticlesPageState extends State<KnowledgeArticlesPage> {
   }
 
   Future<void> _openCreate() async {
-    final created = await showDialog<AdminArticle>(
-      context: context,
-      builder: (_) => _KnowledgeCreateArticleDialog(
-        service: _service,
-        lockOfficeTo: _isAdmin
-            ? null
-            : AuthScope.of(context).currentUser?.officeName,
+    final created = await Navigator.of(context).push<AdminArticle>(
+      MaterialPageRoute(
+        builder: (_) => KnowledgeArticleCreatePage(
+          service: _service,
+          knownCategories: _categoryOptions
+              .where((value) => value != 'All')
+              .toList(),
+          knownOffices: _officeOptions
+              .where((value) => value != 'All')
+              .toList(),
+          debugCreateArticle: widget.debugCreateArticle,
+          debugOfficeNames: widget.debugOfficeNames ??
+              (widget.debugArticles != null ||
+                      widget.debugCreateArticle != null
+                  ? _officeOptions
+                      .where((value) => value != 'All')
+                      .toList()
+                  : null),
+        ),
       ),
     );
     if (created == null || !mounted) return;
     await _loadArticles();
     if (!mounted) return;
-    await _openEdit(created);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          created.published
+              ? 'Published "${created.title}".'
+              : 'Saved draft "${created.title}".',
+        ),
+      ),
+    );
   }
 
   Future<void> _confirmDelete(AdminArticle article) async {
@@ -1550,138 +1582,6 @@ class _KnowledgeArticlePager extends StatelessWidget {
     if (total <= 5) return [for (var i = 1; i <= total; i++) i];
     final start = (current - 2).clamp(1, total - 4);
     return [for (var i = start; i < start + 5; i++) i];
-  }
-}
-
-class _KnowledgeCreateArticleDialog extends StatefulWidget {
-  const _KnowledgeCreateArticleDialog({
-    required this.service,
-    this.lockOfficeTo,
-  });
-
-  final AdminArticleService service;
-  final String? lockOfficeTo;
-
-  @override
-  State<_KnowledgeCreateArticleDialog> createState() =>
-      _KnowledgeCreateArticleDialogState();
-}
-
-class _KnowledgeCreateArticleDialogState
-    extends State<_KnowledgeCreateArticleDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _titleCtrl = TextEditingController();
-  final _categoryCtrl = TextEditingController();
-  final _summaryCtrl = TextEditingController();
-  bool _saving = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _titleCtrl.dispose();
-    _categoryCtrl.dispose();
-    _summaryCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
-    try {
-      final created = await widget.service.createArticle({
-        'title': _titleCtrl.text.trim(),
-        'category': _categoryCtrl.text.trim(),
-        if (_summaryCtrl.text.trim().isNotEmpty)
-          'summary': _summaryCtrl.text.trim(),
-        'content': _summaryCtrl.text.trim(),
-        'publish_status': false,
-        if ((widget.lockOfficeTo ?? '').trim().isNotEmpty)
-          'office': widget.lockOfficeTo!.trim(),
-      });
-      if (!mounted) return;
-      Navigator.of(context).pop(created);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _error = error.toString());
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Create Article'),
-      content: SizedBox(
-        width: 460,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextFormField(
-                controller: _titleCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Title',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    (value == null || value.trim().isEmpty) ? 'Enter a title.' : null,
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _categoryCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Category',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) => (value == null || value.trim().isEmpty)
-                    ? 'Enter a category.'
-                    : null,
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _summaryCtrl,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Summary',
-                  helperText: 'Saved as a draft. You can finish the article next.',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  _error!,
-                  style: const TextStyle(
-                    color: Color(0xFFB91C1C),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _saving ? null : _submit,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: DesignTokens.maroon,
-            foregroundColor: Colors.white,
-          ),
-          child: Text(_saving ? 'Creating...' : 'Create draft'),
-        ),
-      ],
-    );
   }
 }
 

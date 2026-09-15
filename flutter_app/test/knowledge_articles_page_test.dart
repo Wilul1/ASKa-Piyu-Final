@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aska_piyu/auth/auth_state.dart';
+import 'package:aska_piyu/models/admin_article_models.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/admin_management_pages.dart';
+import 'package:aska_piyu/screens/knowledge_article_create_page.dart';
+import 'package:aska_piyu/screens/knowledge_article_edit_page.dart';
 import 'package:aska_piyu/screens/knowledge_articles_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 
@@ -96,6 +99,9 @@ void main() {
     List<Map<String, dynamic>>? articles,
     bool loading = false,
     String? error,
+    Future<AdminArticle> Function(Map<String, dynamic> payload)?
+        debugCreateArticle,
+    List<String>? debugOfficeNames,
   }) async {
     await tester.binding.setSurfaceSize(size);
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -114,6 +120,8 @@ void main() {
             debugArticles: articles,
             debugLoading: loading,
             debugError: error,
+            debugCreateArticle: debugCreateArticle,
+            debugOfficeNames: debugOfficeNames,
           ),
         ),
       ),
@@ -293,14 +301,31 @@ void main() {
       expect(find.text('Edit'), findsWidgets);
     });
 
-    testWidgets('Create Article opens the existing draft dialog', (tester) async {
+    testWidgets('Create Article opens the full create page', (tester) async {
       await pumpPage(tester, user: _adminUser(), articles: adminArticles());
 
       await tester.tap(find.byKey(const Key('knowledge-article-create')));
       await tester.pumpAndSettle();
-      expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('Create Article'), findsWidgets);
-      expect(find.text('Create draft'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(KnowledgeArticleCreatePage), findsOneWidget);
+      expect(find.text('Create Knowledge Article'), findsOneWidget);
+      expect(find.text('Create draft'), findsNothing);
+      expect(find.text('Back to Articles'), findsOneWidget);
+      expect(find.byKey(const Key('knowledge-article-create-page')), findsOneWidget);
+    });
+
+    testWidgets('existing article Edit flow still opens the editor',
+        (tester) async {
+      await pumpPage(tester, user: _adminUser(), articles: adminArticles());
+
+      await tester.ensureVisible(
+        find.byKey(const Key('knowledge-article-edit-a1')),
+      );
+      await tester.tap(find.byKey(const Key('knowledge-article-edit-a1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byType(KnowledgeArticleEditPage), findsOneWidget);
+      expect(find.text('Create Knowledge Article'), findsNothing);
     });
   });
 
@@ -351,12 +376,16 @@ void main() {
       expect(find.text('OSA draft handbook note'), findsNothing);
     });
 
-    testWidgets('Create Article remains available', (tester) async {
+    testWidgets('Create Article opens the full create page', (tester) async {
       await pumpPage(tester, user: _officeUser(), articles: officeArticles());
 
       await tester.tap(find.byKey(const Key('knowledge-article-create')));
       await tester.pumpAndSettle();
-      expect(find.text('Create draft'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(KnowledgeArticleCreatePage), findsOneWidget);
+      expect(find.text('Create Knowledge Article'), findsOneWidget);
+      expect(find.text('Create draft'), findsNothing);
+      expect(find.text('Office workspace'), findsWidgets);
     });
 
     testWidgets('narrow office layout has no overflow', (tester) async {

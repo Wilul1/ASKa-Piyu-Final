@@ -1,18 +1,15 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
-import '../app_config.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
 import '../models/article_media_models.dart';
 import '../services/admin_article_service.dart';
-import '../services/api_client.dart';
 import '../services/file_pick.dart';
 import '../widgets/article_attachments_panel.dart';
 import '../widgets/article_html_codec.dart';
 import '../widgets/article_rich_editor.dart';
+import '../widgets/article_workspace_chrome.dart';
 import '../widgets/sidebar.dart';
 import 'admin_scaffold.dart';
 import 'login_page.dart';
@@ -141,7 +138,7 @@ class _KnowledgeArticleCreatePageState
       return;
     }
     try {
-      final fetched = await _loadAdminOfficeNames(context);
+      final fetched = await loadTicketOfficeNames(context);
       if (!mounted) return;
       final merged = {...names, ...fetched}.toList()..sort();
       setState(() {
@@ -441,9 +438,15 @@ class _KnowledgeArticleCreatePageState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _CreateArticleHeader(
+                    ArticleWorkspaceHeader(
                       stacked: stacked,
                       onBack: _saving ? null : _handleBack,
+                      breadcrumbCurrent: 'Create Article',
+                      title: 'Create Knowledge Article',
+                      subtitle:
+                          'Share helpful information with students and staff. Save a draft now, or publish when the article should appear in the Knowledge Base.',
+                      backButtonKey:
+                          const Key('knowledge-article-create-back'),
                     ),
                     const SizedBox(height: 18),
                     if (stacked) ...[
@@ -496,7 +499,7 @@ class _KnowledgeArticleCreatePageState
   }
 
   Widget _buildBasicInformation() {
-    return _CreatePanel(
+    return ArticleWorkspacePanel(
       title: 'Basic Information',
       subtitle: 'Provide the essential details about your article.',
       child: Column(
@@ -505,14 +508,14 @@ class _KnowledgeArticleCreatePageState
           LayoutBuilder(
             builder: (context, constraints) {
               final stackFields = constraints.maxWidth < 560;
-              final title = _labeledField(
+              final title = articleLabeledField(
                 label: 'Title',
                 required: true,
                 child: TextFormField(
                   key: const Key('knowledge-article-create-title'),
                   controller: _titleCtrl,
                   enabled: !_saving,
-                  decoration: _inputDecoration(
+                  decoration: articleInputDecoration(
                     hint: 'Enter a clear and descriptive title',
                   ),
                   validator: (value) => (value == null || value.trim().isEmpty)
@@ -520,7 +523,7 @@ class _KnowledgeArticleCreatePageState
                       : null,
                 ),
               );
-              final category = _labeledField(
+              final category = articleLabeledField(
                 label: 'Category',
                 required: true,
                 helper: widget.knownCategories.isEmpty
@@ -530,7 +533,7 @@ class _KnowledgeArticleCreatePageState
                   key: const Key('knowledge-article-create-category'),
                   controller: _categoryCtrl,
                   enabled: !_saving,
-                  decoration: _inputDecoration(hint: 'Enter a category'),
+                  decoration: articleInputDecoration(hint: 'Enter a category'),
                   validator: (value) => (value == null || value.trim().isEmpty)
                       ? 'Enter a category.'
                       : null,
@@ -559,12 +562,12 @@ class _KnowledgeArticleCreatePageState
           LayoutBuilder(
             builder: (context, constraints) {
               final stackFields = constraints.maxWidth < 560;
-              final office = _labeledField(
+              final office = articleLabeledField(
                 label: 'Related Office',
                 required: _isOffice,
                 child: _buildOfficeField(),
               );
-              final summary = _labeledField(
+              final summary = articleLabeledField(
                 label: 'Summary',
                 helper: 'Optional short description shown in article lists.',
                 child: TextFormField(
@@ -573,7 +576,7 @@ class _KnowledgeArticleCreatePageState
                   enabled: !_saving,
                   minLines: 1,
                   maxLines: 3,
-                  decoration: _inputDecoration(
+                  decoration: articleInputDecoration(
                     hint: 'Add a short summary (optional)',
                   ),
                 ),
@@ -609,7 +612,7 @@ class _KnowledgeArticleCreatePageState
           : _lockedOfficeName;
       return InputDecorator(
         key: const Key('knowledge-article-create-office'),
-        decoration: _inputDecoration(),
+        decoration: articleInputDecoration(),
         child: Row(
           children: [
             Expanded(
@@ -637,7 +640,7 @@ class _KnowledgeArticleCreatePageState
         value: value,
         isExpanded: true,
         hint: const Text('Select office'),
-        decoration: _inputDecoration(),
+        decoration: articleInputDecoration(),
         items: [
           for (final office in _offices)
             DropdownMenuItem(
@@ -660,7 +663,7 @@ class _KnowledgeArticleCreatePageState
       key: const Key('knowledge-article-create-office'),
       controller: _officeTextCtrl,
       enabled: !_saving,
-      decoration: _inputDecoration(
+      decoration: articleInputDecoration(
         hint: 'Office name (optional)',
         helper: _officeFetchFailed
             ? 'Office list could not be loaded. You can still type an office name.'
@@ -670,7 +673,7 @@ class _KnowledgeArticleCreatePageState
   }
 
   Widget _buildContent() {
-    return _CreatePanel(
+    return ArticleWorkspacePanel(
       title: 'Content',
       subtitle:
           'Write the full content of the article. Formatting, links, and images are saved with the article.',
@@ -691,7 +694,7 @@ class _KnowledgeArticleCreatePageState
   }
 
   Widget _buildAttachments() {
-    return _CreatePanel(
+    return ArticleWorkspacePanel(
       title: 'Attachments (optional)',
       subtitle:
           'Upload images or PDFs to support your article. Maximum 10 MB per file. Allowed: JPG, PNG, WebP, GIF, or PDF.',
@@ -710,19 +713,19 @@ class _KnowledgeArticleCreatePageState
   }
 
   Widget _buildPublishSettings() {
-    return _CreatePanel(
+    return ArticleWorkspacePanel(
       title: 'Publish Settings',
       subtitle: 'Manage the status and visibility of this article.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _labeledField(
+          articleLabeledField(
             label: 'Status',
             child: DropdownButtonFormField<String>(
               key: const Key('knowledge-article-create-status'),
               value: _status,
               isExpanded: true,
-              decoration: _inputDecoration(),
+              decoration: articleInputDecoration(),
               items: const [
                 DropdownMenuItem(value: 'draft', child: Text('Draft')),
                 DropdownMenuItem(
@@ -883,262 +886,4 @@ class _KnowledgeArticleCreatePageState
       ],
     );
   }
-}
-
-class _CreateArticleHeader extends StatelessWidget {
-  const _CreateArticleHeader({
-    required this.stacked,
-    required this.onBack,
-  });
-
-  final bool stacked;
-  final VoidCallback? onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text.rich(
-          TextSpan(
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-            children: [
-              const TextSpan(text: 'Knowledge Base'),
-              TextSpan(
-                text: '  >  ',
-                style: TextStyle(
-                  color: DesignTokens.muted.withValues(alpha: 0.7),
-                ),
-              ),
-              const TextSpan(
-                text: 'Create Article',
-                style: TextStyle(color: DesignTokens.ink),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Create Knowledge Article',
-          style: TextStyle(
-            color: DesignTokens.ink,
-            fontSize: 28,
-            fontWeight: FontWeight.w900,
-            height: 1.1,
-          ),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Share helpful information with students and staff. Save a draft now, or publish when the article should appear in the Knowledge Base.',
-          style: TextStyle(
-            color: DesignTokens.muted,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            height: 1.35,
-          ),
-        ),
-      ],
-    );
-    final back = TextButton.icon(
-      key: const Key('knowledge-article-create-back'),
-      onPressed: onBack,
-      icon: const Icon(Icons.arrow_back, size: 18),
-      label: const Text(
-        'Back to Articles',
-        style: TextStyle(fontWeight: FontWeight.w800),
-      ),
-      style: TextButton.styleFrom(
-        foregroundColor: DesignTokens.ink,
-        backgroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: const BorderSide(color: DesignTokens.border),
-        ),
-      ),
-    );
-
-    if (stacked) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          copy,
-          const SizedBox(height: 12),
-          Align(alignment: Alignment.centerLeft, child: back),
-        ],
-      );
-    }
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: copy),
-        const SizedBox(width: 12),
-        back,
-      ],
-    );
-  }
-}
-
-class _CreatePanel extends StatelessWidget {
-  const _CreatePanel({
-    required this.title,
-    required this.subtitle,
-    required this.child,
-  });
-
-  final String title;
-  final String subtitle;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: DesignTokens.border),
-        boxShadow: DesignTokens.softShadow(0.03),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: DesignTokens.ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-Widget _labeledField({
-  required String label,
-  required Widget child,
-  bool required = false,
-  String? helper,
-}) {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: DesignTokens.ink,
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          if (required)
-            const Text(
-              ' *',
-              style: TextStyle(
-                color: DesignTokens.maroon,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-        ],
-      ),
-      const SizedBox(height: 6),
-      child,
-      if (helper != null) ...[
-        const SizedBox(height: 6),
-        Text(
-          helper,
-          style: const TextStyle(
-            color: DesignTokens.muted,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    ],
-  );
-}
-
-InputDecoration _inputDecoration({
-  String? hint,
-  String? helper,
-}) {
-  return InputDecoration(
-    hintText: hint,
-    helperText: helper,
-    isDense: true,
-    filled: true,
-    fillColor: const Color(0xFFF8FAFC),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: DesignTokens.border),
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: DesignTokens.border),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: DesignTokens.maroon, width: 1.2),
-    ),
-  );
-}
-
-Future<List<String>> _loadAdminOfficeNames(BuildContext context) async {
-  final result = await ApiClient.send(
-    method: 'GET',
-    url: '${AppConfig.resolvedApiBase}/tickets/offices',
-    headers: AuthScope.of(context).ticketHeaders(),
-  );
-  final decoded = result.json;
-  Map<String, dynamic> data;
-  if (decoded is Map<String, dynamic>) {
-    data = decoded;
-  } else if (decoded is Map) {
-    data = Map<String, dynamic>.from(decoded);
-  } else {
-    try {
-      final parsed = jsonDecode(result.body);
-      data = parsed is Map
-          ? Map<String, dynamic>.from(parsed)
-          : <String, dynamic>{};
-    } catch (_) {
-      data = <String, dynamic>{};
-    }
-  }
-  if (!result.ok) {
-    throw StateError('Could not load offices.');
-  }
-  final items = data['items'] is List ? data['items'] as List : const [];
-  final names = items
-      .whereType<Map>()
-      .map((item) => (item['name'] ?? '').toString().trim())
-      .where((name) => name.isNotEmpty)
-      .toSet()
-      .toList()
-    ..sort();
-  return names;
 }

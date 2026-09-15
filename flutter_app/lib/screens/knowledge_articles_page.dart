@@ -24,6 +24,7 @@ class KnowledgeArticlesPage extends StatefulWidget {
     this.debugError,
     this.debugCreateArticle,
     this.debugOfficeNames,
+    this.debugGetArticle,
   });
 
   final String? focusArticleId;
@@ -46,6 +47,10 @@ class KnowledgeArticlesPage extends StatefulWidget {
   /// Seeded office names for the create page in widget tests.
   @visibleForTesting
   final List<String>? debugOfficeNames;
+
+  /// Intercepts article detail load when opening Edit in widget tests.
+  @visibleForTesting
+  final Future<AdminArticle> Function(String id)? debugGetArticle;
 
   @override
   State<KnowledgeArticlesPage> createState() => _KnowledgeArticlesPageState();
@@ -280,6 +285,25 @@ class _KnowledgeArticlesPageState extends State<KnowledgeArticlesPage> {
         builder: (_) => KnowledgeArticleEditPage(
           articleId: article.id,
           setAdminHeader: _setAdminHeader,
+          knownCategories: _categoryOptions
+              .where((value) => value != 'All')
+              .toList(),
+          knownOffices: _officeOptions
+              .where((value) => value != 'All')
+              .toList(),
+          debugGetArticle: widget.debugGetArticle ??
+              (widget.debugArticles == null
+                  ? null
+                  : (id) async {
+                      final raw = widget.debugArticles!.firstWhere(
+                        (item) => item['id']?.toString() == id,
+                        orElse: () => {'id': id, 'title': article.title},
+                      );
+                      return AdminArticle.fromJson(
+                        Map<String, dynamic>.from(raw),
+                      );
+                    }),
+          debugOfficeNames: widget.debugOfficeNames,
         ),
       ),
     );

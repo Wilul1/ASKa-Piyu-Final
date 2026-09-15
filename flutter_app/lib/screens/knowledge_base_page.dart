@@ -5,10 +5,12 @@ import '../app_config.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
+import '../models/article_media_models.dart';
 import '../navigation/soft_page_route.dart';
 import '../services/api_client.dart';
 import '../services/print_helper.dart';
 import '../widgets/public_site_header.dart';
+import '../widgets/safe_article_html.dart';
 import '../widgets/source_pdf_viewer.dart';
 import '../widgets/student_ui.dart';
 import 'chatbot_page.dart';
@@ -1165,7 +1167,6 @@ class _ArticleReaderPage extends StatelessWidget {
   final _KbArticle article;
 
   const _ArticleReaderPage({
-    super.key,
     required this.apiBase,
     required this.article,
   });
@@ -1344,7 +1345,12 @@ class _ArticleDocument extends StatelessWidget {
           ),
           const SizedBox(height: 28),
         ],
-        if (blocks.isEmpty)
+        if (detail.isHtml)
+          SafeArticleHtml(
+            html: detail.content,
+            imageHeaders: const {},
+          )
+        else if (blocks.isEmpty)
           const Text(
             'No content available.',
             style: TextStyle(
@@ -1356,6 +1362,10 @@ class _ArticleDocument extends StatelessWidget {
           )
         else
           ...blocks.map((block) => _ArticleBlockView(block: block)),
+        if (detail.attachments.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          ArticleAttachmentsPublicList(attachments: detail.attachments),
+        ],
         const SizedBox(height: 36),
         const Divider(height: 1, color: Color(0xFFE5E7EB)),
         const SizedBox(height: 20),
@@ -2524,6 +2534,8 @@ class _KbArticleDetail {
   final String path;
   final String content;
   final String summary;
+  final String contentFormat;
+  final List<ArticleMediaItem> attachments;
   final String? updatedAt;
   final String? publishedAt;
 
@@ -2533,14 +2545,19 @@ class _KbArticleDetail {
     required this.path,
     required this.content,
     required this.summary,
+    this.contentFormat = 'plain',
+    this.attachments = const [],
     this.updatedAt,
     this.publishedAt,
   });
+
+  bool get isHtml => contentFormat == 'html';
 
   factory _KbArticleDetail.fromJson(Map<String, dynamic> json) {
     final article = _KbArticle.fromJson(json);
     final updated = (json['updated_at'] ?? '').toString().trim();
     final published = (json['published_at'] ?? '').toString().trim();
+    final rawAttachments = json['attachments'];
     return _KbArticleDetail(
       article: article,
       title: article.title,
@@ -2549,6 +2566,13 @@ class _KbArticleDetail {
       summary: (json['summary'] ?? json['short_summary'] ?? article.summary)
           .toString()
           .trim(),
+      contentFormat: (json['content_format'] ?? 'plain').toString(),
+      attachments: rawAttachments is List
+          ? rawAttachments
+              .whereType<Map>()
+              .map((item) => ArticleMediaItem.fromJson(Map<String, dynamic>.from(item)))
+              .toList()
+          : const [],
       updatedAt: updated.isEmpty ? null : updated,
       publishedAt: published.isEmpty ? null : published,
     );

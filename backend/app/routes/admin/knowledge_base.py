@@ -27,6 +27,7 @@ from app.models.schemas import (
     AdminPublishedArticleCreate,
     AdminPublishedArticleUpdate,
     AdminPublishedArticleSchema,
+    ArticleMediaSchema,
     GenerateArticleCandidatesFromPreviewRequest,
     ExtractDocumentResponse,
     IngestKnowledgeBaseResponse,
@@ -89,8 +90,11 @@ def _embedded_article_metadata(content: str | None) -> dict[str, Any]:
 
 def _content_blocks_publish(content: str | None) -> str | None:
     """Block publish when placeholders / empty structured steps remain."""
+    from app.services.article_html import html_to_plain, looks_like_html
+
     main = _main_article_body(content)
-    if not main.strip():
+    visible = html_to_plain(main) if looks_like_html(main) else main
+    if not visible.strip():
         return "Article content is empty. Correct it and save as draft before publishing."
     if "[NEEDS REVIEW]" in main:
         return (
@@ -266,6 +270,27 @@ def require_admin_key(
             detail="Admin API key is not configured. Log in as admin or set ASKA_ADMIN_API_KEY.",
         )
     raise HTTPException(status_code=401, detail="Invalid admin key.")
+
+
+def _http_article_media_error(exc: BaseException) -> HTTPException:
+    from app.services.article_media import (
+        ArticleMediaAccessError,
+        ArticleMediaError,
+        ArticleMediaFileError,
+        ArticleMediaNotFoundError,
+    )
+
+    if isinstance(exc, ArticleMediaAccessError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, ArticleMediaNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ArticleMediaFileError):
+        # Storage couldn't confirm the file was removed; nothing was deleted
+        # (DB row kept) so this is safe to retry, not a client input error.
+        return HTTPException(status_code=500, detail=str(exc))
+    if isinstance(exc, ArticleMediaError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
 
 
 def require_admin_only_key(
@@ -1071,7 +1096,20 @@ def admin_create_article(
             )
             art.category = payload.category
             art.summary = payload.summary
-            art.content = payload.content
+            from app.services.article_media import apply_article_content_and_media
+
+            try:
+                apply_article_content_and_media(
+                    session,
+                    actor=actor,
+                    article=art,
+                    content=payload.content,
+                    content_format=payload.content_format,
+                    media_ids=payload.media_ids,
+                    merge_existing=True,
+                )
+            except Exception as exc:
+                raise _http_article_media_error(exc) from exc
             if actor is not None and str(actor.role).strip().lower() == "office":
                 from app.services.article_access import office_article_office_name
 
@@ -1155,6 +1193,7 @@ def admin_create_article(
             path=None,
             summary=payload.summary,
             content=payload.content,
+            content_format=(payload.content_format or "plain"),
             office=office_name,
             source_filename=payload.source_document,
             chunk_count=len(payload.chunk_ids or []) if payload.chunk_ids else None,
@@ -1184,6 +1223,20 @@ def admin_create_article(
             if admin_actor_id:
                 art.published_by_user_id = admin_actor_id
         session.add(art)
+        session.flush()
+        try:
+            from app.services.article_media import apply_article_content_and_media
+
+            apply_article_content_and_media(
+                session,
+                actor=actor,
+                article=art,
+                content=payload.content,
+                content_format=payload.content_format,
+                media_ids=payload.media_ids,
+            )
+        except Exception as exc:
+            raise _http_article_media_error(exc) from exc
         from app.services.ticket_knowledge import sync_ticket_kb_status
 
         sync_ticket_kb_status(session, art)
@@ -1249,12 +1302,42 @@ def admin_update_article(
             raise HTTPException(status_code=404, detail="Article not found")
         _assert_article_access(session, art, admin_actor_id)
         updates = payload.model_dump(exclude_unset=True)
+        media_ids = updates.pop("media_ids", None)
+        content_format = updates.pop("content_format", None)
         if "source_document" in updates:
             updates["source_filename"] = updates.pop("source_document")
         if "content" in updates:
-            from app.services.article_content_formatter import merge_article_content_update
+            from app.services.article_media import apply_article_content_and_media
 
-            updates["content"] = merge_article_content_update(art.content, updates["content"])
+            try:
+                apply_article_content_and_media(
+                    session,
+                    actor=_kb_editor_actor(session, admin_actor_id),
+                    article=art,
+                    content=updates.pop("content"),
+                    content_format=content_format,
+                    media_ids=media_ids,
+                    merge_existing=True,
+                )
+            except Exception as exc:
+                raise _http_article_media_error(exc) from exc
+            media_ids = None
+        elif media_ids:
+            from app.services.article_media import attach_media_ids
+
+            try:
+                attach_media_ids(
+                    session,
+                    actor=_kb_editor_actor(session, admin_actor_id),
+                    article=art,
+                    media_ids=media_ids,
+                )
+            except Exception as exc:
+                raise _http_article_media_error(exc) from exc
+        if content_format and "content" not in payload.model_dump(exclude_unset=True):
+            fmt = str(content_format).strip().lower()
+            if fmt in {"plain", "html"}:
+                art.content_format = fmt
 
         # Map API publish_status onto the DB published column.
         becoming_published = False
@@ -1544,11 +1627,145 @@ def admin_delete_article(
                 ticket.kb_article_id = None
                 ticket.kb_conversion_status = "none"
                 session.add(ticket)
+        from app.services.article_media import delete_article_media_files
+
+        try:
+            delete_article_media_files(session, article_id)
+        except Exception as exc:
+            raise _http_article_media_error(exc) from exc
         # Delete Postgres row first; orphan Chroma FAQ vectors are filtered at ask-time.
         session.delete(art)
         session.commit()
         best_effort_remove_faq_document(article_id)
         return {"success": True, "id": article_id}
+    except HTTPException:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@kb_tools_router.post("/media", response_model=ArticleMediaSchema)
+async def admin_upload_article_media(
+    file: UploadFile = File(...),
+    kind: str = Form("inline_image"),
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> ArticleMediaSchema:
+    from app.services.article_media import (
+        cleanup_pending_media,
+        media_schema,
+        require_editor_actor,
+        save_article_media,
+    )
+
+    content = await file.read()
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        actor = require_editor_actor(session, admin_actor_id)
+        cleanup_pending_media(session)
+        row = save_article_media(
+            session,
+            actor=actor,
+            kind=kind,
+            filename=file.filename or "file",
+            content=content,
+            claimed_type=file.content_type,
+        )
+        session.commit()
+        session.refresh(row)
+        return ArticleMediaSchema(**media_schema(row))
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:
+        session.rollback()
+        raise _http_article_media_error(exc) from exc
+    finally:
+        session.close()
+
+
+@kb_tools_router.post("/articles/{article_id}/media", response_model=ArticleMediaSchema)
+async def admin_upload_article_media_for_article(
+    article_id: str,
+    file: UploadFile = File(...),
+    kind: str = Form("attachment"),
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> ArticleMediaSchema:
+    from app.models.db_models import PublishedArticle
+    from app.services.article_media import media_schema, require_editor_actor, save_article_media
+
+    content = await file.read()
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        actor = require_editor_actor(session, admin_actor_id)
+        art = session.get(PublishedArticle, article_id)
+        if art is None:
+            raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
+        row = save_article_media(
+            session,
+            actor=actor,
+            kind=kind,
+            filename=file.filename or "file",
+            content=content,
+            claimed_type=file.content_type,
+            article=art,
+        )
+        session.commit()
+        session.refresh(row)
+        return ArticleMediaSchema(**media_schema(row))
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:
+        session.rollback()
+        raise _http_article_media_error(exc) from exc
+    finally:
+        session.close()
+
+
+@kb_tools_router.get("/articles/{article_id}/media", response_model=list[ArticleMediaSchema])
+def admin_list_article_media(
+    article_id: str,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> list[ArticleMediaSchema]:
+    from app.models.db_models import PublishedArticle
+    from app.services.article_media import list_article_media, media_schema
+
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        art = session.get(PublishedArticle, article_id)
+        if art is None:
+            raise HTTPException(status_code=404, detail="Article not found")
+        _assert_article_access(session, art, admin_actor_id)
+        return [ArticleMediaSchema(**media_schema(row)) for row in list_article_media(session, article_id)]
+    finally:
+        session.close()
+
+
+@kb_tools_router.delete("/media/{media_id}")
+def admin_delete_article_media(
+    media_id: str,
+    admin_actor_id: str | None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    from app.services.article_media import delete_media, require_editor_actor
+
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        actor = require_editor_actor(session, admin_actor_id)
+        delete_media(session, actor, media_id)
+        session.commit()
+        return {"success": True, "id": media_id}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:
+        session.rollback()
+        raise _http_article_media_error(exc) from exc
     finally:
         session.close()
 
@@ -2154,6 +2371,17 @@ def _admin_article_schema(art) -> AdminPublishedArticleSchema:
         art.source_filename,
         source_section,
     )
+    from app.services.article_media import KIND_ATTACHMENT, list_article_media, media_schema
+
+    all_media: list = []
+    attachments: list = []
+    media_session = None
+    state = getattr(art, "_sa_instance_state", None)
+    if state is not None:
+        media_session = state.session
+    if media_session is not None:
+        all_media = [media_schema(row) for row in list_article_media(media_session, art.id)]
+        attachments = [item for item in all_media if item.get("kind") == KIND_ATTACHMENT]
     return AdminPublishedArticleSchema(
         id=art.id,
         title=art.title,
@@ -2163,6 +2391,9 @@ def _admin_article_schema(art) -> AdminPublishedArticleSchema:
         path=art.path,
         summary=art.summary,
         content=art.content,
+        content_format=getattr(art, "content_format", None) or "plain",
+        attachments=attachments,
+        media=all_media,
         office=art.office,
         source_filename=art.source_filename,
         chunk_count=int(art.chunk_count or 0),

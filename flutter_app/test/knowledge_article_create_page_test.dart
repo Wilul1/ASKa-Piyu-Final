@@ -1,15 +1,22 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_quill/flutter_quill.dart';
+import 'package:flutter_quill/translations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/models/admin_article_models.dart';
+import 'package:aska_piyu/models/article_media_models.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/knowledge_article_create_page.dart';
 import 'package:aska_piyu/screens/knowledge_articles_page.dart';
 import 'package:aska_piyu/services/admin_article_service.dart';
 import 'package:aska_piyu/services/auth_service.dart';
+import 'package:aska_piyu/services/file_pick.dart';
+import 'package:aska_piyu/widgets/article_rich_editor.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +45,13 @@ void main() {
     List<String>? debugOfficeNames,
     Future<AdminArticle> Function(Map<String, dynamic> payload)?
         debugCreateArticle,
+    Future<ArticleMediaItem> Function({
+      required PickedAppFile file,
+      required String kind,
+    })? debugUploadMedia,
+    Future<void> Function(String mediaId)? debugDeleteMedia,
+    Future<PickedAppFile?> Function()? debugPickImage,
+    Future<List<PickedAppFile>> Function()? debugPickFiles,
     Widget? home,
   }) async {
     await tester.binding.setSurfaceSize(size);
@@ -53,6 +67,12 @@ void main() {
       AuthScope(
         controller: controller,
         child: MaterialApp(
+          localizationsDelegates: const [
+            FlutterQuillLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           home: home ??
               KnowledgeArticleCreatePage(
                 service: AdminArticleService(
@@ -64,12 +84,30 @@ void main() {
                 debugOfficeNames: debugOfficeNames ?? knownOffices,
                 debugCreateArticle: debugCreateArticle ??
                     (payload) async => createdFrom(payload),
+                debugUploadMedia: debugUploadMedia,
+                debugDeleteMedia: debugDeleteMedia ?? (_) async {},
+                debugPickImage: debugPickImage,
+                debugPickFiles: debugPickFiles,
               ),
         ),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
+  }
+
+  Future<void> typeInEditor(WidgetTester tester, String content) async {
+    final editor = tester.state<ArticleRichEditorState>(
+      find.byType(ArticleRichEditor),
+    );
+    final length = editor.controller.document.length;
+    editor.controller.replaceText(
+      0,
+      length > 0 ? length - 1 : 0,
+      content,
+      TextSelection.collapsed(offset: content.length),
+    );
+    await tester.pump();
   }
 
   Future<void> fillRequired(
@@ -86,11 +124,7 @@ void main() {
       find.byKey(const Key('knowledge-article-create-category')),
       category,
     );
-    await tester.enterText(
-      find.byKey(const Key('knowledge-article-create-content')),
-      content,
-    );
-    await tester.pump();
+    await typeInEditor(tester, content);
   }
 
   group('Create Knowledge Article page', () {
@@ -116,13 +150,17 @@ void main() {
           findsOneWidget);
       expect(find.byKey(const Key('knowledge-article-create-content')),
           findsOneWidget);
+      expect(find.byKey(const Key('article-editor-toolbar')), findsOneWidget);
+      expect(find.byKey(const Key('article-editor-bold')), findsOneWidget);
+      expect(find.byKey(const Key('article-editor-italic')), findsOneWidget);
+      expect(find.byKey(const Key('article-editor-underline')), findsOneWidget);
+      expect(find.byKey(const Key('article-editor-image')), findsOneWidget);
       expect(find.text('Enter a clear and descriptive title'), findsOneWidget);
       expect(find.text('0/200'), findsNothing);
       expect(find.text('0/5000'), findsNothing);
       expect(find.text('Tags'), findsNothing);
       expect(find.text('Tags (optional)'), findsNothing);
-      expect(find.text('Attachments'), findsNothing);
-      expect(find.text('Attachments (optional)'), findsNothing);
+      expect(find.text('Attachments (optional)'), findsWidgets);
       expect(find.text('Submit for review'), findsNothing);
       expect(find.text('Submit for Review'), findsNothing);
       expect(find.text('Articles will be reviewed before publishing'),
@@ -420,6 +458,46 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('leaving unsaved create deletes pending uploads',
+        (tester) async {
+      final deleted = <String>[];
+      await pumpCreate(
+        tester,
+        user: _adminUser(),
+        debugUploadMedia: ({required file, required kind}) async {
+          return ArticleMediaItem(
+            id: 'pending-1',
+            kind: kind,
+            originalFilename: file.name,
+            storedFilename: 'pending-1.png',
+            contentType: 'image/png',
+            sizeBytes: file.bytes.length,
+            url: '/kb/media/pending-1.png',
+            pending: true,
+          );
+        },
+        debugDeleteMedia: (id) async => deleted.add(id),
+        debugPickFiles: () async => [
+          PickedAppFile(
+            name: 'campus.png',
+            bytes: Uint8List.fromList(List<int>.filled(16, 1)),
+          ),
+        ],
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('knowledge-article-attachments-dropzone')),
+      );
+      await tester.tap(
+        find.byKey(const Key('knowledge-article-attachments-dropzone')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('campus.png'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(deleted, contains('pending-1'));
+    });
+
     testWidgets('Admin and Office scaffolds stay on Knowledge Article',
         (tester) async {
       await pumpCreate(tester, user: _adminUser());
@@ -430,6 +508,71 @@ void main() {
       expect(find.text('Office workspace'), findsWidgets);
       expect(find.text('Knowledge Article'), findsWidgets);
       expect(find.text('Assigned Tickets'), findsWidgets);
+    });
+
+    testWidgets('attachments upload lists, save includes media_ids, remove works',
+        (tester) async {
+      Map<String, dynamic>? captured;
+      final deleted = <String>[];
+      await pumpCreate(
+        tester,
+        user: _adminUser(),
+        debugCreateArticle: (payload) async {
+          captured = payload;
+          return createdFrom(payload);
+        },
+        debugUploadMedia: ({required file, required kind}) async {
+          return ArticleMediaItem(
+            id: 'att-1',
+            kind: kind,
+            originalFilename: file.name,
+            storedFilename: 'att-1_clearance.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: file.bytes.length,
+            url: '/kb/media/att-1_clearance.pdf',
+            pending: true,
+          );
+        },
+        debugDeleteMedia: (id) async => deleted.add(id),
+        debugPickFiles: () async => [
+          PickedAppFile(
+            name: 'clearance.pdf',
+            bytes: Uint8List.fromList(List<int>.filled(24, 1)),
+          ),
+        ],
+      );
+
+      await tester.ensureVisible(
+        find.byKey(const Key('knowledge-article-attachments-dropzone')),
+      );
+      await tester.tap(
+        find.byKey(const Key('knowledge-article-attachments-dropzone')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('clearance.pdf'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('knowledge-article-attachment-remove-att-1')),
+      );
+      await tester.pumpAndSettle();
+      expect(deleted, contains('att-1'));
+      expect(find.text('clearance.pdf'), findsNothing);
+
+      await tester.tap(
+        find.byKey(const Key('knowledge-article-attachments-dropzone')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('clearance.pdf'), findsOneWidget);
+
+      await fillRequired(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('knowledge-article-create-save-draft')),
+      );
+      await tester.tap(
+        find.byKey(const Key('knowledge-article-create-save-draft')),
+      );
+      await tester.pumpAndSettle();
+      expect(captured?['media_ids'], ['att-1']);
     });
   });
 }

@@ -84,6 +84,31 @@ ADDITIVE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_published_articles_slug ON published_articles (slug)",
     "ALTER TABLE ticket_replies ADD COLUMN IF NOT EXISTS is_internal BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS content_format VARCHAR(20) NOT NULL DEFAULT 'plain'",
+    "UPDATE published_articles SET content_format = 'plain' WHERE content_format IS NULL",
+    "ALTER TABLE published_articles DROP CONSTRAINT IF EXISTS ck_published_articles_content_format",
+    "ALTER TABLE published_articles ADD CONSTRAINT ck_published_articles_content_format "
+    "CHECK (content_format IN ('plain', 'html'))",
+    """
+    CREATE TABLE IF NOT EXISTS article_media (
+        id VARCHAR(36) PRIMARY KEY,
+        article_id VARCHAR(36) REFERENCES published_articles(id),
+        uploaded_by_user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+        kind VARCHAR(20) NOT NULL,
+        original_filename VARCHAR(255) NOT NULL,
+        stored_filename VARCHAR(255) NOT NULL UNIQUE,
+        content_type VARCHAR(120) NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_article_media_article_id ON article_media (article_id)",
+    "CREATE INDEX IF NOT EXISTS ix_article_media_uploaded_by_user_id ON article_media (uploaded_by_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_article_media_kind ON article_media (kind)",
+    "CREATE INDEX IF NOT EXISTS ix_article_media_stored_filename ON article_media (stored_filename)",
+    "ALTER TABLE article_media DROP CONSTRAINT IF EXISTS ck_article_media_kind",
+    "ALTER TABLE article_media ADD CONSTRAINT ck_article_media_kind "
+    "CHECK (kind IN ('inline_image', 'attachment'))",
 )
 
 

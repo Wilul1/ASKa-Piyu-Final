@@ -69,3 +69,29 @@ backend/.EasyOCR/
 
 # Local draft docs / previews (not part of the product)
 docs/
+
+# Local ad hoc audit/probe/certification/regression scratch artifacts from
+# manual production-verification sessions (never hand-authored source, never
+# meant to be committed; several carry "secret"/"qa_state" in the name).
+# Narrowly scoped to the repo root and deploy/ so it cannot hide real source
+# files elsewhere in the tree.
+/_audit_*
+/_cert_*
+/_fix_*
+/_flutter_web_*.tgz
+/_hotfix_*
+/_r123_*
+/_regression_*
+/_smoke_*
+/_stress_*
+/_val_*
+/aska_*.json
+/flutter_web_deploy_*.tgz
+/probe_out*
+deploy/_*.py
+deploy/_*.sh
+deploy/_*.json
+deploy/_*.txt
+
+# Custom pytest tmp dirs left behind by ad hoc first-failure/regression debug runs
+backend/.pytest-tmp-*/

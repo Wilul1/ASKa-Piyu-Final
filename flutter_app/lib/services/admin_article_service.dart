@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../models/admin_article_models.dart';
+import '../models/article_media_models.dart';
 import 'api_client.dart';
 
 typedef AdminHeaderSetter = void Function(Map<String, String> headers);
@@ -108,6 +109,48 @@ class AdminArticleService {
 
   Future<void> deleteArticle(String id) async {
     await _request(method: 'DELETE', path: '/admin/kb/articles/$id');
+  }
+
+  Future<ArticleMediaItem> uploadArticleMedia({
+    required Uint8List bytes,
+    required String filename,
+    required String kind,
+    String? articleId,
+  }) async {
+    final path = (articleId != null && articleId.trim().isNotEmpty)
+        ? '/admin/kb/articles/${articleId.trim()}/media'
+        : '/admin/kb/media';
+    final data = await _request(
+      method: 'POST',
+      path: path,
+      fields: {'kind': kind},
+      files: [
+        http.MultipartFile.fromBytes('file', bytes, filename: filename),
+      ],
+    );
+    if (data is! Map) {
+      throw AdminArticleRequestException(
+        message: 'Invalid media upload response.',
+        responseBody: data?.toString(),
+      );
+    }
+    return ArticleMediaItem.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  Future<List<ArticleMediaItem>> listArticleMedia(String articleId) async {
+    final data = await _request(
+      method: 'GET',
+      path: '/admin/kb/articles/$articleId/media',
+    );
+    if (data is! List) return const [];
+    return data
+        .whereType<Map>()
+        .map((item) => ArticleMediaItem.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
+  Future<void> deleteArticleMedia(String mediaId) async {
+    await _request(method: 'DELETE', path: '/admin/kb/media/$mediaId');
   }
 
   Future<BulkArticleActionResult> bulkSaveDraft(
@@ -343,7 +386,7 @@ class AdminArticleService {
 
     final body = responseText.trim().isNotEmpty
         ? responseText.trim()
-        : (decoded != null ? decoded.toString() : null);
+        : decoded?.toString();
 
     return AdminArticleRequestException(
       message: _formatError(status, detail),
@@ -357,14 +400,14 @@ class AdminArticleService {
     if (status == 0) {
       return 'Could not reach the backend at $apiBase.';
     }
+    final text = detail?.trim() ?? '';
+    if (text.isNotEmpty) return text;
     if (status == 401) {
       return 'Admin authorization failed. Please log in again as admin.';
     }
     if (status == 403) {
-      return 'Only admin accounts can use Knowledge Base Admin tools.';
+      return 'You do not have permission to do that.';
     }
-    final text = detail?.trim() ?? '';
-    if (text.isNotEmpty) return text;
     return status == null ? 'Request failed.' : 'Request failed with status $status.';
   }
 }

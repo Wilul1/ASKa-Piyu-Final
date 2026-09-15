@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'article_media_models.dart';
+
 enum ArticleReviewBucket { recommended, needsReview, overflow, published }
 
 class AdminArticle {
@@ -21,6 +23,9 @@ class AdminArticle {
     this.ragIndexed = false,
     this.metadata = const {},
     this.displayContent = '',
+    this.contentFormat = 'plain',
+    this.attachments = const [],
+    this.media = const [],
   });
 
   final String id;
@@ -40,6 +45,14 @@ class AdminArticle {
   final bool ragIndexed;
   final Map<String, dynamic> metadata;
   final String displayContent;
+  final String contentFormat;
+  final List<ArticleMediaItem> attachments;
+  final List<ArticleMediaItem> media;
+
+  bool get isHtmlContent {
+    if (contentFormat.trim().toLowerCase() == 'html') return true;
+    return _looksLikeHtml(displayContent);
+  }
 
   /// Published in Postgres but missing Chroma vectors (chatbot will miss it).
   bool get ragStale => published && !ragIndexed;
@@ -89,7 +102,8 @@ class AdminArticle {
 
   factory AdminArticle.fromJson(Map<String, dynamic> json) {
     final rawContent = json['content']?.toString();
-    final parsed = _parseArticleContent(rawContent);
+    final contentFormat = (json['content_format']?.toString() ?? 'plain').trim();
+    final parsed = _parseArticleContent(rawContent, contentFormat: contentFormat);
     return AdminArticle(
       id: json['id']?.toString() ?? '',
       title: json['title']?.toString() ?? 'Untitled',
@@ -108,6 +122,9 @@ class AdminArticle {
       ragIndexed: json['rag_indexed'] == true,
       metadata: parsed.metadata,
       displayContent: parsed.displayContent,
+      contentFormat: parsed.isHtml ? 'html' : 'plain',
+      attachments: _readMediaList(json['attachments']),
+      media: _readMediaList(json['media']),
     );
   }
 
@@ -132,6 +149,9 @@ class AdminArticle {
       ragIndexed: json['rag_indexed'] == true,
       metadata: _parseMetadataOnly(rawContent),
       displayContent: '',
+      contentFormat: (json['content_format']?.toString() ?? 'plain').trim(),
+      attachments: _readMediaList(json['attachments']),
+      media: _readMediaList(json['media']),
     );
   }
 
@@ -183,6 +203,8 @@ class AdminArticle {
     String? office,
     String? sourceFilename,
     String? audience,
+    String? contentFormat,
+    List<String>? mediaIds,
   }) {
     final payload = <String, dynamic>{};
     if (title != null) payload['title'] = title;
@@ -192,6 +214,8 @@ class AdminArticle {
     if (office != null) payload['office'] = office;
     if (sourceFilename != null) payload['source_document'] = sourceFilename;
     if (audience != null) payload['audience'] = _normalizeAudience(audience);
+    if (contentFormat != null) payload['content_format'] = contentFormat;
+    if (mediaIds != null) payload['media_ids'] = mediaIds;
     return payload;
   }
 }
@@ -250,7 +274,10 @@ AdminArticle stampManualReviewFromLowQuality(AdminArticle article) {
     audience: article.audience,
     ragIndexed: false,
     metadata: meta,
-    displayContent: cleanArticleContentForDisplay(body),
+    displayContent: article.isHtmlContent ? body : cleanArticleContentForDisplay(body),
+    contentFormat: article.contentFormat,
+    attachments: article.attachments,
+    media: article.media,
   );
 }
 
@@ -1023,13 +1050,27 @@ class _ParsedArticleContent {
   const _ParsedArticleContent({
     required this.displayContent,
     required this.metadata,
+    this.isHtml = false,
   });
 
   final String displayContent;
   final Map<String, dynamic> metadata;
+  final bool isHtml;
 }
 
-_ParsedArticleContent _parseArticleContent(String? rawContent) {
+bool _looksLikeHtml(String? text) {
+  final raw = (text ?? '').trimLeft();
+  if (!raw.startsWith('<')) return false;
+  return RegExp(
+    r'<(p|h[1-4]|ul|ol|blockquote|div|span|strong|em|img)\b',
+    caseSensitive: false,
+  ).hasMatch(raw);
+}
+
+_ParsedArticleContent _parseArticleContent(
+  String? rawContent, {
+  String contentFormat = 'plain',
+}) {
   if (rawContent == null || rawContent.trim().isEmpty) {
     return const _ParsedArticleContent(displayContent: '', metadata: {});
   }
@@ -1056,7 +1097,12 @@ _ParsedArticleContent _parseArticleContent(String? rawContent) {
     body = body.substring(0, rawMatch.start).trimRight();
   }
 
-  return _ParsedArticleContent(displayContent: cleanArticleContentForDisplay(body.trim()), metadata: metadata);
+  final html = contentFormat.trim().toLowerCase() == 'html' || _looksLikeHtml(body);
+  return _ParsedArticleContent(
+    displayContent: html ? body.trim() : cleanArticleContentForDisplay(body.trim()),
+    metadata: metadata,
+    isHtml: html,
+  );
 }
 
 Map<String, dynamic> _parseMetadataOnly(String? rawContent) {
@@ -1891,6 +1937,15 @@ List<String> _readStringList(dynamic value) {
   if (value == null) return const [];
   final text = value.toString().trim();
   return text.isEmpty ? const [] : [text];
+}
+
+List<ArticleMediaItem> _readMediaList(dynamic value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((item) => ArticleMediaItem.fromJson(Map<String, dynamic>.from(item)))
+      .where((item) => item.id.isNotEmpty)
+      .toList();
 }
 
 class AdminArticleRequestException implements Exception {

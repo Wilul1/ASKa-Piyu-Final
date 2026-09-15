@@ -242,6 +242,10 @@ class PublishedArticle(Base):
             "kb_origin IN ('document', 'ticket_resolution')",
             name="ck_published_articles_kb_origin",
         ),
+        CheckConstraint(
+            "content_format IN ('plain', 'html')",
+            name="ck_published_articles_content_format",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -252,6 +256,7 @@ class PublishedArticle(Base):
     path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_format: Mapped[str] = mapped_column(String(20), default="plain", nullable=False)
     office: Mapped[str | None] = mapped_column(String(120), nullable=True)
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
@@ -275,6 +280,44 @@ class PublishedArticle(Base):
         onupdate=utc_now,
         nullable=False,
     )
+
+    media: Mapped[list["ArticleMedia"]] = relationship(
+        back_populates="article",
+        cascade="all, delete-orphan",
+    )
+
+
+class ArticleMedia(Base):
+    """Inline images and file attachments for Knowledge Articles.
+
+    Files live in ``kb_media_dir`` (same volume as existing public KB images).
+    ``article_id`` is null while the Create form is still unsaved.
+    """
+
+    __tablename__ = "article_media"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('inline_image', 'attachment')",
+            name="ck_article_media_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    article_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("published_articles.id"), index=True, nullable=True
+    )
+    uploaded_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), index=True, nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_filename: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    article: Mapped[PublishedArticle | None] = relationship(back_populates="media")
+    uploaded_by: Mapped[User] = relationship(foreign_keys=[uploaded_by_user_id])
 
 
 class SourceDocument(Base):

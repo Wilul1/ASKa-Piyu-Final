@@ -6,8 +6,13 @@ import '../app_config.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
+import '../models/article_media_models.dart';
 import '../services/admin_article_service.dart';
 import '../services/api_client.dart';
+import '../services/file_pick.dart';
+import '../widgets/article_attachments_panel.dart';
+import '../widgets/article_html_codec.dart';
+import '../widgets/article_rich_editor.dart';
 import '../widgets/sidebar.dart';
 import 'admin_scaffold.dart';
 import 'login_page.dart';
@@ -15,8 +20,7 @@ import 'office_scaffold.dart';
 
 /// Full-page Knowledge Article creation for Admin and Office.
 ///
-/// Reuses `POST /admin/kb/articles`. Does not invent tags, attachments,
-/// rich-text toolbars, or a review/approval workflow.
+/// Reuses `POST /admin/kb/articles` plus pending `POST /admin/kb/media`.
 class KnowledgeArticleCreatePage extends StatefulWidget {
   const KnowledgeArticleCreatePage({
     super.key,
@@ -25,6 +29,10 @@ class KnowledgeArticleCreatePage extends StatefulWidget {
     this.knownOffices = const [],
     this.debugCreateArticle,
     this.debugOfficeNames,
+    this.debugUploadMedia,
+    this.debugDeleteMedia,
+    this.debugPickImage,
+    this.debugPickFiles,
   });
 
   final AdminArticleService service;
@@ -40,6 +48,21 @@ class KnowledgeArticleCreatePage extends StatefulWidget {
   @visibleForTesting
   final List<String>? debugOfficeNames;
 
+  @visibleForTesting
+  final Future<ArticleMediaItem> Function({
+    required PickedAppFile file,
+    required String kind,
+  })? debugUploadMedia;
+
+  @visibleForTesting
+  final Future<void> Function(String mediaId)? debugDeleteMedia;
+
+  @visibleForTesting
+  final Future<PickedAppFile?> Function()? debugPickImage;
+
+  @visibleForTesting
+  final Future<List<PickedAppFile>> Function()? debugPickFiles;
+
   @override
   State<KnowledgeArticleCreatePage> createState() =>
       _KnowledgeArticleCreatePageState();
@@ -48,10 +71,10 @@ class KnowledgeArticleCreatePage extends StatefulWidget {
 class _KnowledgeArticleCreatePageState
     extends State<KnowledgeArticleCreatePage> {
   final _formKey = GlobalKey<FormState>();
+  final _editorKey = GlobalKey<ArticleRichEditorState>();
   final _titleCtrl = TextEditingController();
   final _categoryCtrl = TextEditingController();
   final _summaryCtrl = TextEditingController();
-  final _contentCtrl = TextEditingController();
   final _officeTextCtrl = TextEditingController();
 
   bool _saving = false;
@@ -63,6 +86,10 @@ class _KnowledgeArticleCreatePageState
   String? _selectedOffice;
   List<String> _offices = [];
   bool _officeFetchFailed = false;
+  final List<ArticleMediaItem> _attachments = [];
+  final Set<String> _pendingMediaIds = {};
+  final Set<String> _uploadingIds = {};
+  String? _attachmentError;
 
   @override
   void initState() {
@@ -70,17 +97,18 @@ class _KnowledgeArticleCreatePageState
     _titleCtrl.addListener(_markDirty);
     _categoryCtrl.addListener(_markDirty);
     _summaryCtrl.addListener(_markDirty);
-    _contentCtrl.addListener(_markDirty);
     _officeTextCtrl.addListener(_markDirty);
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapOffices());
   }
 
   @override
   void dispose() {
+    if (!_saved) {
+      _discardPendingMedia();
+    }
     _titleCtrl.dispose();
     _categoryCtrl.dispose();
     _summaryCtrl.dispose();
-    _contentCtrl.dispose();
     _officeTextCtrl.dispose();
     super.dispose();
   }
@@ -148,6 +176,9 @@ class _KnowledgeArticleCreatePageState
         ],
       ),
     );
+    if (leave == true && !_saved) {
+      await _discardPendingMedia();
+    }
     return leave == true;
   }
 
@@ -163,7 +194,7 @@ class _KnowledgeArticleCreatePageState
       setState(() {});
       return;
     }
-    if (publish && _contentCtrl.text.trim().isEmpty) {
+    if (publish && _editorValue.isEmpty) {
       setState(() {
         _error =
             'Article content is empty. Correct it and save as draft before publishing.';
@@ -184,14 +215,17 @@ class _KnowledgeArticleCreatePageState
     });
 
     final office = _resolvedOffice();
+    final editor = _editorValue;
     final payload = <String, dynamic>{
       'title': _titleCtrl.text.trim(),
       'category': _categoryCtrl.text.trim(),
       if (_summaryCtrl.text.trim().isNotEmpty)
         'summary': _summaryCtrl.text.trim(),
-      'content': _contentCtrl.text.trim(),
+      'content': editor.content,
+      'content_format': editor.contentFormat,
       'publish_status': publish,
       if (office != null && office.isNotEmpty) 'office': office,
+      if (_pendingMediaIds.isNotEmpty) 'media_ids': _pendingMediaIds.toList(),
     };
 
     try {
@@ -224,6 +258,94 @@ class _KnowledgeArticleCreatePageState
     }
     final typed = _officeTextCtrl.text.trim();
     return typed.isEmpty ? null : typed;
+  }
+
+  ArticleEditorValue get _editorValue {
+    return _editorKey.currentState?.value ??
+        const ArticleEditorValue(content: '', contentFormat: 'plain');
+  }
+
+  Map<String, String> _mediaHeaders() => AuthScope.of(context).ticketHeaders();
+
+  Future<ArticleMediaItem> _uploadFile({
+    required PickedAppFile file,
+    required String kind,
+  }) async {
+    if (widget.debugUploadMedia != null) {
+      return widget.debugUploadMedia!(file: file, kind: kind);
+    }
+    return widget.service.uploadArticleMedia(
+      bytes: file.bytes,
+      filename: file.name,
+      kind: kind,
+    );
+  }
+
+  Future<void> _deleteMediaId(String mediaId) async {
+    try {
+      if (widget.debugDeleteMedia != null) {
+        await widget.debugDeleteMedia!(mediaId);
+      } else {
+        await widget.service.deleteArticleMedia(mediaId);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _discardPendingMedia() async {
+    final ids = List<String>.from(_pendingMediaIds);
+    _pendingMediaIds.clear();
+    _attachments.clear();
+    for (final id in ids) {
+      await _deleteMediaId(id);
+    }
+  }
+
+  Future<void> _uploadAttachments(List<PickedAppFile> files) async {
+    setState(() => _attachmentError = null);
+    for (final file in files) {
+      if (file.bytes.length > articleAttachmentMaxBytes) {
+        setState(() => _attachmentError = 'Files must be 10 MB or smaller.');
+        continue;
+      }
+      final tempId = 'uploading-${file.name}-${file.bytes.length}';
+      setState(() {
+        _uploadingIds.add(tempId);
+        _dirty = true;
+      });
+      try {
+        final uploaded = await _uploadFile(file: file, kind: 'attachment');
+        if (!mounted) return;
+        setState(() {
+          _attachments.add(uploaded);
+          _pendingMediaIds.add(uploaded.id);
+          _uploadingIds.remove(tempId);
+          _dirty = true;
+        });
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _uploadingIds.remove(tempId);
+          _attachmentError = error.toString();
+        });
+      }
+    }
+  }
+
+  Future<ArticleMediaItem> _uploadInlineImage(PickedAppFile file) async {
+    final uploaded = await _uploadFile(file: file, kind: 'inline_image');
+    _pendingMediaIds.add(uploaded.id);
+    _dirty = true;
+    return uploaded;
+  }
+
+  Future<void> _removeAttachment(ArticleMediaItem item) async {
+    await _deleteMediaId(item.id);
+    if (!mounted) return;
+    setState(() {
+      _attachments.removeWhere((row) => row.id == item.id);
+      _pendingMediaIds.remove(item.id);
+      _dirty = true;
+    });
   }
 
   @override
@@ -331,6 +453,8 @@ class _KnowledgeArticleCreatePageState
                       const SizedBox(height: 14),
                       _buildPublishSettings(),
                       const SizedBox(height: 14),
+                      _buildAttachments(),
+                      const SizedBox(height: 14),
                       _buildActions(),
                     ] else
                       Row(
@@ -352,6 +476,8 @@ class _KnowledgeArticleCreatePageState
                             child: Column(
                               children: [
                                 _buildPublishSettings(),
+                                const SizedBox(height: 14),
+                                _buildAttachments(),
                                 const SizedBox(height: 14),
                                 _buildActions(),
                               ],
@@ -547,16 +673,38 @@ class _KnowledgeArticleCreatePageState
     return _CreatePanel(
       title: 'Content',
       subtitle:
-          'Write the full content of the article. Articles are stored as plain text; the current editor does not include a formatting toolbar.',
-      child: TextFormField(
+          'Write the full content of the article. Formatting, links, and images are saved with the article.',
+      child: KeyedSubtree(
         key: const Key('knowledge-article-create-content'),
-        controller: _contentCtrl,
-        enabled: !_saving,
-        minLines: 10,
-        maxLines: 18,
-        decoration: _inputDecoration(
-          hint: 'Start writing your article here…',
+        child: ArticleRichEditor(
+          key: _editorKey,
+          initialContent: '',
+          contentFormat: 'plain',
+          enabled: !_saving,
+          imageHeaders: _mediaHeaders(),
+          debugPickImage: widget.debugPickImage,
+          onChanged: (_) => _markDirty(),
+          onUploadImage: _saving ? null : _uploadInlineImage,
         ),
+      ),
+    );
+  }
+
+  Widget _buildAttachments() {
+    return _CreatePanel(
+      title: 'Attachments (optional)',
+      subtitle:
+          'Upload images or PDFs to support your article. Maximum 10 MB per file. Allowed: JPG, PNG, WebP, GIF, or PDF.',
+      child: ArticleAttachmentsPanel(
+        attachments: _attachments,
+        uploading: _uploadingIds,
+        enabled: !_saving,
+        error: _attachmentError,
+        showTitle: false,
+        debugPickFiles: widget.debugPickFiles,
+        onPick: _uploadAttachments,
+        onDropped: _uploadAttachments,
+        onRemove: _removeAttachment,
       ),
     );
   }

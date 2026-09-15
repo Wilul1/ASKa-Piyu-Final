@@ -291,9 +291,17 @@ def extract_embedded_article_metadata(content: str | None) -> dict[str, Any]:
 def merge_article_content_update(
     existing_content: str | None,
     updated_body: str | None,
+    *,
+    content_format: str | None = None,
 ) -> str:
     """Preserve embedded metadata (including official_source_excerpt) when admins edit body text."""
-    body = clean_article_content_for_display(updated_body or "")
+    fmt = (content_format or "").strip().lower()
+    if fmt == "html":
+        from app.services.article_html import sanitize_article_html
+
+        body = sanitize_article_html(updated_body)
+    else:
+        body = clean_article_content_for_display(updated_body or "")
     metadata = extract_embedded_article_metadata(existing_content)
     if not metadata:
         return body

@@ -849,6 +849,19 @@ class AuthEventListResponse(BaseModel):
 # --- Admin: PublishedArticle management ---
 
 
+class ArticleMediaSchema(BaseModel):
+    id: str
+    article_id: str | None = None
+    kind: str
+    original_filename: str
+    stored_filename: str
+    content_type: str
+    size_bytes: int
+    url: str
+    created_at: str | None = None
+    pending: bool = False
+
+
 class AdminPublishedArticleCreate(BaseModel):
     title: str
     category: str
@@ -858,6 +871,8 @@ class AdminPublishedArticleCreate(BaseModel):
     office: str | None = None
     summary: str | None = None
     content: str | None = None
+    content_format: str | None = None
+    media_ids: list[str] | None = None
     requirements: list[str] | None = None
     steps: list[str] | None = None
     options_or_services: list[str] | None = None
@@ -883,6 +898,8 @@ class AdminPublishedArticleUpdate(BaseModel):
     office: str | None = None
     summary: str | None = None
     content: str | None = None
+    content_format: str | None = None
+    media_ids: list[str] | None = None
     requirements: list[str] | None = None
     steps: list[str] | None = None
     options_or_services: list[str] | None = None
@@ -904,6 +921,9 @@ class AdminPublishedArticleSchema(BaseModel):
     path: str | None = None
     summary: str | None = None
     content: str | None = None
+    content_format: str = "plain"
+    attachments: list[ArticleMediaSchema] = []
+    media: list[ArticleMediaSchema] = []
     office: str | None = None
     source_filename: str | None = None
     chunk_count: int | None = None

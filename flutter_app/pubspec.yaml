@@ -12,7 +12,13 @@ dependencies:
   fl_chart: ^0.69.2
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_quill: 10.8.5
+  flutter_quill_delta_from_html: ^1.5.3
+  dart_quill_delta: ^10.8.3
   flutter_secure_storage: ^9.2.4
+  html: ^0.15.7
   http: ^1.6.0
   open_filex: ^4.7.0
   path_provider: ^2.1.5

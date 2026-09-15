@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
@@ -108,7 +109,7 @@ async def get_article(
     role = current_user.role if current_user is not None else None
     if not _article_visible_for_role(article, role):
         raise HTTPException(status_code=404, detail="Article not found")
-    return _published_article_detail(article)
+    return _published_article_detail(article, session)
 
 
 def _article_visible_for_role(article: PublishedArticle, role: str | None) -> bool:
@@ -134,6 +135,12 @@ def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
     )
 
     display_body = strip_embedded_article_metadata(article.content)
+    fmt = str(getattr(article, "content_format", None) or "plain").strip().lower()
+    search_body = display_body
+    if fmt == "html":
+        from app.services.article_html import html_to_plain
+
+        search_body = html_to_plain(display_body)
     meta = extract_embedded_article_metadata(article.content)
     summary_text = (article.summary or "").strip()
     source_section = str(meta.get("source_section") or "").strip()
@@ -194,8 +201,8 @@ def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
         "document_type": document_type,
         "summary": summary_text,
         "short_summary": summary_text,
-        "body": display_body,
-        "content_preview": _text_preview(summary_text or display_body),
+        "body": search_body,
+        "content_preview": _text_preview(summary_text or search_body),
         "article_type": "published",
         "keywords": [],
         "updated_at": article.updated_at.isoformat() if article.updated_at else None,
@@ -207,7 +214,7 @@ def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
                 article.subcategory or "",
                 article.office or "",
                 summary_text,
-                display_body,
+                search_body,
                 article.source_filename or "",
                 source_section,
                 document_type,
@@ -216,15 +223,36 @@ def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
     }
 
 
-def _published_article_detail(article: PublishedArticle) -> dict[str, Any]:
+def _published_article_detail(article: PublishedArticle, session: Session | None = None) -> dict[str, Any]:
     summary = _published_article_summary(article)
     display_body = strip_embedded_article_metadata(article.content)
+    fmt = str(getattr(article, "content_format", None) or "plain").strip().lower()
+    if fmt == "html":
+        from app.services.article_html import html_to_plain, sanitize_article_html
+
+        display_body = sanitize_article_html(display_body)
+        plain = html_to_plain(display_body)
+    else:
+        plain = display_body
     summary.pop("_search_blob", None)
+    from app.services.article_media import KIND_ATTACHMENT, list_article_media, media_schema
+
+    db = session
+    if db is None and getattr(article, "_sa_instance_state", None):
+        db = article._sa_instance_state.session
+    attachments = []
+    if db is not None:
+        attachments = [
+            media_schema(row)
+            for row in list_article_media(db, article.id, kind=KIND_ATTACHMENT)
+        ]
     return {
         **summary,
         "content": display_body,
-        "text": display_body,
+        "text": plain,
         "body": display_body,
+        "content_format": fmt,
+        "attachments": attachments,
         "metadata": {
             "category": article.category,
             "subcategory": article.subcategory or "",
@@ -1614,15 +1642,21 @@ def _normalize_ascii(value: str) -> str:
 
 
 @router.get("/media/{stored_filename}", summary="Public KB article image")
-async def download_kb_media(stored_filename: str):
-    from fastapi.responses import FileResponse
-
+async def download_kb_media(
+    stored_filename: str,
+    session: Session = Depends(get_db_session),
+    current_user: User | None = Depends(get_optional_user),
+):
+    from app.services.article_media import can_publicly_serve, get_media_by_filename
     from app.services.kb_media import resolve_kb_media_path
 
     try:
         path = resolve_kb_media_path(stored_filename)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    row = get_media_by_filename(session, stored_filename)
+    if row is not None and not can_publicly_serve(session, row, current_user):
+        raise HTTPException(status_code=404, detail="Media file not found.")
     suffix = path.suffix.lower()
     media_type = {
         ".jpg": "image/jpeg",
@@ -1630,8 +1664,15 @@ async def download_kb_media(stored_filename: str):
         ".png": "image/png",
         ".webp": "image/webp",
         ".gif": "image/gif",
+        ".pdf": "application/pdf",
     }.get(suffix, "application/octet-stream")
-    return FileResponse(path, media_type=media_type, filename=path.name)
+    as_attachment = suffix == ".pdf"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=row.original_filename if row is not None else path.name,
+        content_disposition_type="attachment" if as_attachment else "inline",
+    )
 
 
 def _dedupe(values: list[str]) -> list[str]:

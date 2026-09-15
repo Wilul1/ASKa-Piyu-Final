@@ -81,6 +81,41 @@ def test_additive_schema_revision_wires_shared_upgrades() -> None:
         assert needle in joined
 
 
+def test_article_media_revision_wires_shared_upgrades() -> None:
+    """0008 must reuse apply_additive_schema_upgrades, not duplicate its own SQL."""
+    import importlib.util
+
+    from app.db.schema_upgrades import ADDITIVE_SCHEMA_STATEMENTS
+
+    rev_path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "20260915_0008_article_media.py"
+    )
+    spec = importlib.util.spec_from_file_location("alembic_rev_0008", rev_path)
+    assert spec is not None and spec.loader is not None
+    rev = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rev)
+
+    assert rev.revision == "20260915_0008"
+    assert rev.down_revision == "20260815_0007"
+    joined = "\n".join(ADDITIVE_SCHEMA_STATEMENTS)
+    for needle in (
+        "content_format",
+        "CREATE TABLE IF NOT EXISTS article_media",
+        "ck_published_articles_content_format",
+        "ck_article_media_kind",
+    ):
+        assert needle in joined
+
+    # upgrade() must delegate to the shared function rather than inline its own
+    # CREATE TABLE/ALTER TABLE statements (keeps startup init and Alembic in sync).
+    source = rev_path.read_text(encoding="utf-8")
+    assert "apply_additive_schema_upgrades(op.get_bind())" in source
+    assert "CREATE TABLE" not in source.split("def downgrade")[0]
+
+
 def test_announcements_revision_creates_table_when_missing(tmp_path: Path) -> None:
     """Legacy DBs stamped at 0001 before Announcement model existed still need 0002."""
     rev = _load_announcements_revision()

@@ -3,11 +3,16 @@ import 'package:flutter/material.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
+import '../models/article_media_models.dart';
 import '../services/admin_article_service.dart';
+import '../services/file_pick.dart';
 import 'admin_article_preview_download_stub.dart'
     if (dart.library.html) 'admin_article_preview_download_web.dart';
 import 'admin_article_preview_export.dart';
 import 'admin_kb_article_widgets.dart';
+import 'article_attachments_panel.dart';
+import 'article_html_codec.dart';
+import 'article_rich_editor.dart';
 
 class AdminArticleCard extends StatelessWidget {
   const AdminArticleCard({
@@ -699,13 +704,13 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
       TextEditingController(
           text: buildShortSummary(
             widget.article.summary,
-            widget.article.displayContent,
+            widget.article.isHtmlContent
+                ? articleHtmlToPlain(widget.article.displayContent)
+                : widget.article.displayContent,
             title: widget.article.title,
             documentType: widget.article.documentType,
           ));
-  late final TextEditingController contentController =
-      TextEditingController(
-          text: cleanArticleContentForDisplay(widget.article.displayContent));
+  final editorKey = GlobalKey<ArticleRichEditorState>();
   late final TextEditingController officeController =
       TextEditingController(text: widget.article.office ?? '');
   late final TextEditingController sourceController =
@@ -719,13 +724,19 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
               '');
   late String audience = widget.article.audience;
   var saving = false;
+  late List<ArticleMediaItem> attachments = [
+    ...widget.article.attachments.where((item) => item.isAttachment),
+    if (widget.article.attachments.isEmpty)
+      ...widget.article.media.where((item) => item.isAttachment),
+  ];
+  final uploadingIds = <String>{};
+  String? attachmentError;
 
   @override
   void dispose() {
     titleController.dispose();
     categoryController.dispose();
     summaryController.dispose();
-    contentController.dispose();
     officeController.dispose();
     sourceController.dispose();
     sourceSectionController.dispose();
@@ -733,14 +744,86 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
     super.dispose();
   }
 
+  ArticleEditorValue get editorValue =>
+      editorKey.currentState?.value ??
+      ArticleEditorValue(
+        content: widget.article.displayContent,
+        contentFormat: widget.article.contentFormat,
+      );
+
+  Map<String, String> _mediaHeaders() {
+    try {
+      return AuthScope.of(context).ticketHeaders();
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  bool get _isOffice => AuthScope.of(context).role == 'office';
+
+  Future<ArticleMediaItem> _uploadFile({
+    required PickedAppFile file,
+    required String kind,
+  }) {
+    return widget.service.uploadArticleMedia(
+      bytes: file.bytes,
+      filename: file.name,
+      kind: kind,
+      articleId: widget.isPreview ? null : widget.article.id,
+    );
+  }
+
+  Future<ArticleMediaItem> _uploadInlineImage(PickedAppFile file) {
+    return _uploadFile(file: file, kind: 'inline_image');
+  }
+
+  Future<void> _uploadAttachments(List<PickedAppFile> files) async {
+    setState(() => attachmentError = null);
+    for (final file in files) {
+      if (file.bytes.length > articleAttachmentMaxBytes) {
+        setState(() => attachmentError = 'Files must be 10 MB or smaller.');
+        continue;
+      }
+      final tempId = 'uploading-${file.name}-${file.bytes.length}';
+      setState(() => uploadingIds.add(tempId));
+      try {
+        final uploaded = await _uploadFile(file: file, kind: 'attachment');
+        if (!mounted) return;
+        setState(() {
+          attachments.add(uploaded);
+          uploadingIds.remove(tempId);
+        });
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          uploadingIds.remove(tempId);
+          attachmentError = error.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> _removeAttachment(ArticleMediaItem item) async {
+    try {
+      await widget.service.deleteArticleMedia(item.id);
+      if (!mounted) return;
+      setState(() => attachments.removeWhere((row) => row.id == item.id));
+    } catch (error) {
+      if (mounted) setState(() => attachmentError = error.toString());
+    }
+  }
+
   Future<void> save() async {
     setState(() => saving = true);
     try {
-      var content = contentController.text.trim();
+      final editor = editorValue;
+      var content = editor.content.trim();
       final raw = widget.article.content ?? '';
       const marker = '----EXTRACTED METADATA----';
       final markerIndex = raw.indexOf(marker);
-      if (markerIndex >= 0) {
+      if (markerIndex >= 0 && editor.contentFormat != 'html') {
+        content = '$content\n\n${raw.substring(markerIndex)}';
+      } else if (markerIndex >= 0 && editor.contentFormat == 'html') {
         content = '$content\n\n${raw.substring(markerIndex)}';
       }
       final meta = Map<String, dynamic>.from(widget.article.metadata);
@@ -764,7 +847,12 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
           sourceFilename: sourceController.text.trim(),
           audience: audience,
           metadata: meta,
-          displayContent: cleanArticleContentForDisplay(content.split(marker).first.trim()),
+          displayContent: editor.contentFormat == 'html'
+              ? editor.content
+              : cleanArticleContentForDisplay(content.split(marker).first.trim()),
+          contentFormat: editor.contentFormat,
+          attachments: attachments,
+          media: attachments,
         );
         if (widget.asReviewDraft) {
           updated = stampManualReviewFromLowQuality(updated);
@@ -779,9 +867,13 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
           category: categoryController.text.trim(),
           summary: summaryController.text.trim(),
           content: content,
-          office: officeController.text.trim(),
+          office: _isOffice
+              ? (AuthScope.of(context).currentUser?.officeName ?? widget.article.office ?? '')
+              : officeController.text.trim(),
           sourceFilename: sourceController.text.trim(),
           audience: audience,
+          contentFormat: editor.contentFormat,
+          mediaIds: attachments.map((item) => item.id).toList(),
         ),
       );
       if (mounted) Navigator.of(context).pop(true);
@@ -839,15 +931,34 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
           decoration: const InputDecoration(labelText: 'Summary'),
         ),
         const SizedBox(height: 10),
-        TextField(
-          controller: contentController,
-          minLines: 8,
-          maxLines: 14,
-          decoration: const InputDecoration(
-            labelText: 'Article Content',
-            helperText: 'Student-friendly formatted content shown in the knowledge base.',
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Article Content',
+            style: TextStyle(fontSize: 12, color: DesignTokens.muted),
           ),
         ),
+        const SizedBox(height: 6),
+        ArticleRichEditor(
+          key: editorKey,
+          initialContent: widget.article.displayContent,
+          contentFormat: widget.article.contentFormat,
+          enabled: !saving,
+          imageHeaders: _mediaHeaders(),
+          onUploadImage: widget.isPreview ? null : _uploadInlineImage,
+        ),
+        if (!widget.isPreview) ...[
+          const SizedBox(height: 16),
+          ArticleAttachmentsPanel(
+            attachments: attachments,
+            uploading: uploadingIds,
+            enabled: !saving,
+            error: attachmentError,
+            onPick: _uploadAttachments,
+            onDropped: _uploadAttachments,
+            onRemove: _removeAttachment,
+          ),
+        ],
         if ((article.officialSourceExcerpt ?? '').trim().isNotEmpty) ...[
           const SizedBox(height: 12),
           OfficialSourceExcerptPanel(
@@ -855,10 +966,21 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
           ),
         ],
         const SizedBox(height: 10),
-        TextField(
-          controller: officeController,
-          decoration: const InputDecoration(labelText: 'Office'),
-        ),
+        if (_isOffice)
+          InputDecorator(
+            decoration: const InputDecoration(labelText: 'Office'),
+            child: Row(
+              children: [
+                Expanded(child: Text(officeController.text)),
+                const Icon(Icons.lock_outline, size: 16, color: DesignTokens.muted),
+              ],
+            ),
+          )
+        else
+          TextField(
+            controller: officeController,
+            decoration: const InputDecoration(labelText: 'Office'),
+          ),
         const SizedBox(height: 10),
         TextField(
           controller: sourceController,

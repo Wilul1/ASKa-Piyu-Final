@@ -214,6 +214,10 @@ def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
     if (article.kb_origin or "") == "ticket_resolution":
         raw_content = strip_ticket_faq_scaffolding(raw_content, title=article.title)
     visible = _strip_charter_source_footer(raw_content)
+    if str(getattr(article, "content_format", None) or "plain").strip().lower() == "html":
+        from app.services.article_html import html_to_plain
+
+        visible = html_to_plain(visible)
     appendix = _policy_appendix_from_extracted_metadata(article.content or "", visible)
     body = "\n\n".join(
         part

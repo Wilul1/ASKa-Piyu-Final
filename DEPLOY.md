@@ -163,7 +163,7 @@ Or `set ASKA_API_BASE_URL=https://api.your.edu` before the build scripts. Releas
 
 ## 9. Backups
 
-Back up Postgres **and** Chroma/documents together with `scripts\backup_aska.bat` (Windows) or `scripts/backup_aska.sh` (Linux).
+Back up Postgres **and** Chroma/documents/ticket_attachments/kb_media (Knowledge Article images and PDF attachments) together with `scripts\backup_aska.bat` (Windows) or `scripts/backup_aska.sh` (Linux). The script verifies the kb_media file count in the archive matches the source volume and fails loudly (nonzero exit) if it cannot.
 
 ## 10. TLS renewal
 

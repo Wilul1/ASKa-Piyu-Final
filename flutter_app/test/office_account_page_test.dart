@@ -638,7 +638,12 @@ void main() {
     await tester.pumpWidget(
       AuthScope(
         controller: controller,
-        child: const MaterialApp(home: AdminUsersRolesPage()),
+        child: const MaterialApp(
+          home: AdminUsersRolesPage(
+            debugUsers: [],
+            debugOffices: [],
+          ),
+        ),
       ),
     );
     await tester.pump();
@@ -647,12 +652,13 @@ void main() {
     expect(find.text('Users & Roles'), findsWidgets);
     expect(
       find.text(
-        'Search accounts, filter by role, and create office or faculty logins.',
+        'Manage user accounts, roles, and office access for the system.',
       ),
       findsOneWidget,
     );
-    expect(find.text('Create office account'), findsOneWidget);
-    expect(find.text('Create faculty account'), findsOneWidget);
+    expect(find.text('+ Add Account'), findsOneWidget);
+    expect(find.text('Create office account'), findsNothing);
+    expect(find.text('Create faculty account'), findsNothing);
     expect(find.text('USER ACCOUNTS'), findsNothing);
     expect(find.text('Office Staff Accounts'), findsNothing);
     expect(tester.takeException(), isNull);

@@ -239,6 +239,26 @@ void main() {
       expect(find.text('Enter a category.'), findsOneWidget);
     });
 
+    testWidgets('draft save rejects empty article content', (tester) async {
+      await pumpCreate(tester, user: _adminUser());
+      await tester.enterText(
+        find.byKey(const Key('knowledge-article-create-title')),
+        'Student activity clearance',
+      );
+      await tester.enterText(
+        find.byKey(const Key('knowledge-article-create-category')),
+        'Student Services',
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('knowledge-article-create-save-draft')),
+      );
+      await tester.tap(
+        find.byKey(const Key('knowledge-article-create-save-draft')),
+      );
+      await tester.pump();
+      expect(find.text('Enter article content.'), findsOneWidget);
+    });
+
     testWidgets('draft creation uses the existing create payload',
         (tester) async {
       Map<String, dynamic>? captured;

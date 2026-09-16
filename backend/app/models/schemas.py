@@ -868,6 +868,21 @@ class ArticleMediaSchema(BaseModel):
     pending: bool = False
 
 
+def _nonblank_article_title(value: str | None) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        raise ValueError("Title must not be empty.")
+    return cleaned
+
+
+def _require_article_body(value: str | None) -> str:
+    from app.services.article_html import article_body_is_blank
+
+    if article_body_is_blank(value):
+        raise ValueError("Article content must not be empty.")
+    return str(value)
+
+
 class AdminPublishedArticleCreate(BaseModel):
     title: str
     category: str
@@ -894,6 +909,16 @@ class AdminPublishedArticleCreate(BaseModel):
     audience: KbAudience | None = None
     source_ticket_id: str | None = None
 
+    @field_validator("title")
+    @classmethod
+    def title_required(cls, value: str) -> str:
+        return _nonblank_article_title(value)
+
+    @field_validator("content")
+    @classmethod
+    def content_required(cls, value: str | None) -> str:
+        return _require_article_body(value)
+
 
 class AdminPublishedArticleUpdate(BaseModel):
     title: str | None = None
@@ -916,6 +941,20 @@ class AdminPublishedArticleUpdate(BaseModel):
     category_confidence: float | None = None
     preview_file_path: str | None = None
     audience: KbAudience | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _nonblank_article_title(value)
+
+    @field_validator("content")
+    @classmethod
+    def content_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_article_body(value)
 
 
 class AdminPublishedArticleSchema(BaseModel):

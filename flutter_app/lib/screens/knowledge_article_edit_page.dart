@@ -393,6 +393,12 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
       setState(() {});
       return;
     }
+    if (articleBodyIsBlank(_editorValue.content)) {
+      setState(() {
+        _error = 'Enter article content.';
+      });
+      return;
+    }
     setState(() {
       _saving = true;
       _pendingAction = 'save';

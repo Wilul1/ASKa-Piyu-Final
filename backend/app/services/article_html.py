@@ -50,6 +50,22 @@ def looks_like_html(text: str | None) -> bool:
     return bool(re.match(r"<(p|h[1-4]|ul|ol|blockquote|div|span|strong|em|img)\b", raw, re.I))
 
 
+def article_body_is_blank(value: str | None) -> bool:
+    """True when an article body has no visible text and no embedded image.
+
+    Whitespace-only plain text and empty markup are blank. An image-only
+    draft is not blank; that workflow already stores the image as the body.
+    """
+    raw = str(value or "")
+    if not raw.strip():
+        return True
+    if looks_like_html(raw):
+        if html_to_plain(raw).strip():
+            return False
+        return re.search(r"<img\b", raw, re.I) is None
+    return False
+
+
 def html_to_plain(text: str | None) -> str:
     """Strip markup for search, RAG chunking, and empty-content checks."""
     raw = str(text or "")

@@ -15,6 +15,14 @@ class ArticleEditorValue {
   bool get isEmpty => articleHtmlToPlain(content).trim().isEmpty;
 }
 
+bool articleBodyIsBlank(String? content) {
+  final raw = content ?? '';
+  if (raw.trim().isEmpty) return true;
+  if (!looksLikeArticleHtml(raw)) return false;
+  if (articleHtmlToPlain(raw).trim().isNotEmpty) return false;
+  return !RegExp(r'<img\b', caseSensitive: false).hasMatch(raw);
+}
+
 final _tagRe = RegExp(r'<[^>]+>');
 final _htmlStartRe = RegExp(
   r'<(p|h[1-4]|ul|ol|blockquote|div|span|strong|em|img)\b',

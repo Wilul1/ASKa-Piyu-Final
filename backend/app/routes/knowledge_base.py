@@ -280,20 +280,25 @@ def _filter_published_articles(
 ) -> list[dict[str, Any]]:
     filtered = articles
     if q and q.strip():
-        query = _normalize(q)
-        filtered = [
-            article
-            for article in filtered
-            if query
-            in _normalize(
-                str(
-                    article.get("_search_blob")
-                    or f"{article.get('title', '')} {article.get('category', '')} "
-                    f"{article.get('summary', '')} {article.get('content_preview', '')} "
-                    f"{article.get('office', '')} {article.get('body', '')}"
+        # Punctuation and repeated spaces are not part of the search words.
+        # A punctuation-only query must not match every article.
+        query = _normalize_kb_search(q)
+        if not query:
+            filtered = []
+        else:
+            filtered = [
+                article
+                for article in filtered
+                if query
+                in _normalize_kb_search(
+                    str(
+                        article.get("_search_blob")
+                        or f"{article.get('title', '')} {article.get('category', '')} "
+                        f"{article.get('summary', '')} {article.get('content_preview', '')} "
+                        f"{article.get('office', '')} {article.get('body', '')}"
+                    )
                 )
-            )
-        ]
+            ]
     if category and category.strip():
         category_key = _normalize(category)
         filtered = [
@@ -1633,6 +1638,11 @@ def _text_preview(text: str, limit: int = 260) -> str:
 
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").lower()).strip()
+
+
+def _normalize_kb_search(value: str) -> str:
+    """Public KB search text: trim, collapse space, drop ordinary punctuation."""
+    return _normalize_ascii(value)
 
 
 def _normalize_ascii(value: str) -> str:

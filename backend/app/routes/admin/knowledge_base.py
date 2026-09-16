@@ -2020,12 +2020,39 @@ def _bulk_persist_articles(
                             )
                         )
                         continue
+                    if item.title is not None and not str(item.title).strip():
+                        results.append(
+                            AdminBulkArticleResultItem(
+                                preview_id=preview_id,
+                                success=False,
+                                id=art.id,
+                                title=art.title,
+                                error="Title must not be empty.",
+                                code="validation_error",
+                            )
+                        )
+                        continue
+                    if item.content is not None:
+                        from app.services.article_html import article_body_is_blank
+
+                        if article_body_is_blank(item.content):
+                            results.append(
+                                AdminBulkArticleResultItem(
+                                    preview_id=preview_id,
+                                    success=False,
+                                    id=art.id,
+                                    title=art.title,
+                                    error="Article content must not be empty.",
+                                    code="validation_error",
+                                )
+                            )
+                            continue
                     if item.title:
                         from app.services.ticket_knowledge import ensure_unique_article_slug
 
-                        art.title = item.title
+                        art.title = str(item.title).strip()
                         art.slug = ensure_unique_article_slug(
-                            session, item.title, exclude_id=art.id
+                            session, art.title, exclude_id=art.id
                         )
                     if item.category:
                         art.category = item.category
@@ -2088,13 +2115,15 @@ def _bulk_persist_articles(
 
                 title = (item.title or "").strip()
                 category = (item.category or "").strip()
-                if not title or not category:
+                from app.services.article_html import article_body_is_blank
+
+                if not title or not category or article_body_is_blank(item.content):
                     results.append(
                         AdminBulkArticleResultItem(
                             preview_id=preview_id,
                             success=False,
                             title=item.title,
-                            error="title and category are required to create an article",
+                            error="title, category, and article content are required to create an article",
                             code="validation_error",
                         )
                     )

@@ -191,10 +191,9 @@ class _KnowledgeArticleCreatePageState
       setState(() {});
       return;
     }
-    if (publish && _editorValue.isEmpty) {
+    if (articleBodyIsBlank(_editorValue.content)) {
       setState(() {
-        _error =
-            'Article content is empty. Correct it and save as draft before publishing.';
+        _error = 'Enter article content.';
       });
       return;
     }

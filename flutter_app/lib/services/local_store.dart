@@ -21,6 +21,12 @@ class LocalStore {
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
   static String? _memoryToken;
 
+  /// Drops the cached preferences handle so widget tests can re-seed storage.
+  @visibleForTesting
+  static void resetForTest() {
+    _prefs = null;
+  }
+
   static Future<void> init() async {
     _prefs ??= await SharedPreferences.getInstance();
     if (kIsWeb) {

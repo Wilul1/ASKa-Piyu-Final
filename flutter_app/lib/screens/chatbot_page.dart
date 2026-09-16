@@ -1094,7 +1094,6 @@ class _AnswerBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isLowConfidence = answer.confidence == 'low';
-    final topSource = answer.primarySource;
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -1134,10 +1133,6 @@ class _AnswerBubble extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            if (topSource != null) ...[
-              _AnswerGroundingCard(source: topSource),
-              const SizedBox(height: 10),
-            ],
             _ChatMarkdown(
               text: answer.text,
               style: const TextStyle(
@@ -1263,91 +1258,6 @@ TextSpan _inlineMarkdownSpans(String text, TextStyle style) {
     spans.add(TextSpan(text: text.substring(cursor)));
   }
   return TextSpan(style: style, children: spans);
-}
-
-class _AnswerGroundingCard extends StatelessWidget {
-  final _QaSource source;
-
-  const _AnswerGroundingCard({
-    required this.source,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final document = source.documentBadgeLabel;
-    final section = source.conciseSectionLabel;
-    final excerpt = source.conciseExcerpt;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFDE68A)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: const Color(0xFFF59E0B)),
-                ),
-                child: Text(
-                  document,
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF92400E),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'From LSPU source',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    color: DesignTokens.ink,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (section != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              section,
-              style: const TextStyle(
-                fontSize: 12.5,
-                height: 1.35,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF92400E),
-              ),
-            ),
-          ],
-          if (excerpt != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              excerpt,
-              maxLines: 8,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12.5,
-                height: 1.45,
-                color: Color(0xFF57534E),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
 }
 
 class _CollapsibleSources extends StatefulWidget {
@@ -1906,17 +1816,6 @@ class _QaAnswer {
     this.activeService,
   });
 
-  _QaSource? get primarySource {
-    if (sources.isEmpty) return null;
-    for (final source in sources) {
-      final haystack =
-          '${source.title} ${source.sourceSection ?? ''} ${source.path}'
-              .toLowerCase();
-      if (haystack.contains('scholastic delinquency')) return source;
-    }
-    return sources.first;
-  }
-
   Map<String, dynamic> toJson() => {
         'question': question,
         'text': text,
@@ -2044,19 +1943,6 @@ class _QaSource {
     }
     final label = (sourceLabel ?? sourceFilename ?? '').trim();
     return label.isEmpty ? 'LSPU source document' : label;
-  }
-
-  String? get conciseSectionLabel {
-    final raw = (sourceSection ?? path).trim();
-    if (raw.isEmpty) return null;
-    final compact = raw.replaceAll(RegExp(r'\s+>\s+'), ' > ');
-    return compact.length <= 120 ? compact : '${compact.substring(0, 117).trim()}...';
-  }
-
-  String? get conciseExcerpt {
-    final raw = (sourceExcerpt ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (raw.isEmpty) return null;
-    return raw.length <= 320 ? raw : '${raw.substring(0, 317).trim()}...';
   }
 
   String get citationLabel {

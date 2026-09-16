@@ -12,7 +12,13 @@ from app.services.qa.question_answering import (
     GREETING_QUESTION,
     OUT_OF_SCOPE_ANSWER,
     RAW_RETRIEVAL_CANDIDATES,
+    _CLASSIFICATION_FALLBACK_NOTICE,
+    _SUPPORT_REL_FLOOR,
+    _chunk_search_text,
+    _citation_support_score,
     _confidence_for,
+    _grounding_tokens,
+    _select_supporting_context,
     answer_qa_question,
     detect_collection_intent,
     detect_broad_query,
@@ -89,13 +95,30 @@ class FakeStore:
         return items
 
 
+def _echo_context_answer(*, context: str = "", **_kwargs) -> str:
+    """Default mock "LLM" answer: faithfully echoes the retrieved context.
+
+    Tests that only care about *retrieval* (which chunks made it into
+    ``selected_context`` / the generation context) use this default so the
+    citation-selection step in ``answer_qa_question`` — which narrows
+    ``sources`` to whatever the *generated answer* actually supports — finds
+    every retrieved chunk supported (the "answer" literally contains each
+    chunk's own text), matching this suite's long-standing assumption that
+    ``result.sources`` mirrors ``selected_context``. Tests that specifically
+    exercise citation *precision* (a generated answer that only covers some
+    of the retrieved chunks) pass their own ``generate_from_context``/
+    ``side_effect`` instead — see the ``test_citation_*`` tests below.
+    """
+    return context or "Follow the cited policy in the retrieved context."
+
+
 def run_question(question: str, chunks: list[RetrievedChunk], *, user_role: str | None = None):
     store = FakeStore(chunks)
     with (
         patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
         patch(
             "app.services.qa.question_answering.generate_groq_answer",
-            return_value="Follow the cited policy in the retrieved context.",
+            side_effect=_echo_context_answer,
         ) as mock_generate,
     ):
         result = answer_qa_question(question, user_role=user_role)
@@ -2141,4 +2164,371 @@ def test_fee_usable_rejects_none_placeholder_values():
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# Citation grounding / source precision
+#
+# ``answer_qa_question`` retrieves broadly (recall) but must display only
+# the citations that materially support the *generated answer* — retrieval
+# membership alone is not enough. These tests exercise
+# ``_select_supporting_context`` / ``_display_sources_for_answer`` end to
+# end through ``answer_qa_question``, using several unrelated domains
+# (transfer credit, grade correction, latin honors, grading-sheet
+# procedure) so the behavior is proven generic, not keyed to any one
+# question or document.
+# ---------------------------------------------------------------------------
+
+
+def test_citation_precision_excludes_ambiguous_keyword_distractor():
+    """The reported production case: a broad, multi-clause question pulls in
+    the correct Student Handbook evidence alongside Citizen's Charter chunks
+    that merely share the word "validation" with the question — those must
+    not survive as displayed citations even though retrieval surfaced them."""
+    validation_requirements = chunk(
+        "Validation Requirements",
+        "Holders of a degree who transfer or register in this University may be "
+        "given credit for equivalent courses taken without validation, provided "
+        "that credits earned without validation shall not exceed 50% of the total "
+        "credits required for graduation in the curriculum.",
+        score=0.9,
+        path=("Undergraduate Academic Policies", "Admission", "Validation Requirements"),
+        reasons=["academic_policy_match"],
+    )
+    transferring = chunk(
+        "Transferring",
+        "A student who wishes to transfer to this University must submit an "
+        "honorable dismissal and transcript of records to the Registrar for "
+        "evaluation of previous academic units before enrollment.",
+        score=0.86,
+        path=("Undergraduate Academic Policies", "Admission", "Transferring"),
+        reasons=["academic_policy_match"],
+    )
+    id_validation = chunk(
+        "ID Validation",
+        "This service covers validation of student identification cards. "
+        "Requirements: Certificate of Registration, one recent photo. "
+        "Processing time: 15 minutes at the Registrar's window.",
+        score=0.83,
+        path=("Citizen's Charter", "Student Services", "ID Validation"),
+        reasons=["semantic_similarity"],
+    )
+    tech_precommercialization = chunk(
+        "Technology Pre-Commercialization",
+        "This service assists inventors in preparing technology for "
+        "commercialization, including IP assessment and investor matching "
+        "through the Technology Business Incubator.",
+        score=0.81,
+        path=("Citizen's Charter", "Research Services", "Technology Pre-Commercialization"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "Holders of a degree who transfer or register in LSPU may receive "
+            "credit for equivalent courses without validation, but the credits "
+            "cannot exceed 50 percent of the total credits required for "
+            "graduation."
+        )
+
+    store = FakeStore(
+        [validation_requirements, transferring, id_validation, tech_precommercialization]
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "I'm transferring to LSPU with a previous degree. How much of my "
+            "previous coursework can be credited without validation?"
+        )
+
+    titles = [source["title"] for source in result.sources]
+    assert "ID Validation" not in titles
+    assert "Technology Pre-Commercialization" not in titles
+    assert "Validation Requirements" in titles
+    # Strongest supporting source first.
+    assert result.sources[0]["title"] == "Validation Requirements"
+
+
+def test_citation_precision_keeps_multiple_sources_for_a_multi_rule_answer():
+    """A different domain (grade correction) with two distinct rules, each
+    grounded in a different chunk — both must survive; the fix must not
+    collapse a legitimately multi-source answer down to one citation."""
+    approval_rule = chunk(
+        "Grade Correction Approval",
+        "Any correction of grades affecting 30% or more of a class requires "
+        "prior written approval from the Dean of the College before the "
+        "correction may be presented at an Academic Council meeting for "
+        "ratification.",
+        score=0.88,
+        path=("Faculty Manual", "Grading", "Grade Correction Approval"),
+        reasons=["faculty_policy_match"],
+    )
+    deadline_rule = chunk(
+        "Grading Sheet Deadlines",
+        "A corrected grading sheet must be submitted to the Registrar within "
+        "15 days of the original grade submission deadline, together with "
+        "the Dean's approval memorandum.",
+        score=0.85,
+        path=("Faculty Manual", "Grading", "Grading Sheet Deadlines"),
+        reasons=["faculty_policy_match"],
+    )
+    unrelated_leave_policy = chunk(
+        "Faculty Leave Application",
+        "Faculty members applying for sabbatical leave must file Form 21-A "
+        "with the Human Resources Office at least two months before the "
+        "intended leave date.",
+        score=0.79,
+        path=("Faculty Manual", "Leave", "Faculty Leave Application"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "A faculty member correcting grades for 30% or more of a class "
+            "must first secure written approval from the Dean and then "
+            "present the correction at an Academic Council meeting; the "
+            "corrected grading sheet must then be submitted to the Registrar "
+            "within 15 days of the original submission deadline."
+        )
+
+    store = FakeStore([approval_rule, deadline_rule, unrelated_leave_policy])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "A faculty member needs to correct grades for 30% of a class. "
+            "Explain the complete approval process, including who must "
+            "approve it, whether an Academic Council meeting is required, "
+            "and every deadline stated in the policy.",
+            user_role="faculty",
+        )
+
+    titles = {source["title"] for source in result.sources}
+    assert "Grade Correction Approval" in titles
+    assert "Grading Sheet Deadlines" in titles
+    assert "Faculty Leave Application" not in titles
+
+
+def test_citation_precision_excludes_distractor_sharing_important_keywords():
+    """A retrieved chunk shares substantial vocabulary with the question
+    ("general weighted average") but documents a different procedure
+    (academic probation, not Latin honors) — it must not be cited just
+    because the terms overlap."""
+    latin_honors = chunk(
+        "Latin Honors",
+        "Graduating students are awarded Latin honors as follows: summa cum "
+        "laude, general weighted average of 1.20 to 1.45; magna cum laude, "
+        "1.46 to 1.75; cum laude, 1.76 to 2.00.",
+        score=0.9,
+        path=("Undergraduate Academic Policies", "Graduation", "Latin Honors"),
+        reasons=["academic_policy_match"],
+    )
+    academic_probation = chunk(
+        "Academic Probation",
+        "A student whose general weighted average falls to 3.00 or below in "
+        "a given semester shall be placed on academic probation and must "
+        "consult the Program Chair regarding an improvement plan.",
+        score=0.82,
+        path=("Undergraduate Academic Policies", "Retention", "Academic Probation"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "Summa cum laude requires a general weighted average of 1.20 to "
+            "1.45; magna cum laude requires 1.46 to 1.75; and cum laude "
+            "requires 1.76 to 2.00."
+        )
+
+    store = FakeStore([latin_honors, academic_probation])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "What are the grade ranges for summa cum laude, magna cum laude, "
+            "and cum laude?"
+        )
+
+    titles = [source["title"] for source in result.sources]
+    # The classification rewrite replaces the numeric answer with a generic
+    # template. The Latin Honors source that caused that response must still
+    # be displayed; the distractor must not.
+    assert _CLASSIFICATION_FALLBACK_NOTICE in result.answer
+    assert "Latin Honors" in titles
+    assert "Academic Probation" not in titles
+
+
+def test_citation_precision_dedupes_near_duplicate_chunks_from_same_section():
+    """Two retrieval hits landing on the same document/section/page must not
+    both appear as separate citations for the same evidence."""
+    text = (
+        "Faculty must submit two copies of the completed grading sheet to "
+        "the Office of the Registrar within five (5) days after the end of "
+        "the examination period."
+    )
+    first_hit = chunk(
+        "Grading Sheet Submission",
+        text,
+        score=0.9,
+        page=61,
+        path=("Faculty Manual", "Grading", "Grading Sheet Submission"),
+        reasons=["faculty_policy_match"],
+    )
+    duplicate_hit = chunk(
+        "Grading Sheet Submission",
+        text,
+        score=0.88,
+        page=61,
+        path=("Faculty Manual", "Grading", "Grading Sheet Submission"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "Faculty must submit two copies of the grading sheet to the "
+            "Registrar within 5 days after the examination period ends."
+        )
+
+    store = FakeStore([first_hit, duplicate_hit])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "How many copies of the grading sheet must faculty submit, and "
+            "within how many days?",
+            user_role="faculty",
+        )
+
+    assert len(result.sources) == 1
+    assert result.sources[0]["title"] == "Grading Sheet Submission"
+
+
+def test_citation_precision_keeps_weaker_source_for_a_different_claim():
+    """Claim A can be supported much more strongly than claim B. Source B
+    must still be cited when it materially supports claim B, even if its
+    score against the whole answer is well below 0.45 times source A's.
+    An unrelated source stays excluded. This is not a fixed top-N."""
+    protocol = chunk(
+        "Alpha Protocol",
+        "The alpha protocol requires immediate dean written approval, "
+        "academic council ratification, curriculum committee endorsement, "
+        "department chair concurrence, registrar notation, student "
+        "notification, and transcript annotation within 30 days of the "
+        "college board meeting.",
+        score=0.95,
+        path=("Policy Manual", "Governance", "Alpha Protocol"),
+    )
+    reserves = chunk(
+        "Library Reserves",
+        "Library reserves expire after 7 days.",
+        score=0.7,
+        path=("Policy Manual", "Library", "Library Reserves"),
+    )
+    cafeteria = chunk(
+        "Cafeteria Tickets",
+        "Cafeteria meal tickets are sold at the cashier window beside the "
+        "student lounge.",
+        score=0.66,
+        path=("Campus Services", "Dining", "Cafeteria Tickets"),
+    )
+    answer = (
+        "The alpha protocol requires immediate dean written approval, "
+        "academic council ratification, curriculum committee endorsement, "
+        "department chair concurrence, registrar notation, student "
+        "notification, and transcript annotation within 30 days of the "
+        "college board meeting. Library reserves expire after 7 days."
+    )
+
+    selected = _select_supporting_context([protocol, reserves, cafeteria], answer)
+    selected_titles = {item.metadata["section"] for item in selected}
+    assert "Alpha Protocol" in selected_titles
+    assert "Library Reserves" in selected_titles
+    assert "Cafeteria Tickets" not in selected_titles
+    # Prove the global winner-wise floor would have discarded reserves.
+    # The claim-wise pass is what keeps it.
+    answer_words, answer_numbers = _grounding_tokens(answer)
+    idf = {token: 1.0 for token in answer_words}
+    protocol_score = _citation_support_score(
+        answer_words,
+        answer_numbers,
+        *_grounding_tokens(_chunk_search_text(protocol)),
+        idf,
+    )
+    reserves_score = _citation_support_score(
+        answer_words,
+        answer_numbers,
+        *_grounding_tokens(_chunk_search_text(reserves)),
+        idf,
+    )
+    assert reserves_score < _SUPPORT_REL_FLOOR * protocol_score
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return answer
+
+    store = FakeStore([protocol, reserves, cafeteria])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "Explain the alpha protocol requirements and how long library reserves last."
+        )
+
+    titles = [source["title"] for source in result.sources]
+    assert "Alpha Protocol" in titles
+    assert "Library Reserves" in titles
+    assert "Cafeteria Tickets" not in titles
+    assert titles[0] == "Alpha Protocol"
+
+
+def test_citation_precision_no_fabricated_source_for_degraded_answer():
+    """When the generated answer is a generic "I don't have information"
+    reply with no real connection to what was retrieved, no citation is
+    attached just so the UI has something to show."""
+    unrelated_chunk = chunk(
+        "ID Validation",
+        "This service covers validation of student identification cards. "
+        "Requirements: Certificate of Registration, one recent photo.",
+        score=0.7,
+        path=("Citizen's Charter", "Student Services", "ID Validation"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "I do not have enough information in the knowledge base to "
+            "answer that question. Please contact the relevant office."
+        )
+
+    store = FakeStore([unrelated_chunk])
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question("What is the deadline for filing an appeal?")
+
+    assert result.sources == []
 

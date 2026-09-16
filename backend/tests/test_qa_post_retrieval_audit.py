@@ -128,6 +128,21 @@ class RoleAwareStore:
         return select_role_visible_hits(ranked, user_role=user_role, top_k=top_k or 7)
 
 
+def _default_grounded_answer(*, context: str = "", **_kwargs) -> str:
+    """Default mocked "LLM" answer used by ``_ask`` when a test supplies
+    neither ``groq_return`` nor ``groq_side_effect``: faithfully echoes the
+    retrieved context so citation-selection (which narrows ``sources`` to
+    whatever the *generated answer* actually supports — see
+    ``_display_sources_for_answer`` in question_answering.py) finds every
+    retrieved chunk supported, matching this suite's original assumption
+    that ``result.sources`` mirrors the retrieval/context-selection this
+    file actually tests. Tests that pass their own ``groq_return`` already
+    use answer text that names the real evidence (office/fee/title words),
+    so they are unaffected by this default.
+    """
+    return context or "Grounded answer from retrieved context."
+
+
 def _ask(
     store: RoleAwareStore,
     question: str,
@@ -140,8 +155,10 @@ def _ask(
     groq_kw = {}
     if groq_side_effect is not None:
         groq_kw["side_effect"] = groq_side_effect
+    elif groq_return is not None:
+        groq_kw["return_value"] = groq_return
     else:
-        groq_kw["return_value"] = groq_return or "Grounded answer from retrieved context."
+        groq_kw["side_effect"] = _default_grounded_answer
     with (
         patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
         patch("app.services.qa.question_answering.generate_groq_answer", **groq_kw),

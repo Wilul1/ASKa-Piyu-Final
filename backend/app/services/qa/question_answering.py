@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import json
 from dataclasses import dataclass, replace
@@ -504,7 +505,9 @@ def answer_qa_question(
         typed_document_type = _kb_document_type(selected_context[0].metadata if selected_context else {})
         return QAResult(
             answer=typed_answer,
-            sources=sources,
+            sources=_display_sources_for_answer(
+                selected_context, typed_answer, merge_articles=collection_mode
+            ),
             confidence=_confidence_for(
                 retrieved,
                 selected_context,
@@ -539,6 +542,8 @@ def answer_qa_question(
         )
 
     table_inversion_corrected = False
+    classification_template_applied = False
+    evidence_bearing_answer = ""
     try:
         article_labels = distinct_source_articles(
             selected_context,
@@ -556,6 +561,11 @@ def answer_qa_question(
             grounding_notes=grounding_notes,
             active_topic=active_topic,
         )
+        # Capture the evidence-bearing generated wording before any
+        # presentation rewrite. A later classification notice replaces that
+        # wording with a generic template that no longer shares the source's
+        # facts; citations must still be scored against this text.
+        evidence_bearing_answer = answer
         table_records = _structured_table_records_from_text(context)
         if table_records and (
             _answer_contradicts_table_records(answer, table_records)
@@ -580,6 +590,7 @@ def answer_qa_question(
             # retrieval or an unselected chunk.
             answer = _apply_conservative_classification_reply(answer)
             table_inversion_corrected = True
+            classification_template_applied = True
     except GroqAnswerError as exc:
         logger.warning(
             "LLM answer generation unavailable; using conversational fallback. reason=%s",
@@ -589,7 +600,9 @@ def answer_qa_question(
         if typed_answer and is_service_howto_query(extractor_question):
             return QAResult(
                 answer=typed_answer,
-                sources=sources,
+                sources=_display_sources_for_answer(
+                    selected_context, typed_answer, merge_articles=collection_mode
+                ),
                 confidence=_confidence_for(
                     retrieved,
                     selected_context,
@@ -622,7 +635,7 @@ def answer_qa_question(
                 out_of_scope_detected=False,
                 active_service=active_service_for_response,
             )
-        fallback_answer, fallback_confidence, fallback_sources = _fallback_answer_from_context(
+        fallback_answer, fallback_confidence, _fallback_sources_unused = _fallback_answer_from_context(
             selected_context,
             sources,
             question=extractor_question,
@@ -633,18 +646,28 @@ def answer_qa_question(
             retrieved or selected_context,
             sources,
         )
-        if recovered and (
+        used_recovered = bool(recovered) and (
             not fallback_answer.strip()
             or fallback_answer == OUT_OF_SCOPE_ANSWER
             or _indicates_missing_information(fallback_answer)
             or _should_prefer_recovered_factual(extractor_question, fallback_answer)
             or _prefer_structured_fee_recovery(extractor_question, recovered, fallback_answer)
-        ):
+        )
+        if used_recovered:
             fallback_answer = recovered
             fallback_confidence = "medium"
+        # `recovered` may draw on the broader retrieval set (see
+        # `_recover_factual_charter_answer` above), not only the narrower
+        # generation context, so citations match whichever pool actually
+        # produced the returned answer text.
+        fallback_citation_context = (
+            list(retrieved or selected_context) if used_recovered else selected_context
+        )
         return QAResult(
             answer=fallback_answer,
-            sources=fallback_sources,
+            sources=_display_sources_for_answer(
+                fallback_citation_context, fallback_answer, merge_articles=collection_mode
+            ),
             confidence=fallback_confidence,
             retrieved_chunks=retrieved_debug,
             normalized_query=prepared_query.normalized_query,
@@ -693,19 +716,43 @@ def answer_qa_question(
         retrieved or selected_context,
         sources,
     )
-    if recovered and (
+    used_recovered = bool(recovered) and (
         final_answer == OUT_OF_SCOPE_ANSWER
         or _indicates_missing_information(final_answer)
         or _indicates_missing_information(answer)
         or _should_prefer_recovered_factual(extractor_question, final_answer)
         or _prefer_structured_fee_recovery(extractor_question, recovered, final_answer)
-    ):
+    )
+    if used_recovered:
         final_answer = recovered
         confidence = "medium" if confidence == "low" else confidence
+    # `recovered` may draw on the broader retrieval set (see
+    # `_recover_factual_charter_answer` above), not only the narrower
+    # generation context, so citations match whichever pool actually
+    # produced the returned answer text.
+    citation_context = list(retrieved or selected_context) if used_recovered else selected_context
+    # A classification notice is a presentation rewrite of an evidence-bearing
+    # answer, not a new source of facts. Score citations against the wording
+    # that actually used the retrieved evidence. Recovery and table restatement
+    # already *are* the evidence, so they keep scoring the displayed text.
+    # Never invent a source: the candidate pool is still selected/retrieved only.
+    citation_evidence = None
+    if (
+        classification_template_applied
+        and not used_recovered
+        and (evidence_bearing_answer or "").strip()
+        and evidence_bearing_answer.strip() != (final_answer or "").strip()
+    ):
+        citation_evidence = evidence_bearing_answer
 
     return QAResult(
         answer=final_answer,
-        sources=sources,
+        sources=_display_sources_for_answer(
+            citation_context,
+            final_answer,
+            evidence_text=citation_evidence,
+            merge_articles=collection_mode,
+        ),
         confidence=confidence,
         retrieved_chunks=retrieved_debug,
         normalized_query=prepared_query.normalized_query,
@@ -4776,6 +4823,230 @@ def _strip_source_lines(answer: str) -> str:
         if not re.match(r"^\s*sources?\s*:", line, flags=re.I)
     ]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+# --- User-facing citation selection ----------------------------------------
+#
+# ``selected_context`` (and the ``sources`` built from it above, at the top
+# of ``answer_qa_question``) is *retrieval* output: every chunk broad-enough
+# retrieval judged worth handing to generation as context. That breadth is
+# intentional and must stay — recall matters for generation, and this file
+# does not change retrieval, reranking, or how many chunks are retrieved.
+#
+# But it means the naive `sources=sources` returned to the API is every
+# retrieved/selected chunk, regardless of whether the *generated answer*
+# actually drew on it. A broad or multi-part question can legitimately
+# retrieve several chunks that merely share the question's own wording
+# ("validation" pulling in an identity-card "ID Validation" Citizen's
+# Charter entry alongside the actual academic-validation Student Handbook
+# rule) without any of them contributing evidence to the final answer text.
+# Those still-irrelevant chunks must never reach the student as a citation.
+#
+# The functions below add exactly that missing step — select display
+# citations from the chunks that materially support the *answer that was
+# actually generated*, not from retrieval membership alone — without
+# touching retrieval, reranking, embeddings, or Chroma. A citation is never
+# fabricated: every candidate here already went through retrieval (it is a
+# member of ``selected_context`` / ``retrieved``), so this only narrows an
+# existing, already-retrieved set.
+#
+# "Materially support" is judged generically (never keyed to this project's
+# specific documents/questions): a chunk must share at least two distinctive
+# terms/numbers with the answer text, weighted by how *rare* that term is
+# across this turn's own retrieved candidates. A term nearly every candidate
+# shares (typically the query's own vocabulary, e.g. "validation" here) is
+# thereby automatically discounted, while terms concentrated in the answer's
+# actual supporting evidence (e.g. "degree", "equivalent", "50", "graduation")
+# dominate the score. This generalizes across topics because the weighting is
+# recomputed per question from that question's own candidate pool — nothing
+# about "validation", "50%", or any other project-specific term is hardcoded.
+
+_SUPPORT_MIN_SIGNALS = 2
+"""Minimum shared distinctive word/number tokens before a chunk is even
+considered supporting evidence. A single shared term — however rare — is
+keyword overlap, not material support (see module note above)."""
+
+_SUPPORT_ABS_FLOOR = 1.5
+"""Minimum weighted support score, independent of any other candidate's
+score, below which nothing is treated as supporting evidence at all. Guards
+the no-support case: if even the best-matching retrieved chunk barely
+overlaps the answer, no citation is shown rather than attaching a weak one."""
+
+_SUPPORT_REL_FLOOR = 0.45
+"""Within one claim, a chunk must reach at least this fraction of that
+claim's strongest supporting score to also be displayed. Applied per claim,
+not across the whole answer: a source that materially supports a different
+claim is not dropped merely because another claim's source scored higher.
+A straggler on the *same* claim, far weaker than that claim's best evidence,
+is still dropped."""
+
+_NUMBER_TOKEN_WEIGHT = 2.0
+"""A shared number (a percentage, a day count, a grade-range boundary...) is
+unusually specific evidence, so it is weighted above an average word term."""
+
+_NUMBER_TOKEN_RE = re.compile(r"\d+(?:\.\d+)?%?")
+
+
+def _grounding_tokens(text: str) -> tuple[frozenset[str], frozenset[str]]:
+    """Distinctive word tokens and standalone numbers used for citation grounding."""
+    normalized = _normalize(text or "")
+    return frozenset(_meaningful_tokens(normalized)), frozenset(_NUMBER_TOKEN_RE.findall(normalized))
+
+
+def _citation_support_score(
+    answer_words: frozenset[str],
+    answer_numbers: frozenset[str],
+    chunk_words: frozenset[str],
+    chunk_numbers: frozenset[str],
+    idf: dict[str, float],
+) -> float:
+    """How strongly one chunk's own wording supports the answer's wording.
+
+    Returns 0.0 (never a "weak but nonzero" score) when fewer than
+    ``_SUPPORT_MIN_SIGNALS`` distinctive terms are shared — keyword overlap
+    alone is explicitly not sufficient evidence.
+    """
+    shared_words = answer_words & chunk_words
+    shared_numbers = answer_numbers & chunk_numbers
+    if (len(shared_words) + len(shared_numbers)) < _SUPPORT_MIN_SIGNALS:
+        return 0.0
+    word_score = sum(idf.get(token, 1.0) for token in shared_words)
+    number_score = len(shared_numbers) * _NUMBER_TOKEN_WEIGHT
+    return word_score + number_score
+
+
+_CLAIM_SPLIT_RE = re.compile(r"[.!;?\n]+")
+
+
+def _answer_claims(answer: str) -> list[str]:
+    """Split an answer into claim-sized spans for citation scoring.
+
+    A global relative floor compares every chunk to the single strongest
+    overlap with the whole answer. That drops a source that clearly supports
+    a different, shorter claim whenever another claim overlaps much more.
+    Sentence and clause boundaries are the smallest stable split that does
+    not hardcode topics. Fragments too short to be evidence are ignored;
+    the full answer is always scored separately so a single-claim reply
+    behaves as before.
+    """
+    claims: list[str] = []
+    for part in _CLAIM_SPLIT_RE.split(answer or ""):
+        claim = part.strip()
+        if not claim or claim == (answer or "").strip():
+            continue
+        words, numbers = _grounding_tokens(claim)
+        if len(words) + len(numbers) < _SUPPORT_MIN_SIGNALS:
+            continue
+        claims.append(claim)
+    return claims
+
+
+def _select_supporting_context(
+    candidates: list[RetrievedChunk],
+    answer: str,
+) -> list[RetrievedChunk]:
+    """Narrow already-retrieved ``candidates`` to what materially supports ``answer``.
+
+    Every chunk this can return was already retrieved and available to the
+    answer-generation pipeline — this step only decides which of those
+    already-available candidates are grounded enough in the answer text to
+    be shown as a citation. It never introduces a chunk that was not a
+    candidate, and never fabricates one. Ordered strongest-evidence-first.
+    Returns ``[]`` when nothing in ``candidates`` materially supports
+    ``answer`` (e.g. a generic/degraded reply) rather than attaching an
+    unrelated source just so the UI has something to show.
+
+    Support is claim-wise. The relative floor still drops a same-claim
+    straggler, but a chunk that meets the absolute floor for a different
+    claim is kept even when its score against the whole answer is below
+    ``_SUPPORT_REL_FLOOR`` times the strongest other source.
+    """
+    if not candidates or not (answer or "").strip():
+        return []
+
+    per_chunk: list[tuple[RetrievedChunk, frozenset[str], frozenset[str]]] = []
+    doc_freq: dict[str, int] = {}
+    for chunk in candidates:
+        words, numbers = _grounding_tokens(_chunk_search_text(chunk))
+        per_chunk.append((chunk, words, numbers))
+        for token in words:
+            doc_freq[token] = doc_freq.get(token, 0) + 1
+
+    # Classic IDF over this turn's own candidate pool: a term nearly every
+    # candidate shares (usually the query's own vocabulary) is discounted; a
+    # term concentrated in only a few candidates carries real signal.
+    total = len(candidates)
+    idf = {
+        token: math.log((total + 1) / (freq + 1)) + 1.0
+        for token, freq in doc_freq.items()
+    }
+
+    def _scored(text: str) -> list[tuple[float, RetrievedChunk]]:
+        words, numbers = _grounding_tokens(text)
+        if not words and not numbers:
+            return []
+        scored: list[tuple[float, RetrievedChunk]] = []
+        for chunk, chunk_words, chunk_numbers in per_chunk:
+            score = _citation_support_score(words, numbers, chunk_words, chunk_numbers, idf)
+            if score > 0:
+                scored.append((score, chunk))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return scored
+
+    def _above_floor(scored: list[tuple[float, RetrievedChunk]]) -> list[tuple[float, RetrievedChunk]]:
+        if not scored:
+            return []
+        top_score = scored[0][0]
+        if top_score < _SUPPORT_ABS_FLOOR:
+            return []
+        threshold = max(_SUPPORT_ABS_FLOOR, top_score * _SUPPORT_REL_FLOOR)
+        return [(score, chunk) for score, chunk in scored if score >= threshold]
+
+    best: dict[int, tuple[float, RetrievedChunk]] = {}
+
+    def _consider(pairs: list[tuple[float, RetrievedChunk]]) -> None:
+        for score, chunk in pairs:
+            key = id(chunk)
+            previous = best.get(key)
+            if previous is None or score > previous[0]:
+                best[key] = (score, chunk)
+
+    # Full-answer pass preserves single-claim behavior, including the
+    # relative floor against the strongest overall overlap.
+    _consider(_above_floor(_scored(answer)))
+    # Claim pass keeps a weaker source that is the (or a) material support
+    # for a different claim, which the global relative floor would drop.
+    for claim in _answer_claims(answer):
+        _consider(_above_floor(_scored(claim)))
+
+    if not best:
+        return []
+    ordered = sorted(best.values(), key=lambda pair: pair[0], reverse=True)
+    return [chunk for _, chunk in ordered]
+
+
+def _display_sources_for_answer(
+    candidates: list[RetrievedChunk],
+    answer: str,
+    *,
+    merge_articles: bool = False,
+    evidence_text: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build the user-facing ``sources``/``citations`` list for ``answer``.
+
+    Unlike ``_sources_from_chunks(selected_context, ...)`` (every retrieved
+    chunk), this returns only chunks that materially support the answer,
+    deduplicated and ordered strongest-first by ``_sources_from_chunks``'s
+    existing (unchanged) formatting/dedup logic.
+
+    ``evidence_text``, when set, is the pre-rewrite generated answer. A
+    presentation template can erase the wording that overlapped the source;
+    citations are scored against that evidence instead of the template.
+    Candidates are still only already-retrieved chunks.
+    """
+    grounding = (evidence_text or "").strip() or answer
+    supporting = _select_supporting_context(candidates, grounding)
+    return _sources_from_chunks(supporting, merge_articles=merge_articles)
 
 
 def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool = False) -> list[dict[str, Any]]:

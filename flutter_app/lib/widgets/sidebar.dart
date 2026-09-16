@@ -2,10 +2,8 @@ import 'package:flutter/material.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
-import '../screens/admin_abuse_page.dart';
 import '../screens/admin_management_pages.dart';
 import '../screens/admin_panel_page.dart';
-import '../screens/announcements_page.dart';
 import '../screens/chatbot_page.dart';
 import '../screens/knowledge_articles_page.dart';
 import '../screens/knowledge_base_page.dart';
@@ -32,10 +30,8 @@ enum StudentNavItem {
   adminKnowledgeArticles,
   adminGenerateArticles,
   adminUsersRoles,
-  adminAbuseDetection,
   adminOffices,
   adminReports,
-  announcements,
   settings,
 }
 
@@ -91,8 +87,6 @@ class AppSidebar extends StatelessWidget {
             'My Tickets', Icons.fact_check_rounded, StudentNavItem.myTickets),
         _SidebarData('Submit Ticket', Icons.add_task_rounded,
             StudentNavItem.submitTicket),
-        _SidebarData('Announcements', Icons.campaign_rounded,
-            StudentNavItem.announcements),
         _SidebarData(
             'Settings', Icons.settings_rounded, StudentNavItem.settings),
       ]);
@@ -338,14 +332,6 @@ class AppSidebar extends StatelessWidget {
       return;
     }
 
-    if (item == StudentNavItem.adminAbuseDetection) {
-      openAdminPage(
-        context,
-        builder: (_) => const AdminAbuseDetectionPage(),
-      );
-      return;
-    }
-
     if (item == StudentNavItem.adminOffices) {
       openAdminPage(
         context,
@@ -358,13 +344,6 @@ class AppSidebar extends StatelessWidget {
       openAdminPage(
         context,
         builder: (_) => const AdminReportsPage(),
-      );
-      return;
-    }
-
-    if (item == StudentNavItem.announcements) {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const AnnouncementsPage()),
       );
       return;
     }
@@ -562,14 +541,10 @@ class _AdminDarkSidebar extends StatelessWidget {
           StudentNavItem.adminKnowledgeBase),
       _SidebarData('Knowledge Article', Icons.article_outlined,
           StudentNavItem.adminKnowledgeArticles),
-      _SidebarData(
-          'Announcements', Icons.campaign_rounded, StudentNavItem.announcements),
     ]),
     _AdminNavGroup('User & Organization', [
       _SidebarData('Users & Roles', Icons.manage_accounts_rounded,
           StudentNavItem.adminUsersRoles),
-      _SidebarData('Abuse Detection', Icons.shield_rounded,
-          StudentNavItem.adminAbuseDetection),
       _SidebarData(
           'Offices', Icons.apartment_rounded, StudentNavItem.adminOffices),
     ]),

@@ -51,6 +51,8 @@ void main() {
     expect(find.text('Reports'), findsNothing);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
+    expect(find.text('Announcements'), findsNothing);
+    expect(find.text('Abuse Detection'), findsNothing);
     expect(find.text('Logout'), findsNothing);
   });
 
@@ -62,8 +64,11 @@ void main() {
 
     expect(find.text('My Tickets'), findsOneWidget);
     expect(find.text('Submit Ticket'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
     expect(find.text('Student support'), findsOneWidget);
+    expect(find.text('Announcements'), findsNothing);
+    expect(find.text('Abuse Detection'), findsNothing);
     expect(find.text('All Tickets'), findsNothing);
     expect(find.text('Assigned Tickets'), findsNothing);
     expect(find.text('Users & Roles'), findsNothing);
@@ -88,6 +93,8 @@ void main() {
     expect(find.text('Offices'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
+    expect(find.text('Announcements'), findsNothing);
+    expect(find.text('Abuse Detection'), findsNothing);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
     expect(find.text('Assigned Tickets'), findsNothing);
@@ -112,6 +119,8 @@ void main() {
     expect(find.text('Users & Roles'), findsNothing);
     expect(find.text('Offices'), findsNothing);
     expect(find.text('Reports'), findsNothing);
+    expect(find.text('Announcements'), findsNothing);
+    expect(find.text('Abuse Detection'), findsNothing);
   });
 
   testWidgets('sidebar brand subtitle follows student and faculty roles',
@@ -123,6 +132,8 @@ void main() {
     final facultyController = await _authenticatedController('faculty');
     await tester.pumpWidget(_sidebarHarness(facultyController));
     expect(find.text('Faculty support'), findsOneWidget);
+    expect(find.text('Announcements'), findsNothing);
+    expect(find.text('Abuse Detection'), findsNothing);
 
     // Public landing stays the same brand welcome for authenticated students.
     await tester.pumpWidget(_homeHarness(studentController));

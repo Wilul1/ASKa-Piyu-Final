@@ -6,6 +6,7 @@ import '../models/admin_article_models.dart';
 import '../models/article_media_models.dart';
 import '../services/admin_article_service.dart';
 import '../services/file_pick.dart';
+import '../screens/knowledge_article_edit_page.dart';
 import 'admin_article_preview_download_stub.dart'
     if (dart.library.html) 'admin_article_preview_download_web.dart';
 import 'admin_article_preview_export.dart';
@@ -14,11 +15,41 @@ import 'article_attachments_panel.dart';
 import 'article_html_codec.dart';
 import 'article_rich_editor.dart';
 
+String friendlyKbError(Object error) {
+  if (error is AdminArticleRequestException) {
+    if (error.isSimilarArticleConflict) {
+      final detail = error.conflictDetail?['message']?.toString().trim();
+      if (detail != null && detail.isNotEmpty) return detail;
+      return 'A similar article already exists.';
+    }
+    final message = error.message.trim();
+    if (message.isNotEmpty) return message;
+  }
+  final text = error.toString();
+  final lower = text.toLowerCase();
+  if (lower.contains('timeout')) {
+    return 'The request timed out. Please try again.';
+  }
+  if (lower.contains('socket') ||
+      lower.contains('failed host lookup') ||
+      lower.contains('clientexception') ||
+      lower.contains('network')) {
+    return 'Network connection dropped. Check your connection and try again.';
+  }
+  if (lower.contains('not_admin') || lower.contains('missing_admin_token')) {
+    return 'Sign in again to continue.';
+  }
+  if (lower.contains('no extracted document')) {
+    return 'No extracted document is available. Run Extract & Structure first.';
+  }
+  return 'Something went wrong. Please try again.';
+}
+
 class AdminArticleCard extends StatelessWidget {
   const AdminArticleCard({
     super.key,
     required this.article,
-    required this.onView,
+    this.onView,
     required this.onEdit,
     this.onPublish,
     this.onUnpublish,
@@ -42,10 +73,11 @@ class AdminArticleCard extends StatelessWidget {
     this.selected = false,
     this.onSelectedChanged,
     this.showCheckbox = false,
+    this.busy = false,
   });
 
   final AdminArticle article;
-  final VoidCallback onView;
+  final VoidCallback? onView;
   final VoidCallback onEdit;
   final VoidCallback? onPublish;
   final VoidCallback? onUnpublish;
@@ -69,6 +101,7 @@ class AdminArticleCard extends StatelessWidget {
   final bool selected;
   final ValueChanged<bool>? onSelectedChanged;
   final bool showCheckbox;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -82,8 +115,9 @@ class AdminArticleCard extends StatelessWidget {
     final canPublish = allowPublish && !publishBlocked;
     final canSaveDraft = allowSaveDraft;
     final canEdit = !publishBlocked || allowEditAsReviewDraft;
-    final editLabel =
-        allowEditAsReviewDraft ? 'Edit as Review Draft' : 'Edit';
+    final editLabel = allowEditAsReviewDraft
+        ? (busy ? 'Opening…' : 'Edit as Review Draft')
+        : (busy ? 'Opening…' : 'Review');
     final bucket = article.reviewBucket;
     final bucketColor = reviewBucketColor(bucket);
     final padding = lightweight ? 12.0 : 18.0;
@@ -156,10 +190,13 @@ class AdminArticleCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
                     if (alreadyPublishedLabel || (!isUnsavedPreview && article.published && !showPublicReadinessLabels))
                       KbBadge(
                         label: alreadyPublishedLabel ? 'Already Published' : 'Published',
@@ -240,55 +277,64 @@ class AdminArticleCard extends StatelessWidget {
                         background: Color(0xFFFFF7ED),
                         foreground: Color(0xFFB45309),
                       ),
-                    if (!article.published && !lightweight && !showPublicReadinessLabels)
+                    if (lightweight)
+                      KbBadge(
+                        label: bucketLabelForExport(
+                          article.metadata['final_bucket']?.toString() ??
+                              article.metadata['planner_bucket']?.toString(),
+                          fallback: reviewBucketLabel(bucket),
+                        ),
+                        background: bucketColor.withValues(alpha: 0.12),
+                        foreground: bucketColor,
+                      )
+                    else if (!article.published && !showPublicReadinessLabels)
                       KbBadge(
                         label: reviewBucketLabel(bucket),
                         background: bucketColor.withValues(alpha: 0.12),
                         foreground: bucketColor,
                       ),
                   ],
-                ),
-              ],
             ),
             const SizedBox(height: 10),
-                Wrap(
+            Wrap(
               spacing: 12,
               runSpacing: 6,
               children: [
-                if (lightweight && officeLabel != 'Not specified')
+                if (!lightweight) _MetaLine('Category', article.category),
+                if (officeLabel != 'Not specified')
                   _MetaLine('Office', officeLabel),
-                if (lightweight)
-                  _MetaLine(
-                    'Audience',
-                    article.audience == 'faculty'
-                        ? 'Faculty'
-                        : article.audience == 'student'
-                            ? 'Student'
-                            : 'Both',
-                  ),
-                if (lightweight && groupLabel != null && groupLabel.isNotEmpty)
-                  _MetaLine('Group', groupLabel),
-                if (lightweight && sourceFilename != 'Not specified')
-                  _MetaLine('Source file', sourceFilename),
-                _MetaLine(
-                  'Article type',
-                  article.metadata['article_type']?.toString() ??
-                      article.documentType ??
-                      'information',
-                ),
-                if (article.metadata['merged_unit_count'] != null)
-                  _MetaLine(
-                    'Merged units',
-                    '${article.metadata['merged_unit_count']}',
-                  ),
-                if (!lightweight || article.sourceSection != null)
+                if (sourceFilename != 'Not specified')
+                  _MetaLine('Source', sourceFilename),
+                if (article.sourceSection != null &&
+                    article.sourceSection!.trim().isNotEmpty)
                   _MetaLine(
                     'Source section',
                     displaySourceSectionForCard(article),
                   ),
-                _MetaLine('Quality', formatScore(article.qualityScore)),
-                _MetaLine('Confidence', formatScore(article.categoryConfidence)),
-                _MetaLine('Usefulness', formatScore(article.studentUsefulnessScore)),
+                if (!lightweight) ...[
+                  _MetaLine(
+                    'Article type',
+                    article.metadata['article_type']?.toString() ??
+                        article.documentType ??
+                        'information',
+                  ),
+                  if (article.metadata['merged_unit_count'] != null)
+                    _MetaLine(
+                      'Merged units',
+                      '${article.metadata['merged_unit_count']}',
+                    ),
+                  _MetaLine('Quality', formatScore(article.qualityScore)),
+                  _MetaLine(
+                    'Confidence',
+                    formatScore(article.categoryConfidence),
+                  ),
+                  _MetaLine(
+                    'Usefulness',
+                    formatScore(article.studentUsefulnessScore),
+                  ),
+                ],
+                if (lightweight && groupLabel != null && groupLabel.isNotEmpty)
+                  _MetaLine('Group', groupLabel),
               ],
             ),
             if (lightweight && article.reviewReasons.isNotEmpty) ...[
@@ -322,24 +368,26 @@ class AdminArticleCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton(
-                  onPressed: onView,
-                  child: const Text('View'),
-                ),
                 if (canEdit)
                   OutlinedButton(
-                    onPressed: onEdit,
+                    key: Key('candidate-review-${article.id}'),
+                    onPressed: busy ? null : onEdit,
                     child: Text(editLabel),
+                  ),
+                if (onView != null)
+                  TextButton(
+                    onPressed: busy ? null : onView,
+                    child: const Text('Preview'),
                   ),
                 if (onDownloadTxt != null)
                   TextButton(
-                    onPressed: onDownloadTxt,
+                    onPressed: busy ? null : onDownloadTxt,
                     child: const Text('Download TXT'),
                   ),
                 if (canSaveDraft && isUnsavedPreview && onSaveDraft != null)
                   OutlinedButton(
-                    onPressed: onSaveDraft,
-                    child: const Text('Save as Draft'),
+                    onPressed: busy ? null : onSaveDraft,
+                    child: const Text('Save Draft'),
                   ),
                 if (onUpdateExisting != null)
                   ElevatedButton(
@@ -1304,6 +1352,7 @@ class _GeneratedCandidateGroupSectionState
   late int _visibleCount = widget.initialVisibleCount;
   final Set<String> _selectedIds = {};
   bool _bulkBusy = false;
+  String? _openingPreviewId;
 
   bool get _supportsSelection =>
       widget.allowBulkSaveDraft || widget.allowBulkPublish;
@@ -1433,7 +1482,7 @@ class _GeneratedCandidateGroupSectionState
                     ),
                   if (widget.allowBulkPublish &&
                       widget.bulkPublishAllLabel != null)
-                    ElevatedButton(
+                    OutlinedButton(
                       onPressed: _bulkBusy
                           ? null
                           : () => _runBulk(
@@ -1444,10 +1493,6 @@ class _GeneratedCandidateGroupSectionState
                                 confirmMessage:
                                     widget.bulkPublishAllConfirmMessage,
                               ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: DesignTokens.maroon,
-                        foregroundColor: Colors.white,
-                      ),
                       child: Text(widget.bulkPublishAllLabel!),
                     ),
                 ],
@@ -1615,6 +1660,7 @@ class _GeneratedCandidateGroupSectionState
         alreadyPublishedLabel: matchedPublished,
         showCheckbox: showCheckbox && !publishBlocked,
         selected: _selectedIds.contains(previewId),
+        busy: _openingPreviewId == previewId,
         onSelectedChanged: showCheckbox && !publishBlocked
             ? (value) {
                 setState(() {
@@ -1626,13 +1672,12 @@ class _GeneratedCandidateGroupSectionState
                 });
               }
             : null,
-        onView: () => showAdminArticleViewDialog(
+        onEdit: () => _reviewInWorkspace(
           context,
+          previewId,
           article,
-          widget.service,
-          fallbackSourceFilename: widget.fallbackSourceFilename,
+          isPreview: isPreview,
         ),
-        onEdit: () => _editArticle(context, previewId, article, isPreview: isPreview),
         onSaveDraft: isPreview && sectionAllowsSave
             ? () => _savePreview(
                   context,
@@ -1833,48 +1878,86 @@ class _GeneratedCandidateGroupSectionState
       showKbSnackBar(context, '$verb$failureNote');
     } catch (error) {
       if (!context.mounted) return;
-      showKbSnackBar(context, error.toString());
+      showKbSnackBar(context, friendlyKbError(error));
     } finally {
       if (mounted) setState(() => _bulkBusy = false);
     }
   }
 
-  Future<void> _editArticle(
+  Future<void> _reviewInWorkspace(
     BuildContext context,
     String previewId,
     AdminArticle article, {
     required bool isPreview,
   }) async {
-    final result = await showAdminArticleEditDialog(
-      context: context,
-      article: article,
-      service: widget.service,
-      isPreview: isPreview,
-      asReviewDraft: widget.allowEditAsReviewDraft,
-    );
-    if (!context.mounted) return;
-    if (result is AdminArticle) {
-      final stamped = widget.allowEditAsReviewDraft &&
-              result.metadata['manual_review_from_low_quality'] != true
-          ? stampManualReviewFromLowQuality(result)
-          : result;
-      widget.onPreviewUpdated(previewId, stamped);
-      showKbSnackBar(
-        context,
-        widget.allowEditAsReviewDraft
-            ? 'Review draft updated. Use Save as Draft to store it for publishing from Drafts.'
-            : 'Preview updated.',
+    setState(() => _openingPreviewId = previewId);
+    try {
+      var target = article;
+      if (isPreview && widget.allowEditAsReviewDraft) {
+        target = stampManualReviewFromLowQuality(target);
+      }
+      if (isPreview) {
+        final saved = await _persistDraftForReview(context, previewId, target);
+        if (saved == null || !context.mounted) return;
+        target = saved;
+      } else if (isPreviewCandidateId(target.id)) {
+        return;
+      }
+      if (!context.mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => KnowledgeArticleEditPage(
+            articleId: target.id,
+            setAdminHeader: widget.service.setAdminHeader,
+            articleService: widget.service,
+          ),
+        ),
       );
-      return;
-    }
-    if (result == true) {
+      if (!context.mounted) return;
       try {
-        final updated = await widget.service.getArticle(article.id);
+        final refreshed = await widget.service.getArticle(target.id);
         if (!context.mounted) return;
-        widget.onPreviewSaved(previewId, updated);
+        widget.onPreviewSaved(previewId, refreshed);
       } catch (_) {}
-      showKbSnackBar(context, 'Article updated.');
       await widget.onArticlesChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      showKbSnackBar(context, friendlyKbError(error));
+    } finally {
+      if (mounted) setState(() => _openingPreviewId = null);
+    }
+  }
+
+  Future<AdminArticle?> _persistDraftForReview(
+    BuildContext context,
+    String previewId,
+    AdminArticle article,
+  ) async {
+    try {
+      final saved = await widget.service.createArticle(
+        article.toCreatePayload(publish: false),
+      );
+      if (!context.mounted) return saved;
+      widget.onPreviewSaved(previewId, saved);
+      return saved;
+    } on AdminArticleRequestException catch (error) {
+      if (!context.mounted) return null;
+      if (!error.isSimilarArticleConflict) {
+        showKbSnackBar(context, friendlyKbError(error));
+        return null;
+      }
+      final choice = await _showSimilarArticleDialog(context, error);
+      if (!context.mounted || choice == null) return null;
+      final existingId = error.existingArticle?['id']?.toString();
+      final saved = await widget.service.createArticle(
+        article.toCreatePayload(publish: false),
+        updateExistingId:
+            choice == _SimilarArticleChoice.updateExisting ? existingId : null,
+        forceCreate: choice == _SimilarArticleChoice.createNew,
+      );
+      if (!context.mounted) return saved;
+      widget.onPreviewSaved(previewId, saved);
+      return saved;
     }
   }
 
@@ -1904,7 +1987,7 @@ class _GeneratedCandidateGroupSectionState
     } on AdminArticleRequestException catch (error) {
       if (!context.mounted) return;
       if (!error.isSimilarArticleConflict) {
-        showKbSnackBar(context, error.toString());
+        showKbSnackBar(context, friendlyKbError(error));
         return;
       }
       final choice = await _showSimilarArticleDialog(context, error);
@@ -1926,11 +2009,11 @@ class _GeneratedCandidateGroupSectionState
         await widget.onArticlesChanged();
       } catch (retryError) {
         if (!context.mounted) return;
-        showKbSnackBar(context, retryError.toString());
+        showKbSnackBar(context, friendlyKbError(retryError));
       }
     } catch (error) {
       if (!context.mounted) return;
-      showKbSnackBar(context, error.toString());
+      showKbSnackBar(context, friendlyKbError(error));
     }
   }
 
@@ -1948,7 +2031,7 @@ class _GeneratedCandidateGroupSectionState
       await widget.onArticlesChanged();
     } catch (error) {
       if (!context.mounted) return;
-      showKbSnackBar(context, error.toString());
+      showKbSnackBar(context, friendlyKbError(error));
     }
   }
 
@@ -1966,7 +2049,7 @@ class _GeneratedCandidateGroupSectionState
       await widget.onArticlesChanged();
     } catch (error) {
       if (!context.mounted) return;
-      showKbSnackBar(context, error.toString());
+      showKbSnackBar(context, friendlyKbError(error));
     }
   }
 
@@ -1996,7 +2079,7 @@ class _GeneratedCandidateGroupSectionState
       await widget.onArticlesChanged();
     } catch (error) {
       if (!context.mounted) return;
-      showKbSnackBar(context, error.toString());
+      showKbSnackBar(context, friendlyKbError(error));
     }
   }
 }

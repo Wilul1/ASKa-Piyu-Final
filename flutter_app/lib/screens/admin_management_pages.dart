@@ -15,8 +15,8 @@ import '../services/file_pick.dart';
 import '../services/kb_compose_helpers.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
-import 'admin_generate_articles_page.dart';
 import 'admin_scaffold.dart';
+import 'knowledge_articles_page.dart';
 import 'login_page.dart';
 
 part 'staff_ticket_console.dart';
@@ -2207,7 +2207,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                           children: [
                             Text(
                               _ticket.kbConversionStatus == 'published'
-                                  ? 'This ticket already has a published knowledge article. Admins can unpublish it from the Article Library if it needs revision.'
+                                  ? 'This ticket already has a published knowledge article. Admins can unpublish it from Knowledge Article if it needs revision.'
                                   : _ticket.kbConversionStatus == 'draft'
                                       ? 'A draft FAQ already exists for this ticket. You can update it from the approved resolution.'
                                       : 'Convert the approved office answer into a draft FAQ so future users can get this answer from ASKa-Piyu.',
@@ -2230,8 +2230,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                                       onPressed: () {
                                         openAdminPage(
                                           context,
-                                          builder: (_) =>
-                                              AdminGenerateArticlesPage(
+                                          builder: (_) => KnowledgeArticlesPage(
                                             focusArticleId: _ticket.kbArticleId,
                                           ),
                                         );
@@ -2240,7 +2239,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                                         Icons.open_in_new_rounded,
                                         size: 18,
                                       ),
-                                      label: const Text('Open in Article Library'),
+                                      label: const Text('Open in Knowledge Article'),
                                     ),
                                   if (_ticket.kbConversionStatus != 'published')
                                     ElevatedButton.icon(

@@ -165,6 +165,7 @@ class AdminArticle {
       ...metadata,
       if (sourceFilename != null) 'source_filename': sourceFilename,
       if (documentType != null) 'document_type': documentType,
+      'kb_origin': (metadata['kb_origin'] ?? 'document').toString(),
       'published_write': publish,
     };
     if (body.trim().isNotEmpty) {
@@ -187,6 +188,8 @@ class AdminArticle {
         'source_section': metadata['source_section'].toString(),
       if ((metadata['document_type'] ?? documentType ?? '').toString().trim().isNotEmpty)
         'document_type': (metadata['document_type'] ?? documentType).toString(),
+      'content_format':
+          contentFormat.trim().isEmpty ? 'plain' : contentFormat.trim(),
       'publish_status': publish,
       'needs_review': needsReview || metadata['needs_review'] == true,
       'audience': _normalizeAudience(audience),
@@ -544,8 +547,10 @@ class CandidateSummary {
         if (existingPublished != null) 'existing_published': existingPublished,
         if (alreadyPublished != null) 'already_published': alreadyPublished,
         if (existingMatchReason != null) 'existing_match_reason': existingMatchReason,
+        'kb_origin': parsed.metadata['kb_origin'] ?? 'document',
       },
       displayContent: parsed.displayContent,
+      contentFormat: 'plain',
     );
   }
 }

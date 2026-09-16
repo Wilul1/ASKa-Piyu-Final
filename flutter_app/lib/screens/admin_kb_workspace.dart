@@ -363,7 +363,10 @@ class _ProcessingStatusRow extends StatelessWidget {
         ? const [
             AdminPipelineStageView(label: 'OCR/PDF extraction', status: 'waiting'),
             AdminPipelineStageView(label: 'Automatic cleaning', status: 'waiting'),
-            AdminPipelineStageView(label: 'LLM structuring', status: 'waiting'),
+            AdminPipelineStageView(
+              label: 'Structuring extracted content',
+              status: 'waiting',
+            ),
             AdminPipelineStageView(label: 'Admin review/edit', status: 'waiting'),
             AdminPipelineStageView(label: 'Index to ChromaDB', status: 'waiting'),
           ]

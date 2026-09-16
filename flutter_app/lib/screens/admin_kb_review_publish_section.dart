@@ -50,7 +50,7 @@ class KbReviewAndPublishSection extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Review extracted units, then generate student-facing article previews.',
+            'Review extracted units, then prepare student-facing article drafts from the source document.',
             style: TextStyle(
               fontSize: 14,
               height: 1.45,
@@ -67,7 +67,7 @@ class KbReviewAndPublishSection extends StatelessWidget {
           const Divider(height: 1),
           const SizedBox(height: 16),
           const Text(
-            'Step 2 — Generate article previews',
+            'Step 2 — Review generated article candidates',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w800,
@@ -78,7 +78,6 @@ class KbReviewAndPublishSection extends StatelessWidget {
           AdminGenerateArticlesPage(
             embedded: true,
             embeddedCompact: true,
-            showArticleLibrary: false,
             liveSessionContext: sessionContext,
             focusArticleId: focusArticleId,
             onLibraryRefresh: onLibraryRefresh,

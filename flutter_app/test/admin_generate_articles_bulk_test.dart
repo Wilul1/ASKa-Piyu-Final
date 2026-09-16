@@ -8,9 +8,8 @@ void main() {
   test('Generate Articles action buttons are text-only', () {
     final shared =
         File('lib/widgets/admin_kb_article_shared.dart').readAsStringSync();
-    expect(shared.contains("child: const Text('View')"), isTrue);
     expect(shared.contains("child: Text(editLabel)"), isTrue);
-    expect(shared.contains("child: const Text('Save as Draft')"), isTrue);
+    expect(shared.contains("child: const Text('Save Draft')"), isTrue);
     expect(shared.contains("child: const Text('Publish')"), isTrue);
     expect(shared.contains("child: const Text('Discard')"), isTrue);
     expect(shared.contains('OutlinedButton.icon('), isFalse);

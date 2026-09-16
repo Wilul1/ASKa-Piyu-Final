@@ -26,6 +26,7 @@ class KnowledgeArticleEditPage extends StatefulWidget {
     super.key,
     required this.articleId,
     required this.setAdminHeader,
+    this.articleService,
     this.knownCategories = const [],
     this.knownOffices = const [],
     this.debugGetArticle,
@@ -41,6 +42,7 @@ class KnowledgeArticleEditPage extends StatefulWidget {
 
   final String articleId;
   final void Function(Map<String, String> headers) setAdminHeader;
+  final AdminArticleService? articleService;
   final List<String> knownCategories;
   final List<String> knownOffices;
 
@@ -81,10 +83,11 @@ class KnowledgeArticleEditPage extends StatefulWidget {
 }
 
 class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
-  late final AdminArticleService _service = AdminArticleService(
-    apiBase: AppConfig.resolvedApiBase,
-    setAdminHeader: widget.setAdminHeader,
-  );
+  late final AdminArticleService _service = widget.articleService ??
+      AdminArticleService(
+        apiBase: AppConfig.resolvedApiBase,
+        setAdminHeader: widget.setAdminHeader,
+      );
 
   final _formKey = GlobalKey<FormState>();
   final _editorKey = GlobalKey<ArticleRichEditorState>();

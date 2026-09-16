@@ -9,6 +9,15 @@ import '../services/api_client.dart';
 import '../services/extraction_preview_store.dart';
 import '../services/file_pick.dart';
 
+String sanitizePipelineStageLabel(String label) {
+  final normalized = label.trim().toLowerCase();
+  if (normalized == 'llm structuring' ||
+      normalized.contains('llm structur')) {
+    return 'Structuring extracted content';
+  }
+  return label;
+}
+
 /// Survives Knowledge Base page disposal so extract/ingest keep running when
 /// the admin navigates away and comes back.
 class KbWorkspaceSession extends ChangeNotifier {
@@ -347,7 +356,10 @@ class KbWorkspaceSession extends ChangeNotifier {
           detail: 'Reading the document…',
         ),
         const KbPipelineStage(label: 'Automatic cleaning', status: 'waiting'),
-        const KbPipelineStage(label: 'LLM structuring', status: 'waiting'),
+        const KbPipelineStage(
+            label: 'Structuring extracted content',
+            status: 'waiting',
+          ),
         const KbPipelineStage(label: 'Admin review/edit', status: 'waiting'),
         const KbPipelineStage(label: 'Index to ChromaDB', status: 'waiting'),
       ];
@@ -358,7 +370,10 @@ class KbWorkspaceSession extends ChangeNotifier {
           status: 'done',
         ),
         const KbPipelineStage(label: 'Automatic cleaning', status: 'done'),
-        const KbPipelineStage(label: 'LLM structuring', status: 'done'),
+        const KbPipelineStage(
+          label: 'Structuring extracted content',
+          status: 'done',
+        ),
         const KbPipelineStage(label: 'Admin review/edit', status: 'done'),
         const KbPipelineStage(
           label: 'Index to ChromaDB',
@@ -388,7 +403,10 @@ class KbWorkspaceSession extends ChangeNotifier {
             status: 'running',
             detail: 'Normalizing text…',
           ),
-          const KbPipelineStage(label: 'LLM structuring', status: 'waiting'),
+          const KbPipelineStage(
+            label: 'Structuring extracted content',
+            status: 'waiting',
+          ),
           const KbPipelineStage(label: 'Admin review/edit', status: 'waiting'),
           const KbPipelineStage(label: 'Index to ChromaDB', status: 'waiting'),
         ];
@@ -398,7 +416,7 @@ class KbWorkspaceSession extends ChangeNotifier {
           const KbPipelineStage(label: 'OCR/PDF extraction', status: 'done'),
           const KbPipelineStage(label: 'Automatic cleaning', status: 'done'),
           const KbPipelineStage(
-            label: 'LLM structuring',
+            label: 'Structuring extracted content',
             status: 'running',
             detail: 'Building knowledge units…',
           ),
@@ -438,7 +456,7 @@ class KbWorkspaceSession extends ChangeNotifier {
         return const KbPipelineStage(label: 'Unknown step', status: 'waiting');
       }
       return KbPipelineStage(
-        label: (item['label'] ?? '').toString(),
+        label: sanitizePipelineStageLabel((item['label'] ?? '').toString()),
         status: (item['status'] ?? 'waiting').toString(),
         detail: item['detail']?.toString(),
       );
@@ -491,7 +509,10 @@ class KbPipelineStage {
   static List<KbPipelineStage> defaults() => const [
         KbPipelineStage(label: 'OCR/PDF extraction', status: 'waiting'),
         KbPipelineStage(label: 'Automatic cleaning', status: 'waiting'),
-        KbPipelineStage(label: 'LLM structuring', status: 'waiting'),
+        KbPipelineStage(
+          label: 'Structuring extracted content',
+          status: 'waiting',
+        ),
         KbPipelineStage(label: 'Admin review/edit', status: 'waiting'),
         KbPipelineStage(label: 'Index to ChromaDB', status: 'waiting'),
       ];

@@ -185,16 +185,22 @@ class GenerateArticlesReviewSection extends StatelessWidget {
       ),
     ];
 
-    return KbAdminPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const KbSectionHeader(
-            icon: Icons.fact_check_rounded,
-            title: 'Generate Articles',
-            subtitle:
-                'Preview candidates from topic blueprints. Generate is preview-only. Save as Draft writes published=false. Publish writes published=true.',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Generated article candidates',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: DesignTokens.ink,
           ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Review drafts prepared from the extracted document. Save Draft stores unpublished articles. Publish is available only where existing safety rules allow it.',
+          style: TextStyle(fontSize: 13, color: DesignTokens.muted, height: 1.45),
+        ),
           const SizedBox(height: 10),
           Text(
             '${generationResult.previewCount} preview candidates from ${generationResult.blueprintCount} blueprints '
@@ -304,7 +310,6 @@ class GenerateArticlesReviewSection extends StatelessWidget {
             ),
           ],
         ],
-      ),
     );
   }
 }

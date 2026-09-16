@@ -8,12 +8,13 @@ import '../design_tokens.dart';
 import '../models/admin_article_models.dart';
 import '../services/admin_article_service.dart';
 import '../services/extraction_preview_store.dart';
+import '../widgets/admin_kb_article_shared.dart';
 import '../widgets/student_ui.dart';
 import '../widgets/sidebar.dart';
-import 'admin_kb_article_library_section.dart';
 import 'admin_kb_generate_articles_section.dart';
 import 'admin_kb_outline.dart';
 import 'admin_scaffold.dart';
+import 'knowledge_articles_page.dart';
 import 'office_scaffold.dart';
 
 class AdminGenerateArticlesPage extends StatefulWidget {
@@ -22,9 +23,10 @@ class AdminGenerateArticlesPage extends StatefulWidget {
     this.focusArticleId,
     this.embedded = false,
     this.embeddedCompact = false,
-    this.showArticleLibrary = true,
     this.liveSessionContext,
     this.onLibraryRefresh,
+    this.debugGenerationResult,
+    this.debugArticleService,
   });
 
   /// When set, expands Article Library and highlights this article.
@@ -36,14 +38,17 @@ class AdminGenerateArticlesPage extends StatefulWidget {
   /// Slim generate UI inside Review & Publish (no duplicate metadata card).
   final bool embeddedCompact;
 
-  /// When false, Article Library is rendered by the parent KB page.
-  final bool showArticleLibrary;
-
   /// Live extraction context from the KB session (filename, type, unit count).
   final KbSessionDisplayContext? liveSessionContext;
 
-  /// Notifies parent to refresh Article Library when embedded without library.
+  /// Notifies parent after a candidate is saved.
   final VoidCallback? onLibraryRefresh;
+
+  @visibleForTesting
+  final CandidateGenerationResult? debugGenerationResult;
+
+  @visibleForTesting
+  final AdminArticleService? debugArticleService;
 
   @override
   State<AdminGenerateArticlesPage> createState() =>
@@ -69,7 +74,6 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
   final Map<String, AdminArticle> _previewArticlesById = {};
   final Map<String, AdminArticle> _savedArticlesByPreviewId = {};
   final Set<String> _discardedPreviewIds = {};
-  int _articleLibraryRefreshToken = 0;
 
   @override
   void initState() {
@@ -84,6 +88,18 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
   }
 
   void _loadLastExtraction() {
+    if (widget.debugGenerationResult != null) {
+      setState(() {
+        _extractionPreview = const {
+          'knowledge_units': [
+            {'title': 'debug'},
+          ],
+        };
+        _extractionStatus = 'Extraction preview is ready.';
+        _candidateGenerationResult = widget.debugGenerationResult;
+      });
+      return;
+    }
     final saved = AppConfig.lastExtractionPreview;
     if (!isValidExtractionHandoff(saved)) {
       setState(() {
@@ -160,10 +176,11 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
   }
 
   AdminArticleService _articleService() {
-    return AdminArticleService(
-      apiBase: AppConfig.resolvedApiBase,
-      setAdminHeader: _setAdminHeader,
-    );
+    return widget.debugArticleService ??
+        AdminArticleService(
+          apiBase: AppConfig.resolvedApiBase,
+          setAdminHeader: _setAdminHeader,
+        );
   }
 
   void _setAdminHeader(Map<String, String> headers) {
@@ -230,8 +247,9 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
       );
     } on AdminArticleRequestException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyKbError(error))),
+      );
     } on TimeoutException {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -243,8 +261,9 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyKbError(error))),
+      );
     } finally {
       if (mounted) {
         setState(() => _isGeneratingCandidates = false);
@@ -253,7 +272,6 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
   }
 
   Future<void> _onGeneratedArticlesChanged() async {
-    setState(() => _articleLibraryRefreshToken++);
     widget.onLibraryRefresh?.call();
   }
 
@@ -278,6 +296,7 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
     final auth = AuthScope.of(context);
     final isOffice = auth.role == 'office';
     final content = Column(
+      key: const Key('admin-generate-articles'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _GenerateArticlesSourcePanel(
@@ -315,14 +334,23 @@ class _AdminGenerateArticlesPageState extends State<AdminGenerateArticlesPage> {
             extractionPreview: _extractionPreview,
           ),
         ],
-        if (widget.showArticleLibrary) ...[
-          const SizedBox(height: 18),
-          AdminKbArticleLibrarySection(
-            setAdminHeader: _setAdminHeader,
-            refreshToken: _articleLibraryRefreshToken,
-            focusArticleId: widget.focusArticleId,
+        const SizedBox(height: 16),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            key: const Key('view-knowledge-articles'),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => KnowledgeArticlesPage(
+                    focusArticleId: widget.focusArticleId,
+                  ),
+                ),
+              );
+            },
+            child: const Text('View Knowledge Articles'),
           ),
-        ],
+        ),
       ],
     );
 
@@ -412,9 +440,9 @@ class _GenerateArticlesSourcePanel extends StatelessWidget {
       children: [
         if (!compact)
           const StudentSectionTitle(
-            title: 'Generate Article Candidates',
+            title: 'Generated article candidates',
             subtitle:
-                'Uses the most recent Extract & Structure result from Documents. Create unsaved previews from planner blueprints; review buckets below determine priority.',
+                'Prepare student-facing drafts from the extracted source document. Content comes from the document, not invented text.',
           ),
         if (!compact) const SizedBox(height: 12),
         if (!compact)
@@ -423,33 +451,28 @@ class _GenerateArticlesSourcePanel extends StatelessWidget {
             runSpacing: 8,
             children: [
               _MetaPill(
-                icon: Icons.description_outlined,
                 label: sourceFilename?.isNotEmpty == true
                     ? sourceFilename!
                     : 'No source file selected',
               ),
               _MetaPill(
-                icon: Icons.article_rounded,
                 label: hasExtractionPreview
                     ? 'Detected type: ${documentType ?? 'auto'}'
                     : 'Detected type: not available',
               ),
               if ((documentProfile ?? '').isNotEmpty)
                 _MetaPill(
-                  icon: Icons.folder_outlined,
                   label: 'Profile: $documentProfile',
                 ),
               _MetaPill(
-                icon: Icons.article_outlined,
                 label: hasExtractionPreview
                     ? 'Knowledge units: $knowledgeUnitCount'
                     : 'Knowledge units: 0',
               ),
               _MetaPill(
-                icon: Icons.auto_awesome_outlined,
                 label: hasCharterV2Services
-                    ? 'V2 services: $charterV2ServicesCount'
-                    : 'V2 services: 0',
+                    ? 'Structured services: $charterV2ServicesCount'
+                    : 'Structured services: 0',
               ),
             ],
           ),
@@ -631,7 +654,7 @@ class _GenerateArticlesSummary extends StatelessWidget {
           const StudentSectionTitle(
             title: 'Generation Summary',
             subtitle:
-                'Preview-only topic blueprints. Generate does not save. Save as Draft = published=false. Publish = published=true.',
+                'Preview-only topic blueprints. Generate does not save. Save Draft stores unpublished articles. Publish is available only where safety rules allow it.',
           ),
           const SizedBox(height: 10),
           LayoutBuilder(
@@ -675,6 +698,7 @@ class _GenerationMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
@@ -682,7 +706,6 @@ class _GenerationMetric extends StatelessWidget {
         border: Border.all(color: DesignTokens.border),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             value.toString(),
@@ -693,12 +716,16 @@ class _GenerationMetric extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: DesignTokens.muted,
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: DesignTokens.muted,
+              ),
             ),
           ),
         ],
@@ -708,9 +735,8 @@ class _GenerationMetric extends StatelessWidget {
 }
 
 class _MetaPill extends StatelessWidget {
-  const _MetaPill({required this.icon, required this.label});
+  const _MetaPill({required this.label});
 
-  final IconData icon;
   final String label;
 
   @override
@@ -722,20 +748,13 @@ class _MetaPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: DesignTokens.border),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: DesignTokens.muted),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: DesignTokens.muted,
-            ),
-          ),
-        ],
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: DesignTokens.muted,
+        ),
       ),
     );
   }

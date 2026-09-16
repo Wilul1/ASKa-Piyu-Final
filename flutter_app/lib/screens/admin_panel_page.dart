@@ -8,7 +8,6 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../screens/login_page.dart';
 import '../screens/student_home.dart';
-import 'admin_generate_articles_page.dart';
 import 'admin_kb_review_publish_section.dart';
 import 'admin_kb_workspace.dart';
 import 'office_scaffold.dart';
@@ -1491,84 +1490,6 @@ class _KnowledgeUnitRow extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _GenerateArticlesLinkPanel extends StatelessWidget {
-  const _GenerateArticlesLinkPanel({
-    required this.fileName,
-    required this.documentType,
-    required this.knowledgeUnitCount,
-  });
-
-  final String? fileName;
-  final String? documentType;
-  final int knowledgeUnitCount;
-
-  @override
-  Widget build(BuildContext context) {
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _SectionHeader(
-            icon: Icons.library_books_rounded,
-            title: 'Open in Generate Articles',
-            trailing: null,
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 12,
-            runSpacing: 6,
-            children: [
-              _StatusChip(
-                label: 'Source file: ${fileName ?? 'Unknown'}',
-                color: DesignTokens.primaryBlue,
-              ),
-              _StatusChip(
-                label:
-                    'Detected type: ${documentType == null || documentType!.isEmpty ? 'auto' : documentType!}',
-                color: DesignTokens.maroon,
-              ),
-              _StatusChip(
-                label: 'Knowledge units: $knowledgeUnitCount',
-                color: DesignTokens.primaryBlue,
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Use the separate Generate Articles workspace to create and review student-facing article previews. '
-            'This Documents page is for extraction, RAG inspection, and indexing only.',
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.45,
-              color: DesignTokens.muted,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const AdminGenerateArticlesPage(),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.fact_check_rounded, size: 18),
-              label: const Text('Open Generate Articles'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: DesignTokens.maroon,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

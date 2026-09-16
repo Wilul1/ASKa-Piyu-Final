@@ -24,118 +24,7 @@ part 'office_account_page.dart';
 part 'admin_offices_page.dart';
 part 'admin_all_tickets_page.dart';
 part 'admin_users_roles_page.dart';
-
-class AdminDashboardPage extends StatefulWidget {
-  const AdminDashboardPage({super.key});
-
-  @override
-  State<AdminDashboardPage> createState() => _AdminDashboardPageState();
-}
-
-class _AdminDashboardPageState extends State<AdminDashboardPage> {
-  _TicketStats? _stats;
-  bool _loading = false;
-  String? _error;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final auth = AuthScope.of(context);
-    if (auth.role == 'admin' && !_loading && _stats == null && _error == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadStats();
-      });
-    }
-  }
-
-  Future<void> _loadStats() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      _stats = await _loadTicketStats(context);
-    } catch (error) {
-      _error = _friendlyError(error);
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final stats = _stats;
-    final cards = [
-      _AdminMetricData('Total Tickets', stats?.totalText ?? '-',
-          Icons.confirmation_number_rounded),
-      _AdminMetricData('Open Tickets', stats?.openText ?? '-',
-          Icons.mark_email_unread_rounded,
-          statusFilter: 'Open'),
-      _AdminMetricData('In Progress', stats?.inProgressText ?? '-',
-          Icons.timelapse_rounded,
-          statusFilter: 'In Progress'),
-      _AdminMetricData('Closed', stats?.closedText ?? '-',
-          Icons.check_circle_rounded,
-          statusFilter: 'Closed'),
-      _AdminMetricData(
-          'High Priority', stats?.highPriorityText ?? '-', Icons.priority_high_rounded),
-      _AdminMetricData(
-          'Offices', stats?.officeCountText ?? '-', Icons.apartment_rounded),
-    ];
-
-    return AdminScaffold(
-      current: StudentNavItem.adminDashboard,
-      title: 'Admin Dashboard',
-      description:
-          'Monitor support volume, ticket status, and administrative workload.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_loading) const LinearProgressIndicator(minHeight: 3),
-          if (_error != null)
-            _AdminNotice(
-              icon: Icons.info_outline_rounded,
-              message: 'Ticket statistics are not available yet. $_error',
-            ),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 900
-                  ? 3
-                  : constraints.maxWidth >= 560
-                      ? 2
-                      : 1;
-              return StudentResponsiveWrap(
-                columns: columns,
-                spacing: 14,
-                children: cards
-                    .map((card) => _AdminMetricCard(
-                          data: card,
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => AdminAllTicketsPage(
-                                initialStatusFilter:
-                                    card.statusFilter ?? 'All',
-                              ),
-                            ),
-                          ),
-                        ))
-                    .toList(),
-              );
-            },
-          ),
-          const SizedBox(height: 18),
-          const _AdminNotice(
-            icon: Icons.admin_panel_settings_rounded,
-            message:
-                'Use All Tickets, Knowledge Base, Generate Articles, Announcements, Users & Roles, Offices, and Reports from the sidebar.',
-          ),
-        ],
-      ),
-    );
-  }
-}
+part 'admin_dashboard_page.dart';
 
 class OfficeDashboardPage extends StatefulWidget {
   /// Seeded tickets skip network load. Widget tests only.
@@ -3771,6 +3660,24 @@ String? _officeAssignmentError(BuildContext context) {
     return 'Your office account is not assigned to an office. Please contact the administrator.';
   }
   return null;
+}
+
+Future<List<_AdminTicketEntry>> _loadAdminTickets(BuildContext context) async {
+  final result = await ApiClient.send(
+    method: 'GET',
+    url: '${AppConfig.resolvedApiBase}/tickets',
+    headers: AuthScope.of(context).ticketHeaders(),
+  );
+  final data = _decodeObject(result.body);
+  final statusCode = result.statusCode;
+  if (statusCode < 200 || statusCode >= 300) {
+    throw StateError(_extractError(data, 'Could not load tickets.'));
+  }
+  final items = data['items'] is List ? data['items'] as List : const [];
+  return items
+      .whereType<Map>()
+      .map((item) => _AdminTicketEntry.fromJson(Map<String, dynamic>.from(item)))
+      .toList();
 }
 
 Future<List<_AdminTicketEntry>> _loadOfficeTickets(BuildContext context) async {

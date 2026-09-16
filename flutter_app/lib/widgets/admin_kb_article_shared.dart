@@ -14,6 +14,7 @@ import 'admin_kb_article_widgets.dart';
 import 'article_attachments_panel.dart';
 import 'article_html_codec.dart';
 import 'article_rich_editor.dart';
+import 'responsive_dialog_body.dart';
 
 String friendlyKbError(Object error) {
   if (error is AdminArticleRequestException) {
@@ -546,10 +547,9 @@ Future<void> showAdminArticleViewDialog(
 
           return AlertDialog(
             title: Text(full.title),
-            content: SizedBox(
-              width: 720,
-              child: SingleChildScrollView(
-                child: Column(
+            content: ResponsiveDialogBody(
+              maxWidth: 720,
+              child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _DialogField('Category', full.category),
@@ -648,7 +648,6 @@ Future<void> showAdminArticleViewDialog(
                     ),
                   ],
                 ),
-              ),
             ),
             actions: [
               TextButton(
@@ -1160,11 +1159,9 @@ class _AdminArticleEditorState extends State<AdminArticleEditor> {
 
     return AlertDialog(
       title: Text(title),
-      content: SizedBox(
-        width: 720,
-        child: SingleChildScrollView(
-          child: _buildFormFields(),
-        ),
+      content: ResponsiveDialogBody(
+        maxWidth: 720,
+        child: _buildFormFields(),
       ),
       actions: _buildActionButtons(context),
     );

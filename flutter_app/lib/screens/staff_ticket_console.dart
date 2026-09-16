@@ -1070,13 +1070,14 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text('Transfer ticket'),
-              content: SizedBox(
-                width: 420,
+              content: ResponsiveDialogBody(
+                maxWidth: 420,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     DropdownButtonFormField<String>(
                       value: statuses.contains(status) ? status : statuses.first,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Status',
                         border: OutlineInputBorder(),
@@ -1094,6 +1095,7 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: offices.contains(office) ? office : offices.first,
+                        isExpanded: true,
                         decoration: const InputDecoration(
                           labelText: 'Assigned office',
                           border: OutlineInputBorder(),
@@ -1519,11 +1521,13 @@ class _StaffCenterTabs extends StatelessWidget {
     final labels = includeDetails
         ? const ['Conversation', 'Details', 'History']
         : const ['Conversation', 'Details', 'History'];
-    return Row(
+    return Wrap(
+      spacing: 18,
+      runSpacing: 8,
       children: [
         for (var i = 0; i < labels.length; i++)
           Padding(
-            padding: const EdgeInsets.only(right: 18),
+            padding: EdgeInsets.zero,
             child: InkWell(
               onTap: () => onChanged(i),
               child: Column(
@@ -2509,6 +2513,19 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
     );
   }
 
+  Widget _ticketKbPublishButton(bool busy) {
+    return ElevatedButton(
+      key: const Key('ticket-kb-publish'),
+      onPressed: busy ? null : () => _save(publish: true),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: DesignTokens.maroon,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      child: Text(_saving && _publishNow ? 'Publishing…' : 'Publish'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final busy = _saving || _uploadingImage;
@@ -2527,31 +2544,61 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: DesignTokens.border),
         ),
-        actions: [
-          TextButton(
-            onPressed: busy ? null : () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          const SizedBox(width: 4),
-          TextButton(
-            onPressed: busy ? null : () => _save(publish: false),
-            child: Text(_saving && !_publishNow ? 'Saving…' : 'Save draft'),
-          ),
-          const SizedBox(width: 4),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: ElevatedButton(
-              onPressed: busy ? null : () => _save(publish: true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: DesignTokens.maroon,
-                foregroundColor: Colors.white,
-                elevation: 0,
-              ),
-              child: Text(_saving && _publishNow ? 'Publishing…' : 'Publish'),
-            ),
-          ),
-        ],
+        actions: MediaQuery.sizeOf(context).width < 900
+            ? [
+                PopupMenuButton<String>(
+                  key: const Key('ticket-kb-actions'),
+                  tooltip: 'More actions',
+                  enabled: !busy,
+                  onSelected: (value) {
+                    if (value == 'cancel') {
+                      Navigator.of(context).pop();
+                    } else if (value == 'draft') {
+                      _save(publish: false);
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'cancel',
+                      child: Text('Cancel', key: Key('ticket-kb-cancel')),
+                    ),
+                    PopupMenuItem(
+                      value: 'draft',
+                      child: Text(
+                        _saving && !_publishNow ? 'Saving…' : 'Save draft',
+                        key: const Key('ticket-kb-save-draft'),
+                      ),
+                    ),
+                  ],
+                ),
+              ]
+            : [
+                TextButton(
+                  key: const Key('ticket-kb-cancel'),
+                  onPressed: busy ? null : () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 4),
+                TextButton(
+                  key: const Key('ticket-kb-save-draft'),
+                  onPressed: busy ? null : () => _save(publish: false),
+                  child: Text(_saving && !_publishNow ? 'Saving…' : 'Save draft'),
+                ),
+                const SizedBox(width: 4),
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: _ticketKbPublishButton(busy),
+                ),
+              ],
       ),
+      bottomNavigationBar: MediaQuery.sizeOf(context).width < 900
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: _ticketKbPublishButton(busy),
+              ),
+            )
+          : null,
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 920),

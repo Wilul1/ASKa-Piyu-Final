@@ -15,6 +15,7 @@ import '../services/file_pick.dart';
 import '../services/kb_compose_helpers.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
+import '../widgets/responsive_dialog_body.dart';
 import 'admin_scaffold.dart';
 import 'knowledge_articles_page.dart';
 import 'login_page.dart';
@@ -841,8 +842,8 @@ class _CreateOfficeAccountDialogState extends State<_CreateOfficeAccountDialog> 
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Create office account'),
-      content: SizedBox(
-        width: 420,
+      content: ResponsiveDialogBody(
+        maxWidth: 420,
         child: Form(
           key: _formKey,
           child: Column(
@@ -987,8 +988,8 @@ class _CreateFacultyAccountDialogState
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Create faculty account'),
-      content: SizedBox(
-        width: 420,
+      content: ResponsiveDialogBody(
+        maxWidth: 420,
         child: Form(
           key: _formKey,
           child: Column(
@@ -1127,8 +1128,8 @@ class _CreateOfficeDialogState extends State<_CreateOfficeDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add campus office'),
-      content: SizedBox(
-        width: 420,
+      content: ResponsiveDialogBody(
+        maxWidth: 420,
         child: Form(
           key: _formKey,
           child: Column(
@@ -2118,6 +2119,84 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
     super.dispose();
   }
 
+  Widget _adminAttachmentTile(_AdminTicketAttachment file) {
+    final type = file.contentType.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          key: Key('admin-ticket-attachment-${file.id}'),
+          onTap: () => _downloadAdminAttachment(file),
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(
+                  file.isImage
+                      ? Icons.image_outlined
+                      : Icons.attach_file_rounded,
+                  size: 18,
+                  color: DesignTokens.maroon,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        file.originalFilename,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          color: DesignTokens.ink,
+                        ),
+                      ),
+                      if (type.isNotEmpty)
+                        Text(
+                          type,
+                          style: const TextStyle(
+                            color: DesignTokens.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _downloadAdminAttachment(_AdminTicketAttachment file) async {
+    try {
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}${file.downloadUrl}',
+        headers: AuthScope.of(context).ticketHeaders(),
+        asBytes: true,
+      );
+      if (!result.ok) {
+        throw StateError('Could not download file.');
+      }
+      await downloadBytesFile(
+        filename: file.originalFilename,
+        bytes: result.bytes,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_friendlyError(error))),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final officeIdValues = <String>[
@@ -2223,6 +2302,19 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                             'assign it to a real office below.',
                       ),
                     _AdminDetailGrid(ticket: _ticket),
+                    if (_ticket.attachments.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Attachments',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          color: DesignTokens.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ..._ticket.attachments.map(_adminAttachmentTile),
+                    ],
                     if (_ticket.status == 'Resolved' ||
                         _ticket.status == 'Closed') ...[
                       const SizedBox(height: 20),
@@ -2516,10 +2608,9 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text('Convert to Knowledge Base'),
-              content: SizedBox(
-                width: 520,
-                child: SingleChildScrollView(
-                  child: Column(
+              content: ResponsiveDialogBody(
+                maxWidth: 520,
+                child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       TextField(
@@ -2532,6 +2623,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: audience,
+                        isExpanded: true,
                         decoration: const InputDecoration(
                           labelText: 'Audience',
                           helperText:
@@ -2567,7 +2659,6 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       ),
                     ],
                   ),
-                ),
               ),
               actions: [
                 TextButton(

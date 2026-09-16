@@ -8,6 +8,7 @@ import '../widgets/admin_article_preview_download_stub.dart'
 import '../widgets/admin_article_preview_export.dart';
 import '../widgets/admin_kb_article_shared.dart';
 import '../widgets/admin_kb_article_widgets.dart';
+import '../widgets/responsive_dialog_body.dart';
 
 /// Topic-plan review: Recommended / Consolidated / Needs Review / Low Quality / RAG-only.
 class GenerateArticlesReviewSection extends StatelessWidget {
@@ -711,8 +712,8 @@ class _RagOnlyCoveragePanelState extends State<_RagOnlyCoveragePanel> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(topic.canonicalTopic),
-        content: SizedBox(
-          width: 560,
+        content: ResponsiveDialogBody(
+          maxWidth: 560,
           child: units.isEmpty
               ? Text(
                   topic.sourceSection?.isNotEmpty == true

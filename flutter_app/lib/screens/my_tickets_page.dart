@@ -12,6 +12,7 @@ import '../screens/login_page.dart';
 import '../services/api_client.dart';
 import '../services/download_file.dart';
 import '../services/file_pick.dart';
+import '../widgets/phone_keyboard_inset.dart';
 import '../widgets/phone_layout.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/sidebar.dart';
@@ -1257,10 +1258,16 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshTicket(silent: true);
     });
+    bindVisualViewportListener(_onKeyboardInset);
+  }
+
+  void _onKeyboardInset() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    unbindVisualViewportListener(_onKeyboardInset);
     _pollTimer?.cancel();
     _replyController.dispose();
     _conversationScroll.dispose();
@@ -1491,6 +1498,7 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
         ),
         if (_canStudentReply)
           _TicketReplyComposer(
+            key: const Key('student-reply-composer'),
             controller: _replyController,
             sending: _sending,
             attaching: _attaching,
@@ -1647,10 +1655,15 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
     );
 
     if (phone && _phoneThreadOpen) {
+      // Web keyboards often do not update MediaQuery alone. Pad with the
+      // shared inset and keep resizeToAvoidBottomInset off so the gap does
+      // not double when the inset returns to zero.
       return Scaffold(
         backgroundColor: DesignTokens.bgGrey,
         resizeToAvoidBottomInset: false,
-        body: Column(
+        body: Padding(
+          padding: EdgeInsets.only(bottom: phoneKeyboardInset(context)),
+          child: Column(
           children: [
             SafeArea(
               bottom: false,
@@ -1703,6 +1716,7 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
             ),
             Expanded(child: ColoredBox(color: Colors.white, child: conversation)),
           ],
+        ),
         ),
       );
     }
@@ -1936,6 +1950,7 @@ class _TicketReplyComposer extends StatelessWidget {
   final VoidCallback onAttachFile;
 
   const _TicketReplyComposer({
+    super.key,
     required this.controller,
     required this.sending,
     required this.attaching,

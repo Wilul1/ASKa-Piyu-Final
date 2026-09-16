@@ -16,6 +16,7 @@ import '../services/api_client.dart';
 import '../services/file_pick.dart';
 import '../services/kb_workspace_session.dart';
 import '../widgets/sidebar.dart';
+import '../widgets/responsive_dialog_body.dart';
 
 class _PipelineStage {
   final String label;
@@ -1474,13 +1475,11 @@ class _KnowledgeUnitRow extends StatelessWidget {
       builder: (context) {
         return AlertDialog(
           title: Text((unit['title'] ?? 'Knowledge Unit').toString()),
-          content: SizedBox(
-            width: 720,
-            child: SingleChildScrollView(
-              child: SelectableText(
-                (unit['content'] ?? '').toString(),
-                style: const TextStyle(fontSize: 13, height: 1.45),
-              ),
+          content: ResponsiveDialogBody(
+            maxWidth: 720,
+            child: SelectableText(
+              (unit['content'] ?? '').toString(),
+              style: const TextStyle(fontSize: 13, height: 1.45),
             ),
           ),
           actions: [
@@ -1626,13 +1625,11 @@ class _ChunkPreviewRow extends StatelessWidget {
         return AlertDialog(
           title: Text(
               'Chunk ${chunk['chunk_index'] ?? ''}: ${(chunk['title'] ?? 'Untitled').toString()}'),
-          content: SizedBox(
-            width: 720,
-            child: SingleChildScrollView(
-              child: SelectableText(
-                (chunk['content'] ?? chunk['content_preview'] ?? '').toString(),
-                style: const TextStyle(fontSize: 13, height: 1.45),
-              ),
+          content: ResponsiveDialogBody(
+            maxWidth: 720,
+            child: SelectableText(
+              (chunk['content'] ?? chunk['content_preview'] ?? '').toString(),
+              style: const TextStyle(fontSize: 13, height: 1.45),
             ),
           ),
           actions: [
@@ -1813,10 +1810,9 @@ class _RetrievalResultRow extends StatelessWidget {
         ].join(' | ');
         return AlertDialog(
           title: Text('Rank ${result['rank'] ?? '-'}: $title'),
-          content: SizedBox(
-            width: 760,
-            child: SingleChildScrollView(
-              child: Column(
+          content: ResponsiveDialogBody(
+            maxWidth: 760,
+            child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1833,7 +1829,6 @@ class _RetrievalResultRow extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
           ),
           actions: [
             TextButton(

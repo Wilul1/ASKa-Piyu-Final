@@ -2059,7 +2059,11 @@ class _AdminFilterDropdown extends StatelessWidget {
 
 class _AdminTicketDetailsDialog extends StatefulWidget {
   final _AdminTicketEntry ticket;
-  final List<String> offices;
+  // Real offices (id + name) admin can assign the ticket to. Reassignment
+  // is ID-based so a save can never resend an unresolved raw taxonomy
+  // label (see _saveChanges): the office dropdown only ever offers real
+  // office IDs plus an explicit "unresolved" sentinel.
+  final List<_AdminOfficeEntry> officeEntries;
   final String controlsTitle;
   final String replyHint;
   final bool allowReassignment;
@@ -2069,7 +2073,7 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
 
   const _AdminTicketDetailsDialog({
     required this.ticket,
-    required this.offices,
+    required this.officeEntries,
     this.controlsTitle = 'Admin controls',
     this.replyHint = 'Write an admin reply',
     this.allowReassignment = true,
@@ -2083,10 +2087,15 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
 }
 
 class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
+  // Sentinel value for the office dropdown meaning "no real office chosen
+  // yet" -- distinct from any real office id, so it can never collide with
+  // one and can never be mistaken for a resolved assignment.
+  static const String _unresolvedOfficeSentinel = '';
+
   late _AdminTicketEntry _ticket;
   late String _status;
   late String _priority;
-  late String _office;
+  late String _officeId;
   final TextEditingController _categoryCtrl = TextEditingController();
   final TextEditingController _replyCtrl = TextEditingController();
   String? _error;
@@ -2098,7 +2107,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
     _ticket = widget.ticket;
     _status = _ticket.status;
     _priority = _ticket.priority;
-    _office = _ticket.assignedOffice;
+    _officeId = _ticket.assignedOfficeId ?? _unresolvedOfficeSentinel;
     _categoryCtrl.text = _ticket.category;
   }
 
@@ -2111,7 +2120,14 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final offices = _mergeOption(widget.offices, _office);
+    final officeIdValues = <String>[
+      _unresolvedOfficeSentinel,
+      ...widget.officeEntries.map((office) => office.id),
+    ];
+    final officeIdLabels = <String, String>{
+      _unresolvedOfficeSentinel: 'Select an office…',
+      for (final office in widget.officeEntries) office.id: office.name,
+    };
     final priorities = _mergeOption(const ['Low', 'Medium', 'High', 'Urgent'], _priority);
     final statuses =
         _mergeOption(const ['Open', 'In Progress', 'Resolved', 'Closed'], _status);
@@ -2180,6 +2196,11 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       children: [
                         _AdminStatusChip(status: _ticket.status),
                         _AdminPriorityChip(priority: _ticket.priority),
+                        if (_ticket.needsManualRouting)
+                          const _AdminKbBadge(
+                            label: 'Needs Manual Routing',
+                            color: Color(0xFFDC2626),
+                          ),
                         if (_ticket.kbConversionStatus == 'draft')
                           const _AdminKbBadge(
                             label: 'KB Draft',
@@ -2193,6 +2214,14 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                       ],
                     ),
                     const SizedBox(height: 18),
+                    if (_ticket.needsManualRouting)
+                      _AdminNotice(
+                        icon: Icons.report_gmailerrorred_rounded,
+                        message:
+                            'No office matches the taxonomy label "${_ticket.assignedOffice}". '
+                            'This ticket is not visible in any office queue until you '
+                            'assign it to a real office below.',
+                      ),
                     _AdminDetailGrid(ticket: _ticket),
                     if (_ticket.status == 'Resolved' ||
                         _ticket.status == 'Closed') ...[
@@ -2293,13 +2322,17 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                                       setState(() => _priority = value),
                                 ),
                                 if (widget.allowReassignment) ...[
-                                  _AdminFilterDropdown(
+                                  _AllTicketsFilterDropdown(
+                                    fieldKey: const Key('admin-ticket-office-id'),
                                     label: 'Assigned office',
-                                    value: _office,
-                                    values: offices,
-                                    icon: Icons.apartment_rounded,
+                                    value: officeIdValues.contains(_officeId)
+                                        ? _officeId
+                                        : _unresolvedOfficeSentinel,
+                                    values: officeIdValues,
+                                    displayLabel: (id) =>
+                                        officeIdLabels[id] ?? id,
                                     onChanged: (value) =>
-                                        setState(() => _office = value),
+                                        setState(() => _officeId = value),
                                   ),
                                   TextField(
                                     controller: _categoryCtrl,
@@ -2411,17 +2444,26 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
       _error = null;
     });
     try {
+      // Only ever send a REAL office id, and only when one has actually
+      // been chosen. If the ticket is unresolved and the admin hasn't
+      // picked a real office yet, the office key is omitted entirely so
+      // "Save changes" (e.g. just a status update) can never resend the
+      // raw taxonomy label and can never silently re-launder an
+      // unresolved ticket back into a default office.
+      final resolvedOfficeId =
+          _officeId == _unresolvedOfficeSentinel ? null : _officeId;
       final updated = await widget.onUpdate({
         'status': _status,
         'priority': _priority,
-        if (widget.allowReassignment) 'assigned_office': _office,
+        if (widget.allowReassignment && resolvedOfficeId != null)
+          'assigned_office_id': resolvedOfficeId,
         if (widget.allowReassignment) 'category': _categoryCtrl.text.trim(),
       });
       setState(() {
         _ticket = updated;
         _status = updated.status;
         _priority = updated.priority;
-        _office = updated.assignedOffice;
+        _officeId = updated.assignedOfficeId ?? _unresolvedOfficeSentinel;
         _categoryCtrl.text = updated.category;
       });
     } catch (error) {
@@ -2589,6 +2631,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
           closedAt: _ticket.closedAt,
           category: _ticket.category,
           assignedOffice: _ticket.assignedOffice,
+          assignedOfficeId: _ticket.assignedOfficeId,
           priority: _ticket.priority,
           description: _ticket.description,
           confidenceScore: _ticket.confidenceScore,
@@ -3058,6 +3101,7 @@ class _AdminTicketEntry {
   final DateTime? closedAt;
   final String category;
   final String assignedOffice;
+  final String? assignedOfficeId;
   final String priority;
   final String description;
   final double? confidenceScore;
@@ -3080,6 +3124,7 @@ class _AdminTicketEntry {
     required this.closedAt,
     required this.category,
     required this.assignedOffice,
+    required this.assignedOfficeId,
     required this.priority,
     required this.description,
     required this.confidenceScore,
@@ -3089,6 +3134,13 @@ class _AdminTicketEntry {
     this.kbArticleId,
     this.kbConversionStatus = 'none',
   });
+
+  /// True when the backend could not resolve this ticket's raw taxonomy
+  /// office label to a real office (assigned_office_id is null). Such a
+  /// ticket must never masquerade as successfully routed: it needs an
+  /// explicit Admin reassignment to a real office before any Office user
+  /// can see it.
+  bool get needsManualRouting => assignedOfficeId == null;
 
   factory _AdminTicketEntry.fromJson(Map<String, dynamic> json) {
     final rawMessages =
@@ -3110,6 +3162,7 @@ class _AdminTicketEntry {
       category: (json['category'] ?? 'General').toString(),
       assignedOffice: (json['assigned_office_name'] ?? json['assigned_office'] ?? 'Support Office')
           .toString(),
+      assignedOfficeId: _nullableAdminString(json['assigned_office_id']),
       priority: _adminTitlePriority((json['priority'] ?? 'Low').toString()),
       description: (json['description'] ?? '').toString(),
       confidenceScore: _parseDouble(json['confidence_score']),

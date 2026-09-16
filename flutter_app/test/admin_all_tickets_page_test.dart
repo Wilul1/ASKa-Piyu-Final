@@ -14,6 +14,11 @@ void main() {
     required String subject,
     required String status,
     required String office,
+    // Real office id the raw `office` label resolved to. Defaults to null
+    // (unresolved / needs manual routing) unless the caller passes one --
+    // see sampleTickets(), which sets this for every ticket whose office
+    // is one of sampleOffices() so the existing fixtures stay "resolved".
+    String? officeId,
     String priority = 'Medium',
     String requester = 'Ana Santos',
     String email = 'ana.santos@example.edu',
@@ -32,6 +37,7 @@ void main() {
       'category': 'Student Records',
       'assigned_office': office,
       'assigned_office_name': office,
+      'assigned_office_id': officeId,
       'created_at': createdAt,
       'updated_at': createdAt,
       'messages': const <Map<String, dynamic>>[],
@@ -45,6 +51,7 @@ void main() {
         subject: 'Need steps and fee for issuance of Good Moral Certificate',
         status: 'Open',
         office: 'Office of Student Affairs (OSA)',
+        officeId: 'o3',
         createdAt: '2026-09-13T02:24:00Z',
         requester: 'Wilmark Veridiano',
         email: 'wilmarkveridiano9@gmail.com',
@@ -54,6 +61,7 @@ void main() {
         subject: 'How do I get an excuse slip if I missed class?',
         status: 'Open',
         office: 'Office of Student Affairs (OSA)',
+        officeId: 'o3',
         priority: 'High',
         createdAt: '2026-09-13T01:18:00Z',
         requester: 'Test User',
@@ -64,6 +72,7 @@ void main() {
         subject: 'Enrollment requirements for transferees',
         status: 'Closed',
         office: 'Admissions Office',
+        officeId: 'o1',
         priority: 'Low',
         createdAt: '2026-09-12T08:32:00Z',
         requester: 'Juan Dela Cruz',
@@ -74,6 +83,7 @@ void main() {
         subject: 'Request for certificate of registration',
         status: 'Closed',
         office: 'Office of the Registrar',
+        officeId: 'o4',
         createdAt: '2026-09-12T06:11:00Z',
         requester: 'Maria Santos',
         email: 'maria.santos@ls.example.edu',
@@ -83,6 +93,7 @@ void main() {
         subject: 'Reset my student portal password',
         status: 'In Progress',
         office: 'Information and Communications Technology Unit',
+        officeId: 'o2',
         createdAt: '2026-09-12T03:03:00Z',
         requester: 'Carlo Reyes',
         email: 'carlo.reyes@ls.example.edu',
@@ -92,6 +103,7 @@ void main() {
         subject: 'Counseling appointment follow-up',
         status: 'Resolved',
         office: 'Office of Student Affairs (OSA)',
+        officeId: 'o3',
         priority: 'Low',
         createdAt: '2026-09-11T08:00:00Z',
       ),
@@ -100,6 +112,7 @@ void main() {
         subject: 'Where do I claim my TOR?',
         status: 'Open',
         office: 'Office of the Registrar',
+        officeId: 'o4',
         priority: 'Urgent',
         createdAt: '2026-09-10T09:00:00Z',
       ),
@@ -108,6 +121,7 @@ void main() {
         subject: 'Scholarship clearance',
         status: 'Closed',
         office: 'Office of Student Affairs (OSA)',
+        officeId: 'o3',
         createdAt: '2026-09-09T09:00:00Z',
       ),
       ticketJson(
@@ -115,6 +129,7 @@ void main() {
         subject: 'Late enrollment appeal',
         status: 'Closed',
         office: 'Admissions Office',
+        officeId: 'o1',
         createdAt: '2026-09-08T09:00:00Z',
       ),
       ticketJson(
@@ -122,6 +137,7 @@ void main() {
         subject: 'ID reprint request',
         status: 'Closed',
         office: 'Office of the Registrar',
+        officeId: 'o4',
         createdAt: '2026-09-07T09:00:00Z',
       ),
       ticketJson(
@@ -129,9 +145,28 @@ void main() {
         subject: 'Wifi access in the library',
         status: 'Closed',
         office: 'Information and Communications Technology Unit',
+        officeId: 'o2',
         createdAt: '2026-09-06T09:00:00Z',
       ),
     ];
+  }
+
+  // A 12th, unresolved-specific-office ticket: no seeded office matches its
+  // raw taxonomy label, so assigned_office_id stays null. Used by the
+  // dedicated "needs manual routing" tests below; kept out of
+  // sampleTickets() so the existing 11-ticket-count assertions elsewhere
+  // in this file are untouched.
+  Map<String, dynamic> unresolvedTicketJson() {
+    return ticketJson(
+      id: 'TK-20260914-001',
+      subject: 'Enrollment requirements for the College of Agriculture',
+      status: 'Open',
+      office: 'College of Agriculture',
+      officeId: null,
+      createdAt: '2026-09-14T09:00:00Z',
+      requester: 'Nora Ibarra',
+      email: 'nora.ibarra@ls.example.edu',
+    );
   }
 
   List<Map<String, dynamic>> sampleOffices() {
@@ -407,6 +442,57 @@ void main() {
     expect(find.text('Medium'), findsWidgets);
     expect(find.text('Sep 13, 2026'), findsWidgets);
     expect(find.text('10:24 AM'), findsOneWidget);
+  });
+
+  testWidgets(
+      'unresolved-office ticket shows a Needs Routing badge and can be filtered to',
+      (tester) async {
+    await pumpPage(
+      tester,
+      tickets: [...sampleTickets(), unresolvedTicketJson()],
+    );
+
+    // The badge renders once in the table row and again as the stat-row
+    // toggle label, so just assert it shows up rather than pin a count.
+    expect(find.text('Needs Routing'), findsWidgets);
+    expect(find.byKey(const Key('admin-all-tickets-row-TK-20260914-001')),
+        findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('admin-all-tickets-needs-routing-toggle')),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('admin-all-tickets-row-TK-20260914-001')),
+        findsOneWidget);
+    expect(find.byKey(const Key('admin-all-tickets-row-TK-20260913-001')),
+        findsNothing);
+  });
+
+  testWidgets(
+      'unresolved-office ticket dialog explains the state and offers a real-office dropdown',
+      (tester) async {
+    await pumpPage(
+      tester,
+      tickets: [...sampleTickets(), unresolvedTicketJson()],
+    );
+    await tester.tap(
+      find.byKey(const Key('admin-all-tickets-view-TK-20260914-001')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Needs Manual Routing'), findsWidgets);
+    expect(
+      find.textContaining('No office matches the taxonomy label'),
+      findsOneWidget,
+    );
+    // The raw taxonomy label is still shown to admin (it isn't hidden --
+    // just no longer treated as if it were a resolved assignment) ...
+    expect(find.text('College of Agriculture'), findsWidgets);
+    // ... while the reassignment control itself is the real-office-id
+    // dropdown, not the old raw-name dropdown.
+    expect(find.byKey(const Key('admin-ticket-office-id')), findsOneWidget);
   });
 
   testWidgets('empty search/filter state is explained', (tester) async {

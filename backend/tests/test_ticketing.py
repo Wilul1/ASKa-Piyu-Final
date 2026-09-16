@@ -13,6 +13,7 @@ from app.main import app
 from app.models.db_models import Office, User
 from app.services.auth import create_access_token
 from app.services.passwords import hash_password
+from app.services.ticketing import _priority_for_text
 
 
 @pytest.fixture()
@@ -622,6 +623,91 @@ def test_urgent_priority_from_strong_urgency_language(ticket_client):
     assert response.json()["priority"] == "Urgent"
 
 
+# ---------------------------------------------------------------------------
+# ASKA-PIYU MINIMAL TICKET ROUTING FIX -- FIX 1: priority self-escalation
+#
+# Unit-level regression tests against _priority_for_text directly (same
+# direct-import pattern already used for triage_ticket in
+# tests/test_ticket_office_resolver.py), so these are deterministic and
+# independent of taxonomy/office classification.
+# ---------------------------------------------------------------------------
+
+
+def test_mundane_lone_urgent_word_is_not_urgent():
+    """A single self-declared 'urgent' with no real severity/blocker must
+    not alone escalate a mundane ticket to Urgent."""
+    priority = _priority_for_text(
+        "I have an urgent question about the library hours "
+        "Just wondering what time the library opens on Saturdays, urgent to know."
+    )
+    assert priority != "Urgent"
+
+
+def test_lone_asap_and_emergency_words_are_not_urgent():
+    """'asap' and 'emergency' are self-declared urgency words too -- alone,
+    with no severe condition or corroborating blocker, they must not
+    escalate a ticket to Urgent."""
+    assert _priority_for_text("Please process this ASAP, thank you.") != "Urgent"
+    assert _priority_for_text("This is an emergency, please respond.") != "Urgent"
+
+
+def test_repeated_urgent_word_alone_is_not_urgent():
+    """Repeating the same urgency word must not increase severity -- a
+    ticket that is only 'urgent urgent urgent' must not become Urgent
+    from repetition alone."""
+    priority = _priority_for_text(
+        "urgent urgent urgent urgent urgent please help "
+        "urgent urgent urgent urgent urgent urgent urgent urgent"
+    )
+    assert priority != "Urgent"
+
+
+def test_genuine_severe_outage_is_urgent():
+    """A genuinely severe situation (system-wide outage) must still reach
+    Urgent on its own, without needing self-declared urgency language."""
+    assert _priority_for_text(
+        "Our whole campus system is down, this is a system outage. "
+        "Nobody can access anything right now."
+    ) == "Urgent"
+
+
+def test_genuine_graduation_blocker_is_urgent():
+    """A genuine hard blocker (cannot graduate) must still reach Urgent on
+    its own."""
+    assert _priority_for_text(
+        "I cannot graduate this term because of a missing clearance."
+    ) == "Urgent"
+
+
+def test_locked_out_is_urgent():
+    """A genuine access lockout must still reach Urgent on its own."""
+    assert _priority_for_text(
+        "I am locked out of my account and cannot do anything."
+    ) == "Urgent"
+
+
+def test_urgency_word_with_corroborating_high_blocker_is_urgent():
+    """Self-declared urgency language combined with an independent
+    High-tier blocker signal (not merely repeating the urgency word) must
+    still reach Urgent, preserving legitimate existing behavior."""
+    assert _priority_for_text(
+        "URGENT: I cannot log in to my account, it shows invalid credentials."
+    ) == "Urgent"
+
+
+def test_existing_priority_behavior_still_passes():
+    """Existing priority-relevant behavior (unaffected mundane/High/Low
+    cases) must keep working after the Fix 1 rewrite."""
+    assert _priority_for_text(
+        "I cannot access my student portal account before enrollment."
+    ) == "High"
+    assert _priority_for_text(
+        "I cannot log in to my student portal. Correct student number and "
+        "password, still shows invalid credentials. Need access for enrollment."
+    ) == "High"
+    assert _priority_for_text("I need help with enrollment.") != "Urgent"
+
+
 def test_faculty_can_list_and_open_own_tickets(ticket_client):
     faculty_login = ticket_client.post(
         "/auth/login",
@@ -792,3 +878,169 @@ def test_triage_rate_limit_returns_429(ticket_client, monkeypatch):
     assert ticket_client.post("/tickets/triage", headers=headers, json=body).status_code == 200
     assert ticket_client.post("/tickets/triage", headers=headers, json=body).status_code == 200
     assert ticket_client.post("/tickets/triage", headers=headers, json=body).status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# ASKA-PIYU — FIX NULL-OFFICE ROUTING BLOCKER
+#
+# The ticket_client fixture seeds only three offices (ICT Office, Registrar,
+# Office of Student Affairs — see _seed_offices_and_users above), which does
+# not include "Admissions Office". A question about admission requirements
+# reliably classifies to the specific (non-"General") "Admissions" category
+# with taxonomy office "Admissions Office" (confirmed via the real
+# classify_question during this fix), so in this fixture it is guaranteed to
+# be an unresolved-specific-office ticket: assigned_office_id is None and
+# assigned_office is the raw taxonomy label, not silently "Office of Student
+# Affairs". These tests exercise the full HTTP lifecycle for that case.
+# ---------------------------------------------------------------------------
+
+_UNRESOLVED_OFFICE_SUBJECT = "What are the admission requirements for incoming freshmen?"
+_UNRESOLVED_OFFICE_DESCRIPTION = (
+    "Asking about the documentary requirements for new student applicants."
+)
+
+
+def _admin_headers(ticket_client: TestClient) -> dict[str, str]:
+    login = ticket_client.post(
+        "/auth/login",
+        json={"email": "admin@aska.local", "password": "admin123"},
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+def _ict_headers(ticket_client: TestClient) -> dict[str, str]:
+    login = ticket_client.post(
+        "/auth/login",
+        json={"email": "ict@aska.local", "password": "office123"},
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+def _registrar_headers(ticket_client: TestClient) -> dict[str, str]:
+    login = ticket_client.post(
+        "/auth/login",
+        json={"email": "registrar@aska.local", "password": "office123"},
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+def _create_unresolved_office_ticket(ticket_client: TestClient) -> dict:
+    headers = _student_headers(ticket_client)
+    response = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": _UNRESOLVED_OFFICE_SUBJECT,
+            "description": _UNRESOLVED_OFFICE_DESCRIPTION,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_unresolved_specific_office_ticket_creation_succeeds_and_is_flagged(ticket_client):
+    """Creating a ticket whose classified office (Admissions Office) isn't
+    seeded must still succeed (not 503/500), and the response must make the
+    unresolved state explicit rather than masquerading as a normal
+    assignment."""
+    ticket = _create_unresolved_office_ticket(ticket_client)
+
+    assert ticket["category"] != "General"
+    assert ticket["assigned_office_id"] is None
+    assert ticket["assigned_office"] == "Admissions Office"
+    assert ticket["needs_manual_routing"] is True
+
+
+def test_unresolved_specific_office_ticket_visible_to_admin_not_to_office(ticket_client):
+    """Admin must see the unresolved ticket (flagged); office queues must
+    not receive it, since it was never actually assigned to them."""
+    ticket = _create_unresolved_office_ticket(ticket_client)
+
+    admin_listing = ticket_client.get("/tickets", headers=_admin_headers(ticket_client))
+    assert admin_listing.status_code == 200
+    admin_items = {item["id"]: item for item in admin_listing.json()["items"]}
+    assert ticket["id"] in admin_items
+    assert admin_items[ticket["id"]]["needs_manual_routing"] is True
+    assert admin_items[ticket["id"]]["assigned_office_id"] is None
+
+    ict_listing = ticket_client.get("/tickets", headers=_ict_headers(ticket_client))
+    assert ict_listing.status_code == 200
+    assert ticket["id"] not in {item["id"] for item in ict_listing.json()["items"]}
+
+    registrar_listing = ticket_client.get("/tickets", headers=_registrar_headers(ticket_client))
+    assert registrar_listing.status_code == 200
+    assert ticket["id"] not in {item["id"] for item in registrar_listing.json()["items"]}
+
+
+def test_admin_can_recover_unresolved_ticket_with_real_office_id(ticket_client):
+    """Admin recovers an unresolved ticket by assigning a REAL office id
+    (not the raw taxonomy label); the office can then see it."""
+    ticket = _create_unresolved_office_ticket(ticket_client)
+    admin_headers = _admin_headers(ticket_client)
+
+    offices = ticket_client.get("/tickets/offices", headers=admin_headers).json()["items"]
+    registrar = next(item for item in offices if item["name"] == "Registrar")
+
+    response = ticket_client.patch(
+        f"/tickets/{ticket['id']}",
+        headers=admin_headers,
+        json={"assigned_office_id": registrar["id"]},
+    )
+    assert response.status_code == 200, response.text
+    updated = response.json()
+    assert updated["assigned_office_id"] == registrar["id"]
+    assert updated["assigned_office"] == "Registrar"
+    assert updated["needs_manual_routing"] is False
+
+    registrar_listing = ticket_client.get("/tickets", headers=_registrar_headers(ticket_client))
+    assert ticket["id"] in {item["id"] for item in registrar_listing.json()["items"]}
+
+
+def test_admin_resending_raw_unresolved_label_does_not_silently_become_osa(ticket_client):
+    """Re-submitting the SAME raw unresolved taxonomy label through the
+    string-based assigned_office field (e.g. an admin form re-saving the
+    ticket's currently-displayed office text without changing it) must be
+    rejected explicitly, never silently accepted as if it resolved to OSA."""
+    ticket = _create_unresolved_office_ticket(ticket_client)
+    admin_headers = _admin_headers(ticket_client)
+
+    response = ticket_client.patch(
+        f"/tickets/{ticket['id']}",
+        headers=admin_headers,
+        json={"assigned_office": "Admissions Office"},
+    )
+    assert response.status_code == 422, response.text
+
+    fetched = ticket_client.get(f"/tickets/{ticket['id']}", headers=admin_headers)
+    assert fetched.status_code == 200
+    refetched = fetched.json()
+    assert refetched["assigned_office_id"] is None
+    assert refetched["assigned_office"] == "Admissions Office"
+    assert "Student Affairs" not in refetched["assigned_office"]
+    assert refetched["needs_manual_routing"] is True
+
+
+def test_general_fallback_still_goes_to_osa_and_is_not_flagged(ticket_client):
+    """A genuinely unclassified/General question must still default to OSA
+    with a real resolved office id -- unaffected by this fix. Uses
+    /tickets/triage (like the existing priority/office triage tests above)
+    since the nonsense text needed to force a genuine classifier miss would
+    otherwise be rejected by the unrelated ticket-description readability
+    gate in create_ticket, which is not what this test is checking."""
+    headers = _student_headers(ticket_client)
+    response = ticket_client.post(
+        "/tickets/triage",
+        headers=headers,
+        json={
+            "original_question": "asdkjf qwoeiru zxksldjf mnbvqwer",
+            "description": "zxcvbnmasdfghjklqwertyuiop random unclassifiable text",
+        },
+    )
+    assert response.status_code == 200, response.text
+    triage = response.json()
+    assert triage["category"] == "General"
+    assert triage["assigned_office_id"] is not None
+    assert "Student Affairs" in triage["assigned_office"] or "OSA" in triage["assigned_office"]

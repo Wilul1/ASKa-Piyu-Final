@@ -35,6 +35,11 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
   late String _statusFilter;
   String _priorityFilter = 'All';
   String _officeFilter = 'All';
+  // Client-side only: there is deliberately no separate backend
+  // "unassigned queue" endpoint (out of scope for this fix -- Admin's
+  // existing unfiltered GET /tickets already returns these tickets). This
+  // just narrows the existing list to tickets flagged needsManualRouting.
+  bool _needsRoutingOnly = false;
   bool _requestedInitialLoad = false;
   int _page = 1;
 
@@ -208,7 +213,7 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
       context: context,
       builder: (dialogContext) => _AdminTicketDetailsDialog(
         ticket: ticket,
-        offices: _officeOptions(includeAll: false),
+        officeEntries: _offices,
         onUpdate: (payload) => _patchTicket(ticket, payload),
         onReply: (message) => _replyToTicket(ticket, message),
       ),
@@ -223,6 +228,7 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
               _priorityFilter,
               _officeFilter,
             ))
+        .where((ticket) => !_needsRoutingOnly || ticket.needsManualRouting)
         .toList();
   }
 
@@ -251,6 +257,7 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
       _officeFilter = 'All';
       _statusFilter = 'All';
       _priorityFilter = 'All';
+      _needsRoutingOnly = false;
       _page = 1;
     });
   }
@@ -274,6 +281,9 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
 
   int get _closedCount =>
       _tickets.where((ticket) => ticket.status == 'Closed').length;
+
+  int get _needsRoutingCount =>
+      _tickets.where((ticket) => ticket.needsManualRouting).length;
 
   @override
   Widget build(BuildContext context) {
@@ -338,6 +348,14 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
                       priorityFilter: _priorityFilter,
                       officeOptions: _officeOptions(),
                       stacked: constraints.maxWidth < 820,
+                      needsRoutingOnly: _needsRoutingOnly,
+                      needsRoutingCount: _needsRoutingCount,
+                      onNeedsRoutingChanged: (value) {
+                        setState(() {
+                          _needsRoutingOnly = value;
+                          _page = 1;
+                        });
+                      },
                       onOfficeChanged: (value) {
                         setState(() {
                           _officeFilter = value;
@@ -603,6 +621,9 @@ class _AllTicketsFilterBar extends StatelessWidget {
     required this.priorityFilter,
     required this.officeOptions,
     required this.stacked,
+    this.needsRoutingOnly = false,
+    this.needsRoutingCount = 0,
+    this.onNeedsRoutingChanged,
     required this.onOfficeChanged,
     required this.onStatusChanged,
     required this.onPriorityChanged,
@@ -614,6 +635,13 @@ class _AllTicketsFilterBar extends StatelessWidget {
   final String priorityFilter;
   final List<String> officeOptions;
   final bool stacked;
+  // Client-side "unresolved specific office" queue toggle. There is
+  // deliberately no dedicated backend endpoint for this (see the
+  // _needsRoutingOnly comment on the page state) -- it just narrows the
+  // list this page already loaded down to needsManualRouting tickets.
+  final bool needsRoutingOnly;
+  final int needsRoutingCount;
+  final ValueChanged<bool>? onNeedsRoutingChanged;
   final ValueChanged<String> onOfficeChanged;
   final ValueChanged<String> onStatusChanged;
   final ValueChanged<String> onPriorityChanged;
@@ -662,6 +690,18 @@ class _AllTicketsFilterBar extends StatelessWidget {
         style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
       ),
     );
+    final needsRoutingToggle = FilterChip(
+      key: const Key('admin-all-tickets-needs-routing-toggle'),
+      selected: needsRoutingOnly,
+      onSelected: (value) => onNeedsRoutingChanged?.call(value),
+      avatar: const Icon(Icons.report_gmailerrorred_rounded, size: 16),
+      label: Text('Needs Routing ($needsRoutingCount)'),
+      labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+      selectedColor: const Color(0xFFFEE2E2),
+      checkmarkColor: const Color(0xFFB91C1C),
+      backgroundColor: Colors.white,
+      side: const BorderSide(color: DesignTokens.border),
+    );
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
@@ -680,6 +720,11 @@ class _AllTicketsFilterBar extends StatelessWidget {
                     child: filter,
                   ),
                 ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: needsRoutingToggle,
+                ),
+                const SizedBox(height: 10),
                 Align(alignment: Alignment.centerLeft, child: reset),
               ],
             )
@@ -689,6 +734,8 @@ class _AllTicketsFilterBar extends StatelessWidget {
                   Expanded(child: filters[i]),
                   const SizedBox(width: 12),
                 ],
+                needsRoutingToggle,
+                const SizedBox(width: 12),
                 reset,
               ],
             ),
@@ -930,15 +977,29 @@ class _AllTicketsTableRow extends StatelessWidget {
           ),
           Expanded(
             flex: 2,
-            child: Text(
-              ticket.assignedOffice,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: DesignTokens.ink,
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  ticket.assignedOffice,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                if (ticket.needsManualRouting) ...[
+                  const SizedBox(height: 2),
+                  const _AllTicketsPill(
+                    label: 'Needs Routing',
+                    background: Color(0xFFFEE2E2),
+                    foreground: Color(0xFFB91C1C),
+                  ),
+                ],
+              ],
             ),
           ),
           Expanded(
@@ -1051,6 +1112,12 @@ class _AllTicketsCardRow extends StatelessWidget {
             children: [
               _AllTicketsStatusPill(status: ticket.status),
               _AllTicketsPriorityPill(priority: ticket.priority),
+              if (ticket.needsManualRouting)
+                const _AllTicketsPill(
+                  label: 'Needs Routing',
+                  background: Color(0xFFFEE2E2),
+                  foreground: Color(0xFFB91C1C),
+                ),
             ],
           ),
           const SizedBox(height: 8),

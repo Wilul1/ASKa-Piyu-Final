@@ -504,6 +504,12 @@ class TicketSchema(BaseModel):
     assigned_office_id: str | None = None
     assigned_office: str
     assigned_office_name: str
+    # True when assigned_office_id is null because the ticket's specific
+    # taxonomy office could not be resolved to a seeded Office row (see
+    # UnresolvedOfficeLabelError) -- distinguishes "needs an admin to pick a
+    # real office" from a normal resolved assignment (including the genuine
+    # OSA default), so clients never have to infer this from a null id alone.
+    needs_manual_routing: bool = False
     priority: TicketPriority
     status: TicketStatus
     confidence_score: float | None = None

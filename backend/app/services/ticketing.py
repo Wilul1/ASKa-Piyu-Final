@@ -12,10 +12,10 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.db_models import Office, Ticket, TicketReply, User
 from app.models.schemas import CreateTicketRequest, TicketAttachmentSchema, TicketSchema, UpdateTicketRequest
-from app.services.knowledge_taxonomy import classify_question
+from app.services.knowledge_taxonomy import DEFAULT_CATEGORY, classify_question
 from app.services.ticket_audit import record_ticket_audit
 from app.services.ticket_notifications import notify_office_staff, notify_ticket_owner
-from app.services.ticket_office_resolver import resolve_office_for_ticket
+from app.services.ticket_office_resolver import UnresolvedOfficeLabelError, resolve_office_for_ticket
 from app.services.ticket_text_quality import validate_ticket_description, validate_ticket_subject
 
 
@@ -37,9 +37,24 @@ def triage_ticket(question: str, description: str = "", *, session: Session | No
     office_name = classification.office
     office_id: str | None = None
     if session is not None:
+        # A specific (non-"General") taxonomy classification must not be
+        # silently rehomed to the Office of Student Affairs default when its
+        # seeded office can't be found -- that would make an unresolved
+        # taxonomy label indistinguishable from a genuine OSA classification.
+        # Only the deliberate "General"/unclassified sentinel is allowed to
+        # fall back to the OSA default here.
+        is_default_classification = classification.category == DEFAULT_CATEGORY
         try:
-            office_id, office_name = resolve_office_for_ticket(session, classification.office)
+            office_id, office_name = resolve_office_for_ticket(
+                session,
+                classification.office,
+                allow_default_fallback=is_default_classification,
+            )
         except LookupError:
+            # Leaves office_id = None and office_name = classification.office
+            # (the raw taxonomy label) untouched, so the caller can tell this
+            # apart from a resolved office and preserve the label for
+            # diagnostics instead of silently claiming OSA was the target.
             office_id = None
     return {
         "category": classification.category,
@@ -91,7 +106,13 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
         else:
             office_id, office_name = resolve_office_for_ticket(session, payload.preferred_office or "")
     else:
-        office_id, office_name = resolve_office_for_ticket(session, triage["assigned_office"])
+        # Reuse triage's already-computed resolution instead of re-resolving
+        # triage["assigned_office"] here. Re-resolving would call
+        # resolve_office_for_ticket() with its default allow_default_fallback
+        # (True), which would silently default an unresolved specific office
+        # back to OSA -- exactly the silent-OSA behavior Fix 2 removes -- and
+        # would do so uncaught, since this call site has no try/except.
+        office_id, office_name = triage["assigned_office_id"], triage["assigned_office"]
 
     priority = triage["priority"]
     if payload.preferred_priority and actor.role in {"admin", "office"}:
@@ -230,7 +251,23 @@ def update_ticket(
             ticket.assigned_office_id = office.id
             ticket.assigned_office = office.name
         elif payload.assigned_office:
-            office_id, office_name = resolve_office_for_ticket(session, payload.assigned_office)
+            # Admin reassignment must never silently default an unresolved
+            # label back to OSA (that is exactly the bug this blocker fixes):
+            # a specific label either resolves to a real office or the
+            # request is rejected, explicitly, so re-saving a ticket whose
+            # raw taxonomy label happens to be its current assigned_office
+            # can never quietly re-launder it into "Office of Student
+            # Affairs". Admin recovers an unresolved ticket with a real
+            # assigned_office_id instead (see below).
+            try:
+                office_id, office_name = resolve_office_for_ticket(
+                    session, payload.assigned_office, allow_default_fallback=False
+                )
+            except UnresolvedOfficeLabelError as exc:
+                raise TicketValidationError(
+                    f"No office matches {exc.label!r}. "
+                    "Use assigned_office_id to assign a specific existing office."
+                ) from exc
             ticket.assigned_office_id = office_id
             ticket.assigned_office = office_name
         if ticket.assigned_office != previous_office:
@@ -513,6 +550,7 @@ def _ticket_schema(session: Session, ticket: Ticket) -> TicketSchema:
         assigned_office_id=ticket.assigned_office_id,
         assigned_office=office_name,
         assigned_office_name=office_name,
+        needs_manual_routing=ticket.assigned_office_id is None,
         priority=ticket.priority,
         status=ticket.status,
         confidence_score=ticket.confidence_score,
@@ -614,26 +652,49 @@ def _valid_status_transition(current: str, next_status: str, role: str) -> bool:
 def _priority_for_text(text: str) -> str:
     """Score urgency from question+description keywords.
 
-    Urgent > High > Medium > Low. Explicit emergency language or severe outages
-    become Urgent; access/enrollment blockers become High.
+    Urgent > High > Medium > Low.
+
+    A ticket only reaches Urgent when either:
+      (a) it describes a genuinely severe situation (a system-wide outage,
+          a hard graduation/access blocker) -- these are severe on their own,
+          regardless of whether the requester also uses urgency language; or
+      (b) the requester's own self-declared urgency language ("urgent",
+          "asap", "emergency", "immediately") is corroborated by an
+          independent High-tier blocker signal.
+
+    A lone self-declared urgency word is never sufficient by itself (so
+    "an urgent question about the library hours" is not Urgent), and
+    repeating that same word any number of times does not add score, since
+    each term is scored once per presence in the text, not once per
+    occurrence -- "urgent urgent urgent" scores identically to a single
+    "urgent". Access/enrollment blockers on their own become High.
     """
     normalized = _normalize(text)
     # "cannot log in" and "cannot login" should match the same signals.
     compact = re.sub(r"[^a-z0-9]+", "", normalized)
-    urgent_score = 0
+    severe_score = 0
+    urgent_word_score = 0
     high_score = 0
     medium_score = 0
 
-    urgent_terms = (
-        "urgent",
-        "asap",
-        "emergency",
-        "immediately",
+    # Self-sufficient: genuinely severe situations become Urgent on their
+    # own, independent of whether urgency language is also present.
+    severe_terms = (
         "system outage",
         "completely down",
         "portal is down",
         "cannot graduate",
         "locked out",
+    )
+    # Self-declared urgency only ("I need this urgent/asap/emergency/
+    # immediately"). On its own this is not evidence of a genuinely severe
+    # situation, so it can only push a ticket to Urgent when corroborated by
+    # an independent High-tier blocker below.
+    self_declared_urgency_terms = (
+        "urgent",
+        "asap",
+        "emergency",
+        "immediately",
     )
     high_terms = (
         "deadline",
@@ -680,9 +741,12 @@ def _priority_for_text(text: str) -> str:
         "tor",
     )
 
-    for term in urgent_terms:
+    for term in severe_terms:
         if term in normalized:
-            urgent_score += 2 if term in {"urgent", "emergency", "asap", "system outage"} else 1
+            severe_score += 1
+    for term in self_declared_urgency_terms:
+        if term in normalized:
+            urgent_word_score += 1
     for term in high_terms:
         if term in normalized:
             high_score += 1
@@ -693,10 +757,13 @@ def _priority_for_text(text: str) -> str:
         if term in normalized:
             medium_score += 1
 
-    # "Urgent" self-rating language plus any blocker → Urgent
-    if urgent_score >= 2 or (urgent_score >= 1 and high_score >= 1):
+    # Genuinely severe situations are Urgent on their own.
+    if severe_score >= 1:
         return "Urgent"
-    if urgent_score >= 1 and "urgent" in normalized:
+    # Self-declared urgency language ("urgent"/"asap"/"emergency"/
+    # "immediately" -- however many times repeated) is never sufficient by
+    # itself; it must be corroborated by an independent High-tier blocker.
+    if urgent_word_score >= 1 and high_score >= 1:
         return "Urgent"
     if high_score >= 1:
         return "High"

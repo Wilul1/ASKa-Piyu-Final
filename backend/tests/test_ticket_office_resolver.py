@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import initialize_database
 from app.models.db_models import Office
-from app.services.ticket_office_resolver import resolve_office_for_ticket
+from app.services.ticket_office_resolver import UnresolvedOfficeLabelError, resolve_office_for_ticket
 from app.services.ticketing import triage_ticket
 
 
@@ -214,5 +214,167 @@ def test_library_reference_routes_to_library_not_icts():
         )
         assert result["assigned_office"] == "Library"
         assert "ICT" not in result["assigned_office"]
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# ASKA-PIYU MINIMAL TICKET ROUTING FIX -- FIX 2: taxonomy office resolution
+#
+# Production seeds 49 offices under names that don't always match the
+# taxonomy's office labels verbatim. These tests use a realistic subset of
+# actual production office names (not synthetic fixture names) to cover:
+#   - the confirmed "Office of the President" -> OUP naming mismatch
+#   - ICT / Registrar / Accounting / Cashier resolution staying unaffected
+#   - the OSA fallback staying intact for genuinely General/unclassified tickets
+#   - a specific unresolved taxonomy office being distinguishable from a
+#     genuine OSA classification/default, instead of being silently treated
+#     as though OSA were the intended office.
+# ---------------------------------------------------------------------------
+
+_PRODUCTION_OFFICE_NAMES = (
+    "Office of the University President (OUP)",
+    "Information and Communications Technology Services (ICTS)",
+    "Registrar's Office",
+    "Accounting Unit",
+    "Cashier Unit",
+    "Office of Student Affairs (OSA)",
+)
+
+
+def test_office_of_the_president_resolves_to_oup():
+    """Confirmed mismatch: taxonomy 'Office of the President' -> production OUP."""
+    session = _session_with_offices(*_PRODUCTION_OFFICE_NAMES)
+    try:
+        office_id, office_name = resolve_office_for_ticket(session, "Office of the President")
+        assert office_name == "Office of the University President (OUP)"
+        assert office_id
+    finally:
+        session.close()
+
+
+def test_board_of_regents_question_triages_to_oup_end_to_end():
+    """End-to-end through the real classifier: a Board of Regents question
+    classifies under the taxonomy's 'Office of the President' label and must
+    route to production's actual OUP office, not fall back to OSA."""
+    session = _session_with_offices(*_PRODUCTION_OFFICE_NAMES)
+    try:
+        result = triage_ticket(
+            "Who are the current members of the Board of Regents?",
+            "I want to know about the university's Board of Regents policies.",
+            session=session,
+        )
+        assert result["assigned_office"] == "Office of the University President (OUP)"
+        assert result["assigned_office_id"]
+    finally:
+        session.close()
+
+
+def test_office_of_the_president_resolves_to_oup_even_without_default_fallback():
+    """The OUP mapping resolves via the taxonomy-alias tier, so it must still
+    succeed when a caller disallows the OSA default fallback -- it should
+    never need that fallback in the first place."""
+    session = _session_with_offices(*_PRODUCTION_OFFICE_NAMES)
+    try:
+        office_id, office_name = resolve_office_for_ticket(
+            session, "Office of the President", allow_default_fallback=False
+        )
+        assert office_name == "Office of the University President (OUP)"
+        assert office_id
+    finally:
+        session.close()
+
+
+def test_ict_registrar_accounting_cashier_remain_correct_with_production_names():
+    """Fix 2 must not disturb resolution for offices that already worked."""
+    session = _session_with_offices(*_PRODUCTION_OFFICE_NAMES)
+    try:
+        _, ict_name = resolve_office_for_ticket(session, "ICT")
+        assert "ICTS" in ict_name or "Communications Technology" in ict_name
+
+        _, registrar_name = resolve_office_for_ticket(session, "Registrar's Office")
+        assert registrar_name == "Registrar's Office"
+
+        _, accounting_name = resolve_office_for_ticket(session, "Accounting")
+        assert accounting_name == "Accounting Unit"
+
+        _, cashier_name = resolve_office_for_ticket(session, "Cashier")
+        assert cashier_name == "Cashier Unit"
+    finally:
+        session.close()
+
+
+def test_osa_fallback_still_used_for_genuinely_default_label():
+    """A genuinely unclassified/'General' label still defaults to OSA -- Fix 2
+    only changes behavior for a SPECIFIC office label that fails to resolve."""
+    session = _session_with_offices(*_PRODUCTION_OFFICE_NAMES)
+    try:
+        office_id, office_name = resolve_office_for_ticket(
+            session, "Student Affairs and Services", allow_default_fallback=True
+        )
+        assert "Student Affairs" in office_name or "OSA" in office_name
+        assert office_id
+    finally:
+        session.close()
+
+
+def test_unresolved_specific_office_raises_instead_of_silently_becoming_osa():
+    """A specific taxonomy office with no seeded match must raise, not
+    silently resolve to OSA, when the caller opts out of the default
+    fallback -- using the confirmed unmatched labels from the audit."""
+    session = _session_with_offices(*_PRODUCTION_OFFICE_NAMES)
+    try:
+        for unmatched_label in (
+            "Admissions Office",
+            "College of Agriculture",
+            "Graduate Studies Office",
+        ):
+            try:
+                resolve_office_for_ticket(
+                    session, unmatched_label, allow_default_fallback=False
+                )
+                raise AssertionError(f"expected UnresolvedOfficeLabelError for {unmatched_label!r}")
+            except UnresolvedOfficeLabelError as exc:
+                # The original taxonomy label is preserved for diagnostics,
+                # not silently discarded/replaced by "OSA".
+                assert exc.label == unmatched_label
+    finally:
+        session.close()
+
+
+def test_unresolved_specific_office_is_distinguishable_from_genuine_osa_default():
+    """End-to-end through triage_ticket: a specific classification that fails
+    to resolve (assigned_office_id is None, raw taxonomy label preserved)
+    must be distinguishable from a genuine OSA classification/default
+    (assigned_office_id set, resolved OSA name) -- they must never collapse
+    into the same observable result."""
+    session = _session_with_offices(*_PRODUCTION_OFFICE_NAMES)
+    try:
+        # A specific, classifiable category whose production office (Admissions
+        # Office) is a confirmed-unmatched taxonomy label in this session.
+        unresolved = triage_ticket(
+            "What are the admission requirements for incoming freshmen?",
+            "Asking about the documentary requirements for new student applicants.",
+            session=session,
+        )
+        assert unresolved["category"] != "General"
+        assert unresolved["assigned_office_id"] is None
+        assert unresolved["assigned_office"] == "Admissions Office"
+
+        # A genuinely unclassified/general ticket must still land on OSA,
+        # with a real resolved office id -- not collapse into the same shape
+        # as the unresolved case above.
+        general = triage_ticket(
+            "asdkjf qwoeiru zxksldjf mnbvqwer",
+            "zxcvbnmasdfghjklqwertyuiop random unclassifiable text",
+            session=session,
+        )
+        assert general["category"] == "General"
+        assert general["assigned_office_id"] is not None
+        assert "Student Affairs" in general["assigned_office"] or "OSA" in general["assigned_office"]
+
+        # The two must be clearly distinguishable, not silently identical.
+        assert unresolved["assigned_office_id"] != general["assigned_office_id"]
+        assert unresolved["assigned_office"] != general["assigned_office"]
     finally:
         session.close()

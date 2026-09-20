@@ -121,6 +121,7 @@ def generate_groq_answer(
     history: list[Any] | None = None,
     grounding_notes: str | None = None,
     active_topic: str | None = None,
+    usage_sink: dict[str, Any] | None = None,
 ) -> str:
     if not settings.groq_api_key:
         raise GroqAnswerError("Groq API key is not configured.")
@@ -163,6 +164,25 @@ def generate_groq_answer(
         answer = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise GroqAnswerError("Groq returned an unexpected response.") from exc
+
+    if usage_sink is not None:
+        # Observational only, and isolated from the try/except above: a
+        # malformed or non-mapping "usage" value must never turn an
+        # otherwise-valid answer into a raised GroqAnswerError, so this is
+        # its own try/except that swallows everything rather than sharing
+        # the block that guards real response-shape errors. Leaves
+        # usage_sink untouched/empty if the provider omitted "usage" or
+        # sent something that isn't a mapping.
+        try:
+            usage = payload.get("usage")
+            if isinstance(usage, dict):
+                usage_sink.update(usage)
+        except Exception:  # noqa: BLE001 -- instrumentation must fail harmlessly
+            logger.debug(
+                "Ignoring malformed Groq usage telemetry for question %r.",
+                question.strip(),
+                exc_info=True,
+            )
 
     cleaned = format_groq_answer(answer)
     if not cleaned:

@@ -89,6 +89,24 @@ class Settings(BaseSettings):
     # JSON object string, e.g. '{"X-GitHub-Api-Version": "2022-11-28"}'.
     llm_extra_headers_json: str | None = None
 
+    # --- Citation Grounding V2 (semantic, claim-level evidence verification) ---
+    # "lexical" (default): unchanged V1 behavior -- displayed citations come
+    #   from the existing keyword/number-overlap selector only.
+    # "shadow": V2's verifier runs alongside V1 for diagnostics (see
+    #   citation_v2_sink), but user-visible citations stay V1's.
+    # "llm": user-visible citations come ONLY from V2's verified claim/
+    #   evidence support; a verifier failure of any kind displays zero
+    #   citations rather than falling back to V1 (see
+    #   app/services/qa/citation_verification.py).
+    # "async_shadow" / "async_llm": same decision rules as "shadow" / "llm"
+    #   respectively, but the verifier call is deferred to a background task
+    #   (see app/services/qa/citation_verification_jobs.py) instead of
+    #   blocking the /qa/ask response -- local prototype, see
+    #   backend/benchmarks/citation_v2_async_local_prototype.json.
+    # Never silently switch production into "llm"/"async_llm" mode -- this
+    # must be an explicit, deliberate rollout decision.
+    citation_verification_mode: str = "lexical"
+
     cors_origins: list[str] = [
         "http://localhost:8080",
         "http://127.0.0.1:8080",

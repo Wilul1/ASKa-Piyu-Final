@@ -7,11 +7,12 @@ Delegates to the same QA pipeline as ``POST /qa/ask`` (filters + answer engine).
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from app.models.db_models import User
 from app.models.schemas import AskQuestionRequest, AskQuestionResponse, ErrorResponse, SourceChunk
 from app.services.auth import get_optional_user
+from app.services.qa import citation_verification_jobs
 from app.services.qa.question_answering import EmptyKnowledgeBaseError, answer_qa_question
 from app.services.qa_rate_limit import enforce_qa_rate_limit
 
@@ -43,6 +44,7 @@ def _source_chunk_index(item: dict) -> int:
 async def student_ask_question(
     body: AskQuestionRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User | None = Depends(get_optional_user),
 ) -> AskQuestionResponse:
     """Public ask path — same pipeline as ``POST /qa/ask``. Guests use student audience."""
@@ -54,12 +56,15 @@ async def student_ask_question(
             {"role": item.role, "content": item.content}
             for item in (body.history or [])
         ]
+        # See app.routes.qa.qa_ask for the full explanation of this sink.
+        async_verification_sink: dict = {}
         result = await asyncio.to_thread(
             answer_qa_question,
             body.question,
             user_role=user_role,
             history=history,
             client_active_service=body.active_service,
+            async_verification_sink=async_verification_sink,
         )
     except EmptyKnowledgeBaseError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -88,6 +93,9 @@ async def student_ask_question(
             )
         )
 
+    verification_id = citation_verification_jobs.schedule_verification(
+        background_tasks, async_verification_sink
+    )
     return AskQuestionResponse(
         status="success",
         flow="student_question",
@@ -97,4 +105,6 @@ async def student_ask_question(
         confidence=result.confidence,
         degraded=bool(result.fallback_used),
         active_service=result.active_service,
+        citation_status=result.citation_status,
+        citation_verification_id=verification_id,
     )

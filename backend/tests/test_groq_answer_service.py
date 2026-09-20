@@ -4,6 +4,7 @@ import pytest
 
 from app.services.qa.groq_answer_service import (
     GROQ_TEMPERATURE,
+    GroqAnswerError,
     build_groq_messages,
     format_groq_answer,
     generate_groq_answer,
@@ -273,10 +274,13 @@ def test_groq_temperature_favors_factual_consistency():
     assert 0.05 <= GROQ_TEMPERATURE <= 0.2
 
 
-def _mock_httpx_client_returning(content: str) -> MagicMock:
+def _mock_httpx_client_returning(content: str, *, usage: dict | None = None) -> MagicMock:
     mock_response = MagicMock()
     mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {"choices": [{"message": {"content": content}}]}
+    payload = {"choices": [{"message": {"content": content}}]}
+    if usage is not None:
+        payload["usage"] = usage
+    mock_response.json.return_value = payload
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
@@ -413,3 +417,127 @@ def test_resolve_followup_cost_after_submit_keeps_good_moral_not_submit_phrasing
     assert "How much does it cost?" in resolved
     assert "good moral" in resolved.casefold()
     assert "where do i submit them" not in resolved.casefold().split("prior question context:")[-1]
+
+# ---------------------------------------------------------------------------
+# generation_usage_sink instrumentation (Stage 1 baseline infrastructure for
+# Citation Grounding V2 -- see the ``citation_debug_sink`` tests in
+# test_qa_question_answering.py for the companion instrumentation on the
+# citation-selection side). ``usage_sink`` is optional, keyword-only,
+# defaults to ``None``, and is observational only: it never changes the
+# returned answer or which errors are raised.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_groq_answer_usage_sink_populated_from_response():
+    """When Groq's response includes a "usage" object, usage_sink is
+    updated with it -- and the returned answer is unaffected."""
+    mock_client = _mock_httpx_client_returning(
+        "Sure, here's the answer.",
+        usage={"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+    )
+    usage_sink: dict = {}
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        answer = generate_groq_answer(
+            question="How do I enroll?",
+            context="Title: Enrollment\nContent: ...",
+            usage_sink=usage_sink,
+        )
+
+    assert answer == "Sure, here's the answer."
+    assert usage_sink == {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168}
+
+
+def test_generate_groq_answer_usage_sink_missing_usage_key_stays_empty_no_crash():
+    """Groq's OpenAI-compatible response may omit "usage" entirely -- this
+    must not raise, and usage_sink must simply stay empty rather than being
+    populated with a fabricated/misleading value."""
+    mock_client = _mock_httpx_client_returning("Sure, here's the answer.")  # no usage kwarg
+    usage_sink: dict = {}
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        answer = generate_groq_answer(
+            question="How do I enroll?",
+            context="Title: Enrollment\nContent: ...",
+            usage_sink=usage_sink,
+        )
+
+    assert answer == "Sure, here's the answer."
+    assert usage_sink == {}
+
+
+def test_generate_groq_answer_usage_sink_default_none_is_safe():
+    """Every call site that predates this instrumentation (and every test
+    above this section) omits usage_sink entirely -- confirm the default is
+    exactly ``None`` and generation proceeds normally."""
+    mock_client = _mock_httpx_client_returning(
+        "Sure, here's the answer.", usage={"total_tokens": 10}
+    )
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        answer = generate_groq_answer(
+            question="How do I enroll?", context="Title: Enrollment\nContent: ..."
+        )
+
+    assert answer == "Sure, here's the answer."
+
+
+@pytest.mark.parametrize("bad_usage", ["not-a-mapping", ["prompt_tokens", 5], 42, True])
+def test_generate_groq_answer_non_mapping_usage_does_not_break_a_valid_answer(bad_usage):
+    """A non-mapping "usage" value (string, list, int, bool -- anything that
+    is not a dict) must never turn an otherwise-valid answer into a raised
+    GroqAnswerError. The instrumentation must fail harmlessly: usage_sink is
+    simply left untouched/empty, and the real answer is returned exactly as
+    it would be without usage_sink at all."""
+    mock_client = _mock_httpx_client_returning(
+        "Sure, here's the answer.", usage=bad_usage
+    )
+    usage_sink: dict = {}
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        answer = generate_groq_answer(
+            question="How do I enroll?",
+            context="Title: Enrollment\nContent: ...",
+            usage_sink=usage_sink,
+        )
+
+    assert answer == "Sure, here's the answer."
+    assert usage_sink == {}
+
+
+def test_generate_groq_answer_usage_sink_untouched_when_response_is_malformed():
+    """A malformed Groq payload still raises GroqAnswerError exactly as
+    before this instrumentation, and usage_sink is left untouched (not
+    populated with a partial/misleading value) rather than swallowing the
+    error."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"choices": []}  # missing message/content
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+
+    usage_sink: dict = {"stale": "value-from-a-previous-call"}
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        with pytest.raises(GroqAnswerError):
+            generate_groq_answer(
+                question="How do I enroll?",
+                context="Title: Enrollment\nContent: ...",
+                usage_sink=usage_sink,
+            )
+
+    # The IndexError from payload["choices"][0] happens before usage_sink is
+    # ever touched, so it must be exactly what it was passed in as.
+    assert usage_sink == {"stale": "value-from-a-previous-call"}

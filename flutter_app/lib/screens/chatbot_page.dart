@@ -26,6 +26,54 @@ const _suggestionPrompts = <String>[
   'What is the attendance policy?',
 ];
 
+/// The set of citation-verification statuses that end polling once seen in
+/// a successful (200) poll response.
+const citationPollTerminalStatuses = {
+  'verified',
+  'no_verified_support',
+  'failed',
+  'unknown',
+};
+
+/// Pure decision for a single citation-verification poll tick. Deliberately
+/// public (unlike the rest of this file's underscore-prefixed classes) so a
+/// test can import and exercise it directly, without driving a live Timer,
+/// widget tree, or HTTP client.
+class CitationPollDecision {
+  final bool shouldStop;
+  // Only meaningful when shouldStop is true. Always one of
+  // citationPollTerminalStatuses.
+  final String? resolvedStatus;
+
+  const CitationPollDecision.continuePolling()
+      : shouldStop = false,
+        resolvedStatus = null;
+
+  const CitationPollDecision.stop(this.resolvedStatus) : shouldStop = true;
+}
+
+/// Decides whether one poll tick should end polling, and with what
+/// resolved status. [status] is the parsed `status` field from a
+/// successful (200) response body, or null for EVERY other outcome --
+/// a non-200 HTTP response, a network-level exception, or any other
+/// failure to obtain a parsed status. Passing null uniformly for all of
+/// those cases (rather than only for network exceptions) is what
+/// guarantees [maxAttempts] bounds polling regardless of failure mode --
+/// no branch can poll forever.
+CitationPollDecision evaluateCitationPollTick({
+  required int attempts,
+  required int maxAttempts,
+  required String? status,
+}) {
+  final gaveUp = attempts >= maxAttempts;
+  final isTerminal =
+      status != null && citationPollTerminalStatuses.contains(status);
+  if (!isTerminal && !gaveUp) {
+    return const CitationPollDecision.continuePolling();
+  }
+  return CitationPollDecision.stop(isTerminal ? status : 'failed');
+}
+
 class ChatbotPage extends StatefulWidget {
   const ChatbotPage({super.key});
 
@@ -43,6 +91,16 @@ class _ChatbotPageState extends State<ChatbotPage> {
   bool _isLoading = false;
   bool _hydrated = false;
   String? _error;
+
+  // One active poll timer per in-flight async citation verification,
+  // keyed by verification_id so unrelated turns' polling never interferes
+  // with each other. Cancelled on terminal status, on giving up after
+  // _maxCitationPollAttempts, and unconditionally in dispose().
+  final Map<String, Timer> _citationPollTimers = {};
+  static const _citationPollInterval = Duration(seconds: 2);
+  // Bounded, not infinite: gives up after ~60s and shows "unavailable"
+  // rather than polling forever if the backend never resolves the job.
+  static const _maxCitationPollAttempts = 30;
 
   static const _desktopBreakpoint = 900.0;
 
@@ -69,10 +127,77 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
   @override
   void dispose() {
+    for (final timer in _citationPollTimers.values) {
+      timer.cancel();
+    }
+    _citationPollTimers.clear();
     _controller.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Polls GET /qa/citation-verifications/{id} until a terminal status
+  /// arrives (verified / no_verified_support / failed / unknown), or until
+  /// _maxCitationPollAttempts is reached -- never an unbounded timer.
+  /// EVERY tick -- a 200 response, a non-200 response, or a network
+  /// exception -- is routed through the SAME evaluateCitationPollTick
+  /// decision so the bounded-attempt cap applies uniformly regardless of
+  /// why a given tick did not resolve (a persistent non-200 response can
+  /// no longer poll forever). Mutates [answer] in place and calls setState
+  /// so _AnswerBubble picks up the change on its next build; safe to call
+  /// even if the widget is later disposed mid-poll (checked before every
+  /// setState).
+  void _pollCitationVerification(_QaAnswer answer) {
+    final verificationId = answer.citationVerificationId;
+    if (verificationId == null) return;
+    _citationPollTimers[verificationId]?.cancel();
+    var attempts = 0;
+    _citationPollTimers[verificationId] =
+        Timer.periodic(_citationPollInterval, (timer) async {
+      attempts += 1;
+      String? status;
+      List rawCitations = const [];
+      try {
+        final result = await ApiClient.send(
+          method: 'GET',
+          url: '${AppConfig.resolvedApiBase}/qa/citation-verifications/$verificationId',
+          timeout: const Duration(seconds: 15),
+        );
+        if (result.statusCode == 200) {
+          final data = result.jsonObject;
+          status = (data['status'] ?? 'unknown').toString();
+          rawCitations =
+              data['citations'] is List ? data['citations'] as List : const [];
+        }
+        // A non-200 response leaves status null and falls through to the
+        // same uniform decision below as a network exception -- neither
+        // can bypass the bounded-attempt cap.
+      } catch (_) {
+        // Transient network hiccup -- status stays null, handled below.
+      }
+
+      final decision = evaluateCitationPollTick(
+        attempts: attempts,
+        maxAttempts: _maxCitationPollAttempts,
+        status: status,
+      );
+      if (!decision.shouldStop) return; // keep polling next tick
+
+      timer.cancel();
+      _citationPollTimers.remove(verificationId);
+      if (!mounted) return;
+      setState(() {
+        answer.citationStatus = decision.resolvedStatus;
+        if (decision.resolvedStatus == 'verified') {
+          answer.sources = rawCitations
+              .whereType<Map>()
+              .map((item) => _QaSource.fromJson(Map<String, dynamic>.from(item)))
+              .toList();
+        }
+      });
+      await _persistSessions();
+    });
   }
 
   Future<void> _hydrate() async {
@@ -235,12 +360,17 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
       if (result.statusCode == 200) {
         if (!mounted) return;
+        final answer = _QaAnswer.fromJson(data, question);
         setState(() {
-          session!.turns.add(_ChatTurn.answer(_QaAnswer.fromJson(data, question)));
+          session!.turns.add(_ChatTurn.answer(answer));
           session.updatedAt = DateTime.now();
           _sessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         });
         await _persistSessions();
+        if (answer.citationStatus == 'verifying' &&
+            answer.citationVerificationId != null) {
+          _pollCitationVerification(answer);
+        }
       } else if (result.statusCode == 401) {
         if (!mounted) return;
         setState(() => _error =
@@ -1144,6 +1274,9 @@ class _AnswerBubble extends StatelessWidget {
             if (answer.sources.isNotEmpty) ...[
               const SizedBox(height: 14),
               _CollapsibleSources(sources: answer.sources),
+            ] else if (answer.citationStatus != null) ...[
+              const SizedBox(height: 14),
+              _CitationStatusNote(status: answer.citationStatus!),
             ],
             if (isLowConfidence) ...[
               const SizedBox(height: 14),
@@ -1258,6 +1391,44 @@ TextSpan _inlineMarkdownSpans(String text, TextStyle style) {
     spans.add(TextSpan(text: text.substring(cursor)));
   }
   return TextSpan(style: style, children: spans);
+}
+
+/// A small, restrained inline note for the async citation verification
+/// lifecycle -- shown only when there are no sources to display yet (or at
+/// all) for a turn whose citation_verification_mode is async_shadow/
+/// async_llm. Deliberately minimal: no new colors/animations, matches the
+/// existing muted caption style already used elsewhere in this file.
+class _CitationStatusNote extends StatelessWidget {
+  final String status;
+
+  const _CitationStatusNote({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final String message;
+    switch (status) {
+      case 'verifying':
+        message = 'Verifying sources…';
+        break;
+      case 'no_verified_support':
+        message = 'No verified sources for this answer.';
+        break;
+      case 'failed':
+      case 'unknown':
+        message = 'Source verification unavailable.';
+        break;
+      default:
+        return const SizedBox.shrink();
+    }
+    return Text(
+      message,
+      style: const TextStyle(
+        fontSize: 12.5,
+        color: DesignTokens.muted,
+        fontStyle: FontStyle.italic,
+      ),
+    );
+  }
 }
 
 class _CollapsibleSources extends StatefulWidget {
@@ -1798,7 +1969,11 @@ class _QaAnswer {
   final String question;
   final String text;
   final String confidence;
-  final List<_QaSource> sources;
+  // Mutable (not final): a pending async citation verification result
+  // mutates this SAME object in place once polling resolves, so
+  // setState(() {}) on the page is enough to re-render with the update --
+  // no need to replace the turn in its session list.
+  List<_QaSource> sources;
   final bool degraded;
   // Machine-readable taxonomy service identity the backend resolved for
   // this turn (see AskQuestionResponse/QAAskResponse.active_service), or
@@ -1806,14 +1981,24 @@ class _QaAnswer {
   // recent non-null value can be echoed back on the next request instead
   // of relying on the backend re-parsing raw chat history.
   final String? activeService;
+  // Present only when the backend's citation_verification_mode was
+  // "async_shadow"/"async_llm" for this turn. One of: null (not
+  // applicable -- lexical/shadow/llm modes, or a stored/older turn),
+  // 'verifying', 'verified', 'no_verified_support', 'failed', 'unknown'.
+  // Mutated in place as polling progresses; 'verifying' is the only
+  // pre-terminal value ever set here (the initial API response value).
+  String? citationStatus;
+  final String? citationVerificationId;
 
-  const _QaAnswer({
+  _QaAnswer({
     required this.question,
     required this.text,
     required this.confidence,
     required this.sources,
     this.degraded = false,
     this.activeService,
+    this.citationStatus,
+    this.citationVerificationId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -1823,6 +2008,11 @@ class _QaAnswer {
         'degraded': degraded,
         'sources': sources.map((source) => source.toJson()).toList(),
         if (activeService != null) 'active_service': activeService,
+        // Deliberately NOT persisted: citation_status/citation_verification_id
+        // describe a live, in-process backend job that will not survive a
+        // reload of this locally-stored turn -- a restored turn should
+        // simply show whatever sources array was last saved, without
+        // implying a "verifying" state that can never resolve again.
       };
 
   factory _QaAnswer.fromStored(Map<String, dynamic> json) {
@@ -1869,6 +2059,8 @@ class _QaAnswer {
     }
 
     final rawActiveService = json['active_service'];
+    final rawCitationStatus = json['citation_status'];
+    final rawVerificationId = json['citation_verification_id'];
     return _QaAnswer(
       text: (json['answer'] ?? '').toString(),
       question: question,
@@ -1878,6 +2070,13 @@ class _QaAnswer {
       activeService: rawActiveService is String && rawActiveService.trim().isNotEmpty
           ? rawActiveService.trim()
           : null,
+      citationStatus: rawCitationStatus is String && rawCitationStatus.trim().isNotEmpty
+          ? rawCitationStatus.trim()
+          : null,
+      citationVerificationId:
+          rawVerificationId is String && rawVerificationId.trim().isNotEmpty
+              ? rawVerificationId.trim()
+              : null,
     );
   }
 }

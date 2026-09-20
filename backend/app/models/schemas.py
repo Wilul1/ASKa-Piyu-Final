@@ -272,6 +272,10 @@ class AskQuestionResponse(BaseModel):
     # slot-only follow-up's active service does not depend on scanning
     # assistant prose.
     active_service: str | None = None
+    # See QAAskResponse.citation_status / citation_verification_id -- same
+    # meaning, present only for async_shadow/async_llm.
+    citation_status: str | None = None
+    citation_verification_id: str | None = None
 
 
 # --- Production QA chatbot ---
@@ -382,6 +386,21 @@ class QAAskResponse(BaseModel):
     # slot-only follow-up's active service does not depend on scanning
     # assistant prose.
     active_service: str | None = None
+    # Present only when citation_verification_mode is "async_shadow"/
+    # "async_llm": "verifying" (poll citation_verification_id for the
+    # result) or "verification_unavailable" (nothing to verify). Absent for
+    # every other mode -- existing clients see no new fields at all.
+    citation_status: str | None = None
+    citation_verification_id: str | None = None
+
+
+class CitationVerificationStatusResponse(BaseModel):
+    """GET /qa/citation-verifications/{verification_id}. Deliberately minimal:
+    never candidate text, never the verifier prompt, never a raw provider
+    error -- see citation_verification_jobs.py's module docstring."""
+
+    status: str = Field(..., pattern="^(pending|running|verified|no_verified_support|failed|unknown)$")
+    citations: list[QACitationSchema] = Field(default_factory=list)
 
 
 class DocumentSourceMetaSchema(BaseModel):

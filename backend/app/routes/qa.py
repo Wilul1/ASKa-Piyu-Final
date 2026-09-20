@@ -3,13 +3,14 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 
 from app.config import settings
 from app.models.db_models import User
-from app.models.schemas import QAAskRequest, QAAskResponse
+from app.models.schemas import CitationVerificationStatusResponse, QAAskRequest, QAAskResponse
 from app.services.auth import get_optional_user, require_admin_user
 from app.services.chroma_store import get_knowledge_base_store
+from app.services.qa import citation_verification_jobs
 from app.services.qa.question_answering import (
     EmptyKnowledgeBaseError,
     answer_qa_question,
@@ -41,6 +42,7 @@ async def qa_health(_: User = Depends(require_admin_user)) -> dict:
 async def qa_ask(
     payload: QAAskRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     debug: bool | None = Query(default=None),
     current_user: User | None = Depends(get_optional_user),
 ) -> QAAskResponse:
@@ -53,6 +55,12 @@ async def qa_ask(
             {"role": item.role, "content": item.content}
             for item in (payload.history or [])
         ]
+        # Populated in-place by answer_qa_question only when
+        # citation_verification_mode is "async_shadow"/"async_llm" -- see
+        # question_answering._display_sources_for_answer. Read AFTER the
+        # call returns, never during, since answer_qa_question runs
+        # synchronously on a worker thread below.
+        async_verification_sink: dict = {}
         # answer_qa_question is sync (embeddings + HTTP). Run off the event
         # loop so health checks and KB routes stay responsive during slow LLM calls.
         result = await asyncio.to_thread(
@@ -61,6 +69,7 @@ async def qa_ask(
             user_role=user_role,
             history=history,
             client_active_service=payload.active_service,
+            async_verification_sink=async_verification_sink,
         )
     except EmptyKnowledgeBaseError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -80,6 +89,9 @@ async def qa_ask(
     )
     sources = result.sources or []
     citations = _citations_from_sources(sources)
+    verification_id = citation_verification_jobs.schedule_verification(
+        background_tasks, async_verification_sink
+    )
     return QAAskResponse(
         answer=result.answer,
         sources=sources,
@@ -107,4 +119,37 @@ async def qa_ask(
         out_of_scope_detected=result.out_of_scope_detected if debug_enabled else None,
         ticket_routing=result.ticket_routing,
         active_service=result.active_service,
+        citation_status=result.citation_status,
+        citation_verification_id=verification_id,
+    )
+
+
+@router.get(
+    "/citation-verifications/{verification_id}",
+    response_model=CitationVerificationStatusResponse,
+    response_model_exclude_none=True,
+    summary="Poll the status of an async Citation V2 verification job",
+)
+async def qa_citation_verification_status(
+    verification_id: str,
+) -> CitationVerificationStatusResponse:
+    # Capability-based access only, by design -- see
+    # citation_verification_jobs.py and the async-architecture investigation
+    # artifact. An unknown, malformed, expired, or restart-lost id all
+    # resolve identically to "unknown"; never a different error shape that
+    # would let a caller distinguish "never existed" from "expired".
+    status, safe_citations = citation_verification_jobs.status_and_citations_for_poll(
+        verification_id
+    )
+    return CitationVerificationStatusResponse(
+        status=status,
+        citations=[
+            {
+                "citation_id": c.citation_id,
+                "title": c.title,
+                "source_section": c.source_section,
+                "source_filename": c.source_filename,
+            }
+            for c in safe_citations
+        ],
     )

@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple, Sequence
 
+from app.config import settings
 from app.services.chroma_store import RetrievedChunk, get_knowledge_base_store
 from app.services.qa.conversational_fallback import (
     format_conversational_fallback,
@@ -158,6 +159,15 @@ class QAResult:
     fallback_used: bool = False
     fallback_reason: str | None = None
     out_of_scope_detected: bool = False
+    # Set only when citation_verification_mode is "async_shadow"/"async_llm":
+    # "verifying" (a background verification job's inputs were frozen and
+    # handed to the caller via async_verification_sink -- the caller is
+    # responsible for actually scheduling the job) or
+    # "verification_unavailable" (nothing to verify -- zero claims or zero
+    # candidates, the same fail-closed condition the synchronous modes
+    # already detect, just known before any job would be created). None for
+    # every other mode -- existing lexical/shadow/llm behavior is unchanged.
+    citation_status: str | None = None
     # Machine-readable, taxonomy-validated service identity for this turn —
     # `None` when no specific service applies (greeting, out-of-scope, vague
     # clarification, broad/collection question). A client may store this and
@@ -166,12 +176,104 @@ class QAResult:
     active_service: str | None = None
 
 
+def _record_answer_rewrite(
+    sink: dict[str, Any] | None,
+    *,
+    evidence_bearing_answer: str | None,
+    table_inversion_corrected: bool,
+    classification_template_applied: bool,
+    used_recovered: bool,
+) -> None:
+    """Observationally record answer-rewrite diagnostics for offline capture.
+
+    Mirrors ``generation_usage_sink``'s existing contract: purely additive,
+    never read back by ``answer_qa_question`` itself (so it cannot influence
+    the answer), and any failure while recording must never propagate and
+    change what is actually returned to the caller.
+    """
+    if sink is None:
+        return
+    try:
+        sink["evidence_bearing_answer"] = evidence_bearing_answer or None
+        sink["table_inversion_corrected"] = bool(table_inversion_corrected)
+        sink["classification_template_applied"] = bool(classification_template_applied)
+        sink["used_recovered"] = bool(used_recovered)
+    except Exception:
+        logger.debug("answer_rewrite_sink: failed to record diagnostics", exc_info=True)
+
+
+def _record_generation_context(
+    sink: dict[str, Any] | None,
+    *,
+    generation_invoked: bool,
+    generation_succeeded: bool,
+    status: str,
+    chunks: list[RetrievedChunk] | None = None,
+) -> None:
+    """Observationally record the exact final chunks passed as the
+    ``context`` argument to ``generate_groq_answer``.
+
+    There is exactly one ``generate_groq_answer`` call site in this module
+    (verified by inspection, not assumed -- see
+    ``scripts/citation_grounding_capture.py``'s module docstring for the
+    trace). ``chunks`` must always be the fully-finalized
+    ``selected_context`` -- i.e. captured strictly AFTER both
+    ``_restore_missing_facet_context`` and (when applicable)
+    ``_prefer_active_topic_context`` have already run -- never the earlier
+    ``selected_for_context`` flags recorded on ``retrieved_chunks`` debug
+    rows, which reflect an intermediate selection stage that predates both
+    of those mutations and is therefore not authoritative for what
+    generation actually received.
+
+    ``generation_invoked`` is true whenever ``generate_groq_answer`` was
+    actually called for this request; ``generation_succeeded`` additionally
+    distinguishes whether that specific call is what the *displayed*
+    answer is based on. A call that raised (Groq unavailable, etc.) is
+    invoked=True, succeeded=False, and this still records the context that
+    was genuinely passed as that call's argument (an honest historical
+    fact), not the same claim as "this context produced the answer shown."
+    A branch that never calls generation at all (greeting, out-of-scope,
+    typed-answer, etc.) is invoked=False with an explicit ``status``
+    string and an empty ``final_context_chunks`` -- never a backfilled or
+    invented context for a call that never happened.
+    """
+    if sink is None:
+        return
+    try:
+        sink["generation_invoked"] = bool(generation_invoked)
+        sink["generation_succeeded"] = bool(generation_succeeded)
+        sink["status"] = status
+        if not chunks:
+            sink["final_context_chunks"] = []
+        else:
+            sink["final_context_chunks"] = [
+                {
+                    "citation_id": _raw_citation_id(chunk, index),
+                    "chunk_merge_key": _chunk_merge_key(chunk),
+                    "document_id": chunk.document_id or (chunk.metadata or {}).get("document_id"),
+                    "chunk_index": chunk.chunk_index,
+                    "title": _display_title(chunk),
+                    "path": _hierarchy_path(chunk.metadata or {}),
+                    "audience": (chunk.metadata or {}).get("audience"),
+                }
+                for index, chunk in enumerate(chunks, start=1)
+            ]
+    except Exception:
+        logger.debug("generation_context_sink: failed to record diagnostics", exc_info=True)
+
+
 def answer_qa_question(
     question: str,
     *,
     user_role: str | None = None,
     history: list[Any] | None = None,
     client_active_service: str | None = None,
+    citation_debug_sink: list[dict[str, Any]] | None = None,
+    generation_usage_sink: dict[str, Any] | None = None,
+    answer_rewrite_sink: dict[str, Any] | None = None,
+    generation_context_sink: dict[str, Any] | None = None,
+    citation_v2_sink: dict[str, Any] | None = None,
+    async_verification_sink: dict[str, Any] | None = None,
 ) -> QAResult:
     cleaned_question = question.strip()
     chat_history = list(history or [])
@@ -181,6 +283,12 @@ def answer_qa_question(
     validated_client_service = validate_active_service_identity(client_active_service)
     # Greetings / thanks are not KB questions — never retrieve or cite sources.
     if is_greeting_query(cleaned_question):
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=False,
+            generation_succeeded=False,
+            status="not_reached:greeting_short_circuit",
+        )
         return QAResult(
             answer=GREETING_ANSWER,
             sources=[],
@@ -238,6 +346,12 @@ def answer_qa_question(
         )
 
     if out_of_scope:
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=False,
+            generation_succeeded=False,
+            status="not_reached:out_of_scope_short_circuit",
+        )
         return QAResult(
             answer=OUT_OF_SCOPE_ANSWER,
             sources=[],
@@ -265,6 +379,12 @@ def answer_qa_question(
         "office",
         "admin",
     }:
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=False,
+            generation_succeeded=False,
+            status="not_reached:faculty_topic_hidden_from_role",
+        )
         return QAResult(
             answer=FACULTY_SIGNIN_ANSWER,
             sources=[],
@@ -287,6 +407,12 @@ def answer_qa_question(
         )
 
     if _is_underspecified_question(cleaned_question) and not _has_real_active_topic(active_topic):
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=False,
+            generation_succeeded=False,
+            status="not_reached:underspecified_without_active_topic",
+        )
         return QAResult(
             answer=(
                 "Which university service or topic are you asking about? "
@@ -413,6 +539,12 @@ def answer_qa_question(
     active_service_for_response = _active_service_for_response(active_topic, selected_context)
 
     if not retrieved:
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=False,
+            generation_succeeded=False,
+            status="not_reached:empty_retrieval",
+        )
         return QAResult(
             answer=_out_of_scope_answer_for_role(user_role),
             sources=[],
@@ -455,6 +587,12 @@ def answer_qa_question(
             confidence="low",
             style_hint="clarify",
             reason="retrieval_evidence_weak",
+        )
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=False,
+            generation_succeeded=False,
+            status="not_reached:retrieval_quality_should_clarify",
         )
         return QAResult(
             answer=answer,
@@ -504,11 +642,20 @@ def answer_qa_question(
     use_typed_now = bool(typed_answer) and not is_service_howto_query(extractor_question)
     if use_typed_now:
         typed_document_type = _kb_document_type(selected_context[0].metadata if selected_context else {})
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=False,
+            generation_succeeded=False,
+            status="not_invoked:typed_answer_used_instead_of_generation",
+        )
         return QAResult(
             answer=typed_answer,
             sources=_display_sources_for_answer(
-                selected_context, typed_answer, merge_articles=collection_mode
+                selected_context, typed_answer, merge_articles=collection_mode,
+                debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
+                async_verification_sink=async_verification_sink,
             ),
+            citation_status=_citation_status_after_sources(async_verification_sink),
             confidence=_confidence_for(
                 retrieved,
                 selected_context,
@@ -554,6 +701,14 @@ def answer_qa_question(
             build_grounding_notes(facet_coverage),
             build_cross_article_notes(article_labels),
         )
+        # Only pass usage_sink at all when instrumentation was actually
+        # requested. A test (or any other caller) that patches/fakes
+        # generate_groq_answer with the pre-instrumentation signature (no
+        # usage_sink parameter, no **kwargs) must keep working unmodified
+        # when generation_usage_sink is left at its default of None.
+        _generation_kwargs: dict[str, Any] = {}
+        if generation_usage_sink is not None:
+            _generation_kwargs["usage_sink"] = generation_usage_sink
         answer = generate_groq_answer(
             question=extractor_question,
             context=context,
@@ -561,6 +716,7 @@ def answer_qa_question(
             history=generation_history,
             grounding_notes=grounding_notes,
             active_topic=active_topic,
+            **_generation_kwargs,
         )
         # Capture the evidence-bearing generated wording before any
         # presentation rewrite. A later classification notice replaces that
@@ -599,11 +755,21 @@ def answer_qa_question(
         )
         # How-to templates are a solid fallback when Groq is unavailable.
         if typed_answer and is_service_howto_query(extractor_question):
+            _record_generation_context(
+                generation_context_sink,
+                generation_invoked=True,
+                generation_succeeded=False,
+                status="invoked_but_failed:typed_answer_fallback_used_after_groq_error",
+                chunks=selected_context,
+            )
             return QAResult(
                 answer=typed_answer,
                 sources=_display_sources_for_answer(
-                    selected_context, typed_answer, merge_articles=collection_mode
+                    selected_context, typed_answer, merge_articles=collection_mode,
+                    debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
+                    async_verification_sink=async_verification_sink,
                 ),
+                citation_status=_citation_status_after_sources(async_verification_sink),
                 confidence=_confidence_for(
                     retrieved,
                     selected_context,
@@ -664,11 +830,28 @@ def answer_qa_question(
         fallback_citation_context = (
             list(retrieved or selected_context) if used_recovered else selected_context
         )
+        _record_answer_rewrite(
+            answer_rewrite_sink,
+            evidence_bearing_answer=evidence_bearing_answer,
+            table_inversion_corrected=table_inversion_corrected,
+            classification_template_applied=classification_template_applied,
+            used_recovered=used_recovered,
+        )
+        _record_generation_context(
+            generation_context_sink,
+            generation_invoked=True,
+            generation_succeeded=False,
+            status="invoked_but_failed:conversational_or_recovered_fallback_used",
+            chunks=selected_context,
+        )
         return QAResult(
             answer=fallback_answer,
             sources=_display_sources_for_answer(
-                fallback_citation_context, fallback_answer, merge_articles=collection_mode
+                fallback_citation_context, fallback_answer, merge_articles=collection_mode,
+                debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
+                async_verification_sink=async_verification_sink,
             ),
+            citation_status=_citation_status_after_sources(async_verification_sink),
             confidence=fallback_confidence,
             retrieved_chunks=retrieved_debug,
             normalized_query=prepared_query.normalized_query,
@@ -746,6 +929,30 @@ def answer_qa_question(
     ):
         citation_evidence = evidence_bearing_answer
 
+    _record_answer_rewrite(
+        answer_rewrite_sink,
+        evidence_bearing_answer=evidence_bearing_answer,
+        table_inversion_corrected=table_inversion_corrected,
+        classification_template_applied=classification_template_applied,
+        used_recovered=used_recovered,
+    )
+    _record_generation_context(
+        generation_context_sink,
+        generation_invoked=True,
+        generation_succeeded=True,
+        # Real pipeline state (`used_recovered`, already computed above),
+        # never inferred: when the offline charter recovery replaced the
+        # generated text as the displayed answer, "generation_answer_used"
+        # would overstate what actually happened -- the generated text was
+        # produced (generation_succeeded=True, a real call did complete),
+        # but the RECOVERED text is what the user was shown, not it.
+        status=(
+            "invoked_and_succeeded:recovery_answer_used"
+            if used_recovered
+            else "invoked_and_succeeded:generation_answer_used"
+        ),
+        chunks=selected_context,
+    )
     return QAResult(
         answer=final_answer,
         sources=_display_sources_for_answer(
@@ -753,7 +960,11 @@ def answer_qa_question(
             final_answer,
             evidence_text=citation_evidence,
             merge_articles=collection_mode,
+            debug_sink=citation_debug_sink,
+            citation_v2_sink=citation_v2_sink,
+            async_verification_sink=async_verification_sink,
         ),
+        citation_status=_citation_status_after_sources(async_verification_sink),
         confidence=confidence,
         retrieved_chunks=retrieved_debug,
         normalized_query=prepared_query.normalized_query,
@@ -2319,6 +2530,28 @@ def _chunk_merge_key(chunk: RetrievedChunk) -> str:
     title = _normalize_ascii(_normalize(str(chunk.title or metadata.get("title") or "")))
     preview = _normalize_ascii(_normalize(str(chunk.text or "")))[:160]
     return f"doc:{document_id}|p:{page}|t:{title}|x:{preview}"
+
+
+def _raw_citation_id(chunk: RetrievedChunk, index: int) -> str:
+    """Canonical ``citation_id`` for a chunk, without any DB/PDF resolution.
+
+    Mirrors ``_sources_from_chunks``'s ``_citation_fields`` identity formula
+    (``metadata.get("chunk_id")`` when present, else
+    ``f"{document_id}::{chunk_index}"``), but always uses the chunk's own raw
+    ``document_id`` -- never the Postgres-resolved id ``_citation_fields`` may
+    substitute for a re-indexed document -- so this stays cheap and
+    side-effect-free for debug/capture instrumentation (no DB/PDF lookups).
+    It therefore matches the displayed citation_id in the common case (no
+    Postgres remap), but callers must treat it as the retrieval-time
+    identity, not a guaranteed stand-in for the resolved display identity.
+    """
+    metadata = chunk.metadata or {}
+    chunk_id = metadata.get("chunk_id")
+    if chunk_id:
+        return str(chunk_id)
+    document_id = chunk.document_id or metadata.get("document_id") or "doc"
+    chunk_index = chunk.chunk_index or index
+    return f"{document_id}::{chunk_index}"
 
 
 def _retrieval_quality(
@@ -4945,6 +5178,8 @@ def _answer_claims(answer: str) -> list[str]:
 def _select_supporting_context(
     candidates: list[RetrievedChunk],
     answer: str,
+    *,
+    debug_sink: list[dict[str, Any]] | None = None,
 ) -> list[RetrievedChunk]:
     """Narrow already-retrieved ``candidates`` to what materially supports ``answer``.
 
@@ -4965,11 +5200,11 @@ def _select_supporting_context(
     if not candidates or not (answer or "").strip():
         return []
 
-    per_chunk: list[tuple[RetrievedChunk, frozenset[str], frozenset[str]]] = []
+    per_chunk: list[tuple[RetrievedChunk, frozenset[str], frozenset[str], str]] = []
     doc_freq: dict[str, int] = {}
-    for chunk in candidates:
+    for position, chunk in enumerate(candidates, start=1):
         words, numbers = _grounding_tokens(_chunk_search_text(chunk))
-        per_chunk.append((chunk, words, numbers))
+        per_chunk.append((chunk, words, numbers, _raw_citation_id(chunk, position)))
         for token in words:
             doc_freq[token] = doc_freq.get(token, 0) + 1
 
@@ -4987,8 +5222,32 @@ def _select_supporting_context(
         if not words and not numbers:
             return []
         scored: list[tuple[float, RetrievedChunk]] = []
-        for chunk, chunk_words, chunk_numbers in per_chunk:
+        for chunk, chunk_words, chunk_numbers, citation_id in per_chunk:
             score = _citation_support_score(words, numbers, chunk_words, chunk_numbers, idf)
+            if debug_sink is not None:
+                # Observational only: records the same score this loop
+                # already computes for every (claim-or-answer, chunk) pair,
+                # purely for offline diagnosis. Never read back by this
+                # function and never influences `scored`/selection below —
+                # this append happens unconditionally, before the `score > 0`
+                # branch, and `scored`/`score` are never mutated here.
+                shared_words = words & chunk_words
+                shared_numbers = numbers & chunk_numbers
+                debug_sink.append({
+                    "claim_text": text,
+                    # `chunk_id` (the existing merge key) is kept as-is,
+                    # unrenamed -- `citation_id` is a distinct, additional
+                    # field using the same canonical identity semantics as
+                    # displayed sources (see `_raw_citation_id`), not a
+                    # replacement for it.
+                    "chunk_id": _chunk_merge_key(chunk),
+                    "citation_id": citation_id,
+                    "shared_words": sorted(shared_words),
+                    "shared_numbers": sorted(shared_numbers),
+                    "score": score,
+                    "min_signals_met": (len(shared_words) + len(shared_numbers)) >= _SUPPORT_MIN_SIGNALS,
+                    "abs_floor_met": score >= _SUPPORT_ABS_FLOOR,
+                })
             if score > 0:
                 scored.append((score, chunk))
         scored.sort(key=lambda pair: pair[0], reverse=True)
@@ -5026,12 +5285,26 @@ def _select_supporting_context(
     return [chunk for _, chunk in ordered]
 
 
+def _citation_status_after_sources(async_verification_sink: dict[str, Any] | None) -> str | None:
+    """The QAResult.citation_status matching what ``_display_sources_for_answer``
+    just did with ``async_verification_sink`` (called AFTER that, relying on
+    the sink having already been populated in-place by this same call site).
+    None for every mode except "async_shadow"/"async_llm"."""
+    mode = (settings.citation_verification_mode or "lexical").strip().lower()
+    if mode not in ("async_shadow", "async_llm"):
+        return None
+    return "verifying" if async_verification_sink else "verification_unavailable"
+
+
 def _display_sources_for_answer(
     candidates: list[RetrievedChunk],
     answer: str,
     *,
     merge_articles: bool = False,
     evidence_text: str | None = None,
+    debug_sink: list[dict[str, Any]] | None = None,
+    citation_v2_sink: dict[str, Any] | None = None,
+    async_verification_sink: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the user-facing ``sources``/``citations`` list for ``answer``.
 
@@ -5042,12 +5315,97 @@ def _display_sources_for_answer(
 
     ``evidence_text``, when set, is the pre-rewrite generated answer. A
     presentation template can erase the wording that overlapped the source;
-    citations are scored against that evidence instead of the template.
-    Candidates are still only already-retrieved chunks.
+    V1's lexical selector is scored against that evidence instead of the
+    template. Candidates are still only already-retrieved chunks.
+
+    ``settings.citation_verification_mode`` controls whether Citation V2
+    (semantic, claim-level verification -- see
+    ``app.services.qa.citation_verification``) participates:
+
+    - "lexical" (default): V1 only, unchanged -- V2 is not even imported.
+    - "shadow": V1 still decides what is displayed; V2 also runs (against
+      the FINAL ``answer`` text, never ``evidence_text``) purely for
+      diagnostics, recorded into ``citation_v2_sink`` when provided.
+    - "llm": V2 decides what is displayed. Any V2 failure (timeout,
+      malformed output, hallucinated id, etc.) displays zero citations --
+      it never falls back to V1's lexical selection.
+    - "async_shadow" / "async_llm": same decision rules as "shadow" / "llm"
+      respectively, but the verifier is never called inline here. The exact
+      inputs a synchronous call would have used (extracted claims implied by
+      ``answer``, and the frozen candidate snapshot) are handed to the
+      caller via ``async_verification_sink`` so it can be scheduled outside
+      this request's critical path -- see
+      ``app.services.qa.citation_verification_jobs``. "async_llm" returns
+      zero citations immediately and always -- V1's guesses are never shown
+      even transiently while verification is pending.
     """
     grounding = (evidence_text or "").strip() or answer
-    supporting = _select_supporting_context(candidates, grounding)
-    return _sources_from_chunks(supporting, merge_articles=merge_articles)
+    v1_supporting = _select_supporting_context(candidates, grounding, debug_sink=debug_sink)
+
+    mode = (settings.citation_verification_mode or "lexical").strip().lower()
+    if mode not in ("lexical", "shadow", "llm", "async_shadow", "async_llm"):
+        mode = "lexical"
+    if mode == "lexical":
+        return _sources_from_chunks(v1_supporting, merge_articles=merge_articles)
+
+    from app.services.qa.citation_verification import CandidateEvidence, extract_claims, verify_citations
+
+    v2_candidates = [
+        CandidateEvidence(
+            citation_id=_raw_citation_id(chunk, index),
+            title=str(chunk.title or (chunk.metadata or {}).get("title") or ""),
+            source_section=_source_section(chunk.metadata or {}) or None,
+            source_filename=chunk.source_filename,
+            text=chunk.text or "",
+        )
+        for index, chunk in enumerate(candidates, start=1)
+    ]
+
+    if mode in ("async_shadow", "async_llm"):
+        claims = extract_claims(answer)
+        if async_verification_sink is not None and claims and v2_candidates:
+            async_verification_sink.update(
+                {"mode": mode, "answer": answer, "candidates": v2_candidates}
+            )
+        if mode == "async_shadow":
+            return _sources_from_chunks(v1_supporting, merge_articles=merge_articles)
+        return []
+
+    outcome = verify_citations(answer=answer, candidates=v2_candidates, mode=mode)
+
+    if citation_v2_sink is not None:
+        citation_v2_sink.update(
+            {
+                "mode": outcome.mode,
+                "claims": [{"claim_id": c.claim_id, "text": c.text} for c in outcome.claims],
+                "candidate_citation_ids": outcome.candidate_citation_ids,
+                "verifier_invoked": outcome.verifier_invoked,
+                "verifier_succeeded": outcome.verifier_succeeded,
+                "failure_reason": outcome.failure_reason,
+                "per_claim_verified_ids": outcome.per_claim_verified_ids,
+                "verified_citation_ids": outcome.verified_citation_ids,
+                "v1_displayed_citation_ids": [
+                    _raw_citation_id(chunk, index)
+                    for index, chunk in enumerate(v1_supporting, start=1)
+                ],
+                "latency_ms": outcome.latency_ms,
+                "usage": outcome.usage,
+            }
+        )
+
+    if mode == "shadow":
+        return _sources_from_chunks(v1_supporting, merge_articles=merge_articles)
+
+    # mode == "llm": display ONLY V2-verified citations. A failed/empty
+    # outcome yields verified_citation_ids == [] -> zero citations, by
+    # construction -- never a fallback to v1_supporting.
+    id_to_chunk = {
+        _raw_citation_id(chunk, index): chunk for index, chunk in enumerate(candidates, start=1)
+    }
+    verified_chunks = [
+        id_to_chunk[cid] for cid in outcome.verified_citation_ids if cid in id_to_chunk
+    ]
+    return _sources_from_chunks(verified_chunks, merge_articles=merge_articles)
 
 
 def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool = False) -> list[dict[str, Any]]:
@@ -5321,6 +5679,25 @@ def _retrieved_debug(
                 "document_id": chunk.document_id,
                 "source_filename": chunk.source_filename,
                 "chunk_index": chunk.chunk_index,
+                "citation_id": _raw_citation_id(chunk, rank),
+                # True only when metadata["chunk_id"] was actually stamped
+                # on this chunk -- False means citation_id fell back to
+                # `document_id::chunk_index`, which is not guaranteed
+                # stable/unique across re-ingests or when chunk_index==0
+                # collides with _raw_citation_id's own `chunk_index or
+                # index` fallback substitution. Purely diagnostic -- never
+                # read by production selection/formatting, only by capture
+                # tooling deciding whether a candidate's identity is solid
+                # enough for quantitative gold-label evaluation.
+                "citation_id_stamped": bool(metadata.get("chunk_id")),
+                # Raw passthrough only -- never substitute a missing/None/
+                # malformed value with "student" or any other default here.
+                # Production retrieval filtering (chroma_where_for_audience /
+                # filter_chunks_for_audience) already ran before this debug
+                # row is built; this field is purely observational and must
+                # not normalize the value, so a capture script can see
+                # exactly what was (or was not) on the chunk's own metadata.
+                "audience": metadata.get("audience"),
             }
         )
     return debug

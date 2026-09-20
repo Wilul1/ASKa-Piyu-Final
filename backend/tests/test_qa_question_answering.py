@@ -13,13 +13,21 @@ from app.services.qa.question_answering import (
     OUT_OF_SCOPE_ANSWER,
     RAW_RETRIEVAL_CANDIDATES,
     _CLASSIFICATION_FALLBACK_NOTICE,
+    _SUPPORT_ABS_FLOOR,
+    _SUPPORT_MIN_SIGNALS,
     _SUPPORT_REL_FLOOR,
+    _answer_claims,
+    _chunk_merge_key,
     _chunk_search_text,
     _citation_support_score,
     _confidence_for,
+    _display_sources_for_answer,
     _grounding_tokens,
+    _raw_citation_id,
+    _retrieved_debug,
     _detected_query_domain,
     _select_supporting_context,
+    _sources_from_chunks,
     answer_qa_question,
     detect_collection_intent,
     detect_broad_query,
@@ -2552,6 +2560,1311 @@ def test_citation_precision_no_fabricated_source_for_degraded_answer():
         result = answer_qa_question("What is the deadline for filing an appeal?")
 
     assert result.sources == []
+
+
+# ---------------------------------------------------------------------------
+# Production-failure regressions (real production report, 2026-09-17)
+#
+# The tests above used short, clean 2-4 candidate fixtures and passed while
+# real production citations still leaked irrelevant chunks. Root cause: the
+# per-turn IDF pool is small (production retrieves ~5-9 chunks per
+# question), so a term that is genuinely common across the whole knowledge
+# base can look locally "rare" within just that pool and score as though it
+# were distinctive; a long real institutional chunk (a full Citizen's
+# Charter / Faculty Manual entry, not a 2-3 sentence snippet) only needs to
+# incidentally contain a couple of such terms to clear the old score floors.
+# A second, independent bug in the claim splitter (it split on every ``.``,
+# including the decimal point inside "1.20") fragmented numeric-range
+# answers into spurious short "claims" whose own low top-score silently
+# loosened the per-claim relative floor for everything scored against them.
+#
+# These tests widen the candidate pool to production-realistic size (5-8)
+# and use production-realistic chunk length, to actually exercise both
+# failure modes instead of re-testing the same short fixtures.
+#
+# Text provenance, stated explicitly per source below:
+#   REAL        — copied verbatim from the fixtures already committed above
+#                  in this file (the only chunk text tied to the production
+#                  report's document titles that is available locally).
+#   CONSTRUCTED — the production report supplies only a document title and
+#                  page number for these distractors; no chunk body text is
+#                  available in this repository, in saved production
+#                  evidence, or in logs. Per instruction, that text is not
+#                  invented as a claim about what production actually
+#                  contains — it is a generic institutional-boilerplate
+#                  sentence (the same shape as this file's own "ID
+#                  Validation"/"Technology Pre-Commercialization" fixtures)
+#                  built only to test the *mechanism* (generic-term/length
+#                  driven false positives), not to assert real wording.
+# ---------------------------------------------------------------------------
+
+
+def test_citation_precision_production_repro_transfer_credit_full_candidate_pool():
+    """TEST A (production). The reported 8-chunk retrieval pool for the
+    transfer-credit question, including a second "ID Validation" hit (the
+    production report listed it twice) and additional weak Student
+    Handbook/Citizen's Charter neighbors. Only the true supporting evidence
+    should be displayed."""
+    validation_requirements = chunk(
+        "Validation Requirements",
+        "Holders of a degree who transfer or register in this University may be "
+        "given credit for equivalent courses taken without validation, provided "
+        "that credits earned without validation shall not exceed 50% of the total "
+        "credits required for graduation in the curriculum.",
+        score=0.9,
+        page=32,
+        path=("Undergraduate Academic Policies", "Admission", "Validation Requirements"),
+        reasons=["academic_policy_match"],
+    )
+    # CONSTRUCTED — title/page from the production report ("Crediting of
+    # Subjects", Citizen's Charter p.95, reported "RELEVANT to process").
+    crediting_of_subjects = chunk(
+        "Crediting of Subjects",
+        "This service processes the request of a transferee or second-course "
+        "student for crediting of subjects taken in a previous school. "
+        "Requirements: Transcript of Records, course syllabi. Office: "
+        "Registrar. Processing time: 3 working days.",
+        score=0.87,
+        page=95,
+        path=("Citizen's Charter", "Student Services", "Crediting of Subjects"),
+        reasons=["semantic_similarity"],
+    )
+    # CONSTRUCTED — title/page from the production report ("Validation of
+    # Subjects", Student Handbook p.31, reported "WEAK").
+    validation_of_subjects = chunk(
+        "Validation of Subjects",
+        "A student who fails to enroll for one academic year or more must have "
+        "previously earned academic units validated by the appropriate "
+        "department before those units may again be counted toward the "
+        "curriculum requirements.",
+        score=0.84,
+        page=31,
+        path=("Undergraduate Academic Policies", "Admission", "Validation of Subjects"),
+        reasons=["semantic_similarity"],
+    )
+    transferring = chunk(
+        "Transferring",
+        "A student who wishes to transfer to this University must submit an "
+        "honorable dismissal and transcript of records to the Registrar for "
+        "evaluation of previous academic units before enrollment.",
+        score=0.86,
+        page=27,
+        path=("Undergraduate Academic Policies", "Admission", "Transferring"),
+        reasons=["academic_policy_match"],
+    )
+    id_validation_1 = chunk(
+        "ID Validation",
+        "This service covers validation of student identification cards. "
+        "Requirements: Certificate of Registration, one recent photo. "
+        "Processing time: 15 minutes at the Registrar's window.",
+        score=0.83,
+        path=("Citizen's Charter", "Student Services", "ID Validation"),
+        reasons=["semantic_similarity"],
+    )
+    # CONSTRUCTED — title/page from the production report ("Enrollment",
+    # Citizen's Charter p.10, reported "WEAK").
+    enrollment = chunk(
+        "Enrollment",
+        "This service processes the enrollment of new, continuing, and "
+        "transferee students each semester. Requirements: Certificate of "
+        "Registration form, valid identification. Office: Registrar. "
+        "Processing time: 10 minutes per student.",
+        score=0.8,
+        page=10,
+        path=("Citizen's Charter", "Student Services", "Enrollment"),
+        reasons=["semantic_similarity"],
+    )
+    # Production reported a second "ID Validation" hit at p.27.
+    id_validation_2 = chunk(
+        "ID Validation",
+        "This service covers validation of student identification cards. "
+        "Requirements: Certificate of Registration, one recent photo. "
+        "Processing time: 15 minutes at the Registrar's window.",
+        score=0.79,
+        page=27,
+        path=("Citizen's Charter", "Student Services", "ID Validation"),
+        reasons=["semantic_similarity"],
+    )
+    tech_precommercialization = chunk(
+        "Technology Pre-Commercialization",
+        "This service assists inventors in preparing technology for "
+        "commercialization, including IP assessment and investor matching "
+        "through the Technology Business Incubator.",
+        score=0.78,
+        path=("Citizen's Charter", "Research Services", "Technology Pre-Commercialization"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "Holders of a degree who transfer or register in LSPU may receive "
+            "credit for equivalent courses without validation, but the credits "
+            "earned without validation cannot exceed 50% of the total credits "
+            "required for graduation in that curriculum. This 50% cap applies "
+            "specifically to the degree-holder crediting rule, not to every "
+            "transferee."
+        )
+
+    store = FakeStore(
+        [
+            validation_requirements,
+            crediting_of_subjects,
+            validation_of_subjects,
+            transferring,
+            id_validation_1,
+            enrollment,
+            id_validation_2,
+            tech_precommercialization,
+        ]
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "I'm transferring to LSPU with a previous degree. How much of my "
+            "previous coursework can be credited without validation?"
+        )
+
+    titles = [source["title"] for source in result.sources]
+    assert "ID Validation" not in titles
+    assert "Technology Pre-Commercialization" not in titles
+    assert "Validation Requirements" in titles
+
+
+def test_citation_precision_production_repro_latin_honors_graduate_studies_distractor():
+    """TEST C (production). Real production grade ranges (1.00-1.20 /
+    1.21-1.45 / 1.46-1.75). A decimal-heavy numeric-range answer must not be
+    shattered by claim splitting into fragments that loosen the relative
+    floor, and a Graduate-Studies-scoped "Academic Awards Criteria" chunk
+    that happens to state the same-shaped ranges is deliberately included
+    here as a plausible near-duplicate rather than asserted to be wrong —
+    the regression this proves is that "Completion of INC/Removal" (a
+    same-pool distractor with no numeric or topical relation to Latin
+    honors) is excluded."""
+    undergrad_grading = chunk(
+        "Undergraduate Grading System",
+        "The University uses a numerical grading system ranging from 1.00 "
+        "(highest) to 5.00 (lowest), with 3.00 as the minimum passing grade "
+        "for undergraduate courses.",
+        score=0.85,
+        page=40,
+        path=("Undergraduate Academic Policies", "Grading", "Undergraduate Grading System"),
+        reasons=["academic_policy_match"],
+    )
+    grading_system_p42 = chunk(
+        "Grading System",
+        "Final grades are computed as the weighted average of class standing "
+        "and examination results, rounded to the nearest hundredth, and "
+        "recorded on the official grading sheet.",
+        score=0.83,
+        page=42,
+        path=("Undergraduate Academic Policies", "Grading", "Grading System"),
+        reasons=["academic_policy_match"],
+    )
+    academic_awards_criteria = chunk(
+        "Academic Awards Criteria",
+        "Graduate students who complete their program with a general "
+        "weighted average of 1.00 to 1.20 are awarded academic distinction; "
+        "1.21 to 1.45 receive high distinction; 1.46 to 1.75 receive "
+        "distinction, subject to residency and no failing or dropped grade.",
+        score=0.9,
+        page=98,
+        path=("Graduate Studies", "Awards", "Academic Awards Criteria"),
+        reasons=["semantic_similarity"],
+    )
+    completion_of_inc = chunk(
+        "Completion of INC/Removal",
+        "This service processes a student's request for completion or removal "
+        "of an incomplete (INC) grade. Requirements: Application for Removal of "
+        "INC form, instructor's assessment. Office: Registrar. Processing time: "
+        "3 business days.",
+        score=0.7,
+        page=94,
+        path=("Citizen's Charter", "Student Services", "Completion of INC/Removal"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "Summa cum laude requires a general weighted average of 1.00 to "
+            "1.20; magna cum laude requires 1.21 to 1.45; and cum laude "
+            "requires 1.46 to 1.75."
+        )
+
+    store = FakeStore(
+        [undergrad_grading, grading_system_p42, academic_awards_criteria, completion_of_inc]
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "What are the grade ranges for summa cum laude, magna cum laude, "
+            "and cum laude?"
+        )
+
+    titles = {source["title"] for source in result.sources}
+    # Strengthened (Issue 3): the honors/awards source that actually states
+    # the ranges must survive, not just "the distractor is gone."
+    assert "Academic Awards Criteria" in titles
+    assert "Completion of INC/Removal" not in titles
+
+
+def test_citation_precision_production_repro_grading_sheet_submission():
+    """TEST D (production). "Two copies... Dean/Associate Dean... then
+    Registrar... within ten days" must keep the sources that actually state
+    that procedure and exclude the unrelated INC-removal and
+    references/resources chunks the production report showed surviving."""
+    grading_sheets_part1 = chunk(
+        "Grading Sheets Part 1",
+        "Faculty members must prepare two copies of the grading sheet: one "
+        "for the Office of the Dean or Associate Dean and one for the "
+        "Registrar, both bearing the faculty member's original signature.",
+        score=0.88,
+        page=26,
+        path=("Faculty Manual", "Grading", "Grading Sheets Part 1"),
+        reasons=["faculty_policy_match"],
+    )
+    submission_of_grades = chunk(
+        "Submission of Grades",
+        "Signed grading sheets must be submitted to the Registrar within ten "
+        "(10) days after the scheduled final examination for the term, after "
+        "review and approval by the Dean or Associate Dean.",
+        score=0.9,
+        page=44,
+        path=("Faculty Manual", "Grading", "Submission of Grades"),
+        reasons=["faculty_policy_match"],
+    )
+    grading_sheets_part2 = chunk(
+        "Grading Sheets Part 2",
+        "Grading sheets returned for correction by the Registrar's office "
+        "must be resubmitted with the required attachments within the term.",
+        score=0.72,
+        page=26,
+        path=("Faculty Manual", "Grading", "Grading Sheets Part 2"),
+        reasons=["faculty_policy_match"],
+    )
+    completion_of_inc = chunk(
+        "Completion of INC/Removal",
+        "This service processes a student's request for completion or removal "
+        "of an incomplete (INC) grade. Requirements: Application for Removal of "
+        "INC form, instructor's assessment. Office: Registrar. Processing time: "
+        "3 business days.",
+        score=0.68,
+        page=94,
+        path=("Citizen's Charter", "Student Services", "Completion of INC/Removal"),
+        reasons=["semantic_similarity"],
+    )
+    references_and_resources = chunk(
+        "References and Resources",
+        "This section lists reference materials, contact directories, and "
+        "external links maintained by the University for student and faculty "
+        "use, including office hours and hotline numbers.",
+        score=0.6,
+        page=92,
+        path=("Citizen's Charter", "Appendix", "References and Resources"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return (
+            "Faculty must submit two copies of the completed grading sheet: "
+            "after review and approval by the Dean or Associate Dean, both "
+            "copies go to the Registrar, within ten days after the scheduled "
+            "final examination."
+        )
+
+    store = FakeStore(
+        [
+            grading_sheets_part1,
+            submission_of_grades,
+            grading_sheets_part2,
+            completion_of_inc,
+            references_and_resources,
+        ]
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "How many copies of the grading sheet must faculty submit, who "
+            "approves it, and within how many days after the final "
+            "examination must it reach the Registrar?",
+            user_role="faculty",
+        )
+
+    titles = {source["title"] for source in result.sources}
+    # Strengthened (Issue 3): BOTH the copies-source and the submission/
+    # deadline-source must survive -- the answer states facts from both
+    # ("two copies... Dean/Associate Dean" is Grading Sheets Part 1; "within
+    # ten days... to the Registrar" is Submission of Grades), so a fix that
+    # only keeps one of the two claims' evidence is still incomplete.
+    assert "Grading Sheets Part 1" in titles
+    assert "Submission of Grades" in titles
+    assert "Completion of INC/Removal" not in titles
+    assert "References and Resources" not in titles
+
+
+def test_citation_precision_production_repro_paraphrased_numeric_claim():
+    """ISSUE 1 (review finding). A legitimate LLM paraphrase of "credits
+    without validation cannot exceed 50% of total credits required for
+    graduation" as "half of the units needed to graduate" must not lose its
+    citation just because it shares almost no wording with the source --
+    that is ordinary paraphrasing, not evidence the source is unrelated.
+    Uses the same 8-candidate transfer-credit pool as the TEST A repro
+    above so the fix is proven in a production-realistic, noisy pool, not
+    a clean 1-candidate toy case."""
+    validation_requirements = chunk(
+        "Validation Requirements",
+        "Holders of a degree who transfer or register in this University may be "
+        "given credit for equivalent courses taken without validation, provided "
+        "that credits earned without validation shall not exceed 50% of the total "
+        "credits required for graduation in the curriculum.",
+        score=0.9,
+        page=32,
+        path=("Undergraduate Academic Policies", "Admission", "Validation Requirements"),
+        reasons=["academic_policy_match"],
+    )
+    crediting_of_subjects = chunk(
+        "Crediting of Subjects",
+        "This service processes the request of a transferee or second-course "
+        "student for crediting of subjects taken in a previous school. "
+        "Requirements: Transcript of Records, course syllabi. Office: "
+        "Registrar. Processing time: 3 working days.",
+        score=0.87,
+        page=95,
+        path=("Citizen's Charter", "Student Services", "Crediting of Subjects"),
+        reasons=["semantic_similarity"],
+    )
+    validation_of_subjects = chunk(
+        "Validation of Subjects",
+        "A student who fails to enroll for one academic year or more must have "
+        "previously earned academic units validated by the appropriate "
+        "department before those units may again be counted toward the "
+        "curriculum requirements.",
+        score=0.84,
+        page=31,
+        path=("Undergraduate Academic Policies", "Admission", "Validation of Subjects"),
+        reasons=["semantic_similarity"],
+    )
+    transferring = chunk(
+        "Transferring",
+        "A student who wishes to transfer to this University must submit an "
+        "honorable dismissal and transcript of records to the Registrar for "
+        "evaluation of previous academic units before enrollment.",
+        score=0.86,
+        page=27,
+        path=("Undergraduate Academic Policies", "Admission", "Transferring"),
+        reasons=["academic_policy_match"],
+    )
+    id_validation = chunk(
+        "ID Validation",
+        "This service covers validation of student identification cards. "
+        "Requirements: Certificate of Registration, one recent photo. "
+        "Processing time: 15 minutes at the Registrar's window.",
+        score=0.83,
+        path=("Citizen's Charter", "Student Services", "ID Validation"),
+        reasons=["semantic_similarity"],
+    )
+    enrollment = chunk(
+        "Enrollment",
+        "This service processes the enrollment of new, continuing, and "
+        "transferee students each semester. Requirements: Certificate of "
+        "Registration form, valid identification. Office: Registrar. "
+        "Processing time: 10 minutes per student.",
+        score=0.8,
+        page=10,
+        path=("Citizen's Charter", "Student Services", "Enrollment"),
+        reasons=["semantic_similarity"],
+    )
+    tech_precommercialization = chunk(
+        "Technology Pre-Commercialization",
+        "This service assists inventors in preparing technology for "
+        "commercialization, including IP assessment and investor matching "
+        "through the Technology Business Incubator.",
+        score=0.78,
+        path=("Citizen's Charter", "Research Services", "Technology Pre-Commercialization"),
+        reasons=["semantic_similarity"],
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        # Deliberately shares almost no wording with the source: no
+        # "validation", "credits", "50%", "graduation" -- just the
+        # paraphrased meaning, the way an LLM commonly restates a numeric
+        # rule in plain language for a student.
+        return (
+            "If you hold a prior degree, roughly half of the units you "
+            "still need before graduating can be waived without further "
+            "validation of your past coursework."
+        )
+
+    store = FakeStore(
+        [
+            validation_requirements,
+            crediting_of_subjects,
+            validation_of_subjects,
+            transferring,
+            id_validation,
+            enrollment,
+            tech_precommercialization,
+        ]
+    )
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(
+            "I'm transferring to LSPU with a previous degree. How much of my "
+            "previous coursework can be credited without validation?"
+        )
+
+    titles = {source["title"] for source in result.sources}
+    assert "Validation Requirements" in titles
+    # Precision must hold too: a heavily-paraphrased claim being rescued
+    # must not also rescue every same-topic distractor along with it.
+    assert "Technology Pre-Commercialization" not in titles
+
+
+def test_answer_claims_splits_two_sentences_after_a_day_count():
+    """ISSUE 2, second required case: a non-decimal number followed by a
+    real sentence boundary must also split normally."""
+    claims = _answer_claims("Submit within 10 days. Copies must be signed by the Dean.")
+    assert len(claims) == 2
+    assert "10 days" in claims[0]
+    assert "Copies" in claims[1]
+
+
+# ---------------------------------------------------------------------------
+# Citation debug sink / generation usage sink instrumentation (Stage 1
+# baseline infrastructure for Citation Grounding V2 -- see
+# benchmarks/citation_grounding_benchmark.json and
+# scripts/citation_grounding_baseline.py).
+#
+# ``citation_debug_sink`` and ``generation_usage_sink`` are optional,
+# keyword-only, default-``None`` parameters threaded through
+# ``answer_qa_question`` -> ``_display_sources_for_answer`` ->
+# ``_select_supporting_context``, and through ``generate_groq_answer``
+# (tested separately in test_groq_answer_service.py). Every test below
+# proves the instrumentation is purely observational: passing it never
+# changes what is selected/returned, and omitting it (every production
+# call site, and every test above this section) behaves exactly as before
+# this instrumentation was added.
+# ---------------------------------------------------------------------------
+
+
+def test_select_supporting_context_debug_sink_none_matches_pre_instrumentation_behavior():
+    """Baseline regression: with no debug_sink (every existing call site's
+    signature), selection is unchanged from before this parameter existed."""
+    protocol = chunk(
+        "Alpha Protocol",
+        "The alpha protocol requires immediate dean written approval and "
+        "registrar notation within 30 days of the college board meeting.",
+        score=0.95,
+        path=("Policy Manual", "Governance", "Alpha Protocol"),
+    )
+    unrelated = chunk(
+        "Cafeteria Tickets",
+        "Cafeteria meal tickets are sold at the cashier window.",
+        score=0.66,
+        path=("Campus Services", "Dining", "Cafeteria Tickets"),
+    )
+    answer = (
+        "The alpha protocol requires immediate dean written approval and "
+        "registrar notation within 30 days of the college board meeting."
+    )
+
+    selected = _select_supporting_context([protocol, unrelated], answer)
+    titles = {item.metadata["section"] for item in selected}
+    assert "Alpha Protocol" in titles
+    assert "Cafeteria Tickets" not in titles
+
+
+def test_select_supporting_context_debug_sink_does_not_change_selection():
+    """Passing a debug_sink list must select exactly the same chunks, in the
+    same order, as passing none -- proving the instrumentation is read-only
+    and cannot influence which citations are shown."""
+    protocol = chunk(
+        "Alpha Protocol",
+        "The alpha protocol requires immediate dean written approval, "
+        "academic council ratification, curriculum committee endorsement, "
+        "department chair concurrence, registrar notation, student "
+        "notification, and transcript annotation within 30 days of the "
+        "college board meeting.",
+        score=0.95,
+        path=("Policy Manual", "Governance", "Alpha Protocol"),
+    )
+    reserves = chunk(
+        "Library Reserves",
+        "Library reserves expire after 7 days.",
+        score=0.7,
+        path=("Policy Manual", "Library", "Library Reserves"),
+    )
+    cafeteria = chunk(
+        "Cafeteria Tickets",
+        "Cafeteria meal tickets are sold at the cashier window beside the "
+        "student lounge.",
+        score=0.66,
+        path=("Campus Services", "Dining", "Cafeteria Tickets"),
+    )
+    answer = (
+        "The alpha protocol requires immediate dean written approval, "
+        "academic council ratification, curriculum committee endorsement, "
+        "department chair concurrence, registrar notation, student "
+        "notification, and transcript annotation within 30 days of the "
+        "college board meeting. Library reserves expire after 7 days."
+    )
+    candidates = [protocol, reserves, cafeteria]
+
+    without_sink = _select_supporting_context(candidates, answer)
+    debug_sink: list[dict] = []
+    with_sink = _select_supporting_context(candidates, answer, debug_sink=debug_sink)
+
+    assert [id(c) for c in with_sink] == [id(c) for c in without_sink]
+    assert debug_sink, "debug_sink must be populated when supplied"
+
+
+def test_select_supporting_context_debug_sink_records_expected_fields():
+    """Each debug row exposes the same score/signal information the
+    selection logic itself computes for that (claim-or-answer, chunk) pair,
+    for offline diagnosis -- not a re-derivation or approximation. This must
+    reflect the *reverted* (54975af) scoring signals only: no coverage or
+    text_weight fields, since those belonged to the abandoned coverage-floor
+    experiment and are not part of production citation selection."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+    answer = "The Transcript of Records fee is PHP 100.00 per page."
+
+    debug_sink: list[dict] = []
+    _select_supporting_context([fee_chunk], answer, debug_sink=debug_sink)
+
+    assert debug_sink
+    row = debug_sink[0]
+    assert set(row.keys()) == {
+        "claim_text",
+        "chunk_id",
+        "citation_id",
+        "shared_words",
+        "shared_numbers",
+        "score",
+        "min_signals_met",
+        "abs_floor_met",
+    }
+    assert row["chunk_id"] == _chunk_merge_key(fee_chunk)
+    # citation_id is a distinct, additional field -- same canonical identity
+    # semantics as a displayed source's citation_id (see _raw_citation_id),
+    # not a rename/replacement of the existing chunk_id merge key above.
+    assert row["citation_id"] == _raw_citation_id(fee_chunk, 1)
+    assert row["citation_id"] != row["chunk_id"]
+    assert row["claim_text"] == answer
+    assert row["score"] > 0
+    assert row["abs_floor_met"] == (row["score"] >= _SUPPORT_ABS_FLOOR)
+    assert row["min_signals_met"] == (
+        (len(row["shared_words"]) + len(row["shared_numbers"])) >= _SUPPORT_MIN_SIGNALS
+    )
+
+
+def test_select_supporting_context_debug_sink_covers_full_answer_and_each_claim_pass():
+    """The debug sink must reflect both scoring passes the selector actually
+    runs: once against the whole answer, then once per claim -- so a claim
+    that only a weaker source supports is visible in the log, not just the
+    winning full-answer pass."""
+    protocol = chunk(
+        "Alpha Protocol",
+        "The alpha protocol requires immediate dean written approval, "
+        "academic council ratification, curriculum committee endorsement, "
+        "department chair concurrence, registrar notation, student "
+        "notification, and transcript annotation within 30 days of the "
+        "college board meeting.",
+        score=0.95,
+        path=("Policy Manual", "Governance", "Alpha Protocol"),
+    )
+    reserves = chunk(
+        "Library Reserves",
+        "Library reserves expire after 7 days.",
+        score=0.7,
+        path=("Policy Manual", "Library", "Library Reserves"),
+    )
+    answer = (
+        "The alpha protocol requires immediate dean written approval, "
+        "academic council ratification, curriculum committee endorsement, "
+        "department chair concurrence, registrar notation, student "
+        "notification, and transcript annotation within 30 days of the "
+        "college board meeting. Library reserves expire after 7 days."
+    )
+    claims = _answer_claims(answer)
+
+    debug_sink: list[dict] = []
+    _select_supporting_context([protocol, reserves], answer, debug_sink=debug_sink)
+
+    claim_texts = {row["claim_text"] for row in debug_sink}
+    assert answer in claim_texts
+    assert all(claim in claim_texts for claim in claims)
+    # 2 candidates scored on the full-answer pass + 2 candidates per claim.
+    assert len(debug_sink) == 2 * (1 + len(claims))
+
+
+def test_display_sources_for_answer_forwards_debug_sink_without_changing_sources():
+    """``_display_sources_for_answer`` must pass debug_sink straight through
+    to ``_select_supporting_context`` and still return the identical
+    ``sources`` payload it would return without it."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+    answer = "The Transcript of Records fee is PHP 100.00 per page."
+
+    without_sink = _display_sources_for_answer([fee_chunk], answer)
+    debug_sink: list[dict] = []
+    with_sink = _display_sources_for_answer([fee_chunk], answer, debug_sink=debug_sink)
+
+    assert with_sink == without_sink
+    assert debug_sink
+
+
+def test_display_sources_for_answer_debug_sink_default_omitted_is_safe():
+    """Every existing call site in ``answer_qa_question`` calls
+    ``_display_sources_for_answer`` without ``debug_sink`` before this
+    instrumentation existed -- confirm the omitted default is exactly
+    ``None`` and causes no error."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+    result = _display_sources_for_answer(
+        [fee_chunk],
+        "The Transcript of Records fee is PHP 100.00 per page.",
+        merge_articles=False,
+    )
+    assert result and result[0]["title"] == "Transcript of Records"
+
+
+def test_answer_qa_question_accepts_citation_debug_sink_and_generation_usage_sink():
+    """End-to-end proof (through the real, unmocked
+    ``_select_supporting_context``/``_display_sources_for_answer`` seams,
+    with only the store and the Groq call itself faked) that the two new
+    keyword-only parameters are accepted, populate observationally, and
+    leave the returned ``QAResult`` identical to a call that omits them."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return "The Transcript of Records fee is PHP 100.00 per page."
+
+    store = FakeStore([fee_chunk])
+    question = "How much is the fee for a Transcript of Records?"
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        baseline = answer_qa_question(question)
+
+        debug_sink: list[dict] = []
+        usage_sink: dict = {}
+        instrumented = answer_qa_question(
+            question,
+            citation_debug_sink=debug_sink,
+            generation_usage_sink=usage_sink,
+        )
+
+    assert instrumented.answer == baseline.answer
+    assert instrumented.sources == baseline.sources
+    assert instrumented.confidence == baseline.confidence
+    assert debug_sink, "citation_debug_sink must be populated for a real answer path"
+    # generate_from_context above is a plain test side_effect, not the real
+    # generate_groq_answer, so it never touches generation_usage_sink --
+    # usage_sink's own population and graceful-degradation behavior against
+    # the real function is tested in test_groq_answer_service.py.
+    assert usage_sink == {}
+
+
+def test_answer_qa_question_signature_declares_sinks_keyword_only_default_none():
+    """Guards the exact contract the approved Stage 1+2 specification
+    requires: both new parameters are keyword-only and default to ``None``,
+    so every existing caller (including qa.py's route, which does not pass
+    them) is unaffected."""
+    import inspect
+
+    sig = inspect.signature(answer_qa_question)
+    for name in (
+        "citation_debug_sink",
+        "generation_usage_sink",
+        "answer_rewrite_sink",
+        "generation_context_sink",
+    ):
+        param = sig.parameters[name]
+        assert param.kind == inspect.Parameter.KEYWORD_ONLY
+        assert param.default is None
+
+
+# ---------------------------------------------------------------------------
+# Fresh Gold Benchmark Capture -- capture-infrastructure-only instrumentation
+# (``answer_rewrite_sink``, ``citation_id``/``audience`` on retrieved-chunk
+# debug rows, ``citation_id`` on citation-selector debug rows). Every test
+# below proves this instrumentation is purely observational: passing it
+# never changes what is selected/returned/retrieved, and a broken sink can
+# never break the real answer.
+# ---------------------------------------------------------------------------
+
+
+def _fee_pipeline_setup():
+    """Shared fixture for the answer_rewrite_sink tests below: a single
+    chunk and a Groq stub whose generated text is stable, simple prose that
+    never triggers the table-inversion or classification-template rewrite
+    paths -- so evidence_bearing_answer is byte-identical to the generated
+    text and the other two rewrite flags are reliably False."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return "The Transcript of Records fee is PHP 100.00 per page."
+
+    store = FakeStore([fee_chunk])
+    question = "How much is the fee for a Transcript of Records?"
+    return fee_chunk, generate_from_context, store, question
+
+
+def test_answer_rewrite_sink_omitted_behaves_like_pre_instrumentation():
+    """Every existing call site (including this whole test file, and
+    qa.py's route) omits answer_rewrite_sink entirely. A normal successful
+    answer path must behave exactly as it did before this parameter
+    existed -- no error, ordinary QAResult."""
+    fee_chunk, generate_from_context, store, question = _fee_pipeline_setup()
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(question)
+
+    assert result.answer == "The Transcript of Records fee is PHP 100.00 per page."
+
+
+def test_answer_rewrite_sink_enabled_returns_identical_qa_result_and_records_real_values():
+    """Passing answer_rewrite_sink must be purely observational: the
+    returned QAResult is identical to a call that omits it, and the sink is
+    populated with the real pipeline values for a genuine generated
+    answer -- not approximated or re-derived."""
+    fee_chunk, generate_from_context, store, question = _fee_pipeline_setup()
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        baseline = answer_qa_question(question)
+
+        rewrite_sink: dict = {}
+        instrumented = answer_qa_question(question, answer_rewrite_sink=rewrite_sink)
+
+    assert instrumented.answer == baseline.answer
+    assert instrumented.sources == baseline.sources
+    assert instrumented.confidence == baseline.confidence
+    assert rewrite_sink == {
+        "evidence_bearing_answer": "The Transcript of Records fee is PHP 100.00 per page.",
+        "table_inversion_corrected": False,
+        "classification_template_applied": False,
+        "used_recovered": False,
+    }
+
+
+class _RaisingSink(dict):
+    """A sink whose writes always raise, to prove instrumentation failure
+    can never propagate into the real answer path."""
+
+    def __setitem__(self, key, value):
+        raise RuntimeError("boom: broken instrumentation")
+
+
+def test_answer_rewrite_sink_failure_does_not_break_the_answer():
+    fee_chunk, generate_from_context, store, question = _fee_pipeline_setup()
+    broken_sink = _RaisingSink()
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(question, answer_rewrite_sink=broken_sink)
+
+    assert result.answer == "The Transcript of Records fee is PHP 100.00 per page."
+
+
+def test_retrieved_debug_citation_id_matches_displayed_source_identity_formula():
+    """_retrieved_debug's citation_id must use the same canonical identity
+    formula as a displayed source's citation_id (metadata chunk_id, else
+    document_id::chunk_index) -- proven here for a chunk whose document_id
+    and source_filename match no real row (so resolve_citation_document's
+    Postgres/filename fallback finds nothing and never substitutes a
+    resolved document_id -- see _raw_citation_id's own documented caveat
+    that the two are only guaranteed identical in that no-remap case), so
+    the two identities must be byte-identical."""
+    unresolvable_chunk = RetrievedChunk(
+        document_id="no-such-document-fixture-0f3a9c",
+        title="LSPU Student Handbook",
+        source_filename="no-such-file-fixture-0f3a9c.pdf",
+        chunk_index=1,
+        text="Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        relevance_score=0.9,
+        original_score=0.82,
+        reranked_score=0.9,
+        rerank_reasons=["test_match"],
+        metadata={
+            "chapter": "Citizen's Charter",
+            "article": "Registrar",
+            "section": "Transcript of Records",
+            "page_start": 46,
+            "audience": "both",
+        },
+    )
+
+    debug_rows = _retrieved_debug([unresolvable_chunk])
+    sources = _sources_from_chunks([unresolvable_chunk])
+
+    assert debug_rows[0]["citation_id"] == sources[0]["citation_id"]
+    assert debug_rows[0]["citation_id"] == _raw_citation_id(unresolvable_chunk, 1)
+    assert debug_rows[0]["citation_id"] == "no-such-document-fixture-0f3a9c::1"
+
+
+def test_retrieved_debug_audience_passthrough_without_changing_retrieval():
+    """audience metadata is copied through to retrieved_chunks debug rows
+    exactly as stored -- never substituted with "student" or any other
+    default. Uses role="office" (which bypasses filter_chunks_for_audience
+    entirely, per article_rag_indexer.filter_chunks_for_audience) so both a
+    faculty-tagged and an untagged chunk are retrieved regardless of their
+    audience tag, isolating "is audience copied correctly" from "did
+    retrieval filtering change" -- both chunks below must still both be
+    retrieved, proving this debug field addition does not alter retrieval."""
+    faculty_tagged = chunk(
+        "Faculty Load Policy",
+        "Faculty members carry a maximum load per semester as defined by policy.",
+        score=0.9,
+        path=("Faculty Manual", "Workload", "Faculty Load Policy"),
+    )
+    faculty_tagged.metadata["audience"] = "faculty"
+    untagged = chunk(
+        "Legacy Notice",
+        "Legacy notices remain posted for one academic year.",
+        score=0.7,
+        path=("Handbook", "General", "Legacy Notice"),
+    )
+    del untagged.metadata["audience"]
+
+    result, store, _mock_generate = run_question(
+        "What is the faculty load policy and the legacy notice rule?",
+        [faculty_tagged, untagged],
+        user_role="office",
+    )
+
+    debug_by_doc = {row["document_id"]: row for row in result.retrieved_chunks}
+    assert set(debug_by_doc) == {"faculty-load-policy", "legacy-notice"}
+    assert debug_by_doc["faculty-load-policy"]["audience"] == "faculty"
+    assert debug_by_doc["legacy-notice"]["audience"] is None
+
+
+# ---------------------------------------------------------------------------
+# Fresh Gold Benchmark Capture, Stage 4 -- generation_context_sink and
+# rewrite_stage_observed honesty. RETRIEVED CONTEXT != DISPLAYED CITATIONS
+# != FINAL GENERATION CONTEXT: generation_context_sink must capture the
+# exact final selected_context chunks AFTER _restore_missing_facet_context
+# and _prefer_active_topic_context have both already run, never the
+# earlier selected_for_context flags on retrieved_chunks debug rows.
+# ---------------------------------------------------------------------------
+
+
+def test_generation_context_sink_signature_keyword_only_default_none():
+    import inspect
+
+    sig = inspect.signature(answer_qa_question)
+    param = sig.parameters["generation_context_sink"]
+    assert param.kind == inspect.Parameter.KEYWORD_ONLY
+    assert param.default is None
+
+
+def test_generation_context_sink_not_reached_for_greeting():
+    """A branch that never calls generate_groq_answer must record
+    generation_invoked: False with an explicit status, never a silently
+    empty/ambiguous sink and never a fabricated chunk list."""
+    sink: dict = {}
+    result = answer_qa_question("Hello!", generation_context_sink=sink)
+    assert result.answer  # sanity: greeting path actually answered
+    assert sink["generation_invoked"] is False
+    assert sink["generation_succeeded"] is False
+    assert sink["status"] == "not_reached:greeting_short_circuit"
+    assert sink["final_context_chunks"] == []
+
+
+def test_generation_context_sink_not_reached_for_out_of_scope():
+    """The out-of-scope check runs AFTER get_knowledge_base_store() is
+    called (store.chunk_count is checked first) -- the store must be
+    patched here or this would hit a real Chroma connection."""
+    sink: dict = {}
+    store = FakeStore([])
+    with patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store):
+        answer_qa_question("Who is the president of the Philippines?", generation_context_sink=sink)
+    assert sink["generation_invoked"] is False
+    assert sink["status"] == "not_reached:out_of_scope_short_circuit"
+    assert sink["final_context_chunks"] == []
+
+
+def test_generation_context_sink_not_invoked_for_typed_answer_path():
+    """A typed/templated answer never calls generation at all -- the sink
+    must say so explicitly, not silently omit the fact.
+
+    Stage 5 fix: the previous version of this test relied on a specific
+    chunk/question fixture reliably tripping the real ``use_typed_now``
+    heuristic (``bool(typed_answer) and not is_service_howto_query(...)``),
+    which proved unstable and made the test self-skip rather than exercise
+    the branch. Per the Stage 5 instruction, this now directly controls
+    the two decision points that heuristic depends on --
+    ``_typed_answer_from_context`` and ``is_service_howto_query`` -- so the
+    EXISTING ``use_typed_now`` branch in ``answer_qa_question`` is forced
+    deterministically, without changing what that branch itself does or
+    touching any production selection/classification behavior."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+    store = FakeStore([fee_chunk])
+    sink: dict = {}
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering._typed_answer_from_context",
+            return_value="Typed answer: fee is PHP 100.00 per page.",
+        ),
+        patch("app.services.qa.question_answering.is_service_howto_query", return_value=False),
+        patch("app.services.qa.question_answering.generate_groq_answer") as mock_generate,
+    ):
+        result = answer_qa_question(
+            "How much is the fee for a Transcript of Records?",
+            generation_context_sink=sink,
+        )
+
+    mock_generate.assert_not_called()
+    assert result.answer == "Typed answer: fee is PHP 100.00 per page."
+    assert sink["generation_invoked"] is False
+    assert sink["generation_succeeded"] is False
+    assert sink["status"] == "not_invoked:typed_answer_used_instead_of_generation"
+    assert sink["final_context_chunks"] == []
+
+
+def test_generation_context_sink_invoked_and_succeeded_matches_selected_context():
+    """The success path's sink must reflect the real, final selected_context
+    -- safe metadata only, never chunk body text.
+
+    Uses an unresolvable document_id/source_filename (not the ``chunk()``
+    helper's default ``handbook.pdf``, which a real fixture row in this
+    test environment's document store resolves and REMAPS -- see
+    ``_raw_citation_id``'s own documented no-DB-resolution caveat) so the
+    sink's un-resolved citation_id and the displayed source's resolved one
+    are guaranteed to coincide for this equality assertion, rather than
+    incidentally exercising the documented divergence case."""
+    fee_chunk = RetrievedChunk(
+        document_id="no-such-document-fixture-5f2b8e",
+        title="LSPU Student Handbook",
+        source_filename="no-such-file-fixture-5f2b8e.pdf",
+        chunk_index=1,
+        text="Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        relevance_score=0.9,
+        original_score=0.82,
+        reranked_score=0.9,
+        rerank_reasons=["test_match"],
+        metadata={
+            "chapter": "Citizen's Charter",
+            "article": "Registrar",
+            "section": "Transcript of Records",
+            "page_start": 46,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([fee_chunk])
+    sink: dict = {}
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value="The Transcript of Records fee is PHP 100.00 per page.",
+        ),
+    ):
+        result = answer_qa_question(
+            "How much is the fee for a Transcript of Records?",
+            generation_context_sink=sink,
+        )
+
+    assert sink["generation_invoked"] is True
+    assert sink["generation_succeeded"] is True
+    assert sink["status"] == "invoked_and_succeeded:generation_answer_used"
+    assert len(sink["final_context_chunks"]) == 1
+    final_chunk = sink["final_context_chunks"][0]
+    assert final_chunk["citation_id"] == _raw_citation_id(fee_chunk, 1)
+    assert final_chunk["document_id"] == "no-such-document-fixture-5f2b8e"
+    assert final_chunk["audience"] == "both"
+    # Safe metadata only -- never chunk body text.
+    assert "content_preview" not in final_chunk
+    assert "text" not in final_chunk
+    # Matches what was actually displayed for this simple, single-chunk case.
+    assert {s["citation_id"] for s in result.sources} == {final_chunk["citation_id"]}
+
+
+def test_generation_context_sink_recovery_answer_used_status_when_used_recovered():
+    """Stage 5 item 4 fix: when the SUCCESS path's real ``used_recovered``
+    is True (the offline charter recovery replaced the generated text as
+    the displayed answer), the sink's status must say so explicitly --
+    "recovery_answer_used" -- never the "generation_answer_used" label,
+    which would overstate that the generated text is what the user was
+    shown. Forces the real ``used_recovered`` path deterministically by
+    mocking ``_recover_factual_charter_answer`` /
+    ``_indicates_missing_information`` (the same two decision points the
+    production code itself reads), never by changing answer
+    selection/recovery behavior."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+    store = FakeStore([fee_chunk])
+    sink: dict = {}
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value="A generated answer that will be overridden by recovery.",
+        ),
+        patch(
+            "app.services.qa.question_answering._recover_factual_charter_answer",
+            return_value="Recovered answer: PHP 100.00 per page at the Cashier.",
+        ),
+        patch(
+            "app.services.qa.question_answering._indicates_missing_information",
+            return_value=True,
+        ),
+    ):
+        result = answer_qa_question(
+            "How much is the fee for a Transcript of Records?",
+            generation_context_sink=sink,
+        )
+
+    assert result.answer == "Recovered answer: PHP 100.00 per page at the Cashier."
+    assert sink["generation_invoked"] is True
+    assert sink["generation_succeeded"] is True
+    assert sink["status"] == "invoked_and_succeeded:recovery_answer_used"
+
+
+def test_generation_context_sink_invoked_but_failed_records_context_sent_to_failed_call():
+    """A GroqAnswerError still recorded invoked=True (the call really was
+    attempted with this context) but succeeded=False (the displayed answer
+    did not come from it) -- the two must never be conflated."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+    store = FakeStore([fee_chunk])
+    sink: dict = {}
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=GroqAnswerError("503 service unavailable"),
+        ),
+    ):
+        answer_qa_question(
+            "How much is the fee for a Transcript of Records?",
+            generation_context_sink=sink,
+        )
+
+    assert sink["generation_invoked"] is True
+    assert sink["generation_succeeded"] is False
+    assert sink["status"] == "invoked_but_failed:conversational_or_recovered_fallback_used"
+    assert len(sink["final_context_chunks"]) == 1
+    assert sink["final_context_chunks"][0]["citation_id"] == _raw_citation_id(fee_chunk, 1)
+
+
+def test_generation_context_sink_failure_does_not_break_the_answer():
+    """Mirrors the answer_rewrite_sink failure-safety test: a broken sink
+    must never propagate into the real answer."""
+
+    class _RaisingDict(dict):
+        def __setitem__(self, key, value):
+            raise RuntimeError("boom: broken generation_context_sink")
+
+    result = answer_qa_question("Hello!", generation_context_sink=_RaisingDict())
+    assert result.answer == GREETING_ANSWER
+
+
+def test_answer_rewrite_sink_stays_empty_when_branch_never_reaches_rewrite_stage():
+    """Stage 4 item 7: an empty answer_rewrite_sink after a branch that
+    never reaches _record_answer_rewrite (e.g. greeting) must stay
+    genuinely empty -- never populated with (possibly misleading) False
+    values that would look identical to 'the rewrite stage ran and
+    nothing happened'. A capture script reading this must be able to tell
+    the two apart by checking `bool(sink)`."""
+    sink: dict = {}
+    answer_qa_question("Hello!", answer_rewrite_sink=sink)
+    assert sink == {}
+
+
+# --- Stage 4 item 9: proof that generation_context_sink reflects
+# selected_context strictly AFTER both _restore_missing_facet_context and
+# _prefer_active_topic_context have run -------------------------------------
+
+
+def test_generation_context_sink_recorded_after_both_context_mutation_calls_source_order():
+    """Structural guard: every generation-invoked _record_generation_context
+    call site must appear, in source order, AFTER both
+    _restore_missing_facet_context and _prefer_active_topic_context --
+    proving by construction that the sink can never reflect a pre-mutation
+    selected_context, regardless of which specific fixture a behavioral
+    test happens to exercise."""
+    import inspect
+
+    source = inspect.getsource(answer_qa_question)
+    restore_idx = source.index("_restore_missing_facet_context(")
+    prefer_idx = source.index("_prefer_active_topic_context(selected_context, active_topic)")
+    assert restore_idx > 0 and prefer_idx > restore_idx
+
+    invoked_status_markers = [
+        'status="invoked_but_failed:typed_answer_fallback_used_after_groq_error"',
+        'status="invoked_but_failed:conversational_or_recovered_fallback_used"',
+        # Stage 5 item 4: the success path's status is now a conditional
+        # expression on real used_recovered state, not a single literal --
+        # both of its branch strings must still appear after both mutations.
+        '"invoked_and_succeeded:recovery_answer_used"',
+        '"invoked_and_succeeded:generation_answer_used"',
+    ]
+    for marker in invoked_status_markers:
+        marker_idx = source.index(marker)
+        assert marker_idx > restore_idx, marker
+        assert marker_idx > prefer_idx, marker
+
+
+def test_generation_context_sink_reflects_active_topic_narrowing_for_slot_followup():
+    """Behavioral proof: for a slot follow-up ("How much does it cost?")
+    whose active topic is set by conversation history, the final
+    generation context must reflect ONLY the chunk _prefer_active_topic_
+    context actually kept for that topic -- not every retrieved chunk."""
+    tor = RetrievedChunk(
+        document_id="tor-service",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=1,
+        text=(
+            "Issuance of Transcript of Records (TOR)\n"
+            "Office / Division\nOffice of the Registrar\n"
+            "Fees\nUndergraduate: P75.00/page\n"
+        ),
+        relevance_score=0.9,
+        original_score=0.85,
+        reranked_score=0.9,
+        rerank_reasons=["test"],
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Issuance of Transcript of Records (TOR)",
+            "office": "Office of the Registrar",
+            "total_fees": "Undergraduate: P75.00/page",
+            "page_number": 40,
+            "audience": "both",
+        },
+    )
+    distractor = RetrievedChunk(
+        document_id="cafeteria",
+        title="Citizen Charter",
+        source_filename="Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+        chunk_index=2,
+        text="Cafeteria Tickets\nOffice / Division\nCafeteria Office\nFees\nP10.00 per meal ticket\n",
+        relevance_score=0.88,
+        original_score=0.8,
+        reranked_score=0.88,
+        rerank_reasons=["test"],
+        metadata={
+            "document_type": "citizen_charter",
+            "article_type": "service_procedure",
+            "source_section": "Cafeteria Tickets",
+            "office": "Cafeteria Office",
+            "total_fees": "P10.00 per meal ticket",
+            "page_number": 55,
+            "audience": "both",
+        },
+    )
+    store = FakeStore([tor, distractor])
+    history = [
+        {"role": "user", "content": "Tell me about Transcript of Records."},
+        {
+            "role": "assistant",
+            "content": "The Transcript of Records (TOR) is handled by the Office of the Registrar.",
+        },
+    ]
+    sink: dict = {}
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            return_value="It costs P75.00 per page.",
+        ),
+    ):
+        result = answer_qa_question(
+            "How much does it cost?",
+            history=history,
+            generation_context_sink=sink,
+        )
+
+    assert sink["generation_invoked"] is True
+    final_ids = {c["document_id"] for c in sink["final_context_chunks"]}
+    # The active-topic-matching TOR chunk must be present, and the
+    # unrelated cafeteria distractor must not be -- proving the sink
+    # reflects real post-active-topic-filtering context, not an unfiltered
+    # dump of everything retrieved.
+    assert "tor-service" in final_ids
+    assert "cafeteria" not in final_ids
+    # (Displayed sources' document_id is not compared here: a real fixture
+    # row for this test environment's "Laguna State Polytechnic
+    # University-CC_2026-1st Edition.pdf" filename resolves/remaps the
+    # displayed document_id via app.services.document_storage, per
+    # _raw_citation_id's own documented no-DB-resolution divergence caveat
+    # -- irrelevant to what this test actually proves, which is the
+    # active-topic narrowing itself, above.)
 
 
 # --- Phase 1 context-selection fix: select_context_chunks's rank-1 exemption

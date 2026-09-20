@@ -1188,4 +1188,255 @@ def test_dean_instruction_load_and_campaign_questions_are_faculty_restricted():
         "If I am designated as dean, how does my weekly instruction load change?"
     )
     assert is_faculty_restricted_query("Can I use class time to campaign for a political party?")
+
+
+# --- Phase 1 context-selection fix: false-positive domain penalties --------
+# (penalty_disciplinary_offense_out_of_domain misfiring on a routine "check
+# disciplinary records" verification step; penalty_awards_out_of_domain
+# misfiring on "honor" matching inside "Honorable Dismissal") and the Good
+# Moral Certificate query-expansion rule (previously injecting every
+# requester category regardless of what the user actually asked).
+
+
+def test_good_moral_certificate_not_falsely_penalized_as_disciplinary_content():
+    """A routine 'check disciplinary records' verification step -- present on
+    all three real Good Moral Certificate service cards -- must not itself
+    flag the whole chunk as disciplinary-policy content."""
+    ranked = rerank_chunks(
+        "I'm an LSPU alumnus and I need a Good Moral Certificate, what do I need to bring?",
+        [
+            chunk(
+                "Issuance of Good Moral Certificate (LSPU Alumni)",
+                "Requirement: Transcript of Record. Agency Action: Receive and check submitted "
+                "documents. Check disciplinary records. Preparation of Good Moral Certificate.",
+                0.88,
+                metadata={"chapter": "Citizen's Charter", "content_type": "service_card"},
+            ),
+        ],
+    )
+    assert "penalty_disciplinary_offense_out_of_domain" not in ranked[0].rerank_reasons
+
+
+def test_genuine_disciplinary_offense_content_still_penalized_out_of_domain():
+    """A real disciplinary-policy chunk (offense classification, sanctions) --
+    not merely a routine records-check mention -- must still be penalized
+    when the query is off-domain. Same fixture as the pre-existing
+    'Non-wearing of ID' regression test, kept here as an explicit Phase 1
+    negative control."""
+    ranked = rerank_chunks(
+        "What should I do about attendance after being absent due to illness?",
+        [
+            chunk(
+                "Non-wearing of ID",
+                "Minor offense: non-wearing of identification card is subject to sanction.",
+                0.91,
+                metadata={"chapter": "Student Discipline", "article": "Minor Offenses", "content_type": "disciplinary_rule"},
+            ),
+            chunk(
+                "Attendance Policy",
+                "For absence due to illness, submit an excuse slip and medical certificate to OSAS.",
+                0.72,
+                metadata={"chapter": "Undergraduate Academic Policies", "article": "Attendance"},
+            ),
+        ],
+    )
+    noisy = next(r for r in ranked if r.metadata["section"] == "Non-wearing of ID")
+    assert "penalty_disciplinary_offense_out_of_domain" in noisy.rerank_reasons
+
+
+def test_refunding_of_fees_not_falsely_penalized_as_awards_content():
+    """'honor' must not match as a substring inside 'Honorable Dismissal' --
+    a withdrawal/transfer status with no connection to awards or honors."""
+    ranked = rerank_chunks(
+        "If I'm granted a Leave of Absence during the third week of classes, what percentage of "
+        "my paid fees will be refunded?",
+        [
+            chunk(
+                "Refunding of Fees",
+                "A student who has paid the enrolment fees and who is granted Honorable Dismissal/"
+                "Transfer Credentials or Leave of Absence (LOA) is entitled to a refund of their "
+                "fees: 75% within the first week, 50% within the second to fourth week, no refund "
+                "after the fourth week.",
+                0.87,
+                metadata={"chapter": "Undergraduate Academic Policies", "article": "Registration"},
+            ),
+        ],
+    )
+    assert "penalty_awards_out_of_domain" not in ranked[0].rerank_reasons
+
+
+def test_genuine_awards_content_still_penalized_out_of_domain():
+    """A real awards/honors/recognition chunk must still be penalized when
+    the query is off-domain -- the word-boundary fix must not blind the
+    penalty to genuine occurrences of 'award'/'honor'."""
+    ranked = rerank_chunks(
+        "What is scholastic delinquency under retention policies?",
+        [
+            chunk(
+                "Academic Awards",
+                "Awards and honors are granted to students with excellent grades and recognition.",
+                0.9,
+            ),
+            chunk(
+                "Scholastic Delinquency",
+                "Retention Policies define scholastic delinquency, warning, probation, dropped status, and dismissal.",
+                0.71,
+                metadata={"chapter": "Undergraduate Academic Policies", "article": "Retention Policies"},
+            ),
+        ],
+    )
+    noisy = next(r for r in ranked if r.metadata["section"] == "Academic Awards")
+    assert "penalty_awards_out_of_domain" in noisy.rerank_reasons
+
+
+def test_good_moral_alumni_intent_does_not_inject_undergraduate():
+    prepared = prepare_retrieval_query(
+        "I'm an LSPU alumnus and I need a Good Moral Certificate, what do I need to bring?"
+    )
+    expanded = prepared.expanded_query.casefold()
+    assert "good_moral_certificate_alumni" in prepared.matched_expansion_rules
+    assert "undergraduate" not in expanded
+    assert "alumni" in expanded or "alumnus" in expanded
+
+
+def test_good_moral_alumni_paraphrase_still_matches_alumni_rule():
+    prepared = prepare_retrieval_query(
+        "I already graduated from LSPU -- how do I get a certificate of good moral character?"
+    )
+    assert "good_moral_certificate_alumni" in prepared.matched_expansion_rules
+    assert "undergraduate" not in prepared.expanded_query.casefold()
+
+
+def test_good_moral_transferee_intent_does_not_inject_other_categories():
+    prepared = prepare_retrieval_query(
+        "As a transferee, what do I need for a good moral certificate?"
+    )
+    expanded = prepared.expanded_query.casefold()
+    assert "good_moral_certificate_transferee" in prepared.matched_expansion_rules
+    assert "transferee" in expanded
+    assert "undergraduate" not in expanded
+    assert "alumnus" not in expanded and "alumni" not in expanded
+
+
+def test_good_moral_undergraduate_intent_does_not_inject_other_categories():
+    prepared = prepare_retrieval_query(
+        "As a currently enrolled undergraduate student, how do I request a good moral certificate?"
+    )
+    expanded = prepared.expanded_query.casefold()
+    assert "good_moral_certificate_undergraduate" in prepared.matched_expansion_rules
+    assert "undergraduate" in expanded
+    assert "transferee" not in expanded
+    assert "alumnus" not in expanded and "alumni" not in expanded
+
+
+def test_good_moral_generic_intent_preserves_recall_across_all_variants():
+    """No requester category stated -- must still expand toward all three
+    variants so a genuinely ambiguous question keeps its recall."""
+    prepared = prepare_retrieval_query("How do I get a Good Moral Certificate?")
+    expanded = prepared.expanded_query.casefold()
+    assert "good_moral_certificate_generic" in prepared.matched_expansion_rules
+    assert "undergraduate" in expanded
+    assert "alumnus" in expanded
+    assert "transferee" in expanded
+
+
+def test_fg_j1_alumni_good_moral_chunk_no_longer_receives_false_penalty():
+    """Direct reranker-level regression test for the fg_j1 Fresh Gold
+    failure: the Alumni variant, scored against an explicit alumni query,
+    must not carry the disciplinary false-positive that previously caused
+    it to be vetoed during context selection."""
+    ranked = rerank_chunks(
+        "I'm an LSPU alumnus and I need a Good Moral Certificate, what do I need to bring?",
+        [
+            chunk(
+                "Issuance of Good Moral Certificate (LSPU Alumni)",
+                "Requirement: Transcript of Record (TOR). Agency Action: Receive and check "
+                "submitted documents. Check disciplinary records. Preparation of Good Moral "
+                "Certificate. Fees: None.",
+                0.88,
+                metadata={"chapter": "Citizen's Charter"},
+            ),
+            chunk(
+                "Issuance of Good Moral Certificate (Undergraduate)",
+                "Requirement: Certificate of Registration. Agency Action: Receive and check "
+                "submitted documents. Check disciplinary records. Preparation of Good Moral "
+                "Certificate. Fees: None.",
+                0.87,
+                metadata={"chapter": "Citizen's Charter"},
+            ),
+        ],
+    )
+    reasons_by_section = {r.metadata["section"]: r.rerank_reasons for r in ranked}
+    assert "penalty_disciplinary_offense_out_of_domain" not in reasons_by_section[
+        "Issuance of Good Moral Certificate (LSPU Alumni)"
+    ]
+    assert "penalty_disciplinary_offense_out_of_domain" not in reasons_by_section[
+        "Issuance of Good Moral Certificate (Undergraduate)"
+    ]
+
+
+def test_fg_a1_refunding_of_fees_chunk_no_longer_receives_false_penalty():
+    """Direct reranker-level regression test for the fg_a1 Fresh Gold
+    failure."""
+    ranked = rerank_chunks(
+        "If I'm granted a Leave of Absence during the third week of classes, what percentage of "
+        "my paid fees will be refunded?",
+        [
+            chunk(
+                "Refunding of Fees",
+                "A student who has paid the enrolment fees and who is granted Honorable "
+                "Dismissal/Transfer Credentials or Leave of Absence (LOA) is entitled to a "
+                "refund of their fees: 75% within the first week, 50% within the second to "
+                "fourth week, no refund after the fourth week.",
+                0.87,
+                metadata={"chapter": "Undergraduate Academic Policies", "article": "Registration"},
+            ),
+        ],
+    )
+    assert "penalty_awards_out_of_domain" not in ranked[0].rerank_reasons
     assert not is_faculty_restricted_query("What is the maximum residence rule?")
+
+
+def test_generic_policy_title_penalty_ignores_ancestor_chapter_label():
+    """A chunk's OWN title decides whether it is a generic "* Policy" wrapper,
+    not the chapter/article label it happens to be filed under.
+
+    ``cec01713::34`` ("Classifications of Students") is specifically titled
+    and answers "How many units ... Junior student?" from its own body text,
+    but it is filed under the "Undergraduate Academic Policies" chapter. That
+    ancestor label alone must not trigger
+    ``penalty_generic_policy_title_without_topic`` -- doing so wrongly
+    penalized this and 94 other similarly-filed chunks (fg_c2 investigation).
+    """
+    ranked = rerank_chunks(
+        "How many units do I need to have earned to be classified as a Junior student?",
+        [
+            chunk(
+                "Classifications of Students",
+                "Junior. A student who has earned fifty to seventy-five percent (50%-75%) "
+                "of the total units required in the entire course.",
+                0.89,
+                metadata={"chapter": "Undergraduate Academic Policies"},
+            ),
+        ],
+    )
+    assert "penalty_generic_policy_title_without_topic" not in ranked[0].rerank_reasons
+    assert "boost_distinctive_content_terms:units,earned,junior" in ranked[0].rerank_reasons
+
+
+def test_generic_policy_title_penalty_still_applies_to_own_generic_title():
+    """A chunk that is ITSELF generically titled (no ancestor chapter needed)
+    must still receive the penalty -- the fix narrows the signal source, it
+    does not remove the check.
+    """
+    ranked = rerank_chunks(
+        "What is the haircut policy?",
+        [
+            chunk(
+                "Attendance Policy",
+                "A brief mention of haircut grooming standards appears in a footnote here.",
+                0.7,
+            ),
+        ],
+    )
+    assert "penalty_generic_policy_title_without_topic" in ranked[0].rerank_reasons

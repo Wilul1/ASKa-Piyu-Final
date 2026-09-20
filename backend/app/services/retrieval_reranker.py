@@ -122,6 +122,17 @@ DRESS_CODE_TERMS = (
 PROCEDURAL_TERMS = ("ojt", "on-the-job", "on the job", "procedure", "procedures", "process flow")
 APPENDIX_TERMS = ("appendix", "appendices", "form template")
 AWARD_TERMS = ("award", "awards", "honor", "honors", "medal", "recognition")
+# Word-boundary version of AWARD_TERMS: a plain substring check on "honor"/
+# "honors" also matches inside unrelated words such as "honorable".
+_AWARD_TERMS_RE = re.compile(r"\b(?:" + "|".join(re.escape(term) for term in AWARD_TERMS) + r")\b")
+# DISCIPLINARY_TERMS minus "disciplinary"/"discipline" -- used to detect
+# whether a chunk has any disciplinary signal STRONGER than a routine
+# "check disciplinary records" verification-step mention (see
+# _domain_noise_penalty).
+_NON_RECORDS_DISCIPLINARY_TERMS = tuple(
+    term for term in DISCIPLINARY_TERMS if term not in ("disciplinary", "discipline")
+)
+_DISCIPLINARY_RECORDS_CHECK_RE = re.compile(r"\b(?:disciplinary|discipline)\s+records?\b")
 FACULTY_AUDIENCE_TERMS = (
     "faculty",
     "faculty member",
@@ -417,15 +428,69 @@ QUERY_EXPANSION_RULES = (
         required_any_terms=("citizen", "charter", "lspu", "vision", "edition"),
         blocked_terms=("how much", "fee", "fees", "cost", "diploma", "tor", "transcript", "which office"),
     ),
+    # Good Moral Certificate has three near-duplicate Citizen's Charter
+    # variants (Undergraduate / LSPU Alumni / Transferee). The requester's
+    # own category, when stated, must not be diluted by unconditionally
+    # injecting the OTHER categories into the expanded query -- that was
+    # giving the Undergraduate variant an unearned edge on every Good Moral
+    # question regardless of who was actually asking. Split into
+    # category-specific rules (each requiring its own category's wording and
+    # blocking the others) plus a generic fallback for when no category is
+    # named, which still expands toward all three variants to preserve
+    # recall on an ambiguous question.
     QueryExpansionRule(
-        name="good_moral_certificate",
+        name="good_moral_certificate_alumni",
+        trigger_terms=("good moral", "good moral certificate", "certificate of good moral"),
+        expansion_terms=(
+            "issuance of good moral certificate",
+            "alumnus",
+            "alumni",
+            "lspu alumni",
+            "office of the student affairs",
+            "citizen charter",
+        ),
+        required_any_terms=("alumnus", "alumni", "alumna", "already graduated", "graduate of lspu"),
+        blocked_terms=("transferee", "transfer student", "transferring", "undergraduate", "current student", "currently enrolled"),
+    ),
+    QueryExpansionRule(
+        name="good_moral_certificate_transferee",
+        trigger_terms=("good moral", "good moral certificate", "certificate of good moral"),
+        expansion_terms=(
+            "issuance of good moral certificate",
+            "transferee",
+            "office of the student affairs",
+            "citizen charter",
+        ),
+        required_any_terms=("transferee", "transfer student", "transferring", "transferred"),
+        blocked_terms=("alumnus", "alumni", "alumna", "undergraduate", "current student", "currently enrolled"),
+    ),
+    QueryExpansionRule(
+        name="good_moral_certificate_undergraduate",
+        trigger_terms=("good moral", "good moral certificate", "certificate of good moral"),
+        expansion_terms=(
+            "issuance of good moral certificate",
+            "undergraduate",
+            "office of the student affairs",
+            "citizen charter",
+        ),
+        required_any_terms=("undergraduate", "current student", "currently enrolled", "enrolled student"),
+        blocked_terms=("alumnus", "alumni", "alumna", "transferee", "transfer student", "transferring"),
+    ),
+    QueryExpansionRule(
+        name="good_moral_certificate_generic",
         trigger_terms=("good moral", "good moral certificate", "certificate of good moral"),
         expansion_terms=(
             "issuance of good moral certificate",
             "undergraduate",
             "alumnus",
+            "transferee",
             "office of the student affairs",
             "citizen charter",
+        ),
+        blocked_terms=(
+            "alumnus", "alumni", "alumna", "already graduated", "graduate of lspu",
+            "transferee", "transfer student", "transferring", "transferred",
+            "undergraduate", "current student", "currently enrolled", "enrolled student",
         ),
     ),
     QueryExpansionRule(
@@ -846,6 +911,7 @@ def rerank_chunks(
         content = f"{title} {path} {metadata_labels} {chunk.text}"
         normalized_content = _normalize(content)
         normalized_title_path = _normalize(f"{title} {path} {metadata_labels}")
+        normalized_own_title = _normalize(title)
         metadata_content_type = _normalize(str(metadata.get("content_type") or ""))
 
         score += _keyword_overlap_boost(normalized_query, normalized_title_path, reasons)
@@ -863,6 +929,7 @@ def rerank_chunks(
             normalized_title_path,
             normalized_content,
             reasons,
+            normalized_own_title=normalized_own_title,
         )
 
         domain = _detected_domain(profile)
@@ -1666,6 +1733,8 @@ def _distinctive_term_boost(
     normalized_title_path: str,
     normalized_content: str,
     reasons: list[str],
+    *,
+    normalized_own_title: str = "",
 ) -> float:
     """Boost chunks that carry the query's distinctive topic words.
 
@@ -1697,11 +1766,16 @@ def _distinctive_term_boost(
 
     # Soft penalty when the title is a generic "* Policy" page and none of the
     # distinctive query terms appear there — common failure for "X policy?".
-    title_tokens = set(re.findall(r"[a-z0-9]+", normalized_title_path))
+    # Judged from the chunk's OWN title only, not normalized_title_path (which
+    # also folds in ancestor chapter/article labels like "Undergraduate
+    # Academic Policies") -- otherwise a specifically-titled chunk merely
+    # filed under a *Policies* chapter is wrongly treated as a generic wrapper
+    # page itself.
+    own_title_tokens = set(re.findall(r"[a-z0-9]+", normalized_own_title))
     if (
         distinctive
         and not title_hits
-        and ("policy" in title_tokens or "policies" in title_tokens)
+        and ("policy" in own_title_tokens or "policies" in own_title_tokens)
         and not any(_token_matches_folded(token, title_folded) for token in distinctive)
     ):
         boost -= 0.22
@@ -2163,7 +2237,20 @@ def _domain_noise_penalty(
     penalty = 0.0
     if _contains_any(normalized_content, DISCIPLINARY_TERMS) or content_type in {"disciplinary_rule", "offense"}:
         # Identity-document service answers often mention ID cards; do not treat as disciplinary noise.
-        if not (
+        # A routine "check disciplinary records" verification step -- common to
+        # many unrelated Citizen's Charter services (Good Moral Certificate,
+        # Clearance, ...) that confirm a student has no record before issuing a
+        # document -- is not itself disciplinary-POLICY content. Only skip the
+        # penalty when that records-check phrase is the SOLE disciplinary
+        # signal present; any stronger indicator (an actual offense/uniform/
+        # sanction term, or a chunk tagged as disciplinary-policy content)
+        # still penalizes normally.
+        is_benign_disciplinary_records_check = (
+            content_type not in {"disciplinary_rule", "offense"}
+            and not _contains_any(normalized_content, _NON_RECORDS_DISCIPLINARY_TERMS)
+            and bool(_DISCIPLINARY_RECORDS_CHECK_RE.search(normalized_content))
+        )
+        if not is_benign_disciplinary_records_check and not (
             profile.get("identity_document")
             and _contains_any(normalized_content, ("identification card", "id validation", "student id"))
         ):
@@ -2179,7 +2266,11 @@ def _domain_noise_penalty(
     ):
         penalty -= 0.4
         reasons.append("penalty_unrelated_procedure")
-    if not profile["awards"] and _contains_any(normalized_content, AWARD_TERMS):
+    # Word-boundary match, not substring: AWARD_TERMS' "honor"/"honors" would
+    # otherwise match inside unrelated words like "honorable" (as in
+    # "Honorable Dismissal", a withdrawal/transfer status with no connection
+    # to awards or recognitions).
+    if not profile["awards"] and _AWARD_TERMS_RE.search(normalized_content):
         penalty -= 0.35
         reasons.append("penalty_awards_out_of_domain")
     if profile["curricular"]:

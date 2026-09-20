@@ -37,6 +37,7 @@ from app.services.knowledge_taxonomy import (
     DEFAULT_CATEGORY,
     DEFAULT_SUBCATEGORY,
     GENERIC_SERVICE_NAME_TOKENS,
+    LOW_CONFIDENCE_THRESHOLD,
     classify_question,
     has_distinctive_token,
     load_taxonomy,
@@ -5923,11 +5924,30 @@ def _detected_query_domain(normalized_query: str) -> str | None:
 
 
 def _query_taxonomy_labels(question: str) -> tuple[str | None, str | None]:
+    """The query's taxonomy domain, gated to only what's trustworthy enough
+    to steer context selection -- this is the sole caller of
+    ``classify_question`` for that purpose (via ``_detected_query_domain``);
+    any other caller that wants the raw diagnostic classification (including
+    its confidence/method) should call ``classify_question`` directly, which
+    this gate never touches.
+
+    Below ``LOW_CONFIDENCE_THRESHOLD`` -- the same boundary
+    ``classify_chunk`` already uses to decide a classification is reliable
+    enough to use without further (LLM) verification -- a low-confidence
+    guess (typically the embedding-similarity fallback firing on a question
+    with no real rule-based keyword match) must not be treated as an
+    authoritative domain. Returning ``None, None`` here is the existing
+    "no domain" contract ``_detected_query_domain`` already handles for the
+    default/unclassified case; an uncertain guess is treated the same way
+    as no classification at all, never coerced into a specific domain.
+    """
     result = classify_question(question)
     if (
         result.category == DEFAULT_CATEGORY
         and result.subcategory == DEFAULT_SUBCATEGORY
     ):
+        return None, None
+    if result.confidence < LOW_CONFIDENCE_THRESHOLD:
         return None, None
     category = str(result.category or "").strip() or None
     subcategory = str(result.subcategory or "").strip() or None

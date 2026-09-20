@@ -18,13 +18,16 @@ from app.services.qa.question_answering import (
     _citation_support_score,
     _confidence_for,
     _grounding_tokens,
+    _detected_query_domain,
     _select_supporting_context,
     answer_qa_question,
     detect_collection_intent,
     detect_broad_query,
     format_retrieved_context,
     is_greeting_query,
+    select_context_chunks,
 )
+from app.services.knowledge_taxonomy import ClassificationResult
 
 
 def chunk(
@@ -792,7 +795,17 @@ def test_broad_program_questions_select_multiple_curricular_sources(question: st
     assert result.detected_intent == PROGRAM_COLLECTION
     assert result.collection_mode is True
     assert result.selected_context_count == 4
-    assert result.confidence == "high"
+    # "medium", not "high", since the Phase 2 confidence-gating fix
+    # (question_answering._query_taxonomy_labels): the real classify_question()
+    # confidence for this generic phrasing is ~0.25-0.31 (embedding-similarity
+    # fallback, no strong rule-based keyword match), below LOW_CONFIDENCE_
+    # THRESHOLD, so query_domain is now None and _confidence_for's broad-query
+    # "high" tier (which needs domain_match_count >= 2) can no longer be
+    # reached here -- the correct, retrieved, cited context is unaffected
+    # (all source/context assertions above still hold); only the displayed
+    # confidence label changed, and arguably more honestly reflects the
+    # classifier's genuine uncertainty for this generic wording.
+    assert result.confidence == "medium"
 
 
 @pytest.mark.parametrize(
@@ -1013,7 +1026,15 @@ def test_broad_services_question_prioritizes_student_service_sources():
     assert "registrar maintains student records" in context
     assert "disciplinary sanctions" not in context
     assert result.broad_query is True
-    assert result.confidence == "high"
+    # "medium", not "high" -- same Phase 2 dependency as
+    # test_broad_program_questions_select_multiple_curricular_sources above:
+    # the real classify_question() confidence for "What services does OSAS
+    # provide?" is ~0.27 (embedding-similarity fallback), below
+    # LOW_CONFIDENCE_THRESHOLD, so query_domain is None and the broad-query
+    # "high" tier (domain_match_count >= 3) is unreachable. Context selection
+    # itself is unaffected -- all three correct sources are still selected
+    # and the disciplinary chunk is still excluded, per the assertions above.
+    assert result.confidence == "medium"
 
 
 def test_broad_scholarships_question_prioritizes_scholarship_sources():
@@ -2532,3 +2553,181 @@ def test_citation_precision_no_fabricated_source_for_degraded_answer():
 
     assert result.sources == []
 
+
+# --- Phase 1 context-selection fix: select_context_chunks's rank-1 exemption
+# from the strong-penalty veto must not be the ONLY route a legitimate,
+# well-scored, non-penalized chunk has to survive -- regression coverage for
+# the fg_j1/fg_a1 Fresh Gold failures at the selection layer itself (the
+# reranker-level false-positive fix is covered separately in
+# tests/test_retrieval_reranker.py).
+
+
+def test_select_context_chunks_keeps_close_scoring_sibling_without_strong_penalty():
+    """Mirrors fg_j1's post-fix shape: three near-duplicate chunks close in
+    score, none carrying a strong-penalty rerank reason. Before the Phase 1
+    reranker fix, the Alumni/Transferee siblings here would have carried
+    penalty_disciplinary_offense_out_of_domain and been vetoed by the rank-1
+    exemption despite otherwise qualifying via keep_close_to_rank_1; with
+    that false penalty absent (as constructed here), all three must survive."""
+    undergrad = chunk(
+        "Good Moral (Undergraduate)", "Certificate of Registration required.", score=3.42,
+        reasons=["title_path_keyword_match", "boost_exact_service_title:good moral"],
+    )
+    alumni = chunk(
+        "Good Moral (Alumni)", "Transcript of Record required.", score=3.11,
+        reasons=["title_path_keyword_match", "boost_exact_service_title:good moral"],
+    )
+    transferee = chunk(
+        "Good Moral (Transferee)", "Certificate of Transfer required.", score=3.34,
+        reasons=["title_path_keyword_match", "boost_exact_service_title:good moral"],
+    )
+    selected, _ = select_context_chunks(
+        "I'm an LSPU alumnus and I need a Good Moral Certificate, what do I need to bring?",
+        [undergrad, transferee, alumni],
+    )
+    selected_titles = {c.metadata["section"] for c in selected}
+    assert "Good Moral (Alumni)" in selected_titles
+
+
+def test_select_context_chunks_drops_sibling_when_strong_penalty_present_and_not_rank_1():
+    """Negative control: the rank-1 exemption's veto must still function
+    normally for a chunk that legitimately carries a strong penalty and is
+    not rank 1 -- Phase 1 narrowed WHEN the penalty fires, not whether the
+    veto itself still applies once it does."""
+    rank1 = chunk(
+        "Attendance Policy", "Submit an excuse slip for absence.", score=3.5,
+        reasons=["keep_rank_1", "keep_close_to_rank_1"],
+    )
+    penalized_sibling = chunk(
+        "Non-wearing of ID", "Minor offense: non-wearing of identification card is subject to sanction.",
+        score=3.3, reasons=["keep_close_to_rank_1", "penalty_disciplinary_offense_out_of_domain"],
+    )
+    selected, decisions = select_context_chunks(
+        "What should I do about attendance after being absent due to illness?",
+        [rank1, penalized_sibling],
+    )
+    selected_titles = {c.metadata["section"] for c in selected}
+    assert "Non-wearing of ID" not in selected_titles
+    kept, reasons = decisions[id(penalized_sibling)]
+    assert kept is False
+
+
+# --- Phase 2 context-selection fix: a low-confidence classify_question()
+# guess must not become an authoritative query_domain for context-selection
+# boosting. Gated in _query_taxonomy_labels (question_answering.py), the
+# sole caller of classify_question() used for that purpose -- classify_
+# question() itself is unchanged and still returns its full diagnostic
+# result (confidence/method included) for any other caller.
+
+
+def _fake_classification(category, subcategory, confidence, method="rule"):
+    return ClassificationResult(
+        category=category, subcategory=subcategory, office="Registrar",
+        confidence=confidence, method=method, keywords=(),
+    )
+
+
+def test_low_confidence_embedding_fallback_does_not_set_query_domain():
+    with patch(
+        "app.services.qa.question_answering.classify_question",
+        return_value=_fake_classification("Student Services", "Student Welfare", 0.28, "embedding_similarity"),
+    ):
+        domain = _detected_query_domain("how many units do i need to be classified as a junior student")
+    assert domain is None
+
+
+def test_high_confidence_rule_classification_still_sets_query_domain():
+    with patch(
+        "app.services.qa.question_answering.classify_question",
+        return_value=_fake_classification("Student Records", "Good Moral", 0.98, "rule"),
+    ):
+        domain = _detected_query_domain("good moral certificate alumni")
+    assert domain == "Student Records"
+
+
+def test_confidence_exactly_at_threshold_is_accepted():
+    from app.services.knowledge_taxonomy import LOW_CONFIDENCE_THRESHOLD
+
+    with patch(
+        "app.services.qa.question_answering.classify_question",
+        return_value=_fake_classification("Academic Policies", "Registration", LOW_CONFIDENCE_THRESHOLD, "rule"),
+    ):
+        domain = _detected_query_domain("some question")
+    assert domain == "Academic Policies"
+
+
+def test_confidence_just_below_threshold_is_rejected():
+    from app.services.knowledge_taxonomy import LOW_CONFIDENCE_THRESHOLD
+
+    with patch(
+        "app.services.qa.question_answering.classify_question",
+        return_value=_fake_classification("Academic Policies", "Registration", LOW_CONFIDENCE_THRESHOLD - 0.001, "rule"),
+    ):
+        domain = _detected_query_domain("some question")
+    assert domain is None
+
+
+def test_no_domain_path_does_not_crash_context_selection():
+    """A rejected/absent query_domain must flow safely through the whole
+    selection loop -- no keep_same_domain reason should ever be produced,
+    and selection must complete normally rather than raising."""
+    with patch(
+        "app.services.qa.question_answering.classify_question",
+        return_value=_fake_classification("Student Services", "Student Welfare", 0.28, "embedding_similarity"),
+    ):
+        gold = chunk(
+            "Classifications of Students", "Junior = 50%-75% of units earned.", score=1.26,
+            reasons=["boost_distinctive_content_terms:units,earned,junior"],
+        )
+        irrelevant_but_domain_tagged = chunk(
+            "Graduate internship rule", "Consult and assist student interns in revolving problems.", score=1.47,
+            reasons=["keep_close_to_rank_1"],
+        )
+        selected, decisions = select_context_chunks(
+            "how many units do i need to be classified as a junior student",
+            [irrelevant_but_domain_tagged, gold],
+        )
+    for _kept, reasons in decisions.values():
+        assert not any(r.startswith("keep_same_domain") for r in reasons)
+
+
+def test_fg_c2_gold_chunk_survives_context_selection_with_real_classifier():
+    """End-to-end regression anchor using the REAL classify_question() (not
+    mocked) for the exact Fresh Gold fg_c2 question -- pins the observed
+    0.28-confidence embedding-similarity misclassification and confirms the
+    gate suppresses it in the live classifier, not just a mocked one."""
+    from app.services.knowledge_taxonomy import classify_question
+
+    q = "How many units do I need to have earned to be classified as a Junior student?"
+    real_result = classify_question(q.casefold())
+    assert real_result.confidence < 0.45  # pins the documented low-confidence finding
+    domain = _detected_query_domain(q.casefold())
+    assert domain is None
+
+
+def test_fg_k1_and_fg_j1_and_fg_e1_real_classifications_behave_as_expected():
+    """Regression anchors for the three named controls: fg_k1's real
+    classification is also low-confidence and must now be suppressed too
+    (its earlier success never depended on the domain boost); fg_j1 and
+    fg_e1's real classifications are high-confidence and must be
+    preserved."""
+    cases = {
+        "fg_k1 (low confidence, gate suppresses)": (
+            "What percentage of total units must I have completed to be considered a Sophomore instead of a Freshman?",
+            False,
+        ),
+        "fg_j1 (high confidence, gate preserves)": (
+            "I'm an LSPU alumnus and I need a Good Moral Certificate, what do I need to bring?",
+            True,
+        ),
+        "fg_e1 (high confidence, gate preserves)": (
+            "What do I need to submit to the Budget Office to get funding approved for a request letter from my student organization?",
+            True,
+        ),
+    }
+    for label, (question, expect_domain) in cases.items():
+        domain = _detected_query_domain(question.casefold())
+        if expect_domain:
+            assert domain is not None, label
+        else:
+            assert domain is None, label

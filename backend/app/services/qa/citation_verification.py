@@ -217,6 +217,49 @@ Include exactly one entry per claim_id you were given. Use an empty list
 when no candidate supports that claim.
 """.strip()
 
+# Requests the provider constrain its OWN generation to this exact shape
+# (OpenRouter's documented response_format=json_schema contract -- verified
+# against the currently configured model's own listed accepted parameters
+# before adding this, per the investigation this change is based on).
+# Defense in depth, not a trust boundary: _parse_and_validate() below still
+# independently re-validates every field from scratch regardless of whether
+# the provider actually honored this constraint -- this can only IMPROVE
+# the odds of getting parseable output, it never substitutes for or
+# weakens that validation. If the configured provider/model combination
+# does not actually support this (contrary to what it lists), OpenRouter's
+# own documented behavior is to fail the request with an HTTP error --
+# which the existing httpx.HTTPError handler below already maps to
+# failure_category="provider_error", not a new/unhandled failure shape.
+_VERIFIER_RESPONSE_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "citation_verification_claims",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim_id": {"type": "string"},
+                            "supporting_citation_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["claim_id", "supporting_citation_ids"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["claims"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 
 def _build_verifier_messages(
     claims: list[Claim], candidates: list[CandidateEvidence]
@@ -266,6 +309,7 @@ def _call_verifier(messages: list[dict[str, str]]) -> tuple[str, dict[str, Any] 
                     "model": settings.groq_model,
                     "temperature": 0.0,
                     "messages": messages,
+                    "response_format": _VERIFIER_RESPONSE_SCHEMA,
                 },
             )
             response.raise_for_status()

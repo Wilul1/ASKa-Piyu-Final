@@ -451,6 +451,66 @@ def test_shadow_mode_invokes_verifier_and_reports_outcome_fields():
     assert outcome.verified_citation_ids == ["a"]  # computed for diagnostics either way
 
 
+# --- structured output request (response_format) ------------------------------
+
+
+def test_verifier_request_includes_structured_output_response_format():
+    """The verifier request must ask the provider to constrain its own
+    output to the exact {claims: [{claim_id, supporting_citation_ids}]}
+    shape via response_format -- verified against the currently configured
+    model's own documented accepted parameters before this was added (see
+    citation_v2_invalid_response_investigation.json and the commit this
+    test accompanies). This is additive request-shaping only; it must never
+    be treated as a trust boundary -- see the fail-closed tests below,
+    which prove strict re-validation still happens regardless."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["a"]}]})
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    mock_client.post.assert_called_once()
+    _, kwargs = mock_client.post.call_args
+    body = kwargs["json"]
+    assert "response_format" in body
+    assert body["response_format"]["type"] == "json_schema"
+    schema = body["response_format"]["json_schema"]["schema"]
+    assert schema["required"] == ["claims"]
+    assert schema["properties"]["claims"]["items"]["required"] == ["claim_id", "supporting_citation_ids"]
+    # request shape otherwise unchanged
+    assert body["model"] == "test-model"
+    assert body["temperature"] == 0.0
+    assert "messages" in body
+
+
+def test_strict_revalidation_still_rejects_malformed_output_even_with_response_format_requested():
+    """response_format is a REQUEST, not a guarantee -- if the provider
+    still returns something invalid despite it being asked for structured
+    output, _parse_and_validate must catch it exactly as before. Proves
+    this change does not weaken validation even in the worst case."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw("still not json {{{")
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert outcome.verified_citation_ids == []
+    assert "malformed_json" in outcome.failure_reason
+
+
+def test_structured_output_request_is_isolated_to_citation_verification_module():
+    """The response_format constant and its use are defined and applied
+    only inside citation_verification.py -- answer generation
+    (groq_answer_service.py) must remain completely untouched. Confirmed
+    two ways: (1) groq_answer_service's own module source has no
+    response_format reference at all; (2) its request body shape is
+    exactly the pre-existing {model, temperature, messages}, nothing more."""
+    import inspect
+
+    from app.services.qa import groq_answer_service
+
+    source = inspect.getsource(groq_answer_service)
+    assert "response_format" not in source
+
+
 # --- helpers -------------------------------------------------------------------
 
 

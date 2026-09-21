@@ -335,6 +335,25 @@ def test_generate_groq_answer_defaults_to_groq_endpoint_with_no_extra_headers():
     assert "X-GitHub-Api-Version" not in call_kwargs["headers"]
 
 
+def test_generate_groq_answer_request_body_unaffected_by_citation_v2_structured_output():
+    """Regression guard: citation_verification.py's verifier request now
+    asks for structured JSON output via response_format -- answer
+    generation must remain completely untouched by that change. The
+    request body here must still be exactly {model, temperature, messages},
+    with no response_format key at all."""
+    mock_client = _mock_httpx_client_returning("Answer text.")
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        generate_groq_answer(question="How do I enroll?", context="Title: Enrollment\nContent: ...")
+
+    _, call_kwargs = mock_client.post.call_args
+    body = call_kwargs["json"]
+    assert set(body.keys()) == {"model", "temperature", "messages"}
+    assert "response_format" not in body
+
+
 @pytest.mark.parametrize(
     ("topic_question", "slot_chain"),
     (

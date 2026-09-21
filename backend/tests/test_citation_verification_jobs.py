@@ -336,3 +336,84 @@ def test_running_job_that_finishes_after_being_swept_is_discarded_not_resurrecte
         jobs.run_verification_job(vid)  # must not raise
     assert jobs.get_job(vid) is None  # not resurrected under its old id
     assert len(jobs._JOBS) == 0  # no stray state left behind anywhere
+
+
+# --- _failure_category: finer, still-bounded classification -------------------
+#
+# Previously all seven of these prefixes shared one bucket, "invalid_response".
+# Split into five narrower categories so operator telemetry can distinguish
+# an HTTP-envelope-shape problem from a JSON-syntax problem from a
+# schema-shape problem from a genuine model-behavior deviation (an invented
+# or repeated id) -- citation_verification.py's own raise sites/messages are
+# completely unchanged; this only affects which bucket label an existing
+# failure_reason string maps to.
+
+
+@pytest.mark.parametrize(
+    "failure_reason,expected_category",
+    [
+        ("provider_timeout: Read timed out", "provider_error"),
+        ("provider_error: 503 Service Unavailable", "provider_error"),
+        ("provider_not_configured", "provider_error"),
+        ("unexpected_response_shape: 'choices'", "response_shape_error"),
+        ("malformed_json: Expecting value: line 1 column 1", "malformed_json"),
+        ("schema_violation: root is not an object", "schema_violation"),
+        ("schema_violation: 'claims' is not a list", "schema_violation"),
+        ("hallucinated_citation_id: 'not-an-authorized-id'", "unknown_or_hallucinated_id"),
+        ("unknown_claim_id: 'c99'", "unknown_or_hallucinated_id"),
+        ("duplicate_claim_id: 'c1'", "duplicate_id"),
+        ("duplicate_citation_id: 'a' for 'c1'", "duplicate_id"),
+        ("unexpected_error:ValueError", "internal_error"),
+        ("scheduling_failed", "internal_error"),
+        ("something_never_seen_before", "unknown"),
+        (None, "unknown"),
+    ],
+)
+def test_failure_category_maps_every_known_prefix_to_the_correct_bounded_category(
+    failure_reason, expected_category
+):
+    assert jobs._failure_category(failure_reason) == expected_category
+
+
+def test_failure_category_set_is_small_and_fixed():
+    """Guards against the category set silently growing ad hoc -- exactly
+    the 7 non-fallback categories plus the 'unknown' fallback."""
+    all_categories = {category for _, category in jobs._FAILURE_CATEGORIES_BY_PREFIX}
+    assert all_categories == {
+        "provider_error",
+        "response_shape_error",
+        "malformed_json",
+        "schema_violation",
+        "unknown_or_hallucinated_id",
+        "duplicate_id",
+        "internal_error",
+    }
+
+
+def test_schema_violation_failed_job_reports_schema_violation_category_in_real_event(caplog):
+    """End-to-end through run_verification_job (not just the pure
+    _failure_category function): a schema-shape failure_reason must reach
+    the actual logged diagnostic event as failure_category='schema_violation'."""
+    import json
+    import logging
+
+    outcome = VerificationOutcome(
+        mode="async_llm", verifier_succeeded=False,
+        failure_reason="schema_violation: 'claims' is not a list",
+    )
+    vid = jobs.create_job(
+        answer="A 75% refund applies.", candidates=_candidates(), mode="async_llm",
+        v1_citation_ids=["doc::1"],
+    )
+    with caplog.at_level(logging.INFO, logger="app.services.qa.citation_verification_jobs"), \
+         patch(VERIFY, return_value=outcome):
+        jobs.run_verification_job(vid)
+
+    lines = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("citation_verification_async_completed ")
+    ]
+    assert len(lines) == 1
+    event = json.loads(lines[0][len("citation_verification_async_completed ") :])
+    assert event["failure_category"] == "schema_violation"
+    assert event["status"] == "failed"

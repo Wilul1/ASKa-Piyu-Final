@@ -181,29 +181,38 @@ def create_job(
 # already produces, by prefix only. Never logs failure_reason itself (it may
 # embed a wrapped provider/exception message); an unrecognized or future
 # string safely falls back to "unknown" rather than growing this set ad hoc.
+#
+# Previously all seven post-transport conditions below shared one bucket,
+# "invalid_response" -- collapsing a pure JSON-syntax failure, four distinct
+# schema-shape violations, and genuine model-behavior deviations (an
+# invented/incorrect id) into a single, undifferentiated label. Split here
+# into five narrower categories (still a small, fixed, bounded set -- never
+# freeform) so operator-facing telemetry can distinguish "the HTTP envelope
+# itself was unusual" from "the JSON didn't parse" from "the JSON parsed but
+# violated the schema" from "the model proposed an id it shouldn't have"
+# from "the model repeated an id" -- without ever logging the underlying
+# failure_reason string (which may embed a wrapped provider/exception
+# message) or any provider content. citation_verification.py's own raise
+# sites and messages are unchanged by this -- this is a pure telemetry
+# refinement, not a change to what can fail or how.
 _FAILURE_CATEGORIES_BY_PREFIX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("provider_timeout", "provider_error", "provider_not_configured"), "provider_error"),
-    (
-        (
-            "malformed_json",
-            "unexpected_response_shape",
-            "schema_violation",
-            "hallucinated_citation_id",
-            "duplicate_claim_id",
-            "duplicate_citation_id",
-            "unknown_claim_id",
-        ),
-        "invalid_response",
-    ),
+    (("unexpected_response_shape",), "response_shape_error"),
+    (("malformed_json",), "malformed_json"),
+    (("schema_violation",), "schema_violation"),
+    (("hallucinated_citation_id", "unknown_claim_id"), "unknown_or_hallucinated_id"),
+    (("duplicate_claim_id", "duplicate_citation_id"), "duplicate_id"),
     (("unexpected_error:", "scheduling_failed"), "internal_error"),
 )
 
 
 def _failure_category(failure_reason: str | None) -> str:
     """Maps an existing failure_reason string to one of a small bounded set
-    of safe categories (provider_error / invalid_response / internal_error /
-    unknown). Pure derivation only -- does not change what failure_reason
-    values verify_citations()/run_verification_job() can produce."""
+    of safe categories (provider_error / response_shape_error /
+    malformed_json / schema_violation / unknown_or_hallucinated_id /
+    duplicate_id / internal_error / unknown). Pure derivation only -- does
+    not change what failure_reason values verify_citations()/
+    run_verification_job() can produce."""
     reason = failure_reason or ""
     for prefixes, category in _FAILURE_CATEGORIES_BY_PREFIX:
         if reason.startswith(prefixes):

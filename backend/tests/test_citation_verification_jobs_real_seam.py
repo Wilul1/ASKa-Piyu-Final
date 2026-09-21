@@ -336,7 +336,10 @@ def test_failed_emits_event_with_bounded_category_and_no_provider_body(caplog):
     assert event["status"] == "failed"
     assert event["v1_citation_ids"] == ["tor::1"]
     assert event["v2_citation_ids"] == []
-    assert event["failure_category"] in {"provider_error", "invalid_response", "internal_error", "unknown"}
+    assert event["failure_category"] in {
+        "provider_error", "response_shape_error", "malformed_json", "schema_violation",
+        "unknown_or_hallucinated_id", "duplicate_id", "internal_error", "unknown",
+    }
     raw = json.dumps(event)
     assert "SENSITIVE_PROVIDER_TOKEN_xyz" not in raw
     assert "not valid json" not in raw

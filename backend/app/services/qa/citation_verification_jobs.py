@@ -26,6 +26,7 @@ prompt, or raw provider errors to a caller.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -97,6 +98,11 @@ class VerificationJob:
     # the moment a terminal state is reached -- see _discard_snapshot().
     _answer: str | None
     _candidates: list[CandidateEvidence] | None
+    # V1's displayed citation ids only (never source text) -- diagnostic
+    # input for the terminal shadow-comparison log event, discarded (set to
+    # an empty list) the moment that event has been emitted; never returned
+    # by status_and_citations_for_poll.
+    _v1_citation_ids: list[str] = field(default_factory=list)
     completed_at: float | None = None
     verified_citations: list[_SafeCitation] = field(default_factory=list)
     failure_reason: str | None = None
@@ -138,11 +144,23 @@ def _sweep_expired_locked(ttl_seconds: float) -> None:
 
 
 def create_job(
-    *, answer: str, candidates: list[CandidateEvidence], mode: str
+    *,
+    answer: str,
+    candidates: list[CandidateEvidence],
+    mode: str,
+    v1_citation_ids: list[str] | None = None,
 ) -> str:
     """Freeze the exact inputs a synchronous verify_citations() call would
     have used, and return a fresh, unguessable verification_id. Does not
-    call the verifier -- see run_verification_job for that."""
+    call the verifier -- see run_verification_job for that.
+
+    ``v1_citation_ids`` is diagnostic-only (ids, never text) -- the citation
+    ids V1 already decided to display for this same answer, captured at the
+    exact point that decision was made (see
+    question_answering._display_sources_for_answer). It plays no role in
+    verification itself; it exists solely so the terminal log event in
+    run_verification_job can report V1 vs V2 side by side.
+    """
     verification_id = uuid.uuid4().hex
     with _LOCK:
         _sweep_expired_locked(DEFAULT_TTL_SECONDS)
@@ -153,8 +171,93 @@ def create_job(
             mode=mode,
             _answer=answer,
             _candidates=list(candidates),
+            _v1_citation_ids=list(v1_citation_ids) if v1_citation_ids else [],
         )
     return verification_id
+
+
+# Small, fixed, operator-facing failure categories -- derived from the
+# existing failure_reason strings citation_verification.verify_citations()
+# already produces, by prefix only. Never logs failure_reason itself (it may
+# embed a wrapped provider/exception message); an unrecognized or future
+# string safely falls back to "unknown" rather than growing this set ad hoc.
+_FAILURE_CATEGORIES_BY_PREFIX: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("provider_timeout", "provider_error", "provider_not_configured"), "provider_error"),
+    (
+        (
+            "malformed_json",
+            "unexpected_response_shape",
+            "schema_violation",
+            "hallucinated_citation_id",
+            "duplicate_claim_id",
+            "duplicate_citation_id",
+            "unknown_claim_id",
+        ),
+        "invalid_response",
+    ),
+    (("unexpected_error:", "scheduling_failed"), "internal_error"),
+)
+
+
+def _failure_category(failure_reason: str | None) -> str:
+    """Maps an existing failure_reason string to one of a small bounded set
+    of safe categories (provider_error / invalid_response / internal_error /
+    unknown). Pure derivation only -- does not change what failure_reason
+    values verify_citations()/run_verification_job() can produce."""
+    reason = failure_reason or ""
+    for prefixes, category in _FAILURE_CATEGORIES_BY_PREFIX:
+        if reason.startswith(prefixes):
+            return category
+    return "unknown"
+
+
+def _log_async_verification_event(
+    *,
+    verification_id: str,
+    mode: str,
+    status: str,
+    v1_citation_ids: list[str],
+    v2_citation_ids: list[str],
+    duration_ms: float | None,
+    failure_category: str | None,
+) -> None:
+    """Best-effort, terminal, operator-facing diagnostic event for one
+    completed async verification job -- reached by both async_shadow and
+    async_llm (identical payload either way; ``mode`` distinguishes them).
+    Lets an operator watching ``docker logs`` compare V1's displayed
+    citations against V2's verified citations for the same answer, which
+    nothing else in the live request path currently records.
+
+    Contains only ids/counts/status/duration -- never answer, question,
+    claim, or candidate text, and never a raw provider error body (the
+    module-level failure_reason string is mapped through
+    ``_failure_category`` first, never logged verbatim).
+
+    Called strictly AFTER the job record has already been written under
+    _LOCK, and wrapped in its own try/except: a logging/serialization
+    problem here must never affect job state, verification behavior, or the
+    caller -- it can only fail to produce a log line.
+    """
+    try:
+        payload = {
+            "event": "citation_verification_async_completed",
+            "verification_id": verification_id,
+            "mode": mode,
+            "status": status,
+            "v1_citation_ids": list(v1_citation_ids),
+            "v2_citation_ids": list(v2_citation_ids),
+            "v1_count": len(v1_citation_ids),
+            "v2_count": len(v2_citation_ids),
+            "duration_ms": round(duration_ms, 1) if isinstance(duration_ms, (int, float)) else None,
+            "failure_category": failure_category,
+            "timestamp_unix": round(time.time(), 3),
+        }
+        logger.info("citation_verification_async_completed %s", json.dumps(payload, sort_keys=True))
+    except Exception:  # noqa: BLE001 -- logging must never affect verification/job state
+        logger.debug(
+            "citation_verification_jobs: failed to emit async verification diagnostic event",
+            exc_info=True,
+        )
 
 
 def run_verification_job(verification_id: str) -> None:
@@ -174,10 +277,13 @@ def run_verification_job(verification_id: str) -> None:
         answer = job._answer
         candidates = job._candidates
         async_mode = job.mode
+        v1_citation_ids = list(job._v1_citation_ids)
 
     semantic_mode = _semantic_mode_for(async_mode)
+    duration_ms: float | None = None
     try:
         outcome = verify_citations(answer=answer or "", candidates=candidates or [], mode=semantic_mode)
+        duration_ms = outcome.latency_ms
         if outcome.verifier_succeeded and outcome.verified_citation_ids:
             by_id = {c.citation_id: c for c in (candidates or [])}
             safe = [
@@ -221,9 +327,30 @@ def run_verification_job(verification_id: str) -> None:
         current.verified_citations = safe
         current.failure_reason = failure_reason
         # Memory hygiene: candidate text and the answer text are never
-        # needed again once a job is terminal.
+        # needed again once a job is terminal. V1's citation ids were only
+        # ever retained for the diagnostic event below; discard them too.
         current._answer = None
         current._candidates = None
+        current._v1_citation_ids = []
+
+    # Best-effort, outside the lock (no I/O while holding it): one terminal
+    # diagnostic event per completed async job (async_shadow and async_llm
+    # both reach this -- see _log_async_verification_event's own docstring).
+    _log_async_verification_event(
+        verification_id=verification_id,
+        mode=async_mode,
+        status=new_status,
+        v1_citation_ids=v1_citation_ids,
+        v2_citation_ids=[c.citation_id for c in safe],
+        duration_ms=duration_ms,
+        failure_category=(
+            "no_verified_support"
+            if new_status == JobStatus.NO_VERIFIED_SUPPORT
+            else _failure_category(failure_reason)
+            if new_status == JobStatus.FAILED
+            else None
+        ),
+    )
 
 
 def get_job(verification_id: str, *, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> VerificationJob | None:
@@ -255,6 +382,7 @@ def _fail_job_locked(verification_id: str, reason: str) -> None:
     job.failure_reason = reason
     job._answer = None
     job._candidates = None
+    job._v1_citation_ids = []
 
 
 # Modes whose verification_id is offered to the CLIENT at all. async_shadow
@@ -301,6 +429,7 @@ def schedule_verification(background_tasks: Any, async_verification_sink: dict[s
             answer=async_verification_sink["answer"],
             candidates=async_verification_sink["candidates"],
             mode=mode,
+            v1_citation_ids=async_verification_sink.get("v1_citation_ids"),
         )
     except Exception:  # noqa: BLE001 -- must never break the caller's already-built answer
         logger.warning(

@@ -8,6 +8,8 @@ verifier is mocked at the exact names each call site imports.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import time
 from unittest.mock import patch
 
@@ -99,6 +101,24 @@ def test_async_shadow_mode_also_populates_sink_for_diagnostics():
     with patch(MODE, "async_shadow"):
         _display_sources_for_answer([chunk], answer, async_verification_sink=sink)
     assert sink["mode"] == "async_shadow"
+
+
+def test_async_shadow_sink_captures_v1_displayed_citation_ids_only():
+    """The sink's v1_citation_ids must be exactly the ids V1 actually
+    decided to display (same identity formula as the displayed sources
+    themselves) -- not all retrieved candidates, not generation context."""
+    displayed_chunk = _chunk("tor", "Transcript of Records", "Fee: P75/page.")
+    unrelated_chunk = _chunk("library", "Library Hours", "Open 8am to 5pm on weekdays.")
+    answer = "The fee is P75 per page."
+    sink: dict = {}
+    with patch(MODE, "async_shadow"):
+        _display_sources_for_answer(
+            [displayed_chunk, unrelated_chunk], answer, async_verification_sink=sink
+        )
+    # V1's lexical selector should only match the fee chunk, not the
+    # unrelated library-hours chunk -- confirming v1_citation_ids reflects
+    # DISPLAYED citations, not every candidate passed in.
+    assert sink["v1_citation_ids"] == ["tor::0"]
 
 
 def test_async_shadow_with_v1_citations_has_no_client_facing_status():
@@ -231,11 +251,15 @@ def test_qa_ask_async_llm_initial_response_has_empty_citations_and_a_verificatio
     assert job.status == jobs.JobStatus.VERIFIED
 
 
-def _fake_answer_qa_question_async_shadow(sources, v1_answer="The fee is P75 per page."):
+def _fake_answer_qa_question_async_shadow(sources, v1_answer="The fee is P75 per page.", v1_citation_ids=None):
     """Builds a fake answer_qa_question for async_shadow route tests that
     computes citation_status through the REAL _citation_status_after_sources
     (not a hand-picked literal), so these tests exercise the actual
-    integration point the fix changed, not just a stand-in."""
+    integration point the fix changed, not just a stand-in. v1_citation_ids
+    mirrors the real _display_sources_for_answer's sink population -- see
+    question_answering.py's async branch -- defaulting to ["tor::0"] (the
+    one candidate this fake always builds) unless a test overrides it (e.g.
+    with [] for the zero-V1-citations regression case)."""
 
     def _fake(*args, **kwargs):
         from app.services.qa.question_answering import _citation_status_after_sources
@@ -253,6 +277,7 @@ def _fake_answer_qa_question_async_shadow(sources, v1_answer="The fee is P75 per
                             text="Fee: P75/page.",
                         )
                     ],
+                    "v1_citation_ids": ["tor::0"] if v1_citation_ids is None else v1_citation_ids,
                 }
             )
         return QAResult(
@@ -293,13 +318,20 @@ def test_qa_ask_async_shadow_with_v1_sources_never_returns_verification_id_or_st
     assert only_job.status == jobs.JobStatus.VERIFIED
 
 
-def test_qa_ask_async_shadow_with_zero_v1_sources_never_gets_stuck_verifying():
+def test_qa_ask_async_shadow_with_zero_v1_sources_never_gets_stuck_verifying(caplog):
     """The route-level regression test for the reported bug: previously
     citation_status could be "verifying" here with no verification_id for
-    Flutter to ever poll, permanently stuck. Now it must be absent."""
+    Flutter to ever poll, permanently stuck. Now it must be absent. Also
+    covers the observability-patch regression case: even with zero V1
+    sources, the diagnostic event must still be emitted (with v1_count=0
+    and the real V2 outcome) -- it must never look like no job ran."""
     outcome = VerificationOutcome(mode="shadow", verifier_succeeded=True, verified_citation_ids=[])
-    with patch(MODE, "async_shadow"), \
-         patch("app.routes.qa.answer_qa_question", side_effect=_fake_answer_qa_question_async_shadow([])), \
+    with caplog.at_level(logging.INFO, logger="app.services.qa.citation_verification_jobs"), \
+         patch(MODE, "async_shadow"), \
+         patch(
+             "app.routes.qa.answer_qa_question",
+             side_effect=_fake_answer_qa_question_async_shadow([], v1_citation_ids=[]),
+         ), \
          patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
         response = client.post("/qa/ask", json={"question": "How much is the TOR fee per page?"})
     assert response.status_code == 200
@@ -310,6 +342,15 @@ def test_qa_ask_async_shadow_with_zero_v1_sources_never_gets_stuck_verifying():
     assert "citation_verification_id" not in data
     # Background verification still ran despite V1 finding nothing to display.
     assert len(jobs._JOBS) == 1
+    events = [
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("citation_verification_async_completed ")
+    ]
+    assert len(events) == 1
+    event = json.loads(events[0][len("citation_verification_async_completed ") :])
+    assert event["v1_citation_ids"] == []
+    assert event["v1_count"] == 0
+    assert event["v2_citation_ids"] == []  # the real (mocked) V2 outcome for this test
 
 
 def test_qa_ask_lexical_mode_response_has_no_new_fields_at_all():
@@ -327,6 +368,29 @@ def test_qa_ask_lexical_mode_response_has_no_new_fields_at_all():
     # response_model_exclude_none=True: absent fields simply don't appear.
     assert "citation_status" not in data
     assert "citation_verification_id" not in data
+
+
+def test_lexical_mode_emits_no_async_shadow_diagnostic_event(caplog):
+    """Lexical mode never populates async_verification_sink at all (an
+    empty sink), so schedule_verification() short-circuits before any job
+    is created -- run_verification_job (and therefore the new diagnostic
+    event) is never reached."""
+    from app.services.qa.question_answering import QAResult
+
+    def fake(*args, **kwargs):
+        return QAResult(answer="Answer text.", sources=[], confidence="high", retrieved_chunks=[])
+
+    with caplog.at_level(logging.INFO, logger="app.services.qa.citation_verification_jobs"), \
+         patch(MODE, "lexical"), \
+         patch("app.routes.qa.answer_qa_question", side_effect=fake):
+        response = client.post("/qa/ask", json={"question": "Any question."})
+    assert response.status_code == 200
+    assert len(jobs._JOBS) == 0
+    events = [
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("citation_verification_async_completed ")
+    ]
+    assert events == []
 
 
 # --- Poll endpoint -----------------------------------------------------------

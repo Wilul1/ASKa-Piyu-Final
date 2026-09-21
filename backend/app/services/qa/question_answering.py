@@ -5380,7 +5380,19 @@ def _display_sources_for_answer(
         claims = extract_claims(answer)
         if async_verification_sink is not None and claims and v2_candidates:
             async_verification_sink.update(
-                {"mode": mode, "answer": answer, "candidates": v2_candidates}
+                {
+                    "mode": mode,
+                    "answer": answer,
+                    "candidates": v2_candidates,
+                    # Diagnostic only -- the SAME formula the synchronous
+                    # shadow/llm branch below already uses for
+                    # citation_v2_sink["v1_displayed_citation_ids"]. IDs
+                    # only, ordered as V1 selected them; never source text.
+                    "v1_citation_ids": [
+                        _raw_citation_id(chunk, index)
+                        for index, chunk in enumerate(v1_supporting, start=1)
+                    ],
+                }
             )
         if mode == "async_shadow":
             return _sources_from_chunks(v1_supporting, merge_articles=merge_articles)

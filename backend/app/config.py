@@ -15,6 +15,21 @@ class Settings(BaseSettings):
     app_title: str = "ASKa-Piyu API"
     app_version: str = "0.2.0"
 
+    # Root Python logging level for application code (app.*), configured
+    # once at import time in app.main via logging.basicConfig -- see that
+    # module's own comment. Defaults to WARNING (today's actual de facto
+    # production behavior, preserved on purpose -- an audit found at least
+    # one existing INFO log site elsewhere that is not reviewed as safe for
+    # production visibility). The one specific logger whose INFO output has
+    # been reviewed and is meant to be seen --
+    # app.services.qa.citation_verification_jobs -- is opted up to INFO
+    # independently of this setting. Raise this to "INFO" only after
+    # auditing every other app.* logger.info() call site for content
+    # safety. Independent of uvicorn's own access/error logging, which
+    # configures its own loggers separately. Any invalid value falls back
+    # to WARNING rather than failing startup.
+    log_level: str = "WARNING"
+
     # --- Document extraction (admin flow only) ---
     min_chars_per_page_for_digital_pdf: int = 40
     # When most pages already have a text layer, skip OCR on sparse cover/image

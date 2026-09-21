@@ -16,6 +16,47 @@ from app.config import (
     safe_admin_config_diagnostics,
     settings,
 )
+
+# Application-wide logging: nothing in this codebase previously configured
+# the root logger, so every app.* logger.info()/logger.debug() call was
+# silently dropped by Python's own logging.lastResort fallback (a built-in
+# stderr handler with a hard WARNING floor) -- confirmed in production via
+# a direct probe (see backend/benchmarks/async_shadow_phase2_production_
+# staging.json). logger.warning()/error() calls survived only because they
+# meet that WARNING floor, which is why this went unnoticed until an
+# INFO-level diagnostic event needed to actually be observed.
+#
+# logging.basicConfig() is deliberately idempotent (a no-op if the root
+# logger already has a handler, per the stdlib's own documented behavior)
+# -- safe to call unconditionally here with no re-import/handler-
+# duplication guard needed. It configures ONLY the root logger; uvicorn
+# configures its own "uvicorn"/"uvicorn.error"/"uvicorn.access" loggers
+# separately, each with propagate=False and its own handler, so this call
+# neither touches nor duplicates uvicorn's access/error logging -- it only
+# gives app.* loggers (which do propagate to root) somewhere to go.
+#
+# The root level is intentionally left at settings.log_level's default
+# (WARNING -- i.e. today's actual de facto behavior is preserved) rather
+# than a blanket INFO: an audit of every existing logger.info() call site
+# in this codebase (see backend/benchmarks/
+# application_logging_configuration_fix.json) found at least one,
+# question_answering.py's conversational-fallback trigger, that can embed
+# a raw provider/httpx exception string via str(exc) -- not reviewed or
+# designed to be production-log-safe. Enabling INFO globally would have
+# newly exposed that (and every other unreviewed INFO call) the moment a
+# handler existed. Instead, only the specific logger whose INFO output has
+# actually been reviewed and is meant to be visible --
+# citation_verification_jobs's terminal async-verification diagnostic
+# event -- is explicitly opted up to INFO below. Every other app.* logger
+# keeps inheriting root's WARNING floor, exactly matching current
+# production behavior.
+logging.basicConfig(level=getattr(logging, (settings.log_level or "WARNING").strip().upper(), logging.WARNING))
+logging.getLogger("app.services.qa.citation_verification_jobs").setLevel(
+    min(logging.getLogger().getEffectiveLevel(), logging.INFO)
+)
+
+logger = logging.getLogger(__name__)
+
 from app.db.session import get_database_health, initialize_database, safe_database_url
 from app.routes.admin.knowledge_base import (
     chroma_router,
@@ -30,8 +71,6 @@ from app.routes.knowledge_base import router as kb_browser_router
 from app.routes.qa import router as qa_router
 from app.routes.student.chat import router as student_router
 from app.routes.tickets import router as tickets_router
-
-logger = logging.getLogger(__name__)
 
 
 async def validate_startup_configuration() -> None:

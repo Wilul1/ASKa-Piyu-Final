@@ -101,6 +101,46 @@ def test_async_shadow_mode_also_populates_sink_for_diagnostics():
     assert sink["mode"] == "async_shadow"
 
 
+def test_async_shadow_with_v1_citations_has_no_client_facing_status():
+    """async_shadow displays V1's lexical citations immediately, and
+    citation_status must be None -- never "verifying" -- because
+    async_shadow's verification_id is withheld from the client (see
+    citation_verification_jobs._CLIENT_POLLABLE_ASYNC_MODES), so a non-None
+    status here would describe a job the client can never poll."""
+    from app.services.qa.question_answering import _citation_status_after_sources
+
+    chunk = _chunk("tor", "Transcript of Records", "Fee: P75/page.")
+    answer = "The fee is P75 per page."
+    sink: dict = {}
+    with patch(MODE, "async_shadow"):
+        sources = _display_sources_for_answer([chunk], answer, async_verification_sink=sink)
+        status = _citation_status_after_sources(sink)
+    assert sources  # V1's lexical citations, displayed immediately
+    assert status is None
+    assert sink["mode"] == "async_shadow"  # the diagnostic job is still scheduled
+
+
+def test_async_shadow_with_zero_v1_citations_has_no_client_facing_status():
+    """The exact bug this fix targets: when V1 finds nothing to display,
+    citation_status must still be None (not "verifying"), because
+    async_shadow never hands the client a verification_id to poll -- a
+    "verifying" status here would leave Flutter showing "Verifying
+    sources..." forever with no way to ever resolve it (see
+    evaluateCitationPollTick's polling trigger, which only fires when a
+    verification_id is present)."""
+    from app.services.qa.question_answering import _citation_status_after_sources
+
+    chunk = _chunk("library", "Library Hours", "The library is open eight to five on weekdays.")
+    answer = "To renew your student ID, visit the registrar within thirty days of enrollment."
+    sink: dict = {}
+    with patch(MODE, "async_shadow"):
+        sources = _display_sources_for_answer([chunk], answer, async_verification_sink=sink)
+        status = _citation_status_after_sources(sink)
+    assert sources == []  # V1 found nothing supporting -- the exact stuck-state trigger
+    assert status is None  # must NOT be "verifying"
+    assert sink.get("mode") == "async_shadow"  # background verification still runs regardless
+
+
 def test_zero_claims_or_zero_candidates_leaves_sink_empty_no_job_needed():
     sink: dict = {}
     with patch(MODE, "async_llm"):
@@ -189,6 +229,87 @@ def test_qa_ask_async_llm_initial_response_has_empty_citations_and_a_verificatio
     job = jobs.get_job(data["citation_verification_id"])
     assert job is not None
     assert job.status == jobs.JobStatus.VERIFIED
+
+
+def _fake_answer_qa_question_async_shadow(sources, v1_answer="The fee is P75 per page."):
+    """Builds a fake answer_qa_question for async_shadow route tests that
+    computes citation_status through the REAL _citation_status_after_sources
+    (not a hand-picked literal), so these tests exercise the actual
+    integration point the fix changed, not just a stand-in."""
+
+    def _fake(*args, **kwargs):
+        from app.services.qa.question_answering import _citation_status_after_sources
+
+        sink = kwargs.get("async_verification_sink")
+        if sink is not None:
+            sink.update(
+                {
+                    "mode": "async_shadow",
+                    "answer": v1_answer,
+                    "candidates": [
+                        CandidateEvidence(
+                            citation_id="tor::0", title="Transcript of Records",
+                            source_section="Sec. 1", source_filename="doc.pdf",
+                            text="Fee: P75/page.",
+                        )
+                    ],
+                }
+            )
+        return QAResult(
+            answer=v1_answer,
+            sources=sources,
+            confidence="high",
+            retrieved_chunks=[],
+            citation_status=_citation_status_after_sources(sink),
+        )
+
+    return _fake
+
+
+def test_qa_ask_async_shadow_with_v1_sources_never_returns_verification_id_or_status():
+    outcome = VerificationOutcome(mode="shadow", verifier_succeeded=True, verified_citation_ids=["tor::0"])
+    sources = [
+        {
+            "title": "Transcript of Records",
+            "path": "doc.pdf",
+            "citation_id": "tor::0",
+            "source_section": "Sec. 1",
+            "source_filename": "doc.pdf",
+        }
+    ]
+    with patch(MODE, "async_shadow"), \
+         patch("app.routes.qa.answer_qa_question", side_effect=_fake_answer_qa_question_async_shadow(sources)), \
+         patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        response = client.post("/qa/ask", json={"question": "How much is the TOR fee per page?"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sources"]  # V1 lexical citations displayed immediately, unaffected by this fix
+    assert "citation_status" not in data  # None -> excluded by response_model_exclude_none=True
+    assert "citation_verification_id" not in data  # withheld, exactly as before this fix
+    # The diagnostic shadow job still ran server-side -- only its exposure
+    # to the client changed, not whether it runs at all.
+    assert len(jobs._JOBS) == 1
+    (only_job,) = jobs._JOBS.values()
+    assert only_job.status == jobs.JobStatus.VERIFIED
+
+
+def test_qa_ask_async_shadow_with_zero_v1_sources_never_gets_stuck_verifying():
+    """The route-level regression test for the reported bug: previously
+    citation_status could be "verifying" here with no verification_id for
+    Flutter to ever poll, permanently stuck. Now it must be absent."""
+    outcome = VerificationOutcome(mode="shadow", verifier_succeeded=True, verified_citation_ids=[])
+    with patch(MODE, "async_shadow"), \
+         patch("app.routes.qa.answer_qa_question", side_effect=_fake_answer_qa_question_async_shadow([])), \
+         patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        response = client.post("/qa/ask", json={"question": "How much is the TOR fee per page?"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sources"] == []
+    assert data["citations"] == []
+    assert "citation_status" not in data  # THE FIX: never "verifying" with no way to resolve it
+    assert "citation_verification_id" not in data
+    # Background verification still ran despite V1 finding nothing to display.
+    assert len(jobs._JOBS) == 1
 
 
 def test_qa_ask_lexical_mode_response_has_no_new_fields_at_all():

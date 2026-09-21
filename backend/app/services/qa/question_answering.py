@@ -159,14 +159,19 @@ class QAResult:
     fallback_used: bool = False
     fallback_reason: str | None = None
     out_of_scope_detected: bool = False
-    # Set only when citation_verification_mode is "async_shadow"/"async_llm":
-    # "verifying" (a background verification job's inputs were frozen and
-    # handed to the caller via async_verification_sink -- the caller is
-    # responsible for actually scheduling the job) or
-    # "verification_unavailable" (nothing to verify -- zero claims or zero
-    # candidates, the same fail-closed condition the synchronous modes
-    # already detect, just known before any job would be created). None for
-    # every other mode -- existing lexical/shadow/llm behavior is unchanged.
+    # Set only when citation_verification_mode is "async_llm": "verifying"
+    # (a background verification job's inputs were frozen and handed to the
+    # caller via async_verification_sink -- the caller is responsible for
+    # actually scheduling the job) or "verification_unavailable" (nothing to
+    # verify -- zero claims or zero candidates, the same fail-closed
+    # condition the synchronous modes already detect, just known before any
+    # job would be created). Always None for "async_shadow" -- that mode
+    # never hands the client a verification_id to poll (see
+    # citation_verification_jobs._CLIENT_POLLABLE_ASYNC_MODES), so it must
+    # never claim a status the client has no way to resolve; the background
+    # shadow job still runs regardless, this field just never reports it.
+    # None for every other mode -- existing lexical/shadow/llm behavior is
+    # unchanged.
     citation_status: str | None = None
     # Machine-readable, taxonomy-validated service identity for this turn —
     # `None` when no specific service applies (greeting, out-of-scope, vague
@@ -5289,9 +5294,19 @@ def _citation_status_after_sources(async_verification_sink: dict[str, Any] | Non
     """The QAResult.citation_status matching what ``_display_sources_for_answer``
     just did with ``async_verification_sink`` (called AFTER that, relying on
     the sink having already been populated in-place by this same call site).
-    None for every mode except "async_shadow"/"async_llm"."""
+
+    Only "async_llm" ever returns a non-None status here. "async_shadow" is
+    diagnostic-only: its verification_id is never handed to the client (see
+    citation_verification_jobs._CLIENT_POLLABLE_ASYNC_MODES), so a
+    "verifying"/"verification_unavailable" status would describe a job the
+    client has no way to ever resolve -- indistinguishable, from the
+    client's perspective, from a permanently stuck state. The shadow job is
+    still scheduled and still runs (this function does not affect that);
+    only the caller-visible ``citation_status`` field is suppressed. None
+    for every other mode too, matching existing lexical/shadow/llm
+    behavior."""
     mode = (settings.citation_verification_mode or "lexical").strip().lower()
-    if mode not in ("async_shadow", "async_llm"):
+    if mode != "async_llm":
         return None
     return "verifying" if async_verification_sink else "verification_unavailable"
 

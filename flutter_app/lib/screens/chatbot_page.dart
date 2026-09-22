@@ -98,9 +98,20 @@ class _ChatbotPageState extends State<ChatbotPage> {
   // _maxCitationPollAttempts, and unconditionally in dispose().
   final Map<String, Timer> _citationPollTimers = {};
   static const _citationPollInterval = Duration(seconds: 2);
-  // Bounded, not infinite: gives up after ~60s and shows "unavailable"
-  // rather than polling forever if the backend never resolves the job.
-  static const _maxCitationPollAttempts = 30;
+  // Bounded, not infinite: gives up after ~5 minutes and shows
+  // "unavailable" rather than polling forever if the backend never
+  // resolves the job. Was 30 (~60s) until a real production async_shadow
+  // multi-source case (fg_g1) was observed taking ~164.4s to verify
+  // successfully -- see backend/benchmarks/
+  // citation_v2_invalid_response_investigation.json and the structured-
+  // output-fix deployment report. 300s/2s = 150 gives roughly 1.8x
+  // headroom above that single observed worst case: comfortably bounded,
+  // not infinite, not merely "just barely enough" for the one data point
+  // we have. This is a single-sample observation, not a proven upper
+  // bound -- if future verifier durations exceed this window too, that is
+  // a separate finding for a later task, not evidence to keep expanding
+  // this constant reactively.
+  static const _maxCitationPollAttempts = 150;
 
   static const _desktopBreakpoint = 900.0;
 

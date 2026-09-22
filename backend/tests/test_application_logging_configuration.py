@@ -172,7 +172,7 @@ answer = "The fee is P75 per page."
 
 mock_response = MagicMock()
 mock_response.raise_for_status.return_value = None
-mock_response.json.return_value = {"choices": [{"message": {"content": json.dumps({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]})}}]}
+mock_response.json.return_value = {"choices": [{"message": {"content": json.dumps({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})}}]}
 mock_client = MagicMock()
 mock_client.__enter__.return_value = mock_client
 mock_client.__exit__.return_value = False

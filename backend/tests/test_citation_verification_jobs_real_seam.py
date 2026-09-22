@@ -87,7 +87,7 @@ def test_async_llm_real_verifier_path_produces_verified_citation():
     candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
     answer = "The fee is P75 per page."
     mock_client = _mock_httpx_client_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
 
     vid = jobs.create_job(answer=answer, candidates=candidates, mode="async_llm")
@@ -107,7 +107,7 @@ def test_async_llm_full_flow_through_schedule_and_poll_apis():
     candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
     answer = "The fee is P75 per page."
     mock_client = _mock_httpx_client_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
 
     class _ImmediateBackgroundTasks:
@@ -189,7 +189,7 @@ def test_async_shadow_real_verifier_path_actually_executes():
     candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
     answer = "The fee is P75 per page."
     mock_client = _mock_httpx_client_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
 
     vid = jobs.create_job(answer=answer, candidates=candidates, mode="async_shadow")
@@ -210,7 +210,7 @@ def test_async_shadow_diagnostic_result_never_reaches_the_client_via_schedule():
     candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
     answer = "The fee is P75 per page."
     mock_client = _mock_httpx_client_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
 
     class _ImmediateBackgroundTasks:
@@ -240,7 +240,7 @@ def test_verified_emits_exactly_one_terminal_event_with_correct_v1_and_v2_ids(ca
     candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
     answer = "The fee is P75 per page."
     mock_client = _mock_httpx_client_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
 
     vid = jobs.create_job(
@@ -354,7 +354,7 @@ def test_zero_v1_citations_still_logs_v1_count_zero_and_the_real_v2_outcome(capl
     candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
     answer = "The fee is P75 per page."
     mock_client = _mock_httpx_client_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
 
     vid = jobs.create_job(
@@ -382,7 +382,7 @@ def test_async_llm_also_emits_the_same_diagnostic_event_shape(caplog):
     candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
     answer = "The fee is P75 per page."
     mock_client = _mock_httpx_client_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor::1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
 
     vid = jobs.create_job(

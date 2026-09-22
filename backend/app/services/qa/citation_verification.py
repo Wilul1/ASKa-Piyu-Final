@@ -217,63 +217,88 @@ Include exactly one entry per claim_id you were given. Use an empty list
 when no candidate supports that claim.
 """.strip()
 
+# --- citation aliases --------------------------------------------------------
+
+# Real citation_id values are long, compound, provider-facing identifiers
+# (e.g. "30875c07-409e-45ea-989e-3315a85608c1::58" or
+# "faq:bf4a12ed-78c9-4f8e-8264-03ffe577f888::1") that a model must reproduce
+# character-for-character to be trusted. Asking for exact reproduction of a
+# long punctuation-heavy token is an avoidable, confirmed reliability risk
+# (see citation_v2_verifier_id_integrity_investigation.json) -- claim_ids
+# already avoid this by being short server-generated aliases ("c1", "c2",
+# ...); citation_ids did not. These S1/S2/... aliases give citation_ids the
+# same property: short, low-entropy, call-local tokens the model only has to
+# SELECT, never transcribe. Built fresh for every verify_citations call, in
+# candidate order, from the exact authoritative `candidates` list supplied
+# for that call -- never persisted, never reused across calls, never exposed
+# outside this module.
+def _build_citation_aliases(candidates: list[CandidateEvidence]) -> list[str]:
+    return [f"S{i}" for i in range(1, len(candidates) + 1)]
+
+
+# --- verifier response schema (per-call, enum-constrained) -------------------
+
 # Requests the provider constrain its OWN generation to this exact shape
-# (OpenRouter's documented response_format=json_schema contract -- verified
-# against the currently configured model's own listed accepted parameters
-# before adding this, per the investigation this change is based on).
-# Defense in depth, not a trust boundary: _parse_and_validate() below still
+# AND to only the alias/claim_id values that are actually valid for this one
+# call (OpenRouter's documented response_format=json_schema "enum" support --
+# verified against the currently configured model's own listed accepted
+# parameters, per the investigation this change is based on). Defense in
+# depth, not a trust boundary: _parse_and_validate() below still
 # independently re-validates every field from scratch regardless of whether
-# the provider actually honored this constraint -- this can only IMPROVE
-# the odds of getting parseable output, it never substitutes for or
-# weakens that validation. If the configured provider/model combination
-# does not actually support this (contrary to what it lists), OpenRouter's
-# own documented behavior is to fail the request with an HTTP error --
-# which the existing httpx.HTTPError handler below already maps to
-# failure_category="provider_error", not a new/unhandled failure shape.
-_VERIFIER_RESPONSE_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "citation_verification_claims",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "claims": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "claim_id": {"type": "string"},
-                            "supporting_citation_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
+# the provider actually honored this constraint -- this can only IMPROVE the
+# odds of getting a valid response, it never substitutes for or weakens that
+# validation. If the configured provider/model combination does not actually
+# support this (contrary to what it lists), OpenRouter's own documented
+# behavior is to fail the request with an HTTP error -- which the existing
+# httpx.HTTPError handler below already maps to failure_category=
+# "provider_error", not a new/unhandled failure shape.
+def _build_verifier_response_schema(
+    claim_ids: list[str], citation_aliases: list[str]
+) -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "citation_verification_claims",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "claims": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "claim_id": {"type": "string", "enum": claim_ids},
+                                "supporting_citation_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string", "enum": citation_aliases},
+                                },
                             },
+                            "required": ["claim_id", "supporting_citation_ids"],
+                            "additionalProperties": False,
                         },
-                        "required": ["claim_id", "supporting_citation_ids"],
-                        "additionalProperties": False,
                     },
                 },
+                "required": ["claims"],
+                "additionalProperties": False,
             },
-            "required": ["claims"],
-            "additionalProperties": False,
         },
-    },
-}
+    }
 
 
 def _build_verifier_messages(
-    claims: list[Claim], candidates: list[CandidateEvidence]
+    claims: list[Claim], candidates: list[CandidateEvidence], citation_aliases: list[str]
 ) -> list[dict[str, str]]:
     claims_payload = [{"claim_id": c.claim_id, "text": c.text} for c in claims]
     candidates_payload = [
         {
-            "citation_id": c.citation_id,
+            "citation_id": alias,
             "title": c.title,
             "source_section": c.source_section,
             "source_filename": c.source_filename,
             "text": (c.text or "")[:_MAX_EVIDENCE_CHARS],
         }
-        for c in candidates
+        for alias, c in zip(citation_aliases, candidates)
     ]
     user_content = (
         "CLAIMS:\n"
@@ -287,7 +312,9 @@ def _build_verifier_messages(
     ]
 
 
-def _call_verifier(messages: list[dict[str, str]]) -> tuple[str, dict[str, Any] | None]:
+def _call_verifier(
+    messages: list[dict[str, str]], response_schema: dict[str, Any]
+) -> tuple[str, dict[str, Any] | None]:
     """One batched httpx call. Raises CitationVerificationError on any
     provider-level failure. Never called for lexical mode or when there are
     no claims/candidates -- callers gate that before reaching here."""
@@ -309,7 +336,7 @@ def _call_verifier(messages: list[dict[str, str]]) -> tuple[str, dict[str, Any] 
                     "model": settings.groq_model,
                     "temperature": 0.0,
                     "messages": messages,
-                    "response_format": _VERIFIER_RESPONSE_SCHEMA,
+                    "response_format": response_schema,
                 },
             )
             response.raise_for_status()
@@ -332,9 +359,24 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.S)
 
 
 def _parse_and_validate(
-    raw_text: str, claim_ids: set[str], allowlist: set[str]
+    raw_text: str,
+    claim_ids: set[str],
+    alias_to_real: dict[str, str],
+    allowlist: set[str],
 ) -> dict[str, list[str]]:
-    """Strict parse + schema/type/id validation.
+    """Strict parse + schema/type/alias validation, then deterministic
+    alias -> real citation_id mapping.
+
+    The verifier only ever sees short, call-local citation aliases (S1, S2,
+    ... -- see _build_citation_aliases), never the real citation_id values,
+    so every supporting_citation_ids entry is validated against the alias
+    set first. An alias not in ``alias_to_real`` fails closed exactly like
+    an unknown claim_id -- it is never guessed, fuzzy-matched, normalized,
+    truncated, or repaired. Once an alias is accepted, it is mapped to its
+    real citation_id, and that real id is independently re-checked against
+    ``allowlist`` (the original CandidateEvidence.citation_id set) before
+    being trusted -- defense in depth, not a shortcut: this module never
+    relies on the alias map alone to prove an id was authorized.
 
     Any violation anywhere in the payload raises, discarding the WHOLE
     result -- per the "malformed output must not partially pass"
@@ -374,20 +416,23 @@ def _parse_and_validate(
                 f"schema_violation: supporting_citation_ids not a list for {claim_id!r}"
             )
         clean_ids: list[str] = []
-        seen_ids_for_claim: set[str] = set()
-        for cid in ids_field:
-            if not isinstance(cid, str):
+        seen_aliases_for_claim: set[str] = set()
+        for alias in ids_field:
+            if not isinstance(alias, str):
                 raise CitationVerificationError(
                     f"schema_violation: non-string citation id for {claim_id!r}"
                 )
-            if cid not in allowlist:
-                raise CitationVerificationError(f"hallucinated_citation_id: {cid!r}")
-            if cid in seen_ids_for_claim:
+            if alias not in alias_to_real:
+                raise CitationVerificationError(f"hallucinated_citation_id: {alias!r}")
+            if alias in seen_aliases_for_claim:
                 raise CitationVerificationError(
-                    f"duplicate_citation_id: {cid!r} for {claim_id!r}"
+                    f"duplicate_citation_id: {alias!r} for {claim_id!r}"
                 )
-            seen_ids_for_claim.add(cid)
-            clean_ids.append(cid)
+            seen_aliases_for_claim.add(alias)
+            real_id = alias_to_real[alias]
+            if real_id not in allowlist:
+                raise CitationVerificationError(f"hallucinated_citation_id: {alias!r}")
+            clean_ids.append(real_id)
         result[claim_id] = clean_ids
 
     # A claim_id the verifier omitted entirely is treated as "found no
@@ -435,15 +480,20 @@ def verify_citations(
 
     outcome.verifier_invoked = True
     try:
-        messages = _build_verifier_messages(claims, candidates)
+        citation_aliases = _build_citation_aliases(candidates)
+        alias_to_real = dict(zip(citation_aliases, (c.citation_id for c in candidates)))
+        claim_ids_list = [c.claim_id for c in claims]
+
+        messages = _build_verifier_messages(claims, candidates, citation_aliases)
+        response_schema = _build_verifier_response_schema(claim_ids_list, citation_aliases)
         started = time.perf_counter()
-        raw_text, usage = _call_verifier(messages)
+        raw_text, usage = _call_verifier(messages, response_schema)
         outcome.latency_ms = (time.perf_counter() - started) * 1000.0
         outcome.usage = usage
 
         allowlist = {c.citation_id for c in candidates}
-        claim_ids = {c.claim_id for c in claims}
-        per_claim = _parse_and_validate(raw_text, claim_ids, allowlist)
+        claim_ids = set(claim_ids_list)
+        per_claim = _parse_and_validate(raw_text, claim_ids, alias_to_real, allowlist)
 
         outcome.per_claim_verified_ids = per_claim
         seen: set[str] = set()

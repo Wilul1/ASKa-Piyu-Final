@@ -116,17 +116,19 @@ def test_zero_candidates_skips_verifier_call_entirely():
 
 def test_one_claim_one_valid_source():
     candidates = [_ev("coe-27", "Certificate of Employment", "Fee: None.")]
-    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["coe-27"]}]})
+    # The verifier is only ever shown the alias "S1", never the real
+    # "coe-27" id -- see _build_citation_aliases.
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
     assert outcome.verifier_succeeded is True
-    assert outcome.verified_citation_ids == ["coe-27"]
+    assert outcome.verified_citation_ids == ["coe-27"]  # alias mapped back to the real id
 
 
 def test_one_claim_multiple_valid_sources():
     candidates = [_ev("a", "T1", "..."), _ev("b", "T2", "...")]
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["a", "b"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1", "S2"]}]}
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
@@ -138,8 +140,8 @@ def test_multiple_claims_one_shared_source_deduplicated():
     mock_client = _mock_verifier_returning(
         {
             "claims": [
-                {"claim_id": "c1", "supporting_citation_ids": ["a"]},
-                {"claim_id": "c2", "supporting_citation_ids": ["a"]},
+                {"claim_id": "c1", "supporting_citation_ids": ["S1"]},
+                {"claim_id": "c2", "supporting_citation_ids": ["S1"]},
             ]
         }
     )
@@ -153,8 +155,8 @@ def test_multiple_claims_multiple_distinct_sources():
     mock_client = _mock_verifier_returning(
         {
             "claims": [
-                {"claim_id": "c1", "supporting_citation_ids": ["a"]},
-                {"claim_id": "c2", "supporting_citation_ids": ["b"]},
+                {"claim_id": "c1", "supporting_citation_ids": ["S1"]},
+                {"claim_id": "c2", "supporting_citation_ids": ["S2"]},
             ]
         }
     )
@@ -180,7 +182,7 @@ def test_verifier_may_omit_a_claim_entirely_treated_as_no_support():
     candidates = [_ev("a", "T1", "...")]
     # Verifier response omits c2 entirely -- must not be treated as an error.
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["a"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None. Office: HRMU.", candidates=candidates, mode="llm")
@@ -198,7 +200,7 @@ def test_same_number_wrong_procedure_rejection_via_correct_verifier_judgment():
     refund = _ev("refund-52", "Refunding of Fees", "50% refund from 2nd-4th week.")
     classification = _ev("class-34", "Classifications of Students", "Junior = 50%-75% of units earned.")
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["refund-52"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}  # alias for refund-52
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(
@@ -212,7 +214,7 @@ def test_same_office_wrong_procedure_rejection_via_correct_verifier_judgment():
     transcript = _ev("tor-1", "Issuance of Transcript of Records", "Office: Registrar. Fee: P75/page.")
     enrollment = _ev("enroll-0", "Enrollment", "Office: Registrar. Fee: None.")
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["tor-1"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}  # alias for tor-1
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(
@@ -226,7 +228,7 @@ def test_generic_vocabulary_collision_rejection_via_correct_verifier_judgment():
     budget = _ev("budget-29", "Funding of Request Letters", "Budget Office funding, fee none.")
     oup = _ev("oup-21", "Approval of Request Letters", "Office of the University President approval.")
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["budget-29"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}  # alias for budget-29
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(
@@ -242,7 +244,7 @@ def test_near_duplicate_service_variant_rejection_via_correct_verifier_judgment(
     alumni = _ev("gm-16", "Good Moral Certificate (Alumni)", "Requires Transcript of Record.")
     undergrad = _ev("gm-15", "Good Moral Certificate (Undergraduate)", "Requires Certificate of Registration.")
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["gm-16"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}  # alias for gm-16
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(
@@ -303,7 +305,7 @@ def test_empty_verifier_response_fails_closed():
 def test_duplicate_citation_ids_within_one_claim_fails_closed():
     candidates = [_ev("a", "T1", "...")]
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["a", "a"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1", "S1"]}]}
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
@@ -316,7 +318,7 @@ def test_duplicate_claim_ids_in_response_fails_closed():
     mock_client = _mock_verifier_returning(
         {
             "claims": [
-                {"claim_id": "c1", "supporting_citation_ids": ["a"]},
+                {"claim_id": "c1", "supporting_citation_ids": ["S1"]},
                 {"claim_id": "c1", "supporting_citation_ids": []},
             ]
         }
@@ -345,7 +347,7 @@ def test_malformed_one_claim_invalidates_the_whole_response_not_just_that_claim(
     mock_client = _mock_verifier_returning(
         {
             "claims": [
-                {"claim_id": "c1", "supporting_citation_ids": ["a"]},  # valid
+                {"claim_id": "c1", "supporting_citation_ids": ["S1"]},  # valid
                 {"claim_id": "c2", "supporting_citation_ids": ["hallucinated"]},  # invalid
             ]
         }
@@ -442,7 +444,7 @@ def test_candidate_allowlist_matches_exactly_what_was_passed():
 def test_shadow_mode_invokes_verifier_and_reports_outcome_fields():
     candidates = [_ev("a", "T1", "...")]
     mock_client = _mock_verifier_returning(
-        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["a"]}]}
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
     )
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="shadow")
@@ -464,7 +466,7 @@ def test_verifier_request_includes_structured_output_response_format():
     be treated as a trust boundary -- see the fail-closed tests below,
     which prove strict re-validation still happens regardless."""
     candidates = [_ev("a", "T1", "...")]
-    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["a"]}]})
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
 
@@ -509,6 +511,151 @@ def test_structured_output_request_is_isolated_to_citation_verification_module()
 
     source = inspect.getsource(groq_answer_service)
     assert "response_format" not in source
+
+
+# --- citation aliases & dynamic per-call schema --------------------------------
+
+
+def test_citation_aliases_assigned_deterministically_in_candidate_order():
+    from app.services.qa.citation_verification import _build_citation_aliases
+
+    candidates = [_ev("a", "T1", "..."), _ev("b", "T2", "..."), _ev("c", "T3", "...")]
+    assert _build_citation_aliases(candidates) == ["S1", "S2", "S3"]
+
+
+_REALISTIC_PRODUCTION_IDS = [
+    "30875c07-409e-45ea-989e-3315a85608c1::58",
+    "4a7b432a-03a1-4f58-beac-1da63681e734::0",
+    "faq:bf4a12ed-78c9-4f8e-8264-03ffe577f888::1",
+    "4a7b432a-03a1-4f58-beac-1da63681e734::1",
+    "30875c07-409e-45ea-989e-3315a85608c1::460",
+    "faq:ee4bc400-83da-4763-ba6d-55d430f22be5::0",
+    "30875c07-409e-45ea-989e-3315a85608c1::447",
+    "faq:de410e4a-750f-4e4c-963f-767156880442::0",
+    "4a7b432a-03a1-4f58-beac-1da63681e734::92",
+    "4a7b432a-03a1-4f58-beac-1da63681e734::2",
+    "30875c07-409e-45ea-989e-3315a85608c1::401",
+    "4a7b432a-03a1-4f58-beac-1da63681e734::40",
+    "30875c07-409e-45ea-989e-3315a85608c1::386",
+    "30875c07-409e-45ea-989e-3315a85608c1::462",
+    "30875c07-409e-45ea-989e-3315a85608c1::468",
+]  # the exact 15 v1_citation_ids observed in the real production failure
+
+
+def test_realistic_15_candidate_uuid_and_faq_ids_verify_and_map_back_correctly():
+    """Mirrors the real production failure's shape exactly: 15 authorized
+    candidates using long UUID::index and faq:UUID::index citation_ids. The
+    verifier is only ever shown short S1..S15 aliases; a response using an
+    alias must still resolve to the correct real citation_id."""
+    candidates = [_ev(cid, f"Title {i}", "...") for i, cid in enumerate(_REALISTIC_PRODUCTION_IDS)]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is True
+    assert outcome.verified_citation_ids == [_REALISTIC_PRODUCTION_IDS[0]]
+
+
+def test_multiple_valid_aliases_map_to_correct_distinct_real_ids():
+    real_ids = _REALISTIC_PRODUCTION_IDS[:2]
+    candidates = [_ev(real_ids[0], "T1", "..."), _ev(real_ids[1], "T2", "...")]
+    mock_client = _mock_verifier_returning(
+        {
+            "claims": [
+                {"claim_id": "c1", "supporting_citation_ids": ["S1"]},
+                {"claim_id": "c2", "supporting_citation_ids": ["S2"]},
+            ]
+        }
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None. Office: HRMU.", candidates=candidates, mode="llm")
+    assert outcome.per_claim_verified_ids == {"c1": [real_ids[0]], "c2": [real_ids[1]]}
+    assert set(outcome.verified_citation_ids) == set(real_ids)
+
+
+def test_unknown_citation_alias_fails_closed():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S99"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert "hallucinated_citation_id" in outcome.failure_reason
+    assert outcome.verified_citation_ids == []
+
+
+def test_real_citation_id_reproduced_verbatim_is_no_longer_accepted():
+    """Confirms the model can no longer succeed by reproducing the real,
+    long citation_id verbatim -- only its short alias is now a valid value.
+    This is the exact structural gap the fix closes."""
+    candidates = [_ev(_REALISTIC_PRODUCTION_IDS[0], "T1", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": [_REALISTIC_PRODUCTION_IDS[0]]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert "hallucinated_citation_id" in outcome.failure_reason
+    assert outcome.verified_citation_ids == []
+
+
+def test_mapped_real_id_is_independently_checked_against_original_allowlist():
+    """Defense in depth: _parse_and_validate re-checks the mapped real id
+    against the original allowlist and must not trust the alias map alone,
+    even though alias_to_real is always built from the same candidates as
+    allowlist during normal operation."""
+    from app.services.qa.citation_verification import _parse_and_validate
+
+    raw_text = json.dumps({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
+    alias_to_real = {"S1": "not-actually-allowlisted"}
+    with pytest.raises(CitationVerificationError, match="hallucinated_citation_id"):
+        _parse_and_validate(raw_text, {"c1"}, alias_to_real, {"something-else"})
+
+
+def test_dynamic_schema_claim_id_enum_contains_only_current_claim_ids():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    _, kwargs = mock_client.post.call_args
+    schema = kwargs["json"]["response_format"]["json_schema"]["schema"]
+    claim_id_schema = schema["properties"]["claims"]["items"]["properties"]["claim_id"]
+    assert claim_id_schema["enum"] == ["c1"]
+
+
+def test_dynamic_schema_citation_enum_contains_only_current_aliases():
+    candidates = [_ev("a", "T1", "..."), _ev("b", "T2", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    _, kwargs = mock_client.post.call_args
+    schema = kwargs["json"]["response_format"]["json_schema"]["schema"]
+    citation_schema = schema["properties"]["claims"]["items"]["properties"]["supporting_citation_ids"]
+    assert citation_schema["items"]["enum"] == ["S1", "S2"]
+
+
+def test_dynamic_schema_enums_never_leak_real_citation_ids():
+    """The enum the provider is shown must contain only short aliases --
+    never the real, long citation_id values -- so the request payload
+    itself never asks the model to reproduce them."""
+    candidates = [_ev(cid, f"Title {i}", "...") for i, cid in enumerate(_REALISTIC_PRODUCTION_IDS[:3])]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    _, kwargs = mock_client.post.call_args
+    schema = kwargs["json"]["response_format"]["json_schema"]["schema"]
+    citation_enum = schema["properties"]["claims"]["items"]["properties"]["supporting_citation_ids"]["items"]["enum"]
+    assert citation_enum == ["S1", "S2", "S3"]
+    for real_id in _REALISTIC_PRODUCTION_IDS[:3]:
+        assert real_id not in citation_enum
 
 
 # --- helpers -------------------------------------------------------------------

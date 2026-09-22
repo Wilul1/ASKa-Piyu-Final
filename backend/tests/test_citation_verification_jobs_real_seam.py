@@ -21,6 +21,7 @@ import json
 import logging
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from app.services.qa import citation_verification_jobs as jobs
@@ -450,6 +451,125 @@ def test_malformed_json_diagnostics_never_contain_raw_content_in_terminal_event(
     event = events[0]
     assert event["failure_category"] == "malformed_json"
     assert event["failure_diagnostics"] is not None
+    raw = json.dumps(event)
+    assert secret_marker not in raw
+    assert answer not in raw
+
+
+def test_http_status_error_terminal_event_carries_provider_diagnostics(caplog):
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "error", request=MagicMock(), response=MagicMock(status_code=402)
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+
+    vid = jobs.create_job(
+        answer=answer, candidates=candidates, mode="async_llm", v1_citation_ids=["tor::1"]
+    )
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert event["failure_category"] == "provider_error"
+    assert event["failure_diagnostics"] is None  # independent of malformed_json diagnostics
+    assert event["provider_diagnostics"] == {"provider_error_kind": "http_status", "http_status": 402}
+
+
+def test_timeout_terminal_event_carries_provider_diagnostics(caplog):
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = httpx.TimeoutException("timed out")
+
+    vid = jobs.create_job(
+        answer=answer, candidates=candidates, mode="async_llm", v1_citation_ids=["tor::1"]
+    )
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert event["failure_category"] == "provider_error"
+    assert event["provider_diagnostics"] == {"provider_error_kind": "timeout", "http_status": None}
+
+
+def test_verified_terminal_event_has_no_provider_diagnostics(caplog):
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    mock_client = _mock_httpx_client_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+
+    vid = jobs.create_job(answer=answer, candidates=candidates, mode="async_llm")
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    assert events[0]["status"] == "verified"
+    assert events[0].get("provider_diagnostics") is None
+
+
+def test_malformed_json_terminal_event_has_no_provider_diagnostics(caplog):
+    """provider_diagnostics and failure_diagnostics are independent fields
+    -- a malformed_json failure (content-level, after a successful HTTP
+    response) must leave provider_diagnostics null."""
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    mock_client = _mock_httpx_client_raw_content("")
+
+    vid = jobs.create_job(
+        answer=answer, candidates=candidates, mode="async_llm", v1_citation_ids=["tor::1"]
+    )
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert event["failure_category"] == "malformed_json"
+    assert event["failure_diagnostics"] is not None
+    assert event.get("provider_diagnostics") is None
+
+
+def test_provider_diagnostics_never_leak_raw_error_text_in_terminal_event(caplog):
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    secret_marker = "SENSITIVE_PROVIDER_ERROR_BODY_MUST_NEVER_APPEAR_13579"
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        f"error: {secret_marker}", request=MagicMock(), response=MagicMock(status_code=429)
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+
+    vid = jobs.create_job(
+        answer=answer, candidates=candidates, mode="async_llm", v1_citation_ids=["tor::1"]
+    )
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert event["provider_diagnostics"] == {"provider_error_kind": "http_status", "http_status": 429}
     raw = json.dumps(event)
     assert secret_marker not in raw
     assert answer not in raw

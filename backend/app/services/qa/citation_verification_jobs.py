@@ -230,6 +230,7 @@ def _log_async_verification_event(
     duration_ms: float | None,
     failure_category: str | None,
     failure_diagnostics: dict[str, Any] | None = None,
+    provider_diagnostics: dict[str, Any] | None = None,
 ) -> None:
     """Best-effort, terminal, operator-facing diagnostic event for one
     completed async verification job -- reached by both async_shadow and
@@ -251,6 +252,14 @@ def _log_async_verification_event(
     or transform it further, only passes it through into the payload
     verbatim (or ``None``/absent for every other outcome).
 
+    ``provider_diagnostics`` -- present (non-None) only for a provider/
+    transport-layer failure (timeout, HTTP error status, network error, or
+    unconfigured provider) -- is itself already a small, bounded dict built
+    by ``citation_verification._build_provider_diagnostics`` (an HTTP
+    status integer and a fixed ``provider_error_kind`` string only, never a
+    response body or raw exception text); passed through verbatim, never
+    inspected further here.
+
     Called strictly AFTER the job record has already been written under
     _LOCK, and wrapped in its own try/except: a logging/serialization
     problem here must never affect job state, verification behavior, or the
@@ -269,6 +278,7 @@ def _log_async_verification_event(
             "duration_ms": round(duration_ms, 1) if isinstance(duration_ms, (int, float)) else None,
             "failure_category": failure_category,
             "failure_diagnostics": failure_diagnostics,
+            "provider_diagnostics": provider_diagnostics,
             "timestamp_unix": round(time.time(), 3),
         }
         logger.info("citation_verification_async_completed %s", json.dumps(payload, sort_keys=True))
@@ -301,6 +311,7 @@ def run_verification_job(verification_id: str) -> None:
     semantic_mode = _semantic_mode_for(async_mode)
     duration_ms: float | None = None
     failure_diagnostics: dict[str, Any] | None = None
+    provider_diagnostics: dict[str, Any] | None = None
     try:
         outcome = verify_citations(answer=answer or "", candidates=candidates or [], mode=semantic_mode)
         duration_ms = outcome.latency_ms
@@ -327,6 +338,7 @@ def run_verification_job(verification_id: str) -> None:
             new_status = JobStatus.FAILED
             failure_reason = outcome.failure_reason or "verification_failed"
             failure_diagnostics = outcome.failure_diagnostics
+            provider_diagnostics = outcome.provider_diagnostics
     except Exception as exc:  # noqa: BLE001 -- fail-closed against literally anything
         logger.warning(
             "citation_verification_jobs: unexpected error running job, failing closed",
@@ -372,6 +384,7 @@ def run_verification_job(verification_id: str) -> None:
             else None
         ),
         failure_diagnostics=failure_diagnostics,
+        provider_diagnostics=provider_diagnostics,
     )
 
 

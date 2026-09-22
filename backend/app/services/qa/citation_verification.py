@@ -61,11 +61,25 @@ class CitationVerificationError(RuntimeError):
     ``_build_malformed_json_diagnostics``) -- never raw provider content,
     never document/question/answer text. Currently only set for
     ``malformed_json`` failures; every other raise site leaves it ``None``.
+
+    ``provider_diagnostics``, when provided, is a separate, equally small
+    and bounded dict describing a provider/transport-layer failure (see
+    ``_build_provider_diagnostics``) -- an HTTP status integer and a fixed
+    ``provider_error_kind`` string, never a response body, error message,
+    or raw exception text. Only set at provider-facing raise sites in
+    ``_call_verifier``; every other raise site leaves it ``None``.
     """
 
-    def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostics: dict[str, Any] | None = None,
+        provider_diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.diagnostics = diagnostics
+        self.provider_diagnostics = provider_diagnostics
 
 
 # --- claim extraction (deterministic, no LLM call) --------------------------
@@ -180,6 +194,12 @@ class VerificationOutcome:
     # other outcome, including success. See CitationVerificationError's own
     # docstring and _build_malformed_json_diagnostics.
     failure_diagnostics: dict[str, Any] | None = None
+    # Bounded, privacy-safe facts about a provider/transport-layer failure
+    # (provider_error_kind + http_status only). None for every other
+    # outcome, including success and malformed_json. See
+    # CitationVerificationError's own docstring and
+    # _build_provider_diagnostics.
+    provider_diagnostics: dict[str, Any] | None = None
 
 
 # --- verifier prompt ----------------------------------------------------------
@@ -328,6 +348,18 @@ def _build_verifier_messages(
     ]
 
 
+def _build_provider_diagnostics(*, kind: str, http_status: int | None = None) -> dict[str, Any]:
+    """Bounded, JSON-safe facts about a provider/transport-layer failure --
+    a fixed ``provider_error_kind`` string (``"http_status"`` / ``"timeout"``
+    / ``"transport"`` / ``"not_configured"``) and, only for ``"http_status"``,
+    the exact HTTP status code. Never a response body, provider error
+    message, or raw exception text -- the status code alone is sufficient
+    evidence to distinguish e.g. a 402 (billing) from a 429 (rate limit)
+    from a 401 (auth) without parsing or logging anything provider-supplied.
+    """
+    return {"provider_error_kind": kind, "http_status": http_status}
+
+
 def _call_verifier(
     messages: list[dict[str, str]], response_schema: dict[str, Any]
 ) -> tuple[str, dict[str, Any] | None]:
@@ -343,7 +375,10 @@ def _call_verifier(
     separate provider/base URL/API key, only the model.
     """
     if not settings.groq_api_key:
-        raise CitationVerificationError("provider_not_configured")
+        raise CitationVerificationError(
+            "provider_not_configured",
+            provider_diagnostics=_build_provider_diagnostics(kind="not_configured"),
+        )
 
     verifier_model = settings.citation_verifier_model or settings.groq_model
 
@@ -367,9 +402,22 @@ def _call_verifier(
             )
             response.raise_for_status()
     except httpx.TimeoutException as exc:
-        raise CitationVerificationError(f"provider_timeout: {exc}") from exc
+        raise CitationVerificationError(
+            f"provider_timeout: {exc}",
+            provider_diagnostics=_build_provider_diagnostics(kind="timeout"),
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise CitationVerificationError(
+            f"provider_error: {exc}",
+            provider_diagnostics=_build_provider_diagnostics(
+                kind="http_status", http_status=exc.response.status_code
+            ),
+        ) from exc
     except httpx.HTTPError as exc:
-        raise CitationVerificationError(f"provider_error: {exc}") from exc
+        raise CitationVerificationError(
+            f"provider_error: {exc}",
+            provider_diagnostics=_build_provider_diagnostics(kind="transport"),
+        ) from exc
 
     try:
         payload = response.json()
@@ -705,6 +753,7 @@ def verify_citations(
         outcome.verified_citation_ids = []
         outcome.per_claim_verified_ids = {}
         outcome.failure_diagnostics = exc.diagnostics
+        outcome.provider_diagnostics = exc.provider_diagnostics
     except Exception as exc:  # noqa: BLE001 -- fail-closed against literally anything
         logger.warning(
             "citation_verification: unexpected error, failing closed", exc_info=True

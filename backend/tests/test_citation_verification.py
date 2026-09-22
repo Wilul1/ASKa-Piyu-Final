@@ -836,6 +836,132 @@ def test_content_list_fails_closed_as_response_shape_error_not_attribute_error()
     assert outcome.verified_citation_ids == []
 
 
+# --- privacy-safe provider-failure diagnostics -----------------------------------
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 402, 403, 429, 500])
+def test_http_status_error_captures_exact_status_and_kind(status_code):
+    candidates = [_ev("a", "T1", "...")]
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "error", request=MagicMock(), response=MagicMock(status_code=status_code)
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert outcome.provider_diagnostics == {
+        "provider_error_kind": "http_status",
+        "http_status": status_code,
+    }
+
+
+def test_timeout_captures_kind_timeout_with_null_status():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = httpx.TimeoutException("timed out")
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert outcome.provider_diagnostics == {"provider_error_kind": "timeout", "http_status": None}
+
+
+def test_transport_network_failure_captures_kind_transport_with_null_status():
+    """A network/connection-level failure (never got an HTTP response at
+    all) is distinct from both a timeout and an HTTP status error."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = httpx.ConnectError("connection refused")
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert outcome.provider_diagnostics == {"provider_error_kind": "transport", "http_status": None}
+
+
+def test_provider_not_configured_captures_kind_not_configured_with_null_status():
+    candidates = [_ev("a", "T1", "...")]
+    with (
+        patch(f"{MODULE}.settings.groq_api_key", None),
+        patch("httpx.Client") as mock_httpx,
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    mock_httpx.assert_not_called()
+    assert outcome.verifier_succeeded is False
+    assert outcome.provider_diagnostics == {"provider_error_kind": "not_configured", "http_status": None}
+
+
+def test_malformed_json_leaves_provider_diagnostics_none():
+    """provider_diagnostics is specific to provider/transport failures --
+    malformed_json (a content-level failure, after a successful HTTP
+    response) must leave it None; failure_diagnostics is what applies there."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw("")
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert outcome.provider_diagnostics is None
+    assert outcome.failure_diagnostics is not None  # unchanged from the prior fix
+
+
+def test_successful_verification_leaves_provider_diagnostics_none():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is True
+    assert outcome.provider_diagnostics is None
+
+
+def test_provider_diagnostics_never_contain_raw_response_or_exception_text():
+    """A distinctive marker embedded in the mocked error message/response
+    must never appear anywhere in the serialized provider_diagnostics."""
+    candidates = [_ev("a", "T1", "...")]
+    secret_marker = "SECRET_PROVIDER_ERROR_BODY_MUST_NEVER_LEAK_54321"
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        f"server error: {secret_marker}", request=MagicMock(), response=MagicMock(status_code=402)
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.provider_diagnostics == {"provider_error_kind": "http_status", "http_status": 402}
+    serialized = json.dumps(outcome.provider_diagnostics)
+    assert secret_marker not in serialized
+    assert "server error" not in serialized
+    assert secret_marker in outcome.failure_reason  # confirms the marker WAS in the raw
+    # reason (proving this test would catch a leak), just never in diagnostics
+
+
+def test_provider_diagnostics_never_contain_credentials():
+    candidates = [_ev("a", "T1", "...")]
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "unauthorized", request=MagicMock(), response=MagicMock(status_code=401)
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    serialized = json.dumps(outcome.provider_diagnostics)
+    assert "test-key" not in serialized  # the _configured_provider() api key
+    assert "Bearer" not in serialized
+    assert "Authorization" not in serialized
+
+
 # --- privacy-safe malformed_json diagnostics ------------------------------------
 
 

@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from app.services.qa import citation_verification
 from app.services.qa.citation_verification import (
     CandidateEvidence,
     Claim,
@@ -966,6 +967,87 @@ def test_bucket_error_position_boundaries():
     assert _bucket_error_position(99, 100) == "end"
 
 
+# --- dedicated citation verifier model ------------------------------------------
+
+
+def test_verifier_model_unset_falls_back_to_generation_model():
+    """settings.citation_verifier_model is None (the _configured_provider
+    baseline) -- the HTTP request must use groq_model, exactly as before
+    this setting existed."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["json"]["model"] == "test-model"  # groq_model, unchanged
+
+
+def test_verifier_model_empty_string_falls_back_to_generation_model():
+    """An empty string (e.g. an env var set but blank) must be treated the
+    same as unset -- falls back to groq_model, never sent as the model."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
+    with patch("httpx.Client", return_value=mock_client), _configured_provider(), \
+         patch.object(citation_verification.settings, "citation_verifier_model", ""):
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["json"]["model"] == "test-model"
+
+
+def test_verifier_model_set_is_used_in_the_http_request():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
+    with patch("httpx.Client", return_value=mock_client), _configured_provider(), \
+         patch.object(citation_verification.settings, "citation_verifier_model", "dedicated-verifier-model"):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["json"]["model"] == "dedicated-verifier-model"
+    assert outcome.verifier_succeeded is True  # setting it doesn't break anything else
+
+
+def test_verifier_model_set_leaves_base_url_api_key_timeout_unchanged():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
+    with patch("httpx.Client", return_value=mock_client) as mock_httpx_client, _configured_provider(), \
+         patch.object(citation_verification.settings, "citation_verifier_model", "dedicated-verifier-model"):
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    args, kwargs = mock_client.post.call_args
+    assert args[0] == "https://openrouter.ai/api/v1/chat/completions"  # llm_base_url unchanged
+    assert kwargs["headers"]["Authorization"] == "Bearer test-key"  # groq_api_key unchanged
+    mock_httpx_client.assert_called_once_with(timeout=5.0)  # groq_timeout_seconds unchanged
+
+
+def test_verifier_model_set_response_format_and_aliases_still_present():
+    """A dedicated verifier model must not disturb any part of the 02d385d/
+    ef9fe90 hardening -- structured response_format, S1/S2 aliases, and
+    dynamic enums are all still built and sent exactly as before."""
+    candidates = [_ev("a", "T1", "..."), _ev("b", "T2", "...")]
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
+    with patch("httpx.Client", return_value=mock_client), _configured_provider(), \
+         patch.object(citation_verification.settings, "citation_verifier_model", "dedicated-verifier-model"):
+        verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    _, kwargs = mock_client.post.call_args
+    body = kwargs["json"]
+    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"]["json_schema"]["strict"] is True
+    schema = body["response_format"]["json_schema"]["schema"]
+    citation_schema = schema["properties"]["claims"]["items"]["properties"]["supporting_citation_ids"]
+    assert citation_schema["items"]["enum"] == ["S1", "S2"]
+
+
+def test_verifier_model_set_fail_closed_behavior_intact():
+    """A dedicated verifier model must not weaken fail-closed validation --
+    an unknown alias must still be rejected exactly as before."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S99"]}]})
+    with patch("httpx.Client", return_value=mock_client), _configured_provider(), \
+         patch.object(citation_verification.settings, "citation_verifier_model", "dedicated-verifier-model"):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert "hallucinated_citation_id" in outcome.failure_reason
+    assert outcome.verified_citation_ids == []
+
+
 # --- helpers -------------------------------------------------------------------
 
 
@@ -982,6 +1064,7 @@ def _configured_provider():
         llm_base_url="https://openrouter.ai/api/v1/chat/completions",
         groq_model="test-model",
         groq_timeout_seconds=5.0,
+        citation_verifier_model=None,  # deterministic baseline: falls back to groq_model
     )
 
 

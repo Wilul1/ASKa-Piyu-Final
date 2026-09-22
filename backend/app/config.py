@@ -121,6 +121,17 @@ class Settings(BaseSettings):
     # Never silently switch production into "llm"/"async_llm" mode -- this
     # must be an explicit, deliberate rollout decision.
     citation_verification_mode: str = "lexical"
+    # Optional, additive: lets the Citation V2 verifier call use a DIFFERENT
+    # model from normal answer generation, while still sharing the same
+    # OpenRouter-compatible base URL/API key/timeout (groq_* above) --
+    # verification and generation have different requirements (structured-
+    # output reliability vs. generation quality), and this setting exists so
+    # that tradeoff can be tuned independently. Unset (None/empty, the
+    # default) preserves today's behavior exactly: the verifier falls back
+    # to groq_model, same as before this setting existed. See
+    # app/services/qa/citation_verification.py's own use of this field for
+    # the exact fallback logic.
+    citation_verifier_model: str | None = None
 
     cors_origins: list[str] = [
         "http://localhost:8080",

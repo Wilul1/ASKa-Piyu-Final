@@ -333,9 +333,19 @@ def _call_verifier(
 ) -> tuple[str, dict[str, Any] | None]:
     """One batched httpx call. Raises CitationVerificationError on any
     provider-level failure. Never called for lexical mode or when there are
-    no claims/candidates -- callers gate that before reaching here."""
+    no claims/candidates -- callers gate that before reaching here.
+
+    Uses ``settings.citation_verifier_model`` when set (non-None, non-empty)
+    so verification can run a different model from answer generation;
+    otherwise falls back to ``settings.groq_model`` (today's behavior,
+    unchanged when the new setting is left unset). Base URL, API key, and
+    timeout are always the shared groq_* settings -- this module does not
+    separate provider/base URL/API key, only the model.
+    """
     if not settings.groq_api_key:
         raise CitationVerificationError("provider_not_configured")
+
+    verifier_model = settings.citation_verifier_model or settings.groq_model
 
     headers = {
         "Authorization": f"Bearer {settings.groq_api_key}",
@@ -349,7 +359,7 @@ def _call_verifier(
                 settings.llm_base_url,
                 headers=headers,
                 json={
-                    "model": settings.groq_model,
+                    "model": verifier_model,
                     "temperature": 0.0,
                     "messages": messages,
                     "response_format": response_schema,

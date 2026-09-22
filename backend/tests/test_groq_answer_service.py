@@ -354,6 +354,24 @@ def test_generate_groq_answer_request_body_unaffected_by_citation_v2_structured_
     assert "response_format" not in body
 
 
+def test_generate_groq_answer_unaffected_by_citation_verifier_model_setting():
+    """Regression guard: settings.citation_verifier_model exists so Citation
+    V2 verification can use a different model -- answer generation must
+    keep using settings.groq_model regardless of whether that setting is
+    set, unset, or points at a completely different model."""
+    mock_client = _mock_httpx_client_returning("Answer text.")
+    with (
+        patch("app.services.qa.groq_answer_service.settings.groq_api_key", "a-groq-key"),
+        patch("app.services.qa.groq_answer_service.settings.groq_model", "generation-model"),
+        patch("app.services.qa.groq_answer_service.settings.citation_verifier_model", "dedicated-verifier-model"),
+        patch("httpx.Client", return_value=mock_client),
+    ):
+        generate_groq_answer(question="How do I enroll?", context="Title: Enrollment\nContent: ...")
+
+    _, call_kwargs = mock_client.post.call_args
+    assert call_kwargs["json"]["model"] == "generation-model"
+
+
 @pytest.mark.parametrize(
     ("topic_question", "slot_chain"),
     (

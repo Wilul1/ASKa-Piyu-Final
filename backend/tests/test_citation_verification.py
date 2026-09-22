@@ -658,6 +658,183 @@ def test_dynamic_schema_enums_never_leak_real_citation_ids():
         assert real_id not in citation_enum
 
 
+# --- JSON extraction & content-shape guard --------------------------------------
+
+
+def test_extract_bare_json():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    assert _extract_first_json_object('{"a": 1}') == '{"a": 1}'
+
+
+def test_extract_json_fenced_with_language_tag():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '```json\n{"a": 1}\n```'
+    assert _extract_first_json_object(text) == '{"a": 1}'
+
+
+def test_extract_json_fenced_generic():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '```\n{"a": 1}\n```'
+    assert _extract_first_json_object(text) == '{"a": 1}'
+
+
+def test_extract_json_with_leading_prose():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = 'Here is the result: {"a": 1}'
+    assert _extract_first_json_object(text) == '{"a": 1}'
+
+
+def test_extract_json_with_ordinary_trailing_prose():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '{"a": 1} Hope this helps!'
+    assert _extract_first_json_object(text) == '{"a": 1}'
+
+
+def test_extract_json_with_trailing_prose_containing_a_brace():
+    """The exact regression this fix exists for: the old greedy
+    \\{.*\\} regex would have spanned all the way to this trailing '}',
+    corrupting an otherwise-perfectly-valid object into invalid JSON."""
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '{"a": 1} Note: don\'t forget the closing brace }, thanks!'
+    assert _extract_first_json_object(text) == '{"a": 1}'
+
+
+def test_extract_only_first_of_two_json_objects():
+    """Two JSON objects in one response -- must extract ONLY the first
+    complete object, never merge them."""
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '{"a": 1}{"b": 2}'
+    assert _extract_first_json_object(text) == '{"a": 1}'
+
+
+def test_extract_nested_object():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '{"a": {"b": 1}}'
+    assert _extract_first_json_object(text) == text
+
+
+def test_extract_arrays_inside_object():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '{"a": [1, 2, {"b": 3}]}'
+    assert _extract_first_json_object(text) == text
+
+
+def test_extract_braces_inside_quoted_string_do_not_confuse_depth():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    text = '{"a": "text with { and } inside"} trailing prose with a } too'
+    assert _extract_first_json_object(text) == '{"a": "text with { and } inside"}'
+
+
+def test_extract_escaped_quotes_inside_string():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    payload = {"a": 'she said "hi"'}
+    text = json.dumps(payload) + " trailing prose"
+    assert _extract_first_json_object(text) == json.dumps(payload)
+
+
+def test_extract_escaped_backslashes():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    payload = {"a": "path\\to\\file"}
+    text = json.dumps(payload) + " trailing prose"
+    assert _extract_first_json_object(text) == json.dumps(payload)
+
+
+def test_extract_truncated_json_no_matching_close_returns_none():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    assert _extract_first_json_object('{"a": 1, "b": 2') is None
+
+
+def test_extract_unterminated_string_returns_none():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    assert _extract_first_json_object('{"a": "unterminated') is None
+
+
+def test_extract_plain_non_json_text_returns_none():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    assert _extract_first_json_object("this is not json at all") is None
+
+
+def test_extract_empty_string_returns_none():
+    from app.services.qa.citation_verification import _extract_first_json_object
+
+    assert _extract_first_json_object("") is None
+
+
+def test_fenced_valid_json_still_verifies_end_to_end():
+    """The extraction fix must not just reject bad input -- it must still
+    let recoverable, fenced/noisy-but-valid output succeed end-to-end."""
+    candidates = [_ev("a", "T1", "...")]
+    fenced = '```json\n' + json.dumps({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}) + '\n```'
+    mock_client = _mock_verifier_returning_raw(fenced)
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is True
+    assert outcome.verified_citation_ids == ["a"]
+
+
+def test_trailing_prose_with_brace_still_verifies_end_to_end():
+    candidates = [_ev("a", "T1", "...")]
+    noisy = (
+        json.dumps({"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]})
+        + " Note: don't forget the closing brace }, thanks!"
+    )
+    mock_client = _mock_verifier_returning_raw(noisy)
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is True
+    assert outcome.verified_citation_ids == ["a"]
+
+
+def test_two_json_objects_end_to_end_uses_only_the_first():
+    candidates = [_ev("a", "T1", "..."), _ev("b", "T2", "...")]
+    first = {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    second = {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S2"]}]}
+    mock_client = _mock_verifier_returning_raw(json.dumps(first) + json.dumps(second))
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is True
+    assert outcome.verified_citation_ids == ["a"]  # only the first object's alias, never merged
+
+
+def test_content_none_fails_closed_as_response_shape_error():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw(None)
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert "unexpected_response_shape" in outcome.failure_reason
+    assert outcome.verified_citation_ids == []
+
+
+def test_content_list_fails_closed_as_response_shape_error_not_attribute_error():
+    """Confirms the content-shape guard catches this cleanly -- an
+    AttributeError from .strip() on a list must never escape as a raw,
+    uncategorized unexpected_error."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw([{"type": "text", "text": "{}"}])
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert "unexpected_response_shape" in outcome.failure_reason
+    assert "unexpected_error" not in outcome.failure_reason
+    assert outcome.verified_citation_ids == []
+
+
 # --- helpers -------------------------------------------------------------------
 
 

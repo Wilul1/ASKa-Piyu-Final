@@ -351,11 +351,73 @@ def _call_verifier(
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise CitationVerificationError(f"unexpected_response_shape: {exc}") from exc
 
+    # Content-shape guard: the OpenAI-compatible contract this module relies
+    # on assumes message.content is a plain string, but nothing upstream
+    # enforces that -- a None (e.g. a refusal/empty completion) or a
+    # structured content-parts list (documented for some multimodal/tool
+    # paths on OpenAI-compatible APIs) would otherwise reach
+    # _parse_and_validate and fail with a raw, uncategorized AttributeError
+    # on `.strip()`. Reusing "unexpected_response_shape" here (same prefix
+    # as the envelope-shape check just above, mapped to the existing
+    # response_shape_error telemetry category in citation_verification_jobs
+    # .py) keeps this a clean, already-bounded category instead of an
+    # unexpected_error/internal_error catch-all -- no new module touched, no
+    # stringification or "recovery" of the unexpected shape attempted.
+    if content is None or not isinstance(content, str):
+        raise CitationVerificationError(
+            f"unexpected_response_shape: content is {type(content).__name__}, expected str"
+        )
+
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
     return content, usage
 
 
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.S)
+def _extract_first_json_object(text: str) -> str | None:
+    """Deterministic, JSON-aware scan for the first COMPLETE top-level JSON
+    object in ``text`` -- replaces a prior greedy ``\\{.*\\}`` regex that
+    matched from the first ``{`` to the LAST ``}`` anywhere in the text.
+    That greedy approach silently corrupted otherwise-valid JSON into
+    invalid JSON whenever trailing prose contained a stray ``}``, or when
+    the response contained more than one JSON object -- both would merge
+    unrelated text into the parsed span (see
+    citation_v2_malformed_json_investigation.json).
+
+    Tracks brace depth while ignoring braces inside JSON string literals
+    (respecting backslash-escaping), so nested objects/arrays and braces
+    embedded in string values never confuse the scan. Returns exactly the
+    substring from the first ``{`` to its own matching ``}`` -- nothing
+    before, nothing after, and never a second object. Returns ``None`` if
+    there is no ``{`` at all, or the object never closes (truncated) --
+    both cases are left for the caller's ``json.loads`` to reject as
+    ``malformed_json``; this function never repairs, invents a missing
+    brace, or accepts anything as JSON on its own.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None  # never closed -- truncated; let json.loads reject it
 
 
 def _parse_and_validate(
@@ -384,9 +446,9 @@ def _parse_and_validate(
     verifier response, not just that entry.
     """
     text = (raw_text or "").strip()
-    fence_match = _JSON_OBJECT_RE.search(text)
-    if fence_match:
-        text = fence_match.group(0)
+    extracted = _extract_first_json_object(text)
+    if extracted is not None:
+        text = extracted
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, ValueError) as exc:

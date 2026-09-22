@@ -54,7 +54,18 @@ logger = logging.getLogger(__name__)
 
 class CitationVerificationError(RuntimeError):
     """Internal-only: always caught inside ``verify_citations`` and turned
-    into a fail-closed result. Never escapes this module."""
+    into a fail-closed result. Never escapes this module.
+
+    ``diagnostics``, when provided, is a small, bounded, JSON-safe dict of
+    STRUCTURAL facts only (counts/categories/booleans -- see
+    ``_build_malformed_json_diagnostics``) -- never raw provider content,
+    never document/question/answer text. Currently only set for
+    ``malformed_json`` failures; every other raise site leaves it ``None``.
+    """
+
+    def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
 
 
 # --- claim extraction (deterministic, no LLM call) --------------------------
@@ -164,6 +175,11 @@ class VerificationOutcome:
     verified_citation_ids: list[str] = field(default_factory=list)
     latency_ms: float | None = None
     usage: dict[str, Any] | None = None
+    # Bounded, privacy-safe structural facts about a malformed_json failure
+    # (counts/categories/booleans -- never raw content). None for every
+    # other outcome, including success. See CitationVerificationError's own
+    # docstring and _build_malformed_json_diagnostics.
+    failure_diagnostics: dict[str, Any] | None = None
 
 
 # --- verifier prompt ----------------------------------------------------------
@@ -420,6 +436,110 @@ def _extract_first_json_object(text: str) -> str | None:
     return None  # never closed -- truncated; let json.loads reject it
 
 
+# --- privacy-safe malformed_json diagnostics ----------------------------------
+#
+# Bounded, structural-only telemetry for a malformed_json failure -- never
+# the raw text, never json.JSONDecodeError.doc, never surrounding
+# characters, never an exact character position, never a real citation id
+# or alias, never question/answer/claim/candidate text. Every value below
+# is either a count bucketed into a small fixed set, a boolean, or one of a
+# small fixed category-name enum -- see citation_v2_malformed_json_
+# investigation.json (the read-only investigation this responds to) for why
+# this exists: two real production malformed_json events left no way to
+# tell what class of malformed response occurred, even after ruling out the
+# parser's own prior fragility.
+
+_CONTENT_LENGTH_BUCKETS: tuple[tuple[int, str], ...] = (
+    (0, "empty"),
+    (100, "1_100"),
+    (500, "101_500"),
+    (1000, "501_1000"),
+    (2000, "1001_2000"),
+    (5000, "2001_5000"),
+)
+
+
+def _bucket_content_length(length: int) -> str:
+    if length == 0:
+        return "empty"
+    for ceiling, bucket in _CONTENT_LENGTH_BUCKETS[1:]:
+        if length <= ceiling:
+            return bucket
+    return "over_5000"
+
+
+_POSITION_BUCKET_CEILINGS: tuple[tuple[float, str], ...] = (
+    (0.05, "start"),
+    (0.35, "early"),
+    (0.65, "middle"),
+    (0.95, "late"),
+)
+
+
+def _bucket_error_position(pos: int, length: int) -> str:
+    if length <= 0:
+        return "start"
+    ratio = max(0.0, min(1.0, pos / length))
+    for ceiling, bucket in _POSITION_BUCKET_CEILINGS:
+        if ratio <= ceiling:
+            return bucket
+    return "end"
+
+
+def _json_error_category(exc: BaseException) -> str:
+    """Classifies a JSON parse failure into one of a small, fixed set of
+    bounded category names, by READING (never logging or returning)
+    ``exc.msg``. json.JSONDecodeError.msg is normally one of a handful of
+    fixed English phrases (e.g. "Expecting value"), but for a couple of
+    error kinds (invalid escape / invalid control character) CPython
+    interpolates the single offending character into that string -- this
+    function only ever inspects that text to pick a category; the fixed
+    category name it RETURNS never contains any part of ``msg`` or
+    ``str(exc)``, so no content can leak through this path regardless of
+    what ``msg`` happens to contain for a given error.
+    """
+    if not isinstance(exc, json.JSONDecodeError):
+        return "other_json_decode_error"
+    msg = exc.msg
+    if msg.startswith("Unterminated string"):
+        return "unterminated_string"
+    if msg.startswith("Expecting property name"):
+        return "expecting_property_name"
+    if msg.startswith("Expecting value"):
+        return "expecting_value"
+    if msg.startswith("Expecting") and "delimiter" in msg:
+        return "expecting_delimiter"
+    if msg.startswith("Extra data"):
+        return "extra_data"
+    if "escape" in msg.lower():
+        return "invalid_escape"
+    return "other_json_decode_error"
+
+
+def _build_malformed_json_diagnostics(
+    text: str, complete_object_found: bool, exc: BaseException
+) -> dict[str, Any]:
+    """Bounded, JSON-safe structural facts about one malformed_json failure.
+    ``text`` is exactly what was handed to the failing ``json.loads`` call
+    (the extracted first-object substring when extraction succeeded,
+    otherwise the original stripped content) -- never included in the
+    returned dict itself, only its length (bucketed) and whether it
+    contains a literal '{' at all.
+    """
+    length = len(text)
+    has_open_brace = "{" in text
+    pos = getattr(exc, "pos", None)
+    position_bucket = _bucket_error_position(pos, length) if isinstance(pos, int) else None
+    return {
+        "content_length_bucket": _bucket_content_length(length),
+        "complete_top_level_object_found": complete_object_found,
+        "incomplete_top_level_object": (not complete_object_found) and has_open_brace,
+        "json_error_category": _json_error_category(exc),
+        "json_error_position_bucket": position_bucket,
+        "error_near_end": position_bucket in ("late", "end") if position_bucket else None,
+    }
+
+
 def _parse_and_validate(
     raw_text: str,
     claim_ids: set[str],
@@ -447,12 +567,14 @@ def _parse_and_validate(
     """
     text = (raw_text or "").strip()
     extracted = _extract_first_json_object(text)
+    complete_object_found = extracted is not None
     if extracted is not None:
         text = extracted
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, ValueError) as exc:
-        raise CitationVerificationError(f"malformed_json: {exc}") from exc
+        diagnostics = _build_malformed_json_diagnostics(text, complete_object_found, exc)
+        raise CitationVerificationError(f"malformed_json: {exc}", diagnostics=diagnostics) from exc
 
     if not isinstance(parsed, dict):
         raise CitationVerificationError("schema_violation: root is not an object")
@@ -572,6 +694,7 @@ def verify_citations(
         outcome.verifier_succeeded = False
         outcome.verified_citation_ids = []
         outcome.per_claim_verified_ids = {}
+        outcome.failure_diagnostics = exc.diagnostics
     except Exception as exc:  # noqa: BLE001 -- fail-closed against literally anything
         logger.warning(
             "citation_verification: unexpected error, failing closed", exc_info=True

@@ -835,6 +835,137 @@ def test_content_list_fails_closed_as_response_shape_error_not_attribute_error()
     assert outcome.verified_citation_ids == []
 
 
+# --- privacy-safe malformed_json diagnostics ------------------------------------
+
+
+def test_malformed_empty_response_gets_safe_structural_diagnostics():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw("")
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert outcome.failure_diagnostics == {
+        "content_length_bucket": "empty",
+        "complete_top_level_object_found": False,
+        "incomplete_top_level_object": False,
+        "json_error_category": "expecting_value",
+        "json_error_position_bucket": "start",
+        "error_near_end": False,
+    }
+
+
+def test_truncated_json_gets_incomplete_top_level_object_true():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw('{"a": 1, "b": 2')
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    diag = outcome.failure_diagnostics
+    assert diag["complete_top_level_object_found"] is False
+    assert diag["incomplete_top_level_object"] is True
+    assert diag["json_error_category"] == "expecting_delimiter"
+    assert diag["error_near_end"] is True  # error is at the very end of a cut-off response
+
+
+def test_unterminated_string_gets_unterminated_string_category():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw('{"a": "unterminated')
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    diag = outcome.failure_diagnostics
+    assert diag["json_error_category"] == "unterminated_string"
+    assert diag["complete_top_level_object_found"] is False
+    # A '{' did begin a candidate object, it just never closed (the value
+    # string swallows the rest of the text without ever finding its own
+    # closing quote) -- correctly flagged as an incomplete top-level object.
+    assert diag["incomplete_top_level_object"] is True
+
+
+def test_extra_data_case_gets_extra_data_category_when_reachable():
+    """Reachable specifically when there is no '{' at all -- extraction
+    finds nothing to isolate, so the original text (a complete JSON value
+    followed by trailing non-JSON text) reaches json.loads unmodified."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning_raw('"hello" extra text')
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    diag = outcome.failure_diagnostics
+    assert diag["json_error_category"] == "extra_data"
+    assert diag["complete_top_level_object_found"] is False
+    assert diag["incomplete_top_level_object"] is False  # no '{' at all in this text
+
+
+def test_valid_json_does_not_report_malformed_diagnostics():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is True
+    assert outcome.failure_diagnostics is None
+
+
+def test_non_malformed_failure_leaves_diagnostics_none():
+    """failure_diagnostics is specific to malformed_json -- every other
+    failure category (e.g. a hallucinated alias) must leave it None."""
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S99"]}]}
+    )
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    assert "hallucinated_citation_id" in outcome.failure_reason
+    assert outcome.failure_diagnostics is None
+
+
+def test_diagnostics_never_contain_raw_content():
+    """A distinctive marker placed right next to the parse failure must
+    never appear anywhere in the serialized diagnostics -- proves the
+    privacy property empirically, not just by code inspection."""
+    candidates = [_ev("a", "T1", "...")]
+    secret_marker = "SECRET_SOURCE_EXCERPT_MUST_NEVER_LEAK_12345"
+    raw = '{"a": "' + secret_marker + " unterminated"
+    mock_client = _mock_verifier_returning_raw(raw)
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.verifier_succeeded is False
+    serialized = json.dumps(outcome.failure_diagnostics)
+    assert secret_marker not in serialized
+    assert secret_marker not in json.dumps(outcome.per_claim_verified_ids)
+
+
+def test_bucket_content_length_boundaries():
+    from app.services.qa.citation_verification import _bucket_content_length
+
+    assert _bucket_content_length(0) == "empty"
+    assert _bucket_content_length(1) == "1_100"
+    assert _bucket_content_length(100) == "1_100"
+    assert _bucket_content_length(101) == "101_500"
+    assert _bucket_content_length(500) == "101_500"
+    assert _bucket_content_length(501) == "501_1000"
+    assert _bucket_content_length(1000) == "501_1000"
+    assert _bucket_content_length(1001) == "1001_2000"
+    assert _bucket_content_length(2000) == "1001_2000"
+    assert _bucket_content_length(2001) == "2001_5000"
+    assert _bucket_content_length(5000) == "2001_5000"
+    assert _bucket_content_length(5001) == "over_5000"
+
+
+def test_bucket_error_position_boundaries():
+    from app.services.qa.citation_verification import _bucket_error_position
+
+    assert _bucket_error_position(0, 0) == "start"
+    assert _bucket_error_position(0, 100) == "start"
+    assert _bucket_error_position(30, 100) == "early"
+    assert _bucket_error_position(50, 100) == "middle"
+    assert _bucket_error_position(80, 100) == "late"
+    assert _bucket_error_position(99, 100) == "end"
+
+
 # --- helpers -------------------------------------------------------------------
 
 

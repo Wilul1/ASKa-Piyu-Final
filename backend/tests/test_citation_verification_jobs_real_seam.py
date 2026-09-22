@@ -65,9 +65,13 @@ def _configured_provider():
 
 
 def _mock_httpx_client_returning(payload: dict) -> MagicMock:
+    return _mock_httpx_client_raw_content(json.dumps(payload))
+
+
+def _mock_httpx_client_raw_content(content: str) -> MagicMock:
     mock_response = MagicMock()
     mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {"choices": [{"message": {"content": json.dumps(payload)}}]}
+    mock_response.json.return_value = {"choices": [{"message": {"content": content}}]}
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
@@ -343,6 +347,111 @@ def test_failed_emits_event_with_bounded_category_and_no_provider_body(caplog):
     raw = json.dumps(event)
     assert "SENSITIVE_PROVIDER_TOKEN_xyz" not in raw
     assert "not valid json" not in raw
+    assert answer not in raw
+
+
+def test_malformed_json_terminal_event_carries_bounded_structural_diagnostics(caplog):
+    """The terminal event for a malformed_json failure must carry the new
+    failure_diagnostics field, and it must be exactly the bounded,
+    structural dict citation_verification._build_malformed_json_diagnostics
+    produces -- all existing fields must remain intact alongside it."""
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    mock_client = _mock_httpx_client_raw_content("")  # empty content -> malformed_json
+
+    vid = jobs.create_job(
+        answer=answer, candidates=candidates, mode="async_llm", v1_citation_ids=["tor::1"]
+    )
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert event["failure_category"] == "malformed_json"
+    # existing fields untouched
+    assert event["verification_id"] == vid
+    assert event["mode"] == "async_llm"
+    assert event["status"] == "failed"
+    assert event["v1_citation_ids"] == ["tor::1"]
+    assert event["v2_citation_ids"] == []
+    assert event["v1_count"] == 1
+    assert event["v2_count"] == 0
+    assert isinstance(event["duration_ms"], (int, float))
+    assert "timestamp_unix" in event
+    # new field, exact bounded shape for an empty response
+    assert event["failure_diagnostics"] == {
+        "content_length_bucket": "empty",
+        "complete_top_level_object_found": False,
+        "incomplete_top_level_object": False,
+        "json_error_category": "expecting_value",
+        "json_error_position_bucket": "start",
+        "error_near_end": False,
+    }
+
+
+def test_verified_terminal_event_has_no_failure_diagnostics(caplog):
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    mock_client = _mock_httpx_client_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+
+    vid = jobs.create_job(answer=answer, candidates=candidates, mode="async_llm")
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    assert events[0]["status"] == "verified"
+    assert events[0].get("failure_diagnostics") is None
+
+
+def test_non_malformed_failure_terminal_event_has_no_failure_diagnostics(caplog):
+    """failure_diagnostics is specific to malformed_json -- a hallucinated
+    alias failure must leave it null in the terminal event too."""
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    mock_client = _mock_httpx_client_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S99"]}]}
+    )
+
+    vid = jobs.create_job(answer=answer, candidates=candidates, mode="async_llm")
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    assert events[0]["failure_category"] == "unknown_or_hallucinated_id"
+    assert events[0].get("failure_diagnostics") is None
+
+
+def test_malformed_json_diagnostics_never_contain_raw_content_in_terminal_event(caplog):
+    """A distinctive marker placed right next to the parse failure must
+    never appear anywhere in the logged event, including inside the new
+    failure_diagnostics field."""
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    secret_marker = "SENSITIVE_MARKER_MUST_NEVER_APPEAR_98765"
+    mock_client = _mock_httpx_client_raw_content('{"a": "' + secret_marker + " unterminated")
+
+    vid = jobs.create_job(
+        answer=answer, candidates=candidates, mode="async_llm", v1_citation_ids=["tor::1"]
+    )
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert event["failure_category"] == "malformed_json"
+    assert event["failure_diagnostics"] is not None
+    raw = json.dumps(event)
+    assert secret_marker not in raw
     assert answer not in raw
 
 

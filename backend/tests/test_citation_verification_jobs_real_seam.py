@@ -480,7 +480,12 @@ def test_http_status_error_terminal_event_carries_provider_diagnostics(caplog):
     event = events[0]
     assert event["failure_category"] == "provider_error"
     assert event["failure_diagnostics"] is None  # independent of malformed_json diagnostics
-    assert event["provider_diagnostics"] == {"provider_error_kind": "http_status", "http_status": 402}
+    assert event["provider_diagnostics"] == {
+        "provider_error_kind": "http_status",
+        "http_status": 402,
+        "provider_error_code": None,
+        "provider_error_type": None,
+    }
 
 
 def test_timeout_terminal_event_carries_provider_diagnostics(caplog):
@@ -502,7 +507,12 @@ def test_timeout_terminal_event_carries_provider_diagnostics(caplog):
     assert len(events) == 1
     event = events[0]
     assert event["failure_category"] == "provider_error"
-    assert event["provider_diagnostics"] == {"provider_error_kind": "timeout", "http_status": None}
+    assert event["provider_diagnostics"] == {
+        "provider_error_kind": "timeout",
+        "http_status": None,
+        "provider_error_code": None,
+        "provider_error_type": None,
+    }
 
 
 def test_verified_terminal_event_has_no_provider_diagnostics(caplog):
@@ -569,10 +579,60 @@ def test_provider_diagnostics_never_leak_raw_error_text_in_terminal_event(caplog
     events = _event_payloads(caplog)
     assert len(events) == 1
     event = events[0]
-    assert event["provider_diagnostics"] == {"provider_error_kind": "http_status", "http_status": 429}
+    assert event["provider_diagnostics"] == {
+        "provider_error_kind": "http_status",
+        "http_status": 429,
+        "provider_error_code": None,
+        "provider_error_type": None,
+    }
     raw = json.dumps(event)
     assert secret_marker not in raw
     assert answer not in raw
+
+
+def test_documented_error_fields_flow_through_to_terminal_event(caplog):
+    """error.metadata.error_type / provider_code, when present in the
+    provider's response, must reach the terminal telemetry event intact;
+    error.message (human-readable) must never appear."""
+    candidates = [_ev("tor::1", "Transcript of Records", "Fee: P75 per page.")]
+    answer = "The fee is P75 per page."
+    secret_message = "THIS_HUMAN_MESSAGE_MUST_NEVER_APPEAR_IN_LOGS_11223"
+    body = {
+        "error": {
+            "code": 403,
+            "message": secret_message,
+            "metadata": {"error_type": "forbidden", "provider_code": "access_denied"},
+        }
+    }
+    mock_error_response = MagicMock(status_code=403)
+    mock_error_response.json.return_value = body
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "error", request=MagicMock(), response=mock_error_response
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+
+    vid = jobs.create_job(
+        answer=answer, candidates=candidates, mode="async_llm", v1_citation_ids=["tor::1"]
+    )
+    with caplog.at_level(logging.INFO, logger=JOBS_LOGGER), \
+         patch("httpx.Client", return_value=mock_client), _configured_provider():
+        jobs.run_verification_job(vid)
+
+    events = _event_payloads(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert event["provider_diagnostics"] == {
+        "provider_error_kind": "http_status",
+        "http_status": 403,
+        "provider_error_code": "access_denied",
+        "provider_error_type": "forbidden",
+    }
+    raw = json.dumps(event)
+    assert secret_message not in raw
 
 
 def test_zero_v1_citations_still_logs_v1_count_zero_and_the_real_v2_outcome(caplog):

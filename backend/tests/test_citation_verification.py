@@ -856,6 +856,8 @@ def test_http_status_error_captures_exact_status_and_kind(status_code):
     assert outcome.provider_diagnostics == {
         "provider_error_kind": "http_status",
         "http_status": status_code,
+        "provider_error_code": None,
+        "provider_error_type": None,
     }
 
 
@@ -868,7 +870,12 @@ def test_timeout_captures_kind_timeout_with_null_status():
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
     assert outcome.verifier_succeeded is False
-    assert outcome.provider_diagnostics == {"provider_error_kind": "timeout", "http_status": None}
+    assert outcome.provider_diagnostics == {
+        "provider_error_kind": "timeout",
+        "http_status": None,
+        "provider_error_code": None,
+        "provider_error_type": None,
+    }
 
 
 def test_transport_network_failure_captures_kind_transport_with_null_status():
@@ -882,7 +889,12 @@ def test_transport_network_failure_captures_kind_transport_with_null_status():
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
     assert outcome.verifier_succeeded is False
-    assert outcome.provider_diagnostics == {"provider_error_kind": "transport", "http_status": None}
+    assert outcome.provider_diagnostics == {
+        "provider_error_kind": "transport",
+        "http_status": None,
+        "provider_error_code": None,
+        "provider_error_type": None,
+    }
 
 
 def test_provider_not_configured_captures_kind_not_configured_with_null_status():
@@ -894,7 +906,12 @@ def test_provider_not_configured_captures_kind_not_configured_with_null_status()
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
     mock_httpx.assert_not_called()
     assert outcome.verifier_succeeded is False
-    assert outcome.provider_diagnostics == {"provider_error_kind": "not_configured", "http_status": None}
+    assert outcome.provider_diagnostics == {
+        "provider_error_kind": "not_configured",
+        "http_status": None,
+        "provider_error_code": None,
+        "provider_error_type": None,
+    }
 
 
 def test_malformed_json_leaves_provider_diagnostics_none():
@@ -936,7 +953,12 @@ def test_provider_diagnostics_never_contain_raw_response_or_exception_text():
     mock_client.post.return_value = mock_response
     with patch("httpx.Client", return_value=mock_client), _configured_provider():
         outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
-    assert outcome.provider_diagnostics == {"provider_error_kind": "http_status", "http_status": 402}
+    assert outcome.provider_diagnostics == {
+        "provider_error_kind": "http_status",
+        "http_status": 402,
+        "provider_error_code": None,
+        "provider_error_type": None,
+    }
     serialized = json.dumps(outcome.provider_diagnostics)
     assert secret_marker not in serialized
     assert "server error" not in serialized
@@ -960,6 +982,184 @@ def test_provider_diagnostics_never_contain_credentials():
     assert "test-key" not in serialized  # the _configured_provider() api key
     assert "Bearer" not in serialized
     assert "Authorization" not in serialized
+
+
+def _http_status_error_with_body(status_code: int, body) -> httpx.HTTPStatusError:
+    """An HTTPStatusError whose .response.json() returns the given body,
+    for testing _extract_openrouter_error_fields via the real error path."""
+    mock_response = MagicMock(status_code=status_code)
+    mock_response.json.return_value = body
+    return httpx.HTTPStatusError("error", request=MagicMock(), response=mock_response)
+
+
+def test_documented_error_type_and_provider_code_are_extracted():
+    """The two OpenRouter-documented machine-readable fields
+    (error.metadata.error_type / error.metadata.provider_code) are
+    extracted when present, exactly as documented."""
+    candidates = [_ev("a", "T1", "...")]
+    body = {
+        "error": {
+            "code": 429,
+            "message": "Rate limit exceeded",
+            "metadata": {"error_type": "rate_limit_exceeded", "provider_code": "rate_limited"},
+        }
+    }
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = _http_status_error_with_body(429, body)
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.provider_diagnostics == {
+        "provider_error_kind": "http_status",
+        "http_status": 429,
+        "provider_error_code": "rate_limited",
+        "provider_error_type": "rate_limit_exceeded",
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"code": 403, "message": "Forbidden"}},  # metadata missing entirely
+        {"error": {"code": 403, "message": "Forbidden", "metadata": {}}},  # metadata empty
+        {"error": {"code": 403, "message": "Forbidden", "metadata": {"error_type": "x"}}},  # provider_code missing
+        {"error": {"code": 403, "message": "Forbidden", "metadata": {"provider_code": "y"}}},  # error_type missing
+    ],
+)
+def test_missing_documented_fields_yield_null(body):
+    from app.services.qa.citation_verification import _extract_openrouter_error_fields
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = body
+    error_type, provider_code = _extract_openrouter_error_fields(mock_response)
+    if "error_type" not in body["error"].get("metadata", {}):
+        assert error_type is None
+    if "provider_code" not in body["error"].get("metadata", {}):
+        assert provider_code is None
+
+
+def test_malformed_json_error_body_yields_null_optional_fields():
+    from app.services.qa.citation_verification import _extract_openrouter_error_fields
+
+    mock_response = MagicMock()
+    mock_response.json.side_effect = ValueError("not valid json")
+    assert _extract_openrouter_error_fields(mock_response) == (None, None)
+
+
+def test_non_json_error_body_yields_null_optional_fields():
+    """.json() raising (the real httpx behavior for a non-JSON body) must
+    be handled exactly like malformed JSON -- never propagate, never
+    fail verification."""
+    from app.services.qa.citation_verification import _extract_openrouter_error_fields
+
+    mock_response = MagicMock()
+    mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "not json", 0)
+    assert _extract_openrouter_error_fields(mock_response) == (None, None)
+
+
+def test_unexpected_types_in_metadata_yield_null():
+    from app.services.qa.citation_verification import _extract_openrouter_error_fields
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "error": {"metadata": {"error_type": 12345, "provider_code": ["not", "a", "string"]}}
+    }
+    assert _extract_openrouter_error_fields(mock_response) == (None, None)
+
+
+def test_oversized_field_values_yield_null():
+    from app.services.qa.citation_verification import _extract_openrouter_error_fields
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "error": {"metadata": {"error_type": "x" * 500, "provider_code": "ok"}}
+    }
+    error_type, provider_code = _extract_openrouter_error_fields(mock_response)
+    assert error_type is None  # rejected for exceeding the bound
+    assert provider_code == "ok"
+
+
+def test_human_readable_message_never_extracted():
+    candidates = [_ev("a", "T1", "...")]
+    secret_marker = "THIS_IS_THE_HUMAN_MESSAGE_MUST_NEVER_APPEAR_24680"
+    body = {
+        "error": {
+            "code": 403,
+            "message": secret_marker,
+            "metadata": {"error_type": "forbidden", "provider_code": "blocked"},
+        }
+    }
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = _http_status_error_with_body(403, body)
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    serialized = json.dumps(outcome.provider_diagnostics)
+    assert secret_marker not in serialized
+    assert outcome.provider_diagnostics["provider_error_code"] == "blocked"
+    assert outcome.provider_diagnostics["provider_error_type"] == "forbidden"
+
+
+def test_arbitrary_metadata_keys_never_extracted():
+    """error.metadata may contain arbitrary provider-supplied keys (e.g. a
+    guardrail block's own 'patterns' list) -- only the two named,
+    documented keys are ever read; everything else must never appear."""
+    candidates = [_ev("a", "T1", "...")]
+    secret_marker = "ARBITRARY_METADATA_MUST_NEVER_LEAK_112233"
+    body = {
+        "error": {
+            "code": 403,
+            "message": "Request blocked",
+            "metadata": {
+                "error_type": "guardrail_block",
+                "provider_code": "blocked",
+                "patterns": [secret_marker],
+                "reason": secret_marker,
+            },
+        }
+    }
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = _http_status_error_with_body(403, body)
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+    assert outcome.provider_diagnostics == {
+        "provider_error_kind": "http_status",
+        "http_status": 403,
+        "provider_error_code": "blocked",
+        "provider_error_type": "guardrail_block",
+    }
+    serialized = json.dumps(outcome.provider_diagnostics)
+    assert secret_marker not in serialized
+
+
+def test_prompt_and_answer_content_never_appear_in_provider_diagnostics():
+    candidates = [_ev("a", "T1", "This is candidate evidence text that must never leak.")]
+    secret_answer_marker = "UNIQUE_ANSWER_TEXT_MUST_NEVER_APPEAR_998877"
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "error", request=MagicMock(), response=MagicMock(status_code=403)
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+    with patch("httpx.Client", return_value=mock_client), _configured_provider():
+        outcome = verify_citations(
+            answer=f"Fee: None. {secret_answer_marker}", candidates=candidates, mode="llm"
+        )
+    serialized = json.dumps(outcome.provider_diagnostics)
+    assert secret_answer_marker not in serialized
+    assert "candidate evidence text" not in serialized
 
 
 # --- privacy-safe malformed_json diagnostics ------------------------------------

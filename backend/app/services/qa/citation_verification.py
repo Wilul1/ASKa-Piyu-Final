@@ -348,16 +348,81 @@ def _build_verifier_messages(
     ]
 
 
-def _build_provider_diagnostics(*, kind: str, http_status: int | None = None) -> dict[str, Any]:
+def _build_provider_diagnostics(
+    *,
+    kind: str,
+    http_status: int | None = None,
+    provider_error_code: str | None = None,
+    provider_error_type: str | None = None,
+) -> dict[str, Any]:
     """Bounded, JSON-safe facts about a provider/transport-layer failure --
     a fixed ``provider_error_kind`` string (``"http_status"`` / ``"timeout"``
-    / ``"transport"`` / ``"not_configured"``) and, only for ``"http_status"``,
-    the exact HTTP status code. Never a response body, provider error
-    message, or raw exception text -- the status code alone is sufficient
-    evidence to distinguish e.g. a 402 (billing) from a 429 (rate limit)
-    from a 401 (auth) without parsing or logging anything provider-supplied.
+    / ``"transport"`` / ``"not_configured"``), and, only for
+    ``"http_status"``, the exact HTTP status code plus two OpenRouter-
+    documented machine-readable fields (see
+    https://openrouter.ai/docs/api_reference/errors-and-debugging):
+    ``error.metadata.provider_code`` (the upstream provider's own error
+    code) and ``error.metadata.error_type`` (OpenRouter's own canonical,
+    cross-provider-stable error category). Never a response body, the
+    human-readable ``error.message``, or raw exception text -- these two
+    fields plus the status code are the documented, bounded, machine-
+    readable surface OpenRouter itself designates for programmatic error
+    handling.
     """
-    return {"provider_error_kind": kind, "http_status": http_status}
+    return {
+        "provider_error_kind": kind,
+        "http_status": http_status,
+        "provider_error_code": provider_error_code,
+        "provider_error_type": provider_error_type,
+    }
+
+
+_MAX_PROVIDER_ERROR_FIELD_LENGTH = 100
+
+
+def _extract_openrouter_error_fields(response: httpx.Response) -> tuple[str | None, str | None]:
+    """Best-effort, privacy-safe extraction of OpenRouter's own documented
+    machine-readable error fields, ``error.metadata.error_type`` and
+    ``error.metadata.provider_code``, from a non-2xx JSON error body.
+
+    Deliberately narrow: reads ONLY these two specific, named, documented
+    keys -- never ``error.message`` (explicitly documented as human-
+    readable), never any other key inside ``error.metadata`` (which the
+    schema allows to hold arbitrary provider-supplied data, e.g. a
+    guardrail block's ``patterns`` list), and never the response body as a
+    whole. Each extracted value is also type- and length-bounded before
+    use, so a provider returning something unexpected (wrong type,
+    oversized string) safely yields ``None`` rather than being trusted or
+    truncated-and-kept.
+
+    Any failure at any step -- non-JSON body, unexpected shape, wrong
+    types -- returns ``(None, None)``. This function must never raise;
+    diagnostic parsing must never affect verification behavior.
+    """
+    try:
+        body = response.json()
+        if not isinstance(body, dict):
+            return None, None
+        error = body.get("error")
+        if not isinstance(error, dict):
+            return None, None
+        metadata = error.get("metadata")
+        if not isinstance(metadata, dict):
+            return None, None
+
+        error_type = metadata.get("error_type")
+        if not isinstance(error_type, str) or not (0 < len(error_type) <= _MAX_PROVIDER_ERROR_FIELD_LENGTH):
+            error_type = None
+
+        provider_code = metadata.get("provider_code")
+        if not isinstance(provider_code, str) or not (
+            0 < len(provider_code) <= _MAX_PROVIDER_ERROR_FIELD_LENGTH
+        ):
+            provider_code = None
+
+        return error_type, provider_code
+    except Exception:  # noqa: BLE001 -- diagnostic parsing must never break verification
+        return None, None
 
 
 def _call_verifier(
@@ -407,10 +472,14 @@ def _call_verifier(
             provider_diagnostics=_build_provider_diagnostics(kind="timeout"),
         ) from exc
     except httpx.HTTPStatusError as exc:
+        error_type, provider_code = _extract_openrouter_error_fields(exc.response)
         raise CitationVerificationError(
             f"provider_error: {exc}",
             provider_diagnostics=_build_provider_diagnostics(
-                kind="http_status", http_status=exc.response.status_code
+                kind="http_status",
+                http_status=exc.response.status_code,
+                provider_error_code=provider_code,
+                provider_error_type=error_type,
             ),
         ) from exc
     except httpx.HTTPError as exc:

@@ -118,6 +118,23 @@ def _out_of_scope_answer_for_role(user_role: str | None) -> str:
     return OUT_OF_SCOPE_ANSWER
 
 
+def _is_authoritative_oos_answer(answer: str) -> bool:
+    """True when ``answer`` is one of the pipeline's stock OOS refusal strings.
+
+    This is the structured post-answer signal for Citation V2 gating: when
+    the final displayed text is already an authoritative OOS refusal,
+    semantic verification must not be scheduled. Prefer this over matching
+    arbitrary soft-refusal prose.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return False
+    return text in {
+        OUT_OF_SCOPE_ANSWER.strip(),
+        FACULTY_OUT_OF_SCOPE_ANSWER.strip(),
+    }
+
+
 NORMAL_QA = "NORMAL_QA"
 DEFINITION_QUESTION = "DEFINITION_QUESTION"
 PROCEDURE_QUESTION = "PROCEDURE_QUESTION"
@@ -573,7 +590,7 @@ def answer_qa_question(
             rerank_reasons=_rerank_reasons_summary(retrieved),
             fallback_used=False,
             fallback_reason=None,
-            out_of_scope_detected=False,
+            out_of_scope_detected=True,
         )
 
     retrieval_quality = _retrieval_quality(
@@ -849,6 +866,37 @@ def answer_qa_question(
             status="invoked_but_failed:conversational_or_recovered_fallback_used",
             chunks=selected_context,
         )
+        # Stock OOS refusal: never populate the async verification sink or
+        # display retrieval noise as citations (extract_claims still yields a
+        # span from the stock line, which would otherwise schedule V2).
+        if _is_authoritative_oos_answer(fallback_answer):
+            return QAResult(
+                answer=fallback_answer,
+                sources=[],
+                citation_status=None,
+                confidence=fallback_confidence,
+                retrieved_chunks=retrieved_debug,
+                normalized_query=prepared_query.normalized_query,
+                expanded_query=prepared_query.expanded_query,
+                matched_expansion_rules=prepared_query.matched_expansion_rules,
+                broad_query=broad_query,
+                broad_query_reason=broad_reason,
+                selected_context_count=len(selected_context),
+                grouped_context_summary=grouped_summary,
+                detected_intent=detected_intent,
+                collection_mode=collection_mode,
+                collection_articles=collection_articles if collection_mode else None,
+                collection_chunk_count=len(retrieved) if collection_mode else None,
+                group_count=len(grouped_summary or []) if collection_mode else None,
+                program_scope=program_scope,
+                ticket_routing=ticket_routing,
+                query_expansions_used=prepared_query.matched_expansion_rules,
+                rerank_reasons=_rerank_reasons_summary(retrieved),
+                fallback_used=True,
+                fallback_reason=_safe_fallback_reason(str(exc)),
+                out_of_scope_detected=True,
+                active_service=active_service_for_response,
+            )
         return QAResult(
             answer=fallback_answer,
             sources=_display_sources_for_answer(
@@ -958,6 +1006,37 @@ def answer_qa_question(
         ),
         chunks=selected_context,
     )
+    # Authoritative stock OOS refusal (e.g. collapsed missing-info reply):
+    # never schedule Citation V2. The stock line still yields a claim under
+    # extract_claims, so skipping _display_sources_for_answer is required.
+    if _is_authoritative_oos_answer(final_answer):
+        return QAResult(
+            answer=final_answer,
+            sources=[],
+            citation_status=None,
+            confidence=confidence,
+            retrieved_chunks=retrieved_debug,
+            normalized_query=prepared_query.normalized_query,
+            expanded_query=prepared_query.expanded_query,
+            matched_expansion_rules=prepared_query.matched_expansion_rules,
+            broad_query=broad_query,
+            broad_query_reason=broad_reason,
+            selected_context_count=len(selected_context),
+            grouped_context_summary=grouped_summary,
+            detected_intent=detected_intent,
+            collection_mode=collection_mode,
+            collection_articles=collection_articles if collection_mode else None,
+            collection_chunk_count=len(retrieved) if collection_mode else None,
+            group_count=len(grouped_summary or []) if collection_mode else None,
+            program_scope=program_scope,
+            ticket_routing=ticket_routing,
+            query_expansions_used=prepared_query.matched_expansion_rules,
+            rerank_reasons=_rerank_reasons_summary(retrieved),
+            fallback_used=False,
+            fallback_reason=None,
+            out_of_scope_detected=True,
+            active_service=active_service_for_response,
+        )
     return QAResult(
         answer=final_answer,
         sources=_display_sources_for_answer(
@@ -5354,6 +5433,13 @@ def _display_sources_for_answer(
       zero citations immediately and always -- V1's guesses are never shown
       even transiently while verification is pending.
     """
+    # Authoritative stock OOS refusal: never run V1 selection or V2 (sync or
+    # async). extract_claims still yields a span from the stock OOS line, so
+    # without this gate async_* modes would populate the verification sink
+    # and schedule an irrelevant verifier job.
+    if _is_authoritative_oos_answer(answer):
+        return []
+
     grounding = (evidence_text or "").strip() or answer
     v1_supporting = _select_supporting_context(candidates, grounding, debug_sink=debug_sink)
 

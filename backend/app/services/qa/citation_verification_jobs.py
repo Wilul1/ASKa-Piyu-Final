@@ -34,7 +34,11 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
-from app.services.qa.citation_verification import CandidateEvidence, verify_citations
+from app.services.qa.citation_verification import (
+    CandidateEvidence,
+    build_per_claim_supporting_ids_diagnostic,
+    verify_citations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +110,13 @@ class VerificationJob:
     completed_at: float | None = None
     verified_citations: list[_SafeCitation] = field(default_factory=list)
     failure_reason: str | None = None
+    # Privacy-safe per-claim diagnostic only: claim_index (list order) ->
+    # allowlisted real supporting citation_ids. Populated on successful
+    # verification; empty on failure. IDs only -- never claim/evidence/
+    # answer text. Not returned by status_and_citations_for_poll (API/
+    # Flutter unchanged); available on the in-process job for benchmarks
+    # and the terminal structured log event.
+    per_claim_supporting_ids: list[list[str]] = field(default_factory=list)
 
 
 _JOBS: dict[str, VerificationJob] = {}
@@ -231,6 +242,7 @@ def _log_async_verification_event(
     failure_category: str | None,
     failure_diagnostics: dict[str, Any] | None = None,
     provider_diagnostics: dict[str, Any] | None = None,
+    per_claim_supporting_ids: list[list[str]] | None = None,
 ) -> None:
     """Best-effort, terminal, operator-facing diagnostic event for one
     completed async verification job -- reached by both async_shadow and
@@ -243,6 +255,11 @@ def _log_async_verification_event(
     claim, or candidate text, and never a raw provider error body (the
     module-level failure_reason string is mapped through
     ``_failure_category`` first, never logged verbatim).
+
+    ``per_claim_supporting_ids`` -- when present -- is claim_index-ordered
+    lists of already-allowlisted real citation_ids only (see
+    ``build_per_claim_supporting_ids_diagnostic``). It never includes claim
+    text, evidence text, or call-local S1/S2 aliases.
 
     ``failure_diagnostics`` -- present (non-None) only for a
     ``malformed_json`` failure -- is itself already a small, bounded,
@@ -266,6 +283,7 @@ def _log_async_verification_event(
     caller -- it can only fail to produce a log line.
     """
     try:
+        per_claim = list(per_claim_supporting_ids) if per_claim_supporting_ids else []
         payload = {
             "event": "citation_verification_async_completed",
             "verification_id": verification_id,
@@ -275,6 +293,8 @@ def _log_async_verification_event(
             "v2_citation_ids": list(v2_citation_ids),
             "v1_count": len(v1_citation_ids),
             "v2_count": len(v2_citation_ids),
+            "per_claim_supporting_ids": per_claim,
+            "per_claim_count": len(per_claim),
             "duration_ms": round(duration_ms, 1) if isinstance(duration_ms, (int, float)) else None,
             "failure_category": failure_category,
             "failure_diagnostics": failure_diagnostics,
@@ -312,9 +332,14 @@ def run_verification_job(verification_id: str) -> None:
     duration_ms: float | None = None
     failure_diagnostics: dict[str, Any] | None = None
     provider_diagnostics: dict[str, Any] | None = None
+    per_claim_supporting_ids: list[list[str]] = []
     try:
         outcome = verify_citations(answer=answer or "", candidates=candidates or [], mode=semantic_mode)
         duration_ms = outcome.latency_ms
+        allowlist = {c.citation_id for c in (candidates or [])}
+        per_claim_supporting_ids = build_per_claim_supporting_ids_diagnostic(
+            outcome, allowlist=allowlist
+        )
         if outcome.verifier_succeeded and outcome.verified_citation_ids:
             by_id = {c.citation_id: c for c in (candidates or [])}
             safe = [
@@ -339,6 +364,7 @@ def run_verification_job(verification_id: str) -> None:
             failure_reason = outcome.failure_reason or "verification_failed"
             failure_diagnostics = outcome.failure_diagnostics
             provider_diagnostics = outcome.provider_diagnostics
+            per_claim_supporting_ids = []
     except Exception as exc:  # noqa: BLE001 -- fail-closed against literally anything
         logger.warning(
             "citation_verification_jobs: unexpected error running job, failing closed",
@@ -347,6 +373,7 @@ def run_verification_job(verification_id: str) -> None:
         safe = []
         new_status = JobStatus.FAILED
         failure_reason = f"unexpected_error:{type(exc).__name__}"
+        per_claim_supporting_ids = []
 
     with _LOCK:
         current = _JOBS.get(verification_id)
@@ -359,9 +386,12 @@ def run_verification_job(verification_id: str) -> None:
         current.completed_at = _now()
         current.verified_citations = safe
         current.failure_reason = failure_reason
+        current.per_claim_supporting_ids = list(per_claim_supporting_ids)
         # Memory hygiene: candidate text and the answer text are never
         # needed again once a job is terminal. V1's citation ids were only
         # ever retained for the diagnostic event below; discard them too.
+        # per_claim_supporting_ids is IDs-only and intentionally kept for
+        # benchmark/operator diagnostics until the job TTL sweeps the record.
         current._answer = None
         current._candidates = None
         current._v1_citation_ids = []
@@ -385,6 +415,7 @@ def run_verification_job(verification_id: str) -> None:
         ),
         failure_diagnostics=failure_diagnostics,
         provider_diagnostics=provider_diagnostics,
+        per_claim_supporting_ids=per_claim_supporting_ids,
     )
 
 
@@ -418,6 +449,7 @@ def _fail_job_locked(verification_id: str, reason: str) -> None:
     job._answer = None
     job._candidates = None
     job._v1_citation_ids = []
+    job.per_claim_supporting_ids = []
 
 
 # Modes whose verification_id is offered to the CLIENT at all. async_shadow

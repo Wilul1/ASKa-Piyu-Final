@@ -500,6 +500,46 @@ class VerificationOutcome:
     provider_diagnostics: dict[str, Any] | None = None
 
 
+def build_per_claim_supporting_ids_diagnostic(
+    outcome: VerificationOutcome,
+    *,
+    allowlist: set[str] | None = None,
+) -> list[list[str]]:
+    """Privacy-safe claim_index → allowlisted real citation_ids (diagnostics).
+
+    Each outer list index is the claim order in ``outcome.claims`` (0-based).
+    Inner lists are real CandidateEvidence citation_ids already accepted by
+    ``_parse_and_validate`` (alias→real + allowlist), re-filtered here for
+    defense in depth. Never includes claim text, evidence text, question,
+    answer, provider content, or call-local S1/S2 aliases.
+
+    On verifier failure ``outcome.per_claim_verified_ids`` is empty; this
+    returns ``[]`` (no claim rows) so callers cannot mistake a failed
+    response for "every claim unsupported."
+    """
+    if not outcome.verifier_succeeded:
+        return []
+    allowed = (
+        set(allowlist)
+        if allowlist is not None
+        else set(outcome.candidate_citation_ids or [])
+    )
+    rows: list[list[str]] = []
+    for claim in outcome.claims:
+        raw_ids = outcome.per_claim_verified_ids.get(claim.claim_id, [])
+        clean: list[str] = []
+        seen: set[str] = set()
+        for cid in raw_ids:
+            if not isinstance(cid, str) or cid not in allowed:
+                continue
+            if cid in seen:
+                continue
+            seen.add(cid)
+            clean.append(cid)
+        rows.append(clean)
+    return rows
+
+
 # --- verifier prompt ----------------------------------------------------------
 
 _VERIFIER_SYSTEM_PROMPT = """

@@ -90,6 +90,10 @@ class CitationVerificationError(RuntimeError):
 # both sides; '\n' always splits.
 _CLAIM_SPLIT_RE = re.compile(r"(?<!\d)[.!?;](?!\d)|\n+")
 _MIN_CLAIM_CHARS = 4
+# Soft ceiling so qualifier propagation cannot inflate a claim into a
+# paragraph-sized blob. Prefers dropping the prepend over truncating facts.
+_MAX_CLAIM_CHARS = 600
+_MAX_QUALIFIER_CHARS = 120
 
 # Conservative, deterministic filter for spans that do not assert a
 # checkable fact -- greetings, transition phrases, explicit "not found"
@@ -118,12 +122,279 @@ _NON_FACTUAL_RE = re.compile(
     re.I,
 )
 _LEADING_DECORATION_RE = re.compile(r"^[\s\-\*•]+")
+# Single-marker list prefix only ("- ", "* ", "• ") -- never raw "**"/"__".
+_BULLET_PREFIX_RE = re.compile(r"^([\-\*•]\s+)")
+_MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+")
+# Whole-span balanced emphasis. Trailing ":" may sit inside or just after close.
+_BOLD_WRAPPER_RE = re.compile(r"^\*\*(.+?)\*\*:?\s*$")
+_UNDERSCORE_WRAPPER_RE = re.compile(r"^__(.+?)__:?\s*$")
+# Structural "section label" shapes -- not a domain taxonomy. Used only to
+# decide whether a short span is context for following bullets/clauses.
+_HEADING_LIKE_MAX_CHARS = 80
+# Finite / obligation verbs that mark a span as a factual clause rather than
+# a bare section title ("Course Substitution" vs "The fee is None").
+_FACT_CLAUSE_RE = re.compile(
+    r"\b(?:is|are|was|were|be|been|must|shall|will|can|may|should|"
+    r"requires?|required|need(?:s|ed)?|takes?|taken|costs?|"
+    r"includes?|included|submit(?:s|ted)?|provide[sd]?|pay(?:s|ed|ment)?|"
+    r"issued?|handled?|applies|applied|allowed|entitled|"
+    r"get|gets|got|bring|brings|brought|receive[sd]?|have|has|had)\b",
+    re.I,
+)
+# Ordinary prose openers -- bare section titles are labels, not sentences.
+_SENTENCE_OPENER_RE = re.compile(
+    r"^(?:you|we|i|they|he|she|it|the|a|an|as|if|when|while|"
+    r"after|before|during|to|please|there|this|that|these|those|"
+    r"here|also|then|so|because|since|although|though)\b",
+    re.I,
+)
+# True section breaks / neutral epilogues. Never become semantic qualifiers;
+# as standalone headings they CLEAR any stale audience/procedure qualifier.
+_GENERIC_CLEAR_CONTEXT_RE = re.compile(
+    r"^(?:"
+    r"additional(?:\s+information|\s+context|\s+details)?"
+    r"|more information"
+    r"|summary|overview|process overview"
+    r"|related(?:\s+policy|\s+policies|\s+context)?"
+    r")\s*$",
+    re.I,
+)
+# Nested informational scaffolds inside an audience/procedure block. Never
+# become semantic qualifiers themselves and never enter claim text, but they
+# PRESERVE the active qualifier (Requirements/Steps under Alumni, etc.).
+# Notes / Important / Reminder are treated the same: they typically annotate
+# the current procedure rather than starting an unrelated section.
+_GENERIC_PRESERVE_CONTEXT_RE = re.compile(
+    r"^(?:"
+    r"key points(?:\s+to\s+remember)?"
+    r"|important(?:\s+clarification|\s+notes?)?"
+    r"|notes?|details|next steps|steps|procedure"
+    r"|form required|key requirements(?:\s*&\s*process)?"
+    r"|required documents|requirements|process"
+    r"|clarification|reminder"
+    r")\s*$",
+    re.I,
+)
+# Lightweight person-category cues. Kept small and grammatical ("for X" /
+# "as a/an X" / short heading that IS the category) -- not an LSPU catalog.
+_AUDIENCE_CUE_RE = re.compile(
+    r"(?:"
+    r"\b(?:for|as)\s+(?:an?\s+|the\s+)?"
+    r"(?:lspu\s+)?"
+    r"(?:alumni|alumnus|alumna|undergraduate|graduate|transferee|"
+    r"faculty|student|applicant|staff|employee)s?\b"
+    r"|\b(?:alumni|alumnus|alumna|undergraduate|graduate|transferee|"
+    r"faculty|applicant)s?\b"
+    r")",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
 class Claim:
     claim_id: str
     text: str
+
+
+def _unwrap_balanced_emphasis(text: str) -> str:
+    """Unwrap a whole-span ``**…**`` / ``__…__`` wrapper; leave bullets alone."""
+    cleaned = (text or "").strip()
+    for pattern in (_BOLD_WRAPPER_RE, _UNDERSCORE_WRAPPER_RE):
+        m = pattern.match(cleaned)
+        if m:
+            return m.group(1).strip()
+    return cleaned
+
+
+def _strip_markdown_label(text: str) -> str:
+    """Normalize a heading/label for qualifier use: drop #, **…**, trailing :."""
+    cleaned = (text or "").strip()
+    cleaned = _MARKDOWN_HEADING_RE.sub("", cleaned).strip()
+    cleaned = _unwrap_balanced_emphasis(cleaned)
+    cleaned = cleaned.strip().rstrip(":").strip()
+    return cleaned
+
+
+def _normalize_for_claim_classify(text: str) -> str:
+    """Prepare a split span for heading/non-factual classification.
+
+    Order matters: unwrap balanced Markdown emphasis *before* stripping list
+    markers so ``**Heading**`` is not mangled into ``Heading**`` by a greedy
+    leading-``*`` strip. Single-marker bullets (``* item``) remain bullets.
+    """
+    cleaned = (text or "").strip()
+    cleaned = _MARKDOWN_HEADING_RE.sub("", cleaned).strip()
+    cleaned = _unwrap_balanced_emphasis(cleaned)
+    cleaned = _BULLET_PREFIX_RE.sub("", cleaned).strip()
+    # Legacy multi-marker strip for leftover decorative runs (not ``**``).
+    cleaned = _LEADING_DECORATION_RE.sub("", cleaned).strip()
+    return cleaned
+
+
+def _is_clause_shaped(text: str) -> bool:
+    """True when a span looks like a factual sentence/clause, not a label."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if re.search(r"[.!?]", t):
+        return True
+    if _FACT_CLAUSE_RE.search(t) or _SENTENCE_OPENER_RE.match(t):
+        return True
+    return False
+
+
+def _is_bare_section_title(text: str) -> bool:
+    """Short non-clause label (e.g. ``Course Substitution``, ``ID Validation``)."""
+    t = (text or "").strip()
+    if not t or len(t) > _HEADING_LIKE_MAX_CHARS:
+        return False
+    if ":" in t or re.search(r"[.!?]", t):
+        return False
+    if _is_clause_shaped(t):
+        return False
+    return 1 <= len(t.split()) <= 10
+
+
+def _is_heading_like(classify_as: str) -> bool:
+    """Structural section-label detector (markdown / bold / colon / bare title).
+
+    ``classify_as`` should already be emphasis-unwrapped when possible. Bold
+    wrappers that still arrive here are accepted only when their *inner*
+    text is label-shaped -- ``**TOR is required.**`` stays a fact.
+    """
+    text = (classify_as or "").strip()
+    if not text or len(text) > _HEADING_LIKE_MAX_CHARS:
+        return False
+    if _MARKDOWN_HEADING_RE.match(text):
+        inner = _MARKDOWN_HEADING_RE.sub("", text).strip()
+        return bool(inner) and not _is_clause_shaped(inner)
+    for pattern in (_BOLD_WRAPPER_RE, _UNDERSCORE_WRAPPER_RE):
+        m = pattern.match(text)
+        if m:
+            inner = m.group(1).strip().rstrip(":").strip()
+            if _is_clause_shaped(inner):
+                return False
+            return bool(inner) and (
+                _is_bare_section_title(inner)
+                or (":" not in m.group(1) and not _is_clause_shaped(inner))
+            )
+    bare = text.rstrip(":").strip() if text.endswith(":") else text
+    if text.endswith(":") and "." not in text and not _is_clause_shaped(bare):
+        return True
+    # Bare section title on its own line (e.g. "Course Substitution",
+    # "Issuance of Good Moral Certificate (Alumni)"). Reject clause-shaped
+    # spans so ordinary facts are never swallowed as context.
+    return _is_bare_section_title(text)
+
+
+def _is_generic_context_label(label: str) -> bool:
+    """True for any layout label that must not become a semantic qualifier."""
+    cleaned = (label or "").strip()
+    return bool(
+        _GENERIC_CLEAR_CONTEXT_RE.match(cleaned)
+        or _GENERIC_PRESERVE_CONTEXT_RE.match(cleaned)
+    )
+
+
+def _clears_active_semantic_context(label: str) -> bool:
+    """True for neutral section breaks that end stale audience/procedure scope."""
+    return bool(_GENERIC_CLEAR_CONTEXT_RE.match((label or "").strip()))
+
+
+def _is_semantic_context_label(label: str) -> bool:
+    """True when a heading-like label carries audience/procedure identity.
+
+    Generic layout labels (both clear-break and nested-scaffold) are rejected
+    as qualifiers. Audience cues always qualify. Other short non-generic
+    headings (e.g. "Course Substitution", "Shifting", "ID Validation")
+    qualify structurally so near-duplicate procedure sections reset context
+    without a domain taxonomy.
+    """
+    cleaned = _strip_markdown_label(label)
+    if not cleaned or _is_generic_context_label(cleaned):
+        return False
+    if _AUDIENCE_CUE_RE.search(cleaned):
+        return True
+    # Non-generic short heading with at least one content word.
+    return bool(re.search(r"[A-Za-z]{3,}", cleaned))
+
+
+def _context_only_span(classify_as: str) -> bool:
+    """Heading/label with no attached factual clause -- use as context only."""
+    if not _is_heading_like(classify_as):
+        return False
+    # A heading-like span that still embeds a clause after a colon on the
+    # same line ("For Alumni: TOR is required") is NOT context-only.
+    stripped = _strip_markdown_label(classify_as)
+    raw = (classify_as or "").strip()
+    if ":" in raw.rstrip(":"):
+        # e.g. "Fee: None" is a fact, not a section label.
+        after = raw.split(":", 1)[1].strip()
+        after = _unwrap_balanced_emphasis(after)
+        if after and not _is_heading_like(after) and len(after) >= _MIN_CLAIM_CHARS:
+            return False
+    # Pure labels / markdown headings (bool -- never return a Match object).
+    return bool(
+        _MARKDOWN_HEADING_RE.match(raw)
+        or _BOLD_WRAPPER_RE.match(raw)
+        or _UNDERSCORE_WRAPPER_RE.match(raw)
+        or raw.endswith(":")
+        or (len(stripped) <= _HEADING_LIKE_MAX_CHARS and "." not in stripped)
+    )
+
+
+def _prepend_qualifier(claim_text: str, qualifier: str | None) -> str:
+    """Attach active section context when the claim does not already carry it.
+
+    Preserves a leading bullet marker. Skips prepend when the result would
+    exceed ``_MAX_CLAIM_CHARS`` (keeps the atomic fact, drops the qualifier).
+    """
+    if not qualifier:
+        return claim_text
+    q = qualifier.strip()
+    if not q or len(q) > _MAX_QUALIFIER_CHARS:
+        return claim_text
+    bullet = ""
+    body = claim_text
+    m = _BULLET_PREFIX_RE.match(claim_text or "")
+    if m:
+        bullet = m.group(1)
+        body = claim_text[m.end() :]
+    body_cf = (body or "").casefold()
+    q_cf = q.casefold()
+    # Already scoped at the start (avoid "Alumni: For Alumni: …"). Do NOT use
+    # a bare substring check -- "Shifting" appears inside "shifting form".
+    if body_cf.startswith(q_cf) and (
+        len(body_cf) == len(q_cf)
+        or not body_cf[len(q_cf)].isalnum()
+    ):
+        return claim_text
+    candidate = f"{bullet}{q}: {body}".strip()
+    if len(candidate) > _MAX_CLAIM_CHARS:
+        return claim_text
+    return candidate
+
+
+def _claim_surface_text(original: str, classify_as: str) -> str:
+    """Emit claim text without leftover ``**`` / ``__`` from Markdown splits.
+
+    Preserves a leading list marker. Uses the classification-normalized body
+    when the span was emphasis-wrapped or left with an orphan opener after
+    ``.``/``!``/``?`` splitting (e.g. ``**TOR is required.**`` → ``**TOR is required``).
+    """
+    text = original or ""
+    m = _BULLET_PREFIX_RE.match(text)
+    bullet = m.group(1) if m else ""
+    raw_body = text[m.end() :] if m else text
+    raw_stripped = raw_body.strip()
+    if (
+        _BOLD_WRAPPER_RE.match(raw_stripped)
+        or _UNDERSCORE_WRAPPER_RE.match(raw_stripped)
+        or raw_stripped.startswith("**")
+        or raw_stripped.startswith("__")
+    ):
+        return f"{bullet}{classify_as}".strip()
+    return text.strip()
 
 
 def extract_claims(answer: str) -> list[Claim]:
@@ -136,18 +407,45 @@ def extract_claims(answer: str) -> list[Claim]:
     (it will correctly end up with zero supporting citations either way);
     a wrongly-dropped factual span is the failure mode worth avoiding, so
     the patterns above are deliberately narrow and anchored.
+
+    Qualifier propagation (Fresh Gold near-duplicate finding): when a
+    heading/lead establishes audience or procedure identity, that minimum
+    context is prepended to following atomic claims until a new semantic
+    section replaces it. Generic layout headings never become qualifiers and
+    never appear in claim text. Nested scaffolds (Requirements, Steps,
+    Procedure, Notes, …) preserve the active qualifier; true section breaks
+    (Additional Information, Summary, …) clear it. Propagation never merges
+    unrelated procedures into one claim and never copies the whole answer.
     """
     claims: list[Claim] = []
     index = 0
+    active_qualifier: str | None = None
     for part in _CLAIM_SPLIT_RE.split(answer or ""):
         text = part.strip()
         if len(text) < _MIN_CLAIM_CHARS:
             continue
-        classify_as = _LEADING_DECORATION_RE.sub("", text).strip()
+        # Emphasis unwrap before bullet strip -- see _normalize_for_claim_classify.
+        classify_as = _normalize_for_claim_classify(text)
         if _NON_FACTUAL_RE.match(classify_as):
             continue
+
+        # Section labels: update / preserve / clear context; never emit as claims.
+        if _context_only_span(classify_as):
+            label = _strip_markdown_label(classify_as)
+            if _is_semantic_context_label(label):
+                active_qualifier = label[:_MAX_QUALIFIER_CHARS]
+            elif _clears_active_semantic_context(label):
+                # Neutral epilogue ("Additional Information", "Summary").
+                active_qualifier = None
+            # else: nested scaffold ("Requirements", "Steps", …) -- preserve.
+            continue
+
+        claim_body = _claim_surface_text(text, classify_as)
+        claim_text = _prepend_qualifier(claim_body, active_qualifier)
+        if len(claim_text) < _MIN_CLAIM_CHARS:
+            continue
         index += 1
-        claims.append(Claim(claim_id=f"c{index}", text=text))
+        claims.append(Claim(claim_id=f"c{index}", text=claim_text))
     return claims
 
 

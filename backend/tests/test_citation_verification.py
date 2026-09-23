@@ -8,6 +8,7 @@ matching the existing pattern in tests/test_groq_answer_service.py
 from __future__ import annotations
 
 import json
+import re
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -79,6 +80,497 @@ def test_extract_claims_assigns_stable_sequential_ids():
     answer = "Fee: None. Processing time: 5 minutes. Office: Registrar."
     claims = extract_claims(answer)
     assert [c.claim_id for c in claims] == ["c1", "c2", "c3"]
+
+
+def test_extract_claims_preserves_audience_heading_on_bullets():
+    answer = (
+        "For Alumni:\n"
+        "- Transcript of Records is required.\n"
+        "- Student ID is required."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    assert len(claims) >= 2
+    assert all(re.search(r"alumni", t, re.I) for t in texts)
+    assert any("Transcript of Records" in t for t in texts)
+    assert any("Student ID" in t for t in texts)
+    # Heading itself is context, not a standalone claim.
+    assert not any(re.fullmatch(r"for alumni:?", t.strip(), re.I) for t in texts)
+
+
+def test_extract_claims_keeps_near_duplicate_audiences_separate():
+    answer = (
+        "### Undergraduate\n"
+        "- Certificate of Registration is required.\n"
+        "### Transferee\n"
+        "- Certificate of Transfer is required.\n"
+        "### Alumni\n"
+        "- Transcript of Records is required."
+    )
+    claims = extract_claims(answer)
+    undergrad = [c.text for c in claims if re.search(r"undergraduate", c.text, re.I)]
+    transfer = [c.text for c in claims if re.search(r"transferee", c.text, re.I)]
+    alumni = [c.text for c in claims if re.search(r"alumni", c.text, re.I)]
+    assert undergrad and any("Certificate of Registration" in t for t in undergrad)
+    assert transfer and any("Certificate of Transfer" in t for t in transfer)
+    assert alumni and any("Transcript of Records" in t for t in alumni)
+    # No cross-inheritance of the wrong audience onto another section's document.
+    claim_texts = [c.text for c in claims]
+    assert not any(
+        re.search(r"undergraduate", t, re.I) and "Transcript of Records" in t for t in claim_texts
+    )
+    assert not any(
+        re.search(r"alumni", t, re.I) and "Certificate of Registration" in t for t in claim_texts
+    )
+    assert not any(
+        re.search(r"transferee", t, re.I) and "Certificate of Registration" in t for t in claim_texts
+    )
+
+
+def test_extract_claims_separates_substitution_and_shifting_procedures():
+    answer = (
+        "Course Substitution\n"
+        "- An application letter is required.\n"
+        "Shifting\n"
+        "- A filled-out shifting form is required."
+    )
+    claims = extract_claims(answer)
+    sub = [c.text for c in claims if re.search(r"substitution", c.text, re.I)]
+    shift = [c.text for c in claims if re.search(r"shifting", c.text, re.I)]
+    assert sub and any("application letter" in t.lower() for t in sub)
+    assert shift and any("shifting form" in t.lower() for t in shift)
+    claim_texts = [c.text for c in claims]
+    assert not any(
+        re.search(r"substitution", t, re.I) and "shifting form" in t.lower() for t in claim_texts
+    )
+    assert not any(
+        re.search(r"shifting", t, re.I)
+        and "application letter" in t.lower()
+        and not re.search(r"substitution", t, re.I)
+        for t in claim_texts
+    )
+
+
+def test_extract_claims_separates_validation_procedures():
+    answer = (
+        "Subject Validation\n"
+        "- There is no fee for subject validation.\n"
+        "ID Validation\n"
+        "- ID validation takes 4 minutes."
+    )
+    claims = extract_claims(answer)
+    subject = [c.text for c in claims if re.search(r"subject validation", c.text, re.I)]
+    id_val = [c.text for c in claims if re.search(r"\bid validation\b", c.text, re.I)]
+    assert subject and any("no fee" in t.lower() for t in subject)
+    assert id_val and any("4 minutes" in t.lower() for t in id_val)
+    claim_texts = [c.text for c in claims]
+    assert not any(
+        re.search(r"subject validation", t, re.I) and "4 minutes" in t.lower()
+        for t in claim_texts
+    )
+
+
+def test_extract_claims_ignores_nonsemantic_generic_heading():
+    answer = (
+        "### Additional Information\n"
+        "- The Registrar office handles the request.\n"
+        "- Processing takes five minutes."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    assert any("Registrar" in t for t in texts)
+    assert any("five minutes" in t for t in texts)
+    assert not any(re.search(r"additional information", t, re.I) for t in texts)
+
+
+def test_extract_claims_ordinary_paragraph_unchanged_shape():
+    answer = "The fee is None. Processing time is 5 minutes."
+    claims = extract_claims(answer)
+    assert [c.claim_id for c in claims] == ["c1", "c2"]
+    assert "fee is None" in claims[0].text
+    assert "5 minutes" in claims[1].text
+
+
+def test_extract_claims_qualifier_respects_max_claim_length():
+    from app.services.qa.citation_verification import _MAX_CLAIM_CHARS
+
+    long_fact = "Fact token " * 80  # well over remaining room once qualified
+    answer = f"Alumni Good Moral Certificate\n- {long_fact.strip()}."
+    claims = extract_claims(answer)
+    assert claims
+    # Either prepend skipped (length guard) or still within ceiling.
+    assert all(len(c.text) <= _MAX_CLAIM_CHARS or "Alumni" not in c.text for c in claims)
+    assert all(len(c.text) >= 4 for c in claims)
+
+
+def test_extract_claims_fg_j1_audience_document_distinctions():
+    """Structural stand-in for Fresh Gold fg_j1 near-duplicate Good Moral."""
+    answer = (
+        "Issuance of Good Moral Certificate (Undergraduate)\n"
+        "- Certificate of Registration is required.\n"
+        "- Student ID is required.\n"
+        "Issuance of Good Moral Certificate (Transferee)\n"
+        "- Certificate of Transfer is required.\n"
+        "- Student ID is required.\n"
+        "Issuance of Good Moral Certificate (LSPU Alumni)\n"
+        "- Transcript of Records is required.\n"
+        "- Student ID is required."
+    )
+    claims = extract_claims(answer)
+    alumni_tor = [
+        c.text
+        for c in claims
+        if re.search(r"alumni", c.text, re.I) and "Transcript of Records" in c.text
+    ]
+    undergrad_cor = [
+        c.text
+        for c in claims
+        if re.search(r"undergraduate", c.text, re.I)
+        and "Certificate of Registration" in c.text
+    ]
+    transfer_cot = [
+        c.text
+        for c in claims
+        if re.search(r"transferee", c.text, re.I) and "Certificate of Transfer" in c.text
+    ]
+    assert alumni_tor
+    assert undergrad_cor
+    assert transfer_cot
+    claim_texts = [c.text for c in claims]
+    assert not any(
+        re.search(r"alumni", t, re.I) and "Certificate of Registration" in t for t in claim_texts
+    )
+
+
+def test_extract_claims_fg_e2_substitution_vs_shifting_structure():
+    """Structural stand-in for Fresh Gold fg_e2 multi-procedure answer."""
+    answer = (
+        "**Course Substitution**\n"
+        "- Submit an application letter indicating the reasons.\n"
+        "- Requests must be recommended by the Program Coordinator/Dean.\n"
+        "**Shifting**\n"
+        "- A filled-out shifting form from the Office of the Registrar is required.\n"
+        "- No failure of greater than six (6) units during the semester."
+    )
+    claims = extract_claims(answer)
+    claim_texts = [c.text for c in claims]
+    assert all("**" not in t for t in claim_texts)
+    sub_claims = [t for t in claim_texts if re.search(r"substitution", t, re.I)]
+    shift_claims = [
+        t
+        for t in claim_texts
+        if re.search(r"shifting", t, re.I) and not re.search(r"substitution", t, re.I)
+    ]
+    assert any("application letter" in t.lower() for t in sub_claims)
+    assert any(
+        re.search(r"^[\-\*•]?\s*shifting\s*:", t, re.I) and "shifting form" in t.lower()
+        for t in shift_claims
+    )
+    assert any("six (6) units" in t or "6) units" in t for t in shift_claims)
+    assert not any("shifting form" in t.lower() for t in sub_claims)
+
+
+def test_extract_claims_fg_h1_validation_procedure_identity():
+    """Structural stand-in for Fresh Gold fg_h1 ID vs subject validation aside."""
+    answer = (
+        "ID Validation\n"
+        "- There is no fee for ID validation.\n"
+        "- The total processing time for ID validation is 4 minutes.\n"
+        "Subject Validation\n"
+        "- Subject validation may be examined during the final exam period."
+    )
+    claims = extract_claims(answer)
+    id_claims = [c.text for c in claims if re.search(r"\bid validation\b", c.text, re.I)]
+    subject_claims = [
+        c.text for c in claims if re.search(r"subject validation", c.text, re.I)
+    ]
+    assert any("no fee" in t.lower() for t in id_claims)
+    assert any("4 minutes" in t.lower() for t in id_claims)
+    assert any("final exam" in t.lower() for t in subject_claims)
+    assert not any("4 minutes" in t.lower() for t in subject_claims)
+
+
+def test_extract_claims_bold_markdown_headings_clean_qualifiers():
+    """Regression: balanced **…** must not leave trailing stars in qualifiers."""
+    answer = (
+        "**Course Substitution**\n"
+        "- Application letter is required.\n"
+        "**For Alumni:**\n"
+        "- TOR is required.\n"
+        "**ID Validation**\n"
+        "- Processing takes 4 minutes.\n"
+        "**Additional Information**\n"
+        "- The Registrar office handles the request."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    assert all("**" not in t for t in texts)
+    assert all("__" not in t for t in texts)
+    assert any(
+        re.search(r"course substitution\s*:", t, re.I) and "application letter" in t.lower()
+        for t in texts
+    )
+    assert any(
+        re.search(r"for alumni\s*:", t, re.I) and "TOR is required" in t for t in texts
+    )
+    assert any(
+        re.search(r"\bid validation\s*:", t, re.I) and "4 minutes" in t.lower()
+        for t in texts
+    )
+    # Bold generic heading is not a claim and must not become a qualifier.
+    assert not any(re.search(r"additional information", t, re.I) for t in texts)
+    assert any("Registrar" in t for t in texts)
+    # Heading labels themselves are not independent factual claims.
+    assert not any(re.fullmatch(r"for alumni:?", t.strip(), re.I) for t in texts)
+    assert not any(re.fullmatch(r"course substitution:?", t.strip(), re.I) for t in texts)
+
+
+def test_extract_claims_inline_bold_facts_remain_claims():
+    for answer in ("**TOR is required.**", "**Processing takes 3 days.**"):
+        claims = extract_claims(answer)
+        assert len(claims) >= 1
+        joined = " ".join(c.text for c in claims)
+        assert "**" not in joined
+        # Must be emitted as claims, not swallowed as context-only headings.
+        assert claims[0].claim_id.startswith("c")
+    tor = extract_claims("**TOR is required.**")
+    assert any("TOR is required" in c.text for c in tor)
+    proc = extract_claims("**Processing takes 3 days.**")
+    assert any("Processing takes 3 days" in c.text for c in proc)
+    # Not context-only labels: a following bullet would not inherit them as
+    # section qualifiers (they are facts, not headings).
+    follow = extract_claims("**TOR is required.**\n- Fee is None.")
+    fee = [c.text for c in follow if "Fee is None" in c.text]
+    assert fee
+    assert not any(re.search(r"\bTOR\s*:", t, re.I) for t in fee)
+
+
+def test_extract_claims_generic_section_clears_stale_qualifier():
+    answer = (
+        "For Alumni:\n"
+        "- TOR is required.\n"
+        "\n"
+        "Additional Information:\n"
+        "- Processing takes one hour."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    alumni_tor = [
+        t for t in texts if re.search(r"alumni", t, re.I) and "TOR is required" in t
+    ]
+    assert alumni_tor
+    processing = [t for t in texts if "one hour" in t.lower()]
+    assert processing
+    assert not any(re.search(r"alumni", t, re.I) for t in processing)
+    assert not any(re.search(r"additional information", t, re.I) for t in texts)
+
+
+def test_extract_claims_summary_clears_stale_qualifier():
+    answer = (
+        "For Alumni:\n"
+        "- TOR is required.\n"
+        "Summary:\n"
+        "- Processing takes one hour."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    assert any(re.search(r"alumni", t, re.I) and "TOR is required" in t for t in texts)
+    processing = [t for t in texts if "one hour" in t.lower()]
+    assert processing
+    assert not any(re.search(r"alumni", t, re.I) for t in processing)
+    assert not any(re.search(r"\bsummary\s*:", t, re.I) for t in texts)
+
+
+def test_extract_claims_structural_generics_are_not_semantic_qualifiers():
+    for label in ("Summary:", "Procedure:", "Steps:", "Notes:", "Requirements:"):
+        answer = f"{label}\n- Processing takes five minutes."
+        claims = extract_claims(answer)
+        texts = [c.text for c in claims]
+        assert any("five minutes" in t.lower() for t in texts)
+        bare = label.rstrip(":").strip()
+        assert not any(re.search(rf"\b{re.escape(bare)}\s*:", t, re.I) for t in texts)
+        assert not any(re.fullmatch(rf"{re.escape(bare)}:?", t.strip(), re.I) for t in texts)
+
+
+def test_extract_claims_nested_subsection_scaffolds_preserve_qualifier():
+    cases = [
+        (
+            "For Alumni:\nRequirements:\n- TOR is required.",
+            r"alumni",
+            "TOR is required",
+        ),
+        (
+            "For Transferees:\nRequirements:\n- Certificate of Transfer is required.",
+            r"transferee",
+            "Certificate of Transfer",
+        ),
+        (
+            "Course Substitution:\nProcedure:\n- Submit an application letter.",
+            r"substitution",
+            "application letter",
+        ),
+        (
+            "ID Validation:\nSteps:\n- Present the required ID.",
+            r"\bid validation\b",
+            "Present the required ID",
+        ),
+    ]
+    for answer, scope_re, fact in cases:
+        texts = [c.text for c in extract_claims(answer)]
+        assert any(
+            re.search(scope_re, t, re.I) and fact.lower() in t.lower() for t in texts
+        ), answer
+        # Scaffold word must not enter the qualifier stack.
+        assert not any(re.search(r"requirements\s*:", t, re.I) for t in texts)
+        assert not any(re.search(r"procedure\s*:", t, re.I) for t in texts)
+        assert not any(re.search(r"\bsteps\s*:", t, re.I) for t in texts)
+
+
+def test_extract_claims_notes_important_reminder_preserve_active_qualifier():
+    for scaffold in ("Notes:", "Important:", "Reminder:"):
+        answer = (
+            f"Course Substitution\n{scaffold}\n"
+            "- The application must be submitted before the deadline."
+        )
+        texts = [c.text for c in extract_claims(answer)]
+        assert any(
+            re.search(r"substitution", t, re.I) and "deadline" in t.lower() for t in texts
+        ), scaffold
+        bare = scaffold.rstrip(":").strip()
+        assert not any(re.search(rf"\b{re.escape(bare)}\s*:", t, re.I) for t in texts)
+
+
+def test_extract_claims_good_moral_nested_requirements_keep_audiences():
+    answer = (
+        "Issuance of Good Moral Certificate (Alumni)\n"
+        "Requirements:\n"
+        "- Transcript of Records is required.\n"
+        "- Student ID is required.\n"
+        "Issuance of Good Moral Certificate (Undergraduate)\n"
+        "Requirements:\n"
+        "- Certificate of Registration is required.\n"
+        "- Student ID is required.\n"
+        "Issuance of Good Moral Certificate (Transferee)\n"
+        "Requirements:\n"
+        "- Certificate of Transfer is required.\n"
+        "- Student ID is required."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    assert any(
+        re.search(r"alumni", t, re.I) and "Transcript of Records" in t for t in texts
+    )
+    assert any(
+        re.search(r"undergraduate", t, re.I) and "Certificate of Registration" in t
+        for t in texts
+    )
+    assert any(
+        re.search(r"transferee", t, re.I) and "Certificate of Transfer" in t for t in texts
+    )
+    alumni_sid = [
+        t
+        for t in texts
+        if re.search(r"alumni", t, re.I) and "Student ID" in t
+    ]
+    undergrad_sid = [
+        t
+        for t in texts
+        if re.search(r"undergraduate", t, re.I) and "Student ID" in t
+    ]
+    transfer_sid = [
+        t
+        for t in texts
+        if re.search(r"transferee", t, re.I) and "Student ID" in t
+    ]
+    assert alumni_sid and undergrad_sid and transfer_sid
+    assert not any(
+        re.search(r"alumni", t, re.I) and "Certificate of Registration" in t for t in texts
+    )
+    assert not any(
+        re.search(r"undergraduate", t, re.I) and "Transcript of Records" in t for t in texts
+    )
+    assert not any(re.search(r"requirements\s*:", t, re.I) for t in texts)
+
+
+def test_extract_claims_nested_procedure_requirements_and_procedure_scaffolds():
+    answer = (
+        "Course Substitution\n"
+        "Requirements:\n"
+        "- Application letter is required.\n"
+        "Procedure:\n"
+        "- Submit it to the Dean.\n"
+        "Shifting\n"
+        "Requirements:\n"
+        "- Shifting form is required.\n"
+        "Procedure:\n"
+        "- Submit the form."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    sub = [t for t in texts if re.search(r"substitution", t, re.I)]
+    shift = [
+        t
+        for t in texts
+        if re.search(r"shifting", t, re.I) and not re.search(r"substitution", t, re.I)
+    ]
+    assert any("application letter" in t.lower() for t in sub)
+    assert any("dean" in t.lower() for t in sub)
+    assert any("shifting form" in t.lower() for t in shift)
+    assert any(
+        re.search(r"shifting\s*:", t, re.I) and "submit the form" in t.lower() for t in shift
+    )
+    assert not any("shifting form" in t.lower() for t in sub)
+    assert not any("application letter" in t.lower() for t in shift)
+    assert not any(re.search(r"requirements\s*:", t, re.I) for t in texts)
+    assert not any(re.search(r"procedure\s*:", t, re.I) for t in texts)
+
+
+def test_extract_claims_semantic_reset_wins_over_preserved_subsection():
+    answer = (
+        "Alumni\n"
+        "Requirements:\n"
+        "- TOR is required.\n"
+        "Transferee\n"
+        "Requirements:\n"
+        "- Certificate of Transfer is required."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    assert any(re.search(r"alumni", t, re.I) and "TOR is required" in t for t in texts)
+    assert any(
+        re.search(r"transferee", t, re.I) and "Certificate of Transfer" in t for t in texts
+    )
+    assert not any(
+        re.search(r"alumni", t, re.I) and "Certificate of Transfer" in t for t in texts
+    )
+
+
+def test_extract_claims_bullet_and_numbered_list_markers_preserved():
+    answer = (
+        "- Tuition is free.\n"
+        "* Processing takes 3 days.\n"
+        "1. Students must register."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    assert any(t.startswith("- ") and "Tuition is free" in t for t in texts)
+    assert any(t.startswith("* ") and "Processing takes 3 days" in t for t in texts)
+    assert any(re.match(r"1\.\s+Students must register", t) for t in texts)
+    # Single-star bullets must not be confused with bold Markdown.
+    assert all("**" not in t for t in texts)
+
+
+def test_extract_claims_ordinary_short_facts_remain_claims():
+    for sentence in (
+        "Tuition is free.",
+        "Processing takes 3 days.",
+        "Students must register.",
+        "TOR is required.",
+        "Maximum load is 24 units.",
+    ):
+        claims = extract_claims(sentence)
+        assert len(claims) == 1, sentence
+        assert sentence.rstrip(".").casefold() in claims[0].text.casefold()
 
 
 # --- verify_citations: mode gating -------------------------------------------

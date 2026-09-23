@@ -46,7 +46,8 @@ def test_lexical_mode_never_imports_or_calls_v2_verifier():
 def test_shadow_mode_preserves_v1_displayed_citations_regardless_of_v2_outcome():
     chunk = _chunk("tor", "Transcript of Records", "Fee: P75/page. Processing time: 5 minutes.")
     answer = "The fee is P75 per page. Processing time is 5 minutes."
-    v1_only = _display_sources_for_answer([chunk], answer)  # ground truth under lexical
+    with patch(MODE, "lexical"):
+        v1_only = _display_sources_for_answer([chunk], answer)  # ground truth under lexical
 
     fake_outcome = VerificationOutcome(
         mode="shadow",
@@ -105,7 +106,8 @@ def test_llm_mode_displays_only_v2_verified_citations():
 def test_llm_mode_verifier_failure_displays_zero_citations_not_v1_fallback():
     chunk = _chunk("tor", "Transcript of Records", "Fee: P75/page. Processing time: 5 minutes.")
     answer = "The fee is P75 per page. Processing time is 5 minutes."
-    v1_only = _display_sources_for_answer([chunk], answer)
+    with patch(MODE, "lexical"):
+        v1_only = _display_sources_for_answer([chunk], answer)
     assert v1_only, "precondition: V1 would normally display something for this answer"
 
     fake_failed_outcome = VerificationOutcome(

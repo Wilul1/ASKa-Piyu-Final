@@ -610,6 +610,128 @@ def test_student_preferred_office_is_ignored(ticket_client):
     assert "office_confirmed" not in actions
 
 
+def test_student_selected_office_is_honored(ticket_client):
+    headers = _student_headers(ticket_client)
+
+    offices = ticket_client.get("/tickets/offices", headers=headers)
+    assert offices.status_code == 200
+    all_offices = offices.json()["items"]
+
+    triage = ticket_client.post(
+        "/tickets/triage",
+        headers=headers,
+        json={
+            "original_question": "How can I request a copy of my TOR?",
+            "description": "I need this document for employment purposes.",
+        },
+    )
+    assert triage.status_code == 200
+    expected_office = triage.json()["assigned_office"]
+
+    # Pick an office the auto-classifier would NOT have chosen, so a match
+    # can only be explained by the explicit selection, not coincidence.
+    target = next(item for item in all_offices if item["name"] != expected_office)
+
+    created = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": "How can I request a copy of my TOR?",
+            "description": "I need this document for employment purposes.",
+            "routing_method": "student_selected",
+            "preferred_office_id": target["id"],
+        },
+    )
+    assert created.status_code == 200
+    ticket = created.json()
+    assert ticket["assigned_office_id"] == target["id"]
+    assert ticket["assigned_office"] == target["name"]
+    assert ticket["assigned_office"] != expected_office  # not silently overwritten by the classifier
+
+    audit = ticket_client.get(f"/tickets/{ticket['id']}/audit", headers=headers)
+    assert audit.status_code == 200
+    events = audit.json()
+    confirmed = next(item for item in events if item["action"] == "office_confirmed")
+    assert confirmed["new_value"] == target["name"]
+    assert confirmed["actor_role"] == "student"  # distinguishes this from a staff confirmation
+
+
+def test_student_selected_nonexistent_office_is_rejected(ticket_client):
+    headers = _student_headers(ticket_client)
+
+    created = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": "How can I request a copy of my TOR?",
+            "description": "I need this document for employment purposes.",
+            "routing_method": "student_selected",
+            "preferred_office_id": "00000000-0000-0000-0000-000000000000",
+        },
+    )
+    assert created.status_code == 422
+
+
+def test_student_cannot_use_fuzzy_office_name_for_direct_selection(ticket_client):
+    """routing_method=student_selected with only preferred_office (a name,
+    not an id) must NOT activate manual routing -- students are restricted
+    to exact preferred_office_id selection only."""
+    headers = _student_headers(ticket_client)
+
+    triage = ticket_client.post(
+        "/tickets/triage",
+        headers=headers,
+        json={
+            "original_question": "How can I request a copy of my TOR?",
+            "description": "I need this document for employment purposes.",
+        },
+    )
+    expected_office = triage.json()["assigned_office"]
+
+    created = ticket_client.post(
+        "/tickets",
+        headers=headers,
+        json={
+            "original_question": "How can I request a copy of my TOR?",
+            "description": "I need this document for employment purposes.",
+            "routing_method": "student_selected",
+            "preferred_office": "Registrar",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["assigned_office"] == expected_office  # fell through to automatic
+
+
+def test_student_selected_office_visible_in_office_queue(ticket_client):
+    student_headers = _student_headers(ticket_client)
+    office_login = ticket_client.post(
+        "/auth/login",
+        json={"email": "registrar@aska.local", "password": "office123"},
+    )
+    assert office_login.status_code == 200
+    office_headers = {"Authorization": f"Bearer {office_login.json()['access_token']}"}
+
+    offices = ticket_client.get("/tickets/offices", headers=student_headers).json()["items"]
+    registrar = next(item for item in offices if item["name"] == "Registrar")
+
+    created = ticket_client.post(
+        "/tickets",
+        headers=student_headers,
+        json={
+            "original_question": "How can I request a copy of my TOR?",
+            "description": "I need this document for employment purposes.",
+            "routing_method": "student_selected",
+            "preferred_office_id": registrar["id"],
+        },
+    )
+    assert created.status_code == 200
+    ticket_id = created.json()["id"]
+
+    queue = ticket_client.get("/tickets", headers=office_headers)
+    assert queue.status_code == 200
+    assert any(item["id"] == ticket_id for item in queue.json()["items"])
+
+
 def test_urgent_priority_from_strong_urgency_language(ticket_client):
     response = ticket_client.post(
         "/tickets/triage",

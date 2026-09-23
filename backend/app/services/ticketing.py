@@ -97,7 +97,20 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
         actor.role in {"admin", "office"}
         and bool(payload.preferred_office_id or payload.preferred_office)
     )
-    if staff_selected_office:
+    # Student direct office selection: deliberately narrower than the staff
+    # path above -- requires an explicit routing_method opt-in (not merely a
+    # non-null preferred_office_id, which the student-preference-ignored
+    # tests below still cover) and ID-only (never the fuzzy preferred_office
+    # name resolver, which silently defaults to OSA when unresolved -- fine
+    # for a trusted staff correction, wrong contract for a student-facing
+    # exact-selection dropdown).
+    student_selected_office = (
+        actor.role == "student"
+        and payload.routing_method == "student_selected"
+        and bool(payload.preferred_office_id)
+    )
+    explicit_office_selected = staff_selected_office or student_selected_office
+    if explicit_office_selected:
         if payload.preferred_office_id:
             office = session.get(Office, payload.preferred_office_id)
             if office is None:
@@ -144,7 +157,10 @@ def create_ticket(session: Session, payload: CreateTicketRequest, actor: User) -
         old_value=None,
         new_value="Open",
     )
-    if staff_selected_office:
+    if explicit_office_selected:
+        # actor_role on this event (already recorded by record_ticket_audit)
+        # distinguishes staff-confirmed ("admin"/"office") from student-
+        # selected ("student") without needing a new event type or field.
         record_ticket_audit(
             session,
             ticket_id=ticket.id,

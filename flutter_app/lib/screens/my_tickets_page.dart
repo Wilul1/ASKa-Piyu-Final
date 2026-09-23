@@ -2908,11 +2908,16 @@ class CreateTicketForm extends StatefulWidget {
   final ValueChanged<TicketEntry> onCreated;
   final bool compact;
 
+  /// Seeded offices skip the network load. Widget tests only.
+  @visibleForTesting
+  final List<Map<String, dynamic>>? debugOffices;
+
   const CreateTicketForm({
     super.key,
     this.initialQuestion,
     required this.onCreated,
     this.compact = false,
+    this.debugOffices,
   });
 
   @override
@@ -2927,10 +2932,70 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
   PickedAppFile? _attachmentFile;
   String? _attachmentName;
 
+  // Student direct office selection (additive; null = Automatic Routing,
+  // the default and unchanged existing behavior -- see _submit()).
+  List<_TicketOfficeOption> _offices = const [];
+  bool _officesLoading = true;
+  String? _selectedOfficeId;
+  bool _officesRequested = false;
+
   @override
   void initState() {
     super.initState();
     _subjectCtrl.text = widget.initialQuestion ?? '';
+    final seeded = widget.debugOffices;
+    if (seeded != null) {
+      _officesRequested = true;
+      _officesLoading = false;
+      _offices = seeded
+          .map((item) => _TicketOfficeOption(
+                id: (item['id'] ?? '').toString(),
+                name: (item['name'] ?? '').toString(),
+              ))
+          .where((office) => office.id.isNotEmpty && office.name.isNotEmpty)
+          .toList();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // AuthScope.of(context) needs the inherited-widget chain to be attached,
+    // which is only guaranteed from here on, not in initState().
+    if (!_officesRequested) {
+      _officesRequested = true;
+      _loadOffices();
+    }
+  }
+
+  Future<void> _loadOffices() async {
+    try {
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/offices',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      if (result.statusCode < 200 || result.statusCode >= 300) return;
+      final data = _decodeObject(result.body);
+      final items = data['items'];
+      if (items is! List) return;
+      if (!mounted) return;
+      setState(() {
+        _offices = items
+            .whereType<Map>()
+            .map((item) => _TicketOfficeOption(
+                  id: (item['id'] ?? '').toString(),
+                  name: (item['name'] ?? '').toString(),
+                ))
+            .where((office) => office.id.isNotEmpty && office.name.isNotEmpty)
+            .toList();
+      });
+    } catch (_) {
+      // Office list is a nice-to-have for manual selection only -- Automatic
+      // Routing (the default) must remain fully usable even if this fails.
+    } finally {
+      if (mounted) setState(() => _officesLoading = false);
+    }
   }
 
   @override
@@ -3006,6 +3071,13 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
         'description': _descCtrl.text.trim(),
         'source_from_chatbot': widget.initialQuestion != null,
       };
+      // Automatic Routing (the default, _selectedOfficeId == null) must
+      // never send these fields -- ticket behavior is then identical to
+      // today's existing automatic pipeline.
+      if (_selectedOfficeId != null) {
+        body['routing_method'] = 'student_selected';
+        body['preferred_office_id'] = _selectedOfficeId;
+      }
       final result = await ApiClient.send(
         method: 'POST',
         url: '${AppConfig.resolvedApiBase}/tickets',
@@ -3043,6 +3115,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
         _descCtrl.clear();
         _attachmentFile = null;
         _attachmentName = null;
+        _selectedOfficeId = null;
       });
     } catch (error) {
       if (!mounted) return;
@@ -3092,6 +3165,45 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
             ),
             const SizedBox(height: 24),
             ],
+            _FieldLabel(
+              label: 'Office (optional)',
+              helper: 'Select the office you want to send this ticket to.',
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String?>(
+              value: _selectedOfficeId,
+              decoration: _inputDecoration(
+                hintText: 'Automatic routing — Let ASKa-Piyu choose',
+                icon: Icons.apartment_outlined,
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Automatic routing — Let ASKa-Piyu choose'),
+                ),
+                ..._offices.map(
+                  (office) => DropdownMenuItem<String?>(
+                    value: office.id,
+                    child: Text(office.name),
+                  ),
+                ),
+              ],
+              onChanged: _officesLoading && _offices.isEmpty
+                  ? null
+                  : (value) => setState(() => _selectedOfficeId = value),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Not sure which office handles your concern? Leave this on '
+              'Automatic Routing and ASKa-Piyu will send your ticket to the '
+              'appropriate office.',
+              style: const TextStyle(
+                color: DesignTokens.muted,
+                fontSize: 12.5,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 20),
             _FieldLabel(
               label: 'Subject',
               helper: widget.compact
@@ -3159,6 +3271,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                           setState(() {
                             _attachmentFile = null;
                             _attachmentName = null;
+                            _selectedOfficeId = null;
                           });
                         },
                   icon: const Icon(Icons.clear_rounded),
@@ -3229,6 +3342,13 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       ),
     );
   }
+}
+
+class _TicketOfficeOption {
+  final String id;
+  final String name;
+
+  const _TicketOfficeOption({required this.id, required this.name});
 }
 
 class _FieldLabel extends StatelessWidget {

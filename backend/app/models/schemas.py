@@ -602,6 +602,11 @@ class CreateTicketRequest(BaseModel):
     preferred_priority: TicketPriority | None = None
     # Office/admin: open ticket owned by this student/faculty email.
     on_behalf_of_email: str | None = Field(default=None, max_length=255)
+    # Student direct office selection: request-only discriminator, never
+    # persisted on Ticket itself. Must be exactly "student_selected" (not
+    # merely a non-null preferred_office_id) for a student actor's chosen
+    # office to be honored -- see ticketing.py's explicit_office_selected.
+    routing_method: Literal["automatic", "student_selected"] | None = None
 
     @field_validator("on_behalf_of_email")
     @classmethod

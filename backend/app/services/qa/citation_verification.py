@@ -579,6 +579,13 @@ chunk's own text, do not include that chunk for that claim, even if it is
 the closest available option. It is correct and expected for a claim to
 end up with zero supporting citation_ids.
 
+For a compound claim (one that asserts a relationship among multiple
+facts, roles, or procedures), evidence must substantively support that
+relationship -- not merely one entity, office, actor, action, or topic
+mentioned inside the claim. Evidence that an office participates in
+procedure A does not support a claim that the same office manages
+procedure B unless the evidence itself establishes that relationship.
+
 Only use citation_ids that appear in the candidate list below. Never
 invent, guess, abbreviate, or modify a citation_id.
 

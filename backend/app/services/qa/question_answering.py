@@ -6699,6 +6699,7 @@ def _is_out_of_scope_query(normalized_query: str) -> bool:
             "weather forecast",
             "capital of japan",
             "capital city of japan",
+            "which phone should i buy",
         ),
     ):
         return True
@@ -6711,6 +6712,16 @@ def _is_out_of_scope_query(normalized_query: str) -> bool:
         "microsoft",
         "openai",
         "united states",
+        # Generic conversational domains ASKa-Piyu never covers, regardless
+        # of which specific dish/league/title/team is named -- deliberately
+        # category-level (not "adobo"/"nba"/etc.) so this generalizes
+        # instead of chasing individual examples.
+        "recipe",
+        "cook",
+        "cooking",
+        "fantasy",
+        "championship",
+        "movie",
     )
     handbook_terms = (
         "lspu",
@@ -6725,6 +6736,21 @@ def _is_out_of_scope_query(normalized_query: str) -> bool:
         "scholastic",
         "retention",
         "tor",
+        # A campus class/class-suspension question can legitimately mention
+        # "weather" (e.g. suspensions due to bad weather) -- these keep
+        # that in scope without weakening the "weather" external term.
+        "class",
+        "suspend",
+        # Generic on-campus administrative-process signals: a student
+        # organization asking who reviews/registers an activity (a
+        # championship, a movie screening, etc.) is asking about a campus
+        # process, not requesting the external content itself. Kept
+        # deliberately general (not "championship"/"movie"-specific) so it
+        # covers the same pattern for any future external_terms addition.
+        "office",
+        "organization",
+        "approve",
+        "register",
         "transcript",
         "program",
         "scholarship",

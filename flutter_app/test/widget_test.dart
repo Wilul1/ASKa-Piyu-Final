@@ -14,7 +14,14 @@ void main() {
     await tester.pumpWidget(const MyApp());
     await tester.pump(); // settle initial auth load frame
 
-    expect(find.text('Welcome to ASKa-Piyu'), findsOneWidget);
+    // Heading is intentionally two-toned ("Welcome to" / "ASKa-Piyu") via
+    // RichText/TextSpan, so the finder must read across spans. "ASKa-Piyu"
+    // uses a non-breaking hyphen (‑) so the product name can never
+    // wrap mid-word -- visually identical to a plain hyphen.
+    expect(
+      find.text('Welcome to ASKa‑Piyu', findRichText: true),
+      findsOneWidget,
+    );
     expect(find.text('Search'), findsOneWidget);
     // Floating chat CTA uses full or compact label by viewport width.
     expect(
@@ -138,7 +145,10 @@ void main() {
     // Public landing stays the same brand welcome for authenticated students.
     await tester.pumpWidget(_homeHarness(studentController));
     await tester.pump();
-    expect(find.text('Welcome to ASKa-Piyu'), findsOneWidget);
+    expect(
+      find.text('Welcome to ASKa‑Piyu', findRichText: true),
+      findsOneWidget,
+    );
   });
 }
 

@@ -57,23 +57,34 @@ class PublicSiteHeader extends StatelessWidget {
           border: Border(bottom: BorderSide(color: Color(0xFFEEF1F5))),
         ),
         padding: EdgeInsets.symmetric(
-          horizontal: isNarrow ? 12 : 28,
-          vertical: slim && isNarrow ? 8 : 14,
+          horizontal: isNarrow ? 12 : 32,
+          // Desktop-only bump so the homepage's larger hero doesn't sit
+          // under a comparatively tiny navbar -- narrow/slim values are
+          // untouched since other public pages rely on them as-is.
+          vertical: isNarrow ? (slim ? 8 : 14) : 18,
         ),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1120),
+            constraints: const BoxConstraints(maxWidth: kHomeContentMaxWidth),
             child: Row(
               children: [
-                InkWell(
-                  onTap: () => _goHome(context),
-                  borderRadius: BorderRadius.circular(8),
+                // Static branding, not a navigation control: previously an
+                // InkWell that pushed the homepage, which made the brand
+                // behave (and look, via its click cursor/ink splash) like a
+                // link. Product decision is that the brand mark is purely
+                // decorative, so it's now a plain, non-interactive Row --
+                // `excludeSemantics` presents it as a single labeled
+                // branding node rather than a tappable control.
+                Semantics(
+                  label: 'ASKa-Piyu',
+                  container: true,
+                  excludeSemantics: true,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Image.asset(
                         'assets/brandmark.png',
-                        height: slim && isNarrow ? 28 : 36,
+                        height: isNarrow ? (slim ? 28 : 36) : 42,
                         fit: BoxFit.contain,
                         filterQuality: FilterQuality.high,
                       ),
@@ -85,7 +96,7 @@ class PublicSiteHeader extends StatelessWidget {
                         style: TextStyle(
                           color: DesignTokens.maroon,
                           fontWeight: FontWeight.w900,
-                          fontSize: slim && isNarrow ? 15 : 18,
+                          fontSize: isNarrow ? (slim ? 15 : 18) : 20,
                           letterSpacing: -0.2,
                           height: 1,
                         ),

@@ -35,5 +35,5 @@ flutter:
   assets:
     - assets/logo.png
     - assets/brandmark.png
-    - assets/hero_waves.png
     - assets/lspu_logo.png
+    - assets/images/lspu_admin_building.png

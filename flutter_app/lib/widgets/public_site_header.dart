@@ -30,7 +30,10 @@ class PublicSiteHeader extends StatelessWidget {
   });
 
   bool get _onPublicPeerPage =>
-      knowledgeBaseActive || askAssistantActive || myTicketsActive || accountActive;
+      knowledgeBaseActive ||
+      askAssistantActive ||
+      myTicketsActive ||
+      accountActive;
 
   Future<void> _goHome(BuildContext context) =>
       softPushAndClear(context, const StudentHomePage());
@@ -143,14 +146,14 @@ class PublicSiteHeader extends StatelessWidget {
                     )
                   else
                     _NavLink(
-                      label: role == 'office'
-                          ? 'Office'
-                          : role == 'admin'
+                      label:
+                          role == 'office'
+                              ? 'Office'
+                              : role == 'admin'
                               ? 'Admin'
                               : 'Account',
-                      active: accountActive &&
-                          role != 'office' &&
-                          role != 'admin',
+                      active:
+                          accountActive && role != 'office' && role != 'admin',
                       onTap: () {
                         if (role == 'office' || role == 'admin') {
                           redirectAfterAuth(context, role ?? 'student', null);
@@ -175,7 +178,9 @@ class PublicSiteHeader extends StatelessWidget {
                       foregroundColor: Colors.white,
                       elevation: 0,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 14),
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
                       shape: const StadiumBorder(),
                     ),
                     child: const Text(
@@ -190,7 +195,9 @@ class PublicSiteHeader extends StatelessWidget {
                       foregroundColor: DesignTokens.maroon,
                       side: const BorderSide(color: DesignTokens.maroon),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 14),
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
                       shape: const StadiumBorder(),
                     ),
                     child: const Text('Sign out'),
@@ -207,7 +214,10 @@ class PublicSiteHeader extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    icon: const Icon(Icons.menu_rounded, color: DesignTokens.maroon),
+                    icon: const Icon(
+                      Icons.menu_rounded,
+                      color: DesignTokens.maroon,
+                    ),
                   ),
               ],
             ),
@@ -219,7 +229,8 @@ class PublicSiteHeader extends StatelessWidget {
 
   void _openMobileMenu(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final drawerWidth = width < 360 ? width * 0.92 : (width * 0.82).clamp(260.0, 320.0);
+    final drawerWidth =
+        width < 360 ? width * 0.92 : (width * 0.82).clamp(260.0, 320.0);
 
     showGeneralDialog<void>(
       context: context,
@@ -244,14 +255,20 @@ class PublicSiteHeader extends StatelessWidget {
                 onTap();
               },
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
                 child: Row(
                   children: [
                     Container(
                       width: 8,
                       height: 8,
                       decoration: BoxDecoration(
-                        color: active ? DesignTokens.maroon : const Color(0xFFD1D5DB),
+                        color:
+                            active
+                                ? DesignTokens.maroon
+                                : const Color(0xFFD1D5DB),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -260,8 +277,12 @@ class PublicSiteHeader extends StatelessWidget {
                       child: Text(
                         label,
                         style: TextStyle(
-                          fontWeight: active ? FontWeight.w800 : FontWeight.w700,
-                          color: active ? DesignTokens.maroon : const Color(0xFF374151),
+                          fontWeight:
+                              active ? FontWeight.w800 : FontWeight.w700,
+                          color:
+                              active
+                                  ? DesignTokens.maroon
+                                  : const Color(0xFF374151),
                           fontSize: 15,
                         ),
                       ),
@@ -387,18 +408,24 @@ class PublicSiteHeader extends StatelessWidget {
                         ),
                       ] else ...[
                         item(
-                          label: auth.role == 'office'
-                              ? 'Office'
-                              : auth.role == 'admin'
+                          label:
+                              auth.role == 'office'
+                                  ? 'Office'
+                                  : auth.role == 'admin'
                                   ? 'Admin'
                                   : 'Account',
-                          active: accountActive &&
+                          active:
+                              accountActive &&
                               auth.role != 'office' &&
                               auth.role != 'admin',
                           onTap: () {
                             final role = auth.role;
                             if (role == 'office' || role == 'admin') {
-                              redirectAfterAuth(context, role ?? 'student', null);
+                              redirectAfterAuth(
+                                context,
+                                role ?? 'student',
+                                null,
+                              );
                             } else {
                               openProtectedPage(
                                 context,
@@ -438,7 +465,9 @@ class PublicSiteHeader extends StatelessWidget {
         final slide = Tween<Offset>(
           begin: const Offset(1, 0),
           end: Offset.zero,
-        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+        ).animate(
+          CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        );
         return SlideTransition(position: slide, child: child);
       },
     );
@@ -461,15 +490,30 @@ class _NavLink extends StatelessWidget {
     return TextButton(
       onPressed: onTap,
       style: TextButton.styleFrom(
-        foregroundColor:
-            active ? DesignTokens.maroon : const Color(0xFF4B5563),
+        foregroundColor: active ? DesignTokens.maroon : const Color(0xFF4B5563),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontWeight: active ? FontWeight.w900 : FontWeight.w700,
-          fontSize: 14,
+      // IntrinsicWidth so the active underline matches the text's own
+      // width rather than the button's full hit-target width; a fixed-
+      // height SizedBox in the inactive case keeps every nav item the
+      // same height regardless of active state.
+      child: IntrinsicWidth(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: active ? FontWeight.w900 : FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 4),
+            if (active)
+              Container(height: 2, color: DesignTokens.maroon)
+            else
+              const SizedBox(height: 2),
+          ],
         ),
       ),
     );
@@ -508,17 +552,3 @@ class PublicBackToHomeButton extends StatelessWidget {
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -19,6 +19,15 @@ import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
 
 const _statusOptions = ['All', 'Open', 'In Progress', 'Resolved', 'Closed'];
+// Cosmetic-only display labels for _statusOptions (same indices/values) --
+// the real filter value stays 'All' so comparisons/onChanged are unchanged.
+const _statusOptionsDisplay = [
+  'All Status',
+  'Open',
+  'In Progress',
+  'Resolved',
+  'Closed',
+];
 
 class TicketMessage {
   final String id;
@@ -96,9 +105,10 @@ class TicketEntry {
   factory TicketEntry.fromJson(Map<String, dynamic> json) {
     final rawMessages =
         json['messages'] is List ? json['messages'] as List : const <dynamic>[];
-    final rawAttachments = json['attachments'] is List
-        ? json['attachments'] as List
-        : const <dynamic>[];
+    final rawAttachments =
+        json['attachments'] is List
+            ? json['attachments'] as List
+            : const <dynamic>[];
     return TicketEntry(
       id: (json['ticket_id'] ?? json['id'] ?? '').toString(),
       userId: (json['user_id'] ?? '').toString(),
@@ -111,35 +121,53 @@ class TicketEntry {
       resolvedAt: _parseNullableDate(json['resolved_at']),
       closedAt: _parseNullableDate(json['closed_at']),
       category: (json['category'] ?? 'General').toString(),
-      assignedOffice: (json['assigned_office_name'] ?? json['assigned_office'] ?? 'Support Office')
-          .toString(),
+      assignedOffice:
+          (json['assigned_office_name'] ??
+                  json['assigned_office'] ??
+                  'Support Office')
+              .toString(),
       priority: _titlePriority((json['priority'] ?? 'Low').toString()),
       description: (json['description'] ?? '').toString(),
       confidenceScore: _parseDouble(json['confidence_score']),
       sourceFromChatbot: json['source_from_chatbot'] == true,
-      messages: rawMessages
-          .whereType<Map>()
-          .map((item) => TicketMessage.fromJson(
-                Map<String, dynamic>.from(item),
-              ))
-          .toList(),
-      attachments: rawAttachments
-          .whereType<Map>()
-          .map((item) =>
-              _TicketAttachment.fromJson(Map<String, dynamic>.from(item)))
-          .toList(),
+      messages:
+          rawMessages
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    TicketMessage.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList(),
+      attachments:
+          rawAttachments
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    _TicketAttachment.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList(),
     );
   }
 
-  bool matches(String query, String statusFilter) {
+  bool matches(
+    String query,
+    String statusFilter, {
+    String officeFilter = 'All Offices',
+    String categoryFilter = 'All Categories',
+  }) {
     final normalized = query.trim().toLowerCase();
-    final matchesQuery = normalized.isEmpty ||
+    final matchesQuery =
+        normalized.isEmpty ||
         id.toLowerCase().contains(normalized) ||
         subject.toLowerCase().contains(normalized) ||
         assignedOffice.toLowerCase().contains(normalized) ||
         category.toLowerCase().contains(normalized);
     final matchesStatus = statusFilter == 'All' || status == statusFilter;
-    return matchesQuery && matchesStatus;
+    final matchesOffice =
+        officeFilter == 'All Offices' || assignedOffice == officeFilter;
+    final matchesCategory =
+        categoryFilter == 'All Categories' || category == categoryFilter;
+    return matchesQuery && matchesStatus && matchesOffice && matchesCategory;
   }
 }
 
@@ -162,6 +190,8 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   bool _loading = false;
   String? _error;
   String _statusFilter = 'All';
+  String _officeFilter = 'All Offices';
+  String _categoryFilter = 'All Categories';
   bool _requestedInitialLoad = false;
   int _unreadNotifications = 0;
   Timer? _listPollTimer;
@@ -169,8 +199,11 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   @override
   void initState() {
     super.initState();
-    _tabController =
-        TabController(length: 2, vsync: this, initialIndex: widget.initialTab);
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: widget.initialTab,
+    );
     _searchCtrl.addListener(() => setState(() {}));
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) setState(() {});
@@ -229,11 +262,11 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       setState(() {
         _tickets
           ..clear()
-          ..addAll(items.whereType<Map>().map(
-                (item) => TicketEntry.fromJson(
-                  Map<String, dynamic>.from(item),
-                ),
-              ));
+          ..addAll(
+            items.whereType<Map>().map(
+              (item) => TicketEntry.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
       });
     } catch (error) {
       if (!silent && mounted) {
@@ -261,11 +294,12 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       setState(() {
         _notifications
           ..clear()
-          ..addAll(items.whereType<Map>().map(
-                (item) => _TicketNotification.fromJson(
-                  Map<String, dynamic>.from(item),
-                ),
-              ));
+          ..addAll(
+            items.whereType<Map>().map(
+              (item) =>
+                  _TicketNotification.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
         _unreadNotifications = _readInt(data['unread_count']);
       });
     } catch (_) {
@@ -297,18 +331,20 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   void _openTicketDetails(TicketEntry ticket) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => TicketDetailsPage(
-          ticket: ticket,
-          onUpdated: (updated) {
-            setState(() {
-              final index =
-                  _tickets.indexWhere((item) => item.id == updated.id);
-              if (index >= 0) {
-                _tickets[index] = updated;
-              }
-            });
-          },
-        ),
+        builder:
+            (context) => TicketDetailsPage(
+              ticket: ticket,
+              onUpdated: (updated) {
+                setState(() {
+                  final index = _tickets.indexWhere(
+                    (item) => item.id == updated.id,
+                  );
+                  if (index >= 0) {
+                    _tickets[index] = updated;
+                  }
+                });
+              },
+            ),
       ),
     );
   }
@@ -327,13 +363,15 @@ class _MyTicketsPageState extends State<MyTicketsPage>
 
     if (!auth.isAuthenticated) {
       return _LoginRequiredPage(
-        current: widget.initialTab == 1
-            ? StudentNavItem.submitTicket
-            : StudentNavItem.myTickets,
-        returnTo: (_) => MyTicketsPage(
-          initialTab: widget.initialTab,
-          initialQuestion: widget.initialQuestion,
-        ),
+        current:
+            widget.initialTab == 1
+                ? StudentNavItem.submitTicket
+                : StudentNavItem.myTickets,
+        returnTo:
+            (_) => MyTicketsPage(
+              initialTab: widget.initialTab,
+              initialQuestion: widget.initialQuestion,
+            ),
       );
     }
 
@@ -354,159 +392,138 @@ class _MyTicketsPageState extends State<MyTicketsPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
-        final filteredTickets = _tickets
-            .where((ticket) => ticket.matches(
-                  _searchCtrl.text,
-                  _statusFilter,
-                ))
-            .toList();
+        final filteredTickets =
+            _tickets
+                .where(
+                  (ticket) => ticket.matches(
+                    _searchCtrl.text,
+                    _statusFilter,
+                    officeFilter: _officeFilter,
+                    categoryFilter: _categoryFilter,
+                  ),
+                )
+                .toList();
+        final officeOptions = [
+          'All Offices',
+          ..._distinctSorted(_tickets.map((t) => t.assignedOffice)),
+        ];
+        final categoryOptions = [
+          'All Categories',
+          ..._distinctSorted(_tickets.map((t) => t.category)),
+        ];
+        final hasActiveFilters =
+            _searchCtrl.text.trim().isNotEmpty ||
+            _statusFilter != 'All' ||
+            _officeFilter != 'All Offices' ||
+            _categoryFilter != 'All Categories';
+
+        final listView = RefreshIndicator(
+          onRefresh: () async {
+            await _loadTickets();
+            await _loadNotifications();
+          },
+          color: DesignTokens.maroon,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_unreadNotifications > 0) ...[
+                  _NotificationsBanner(
+                    notifications:
+                        _notifications
+                            .where((item) => !item.isRead)
+                            .take(3)
+                            .toList(),
+                    unreadCount: _unreadNotifications,
+                    onDismiss: _markAllNotificationsRead,
+                  ),
+                  SizedBox(height: isWide ? 16 : 12),
+                ],
+                _TicketStatsSummary(
+                  tickets: _tickets,
+                  isWide: isWide,
+                  onSubmitTicket: () => _tabController.animateTo(1),
+                ),
+                SizedBox(height: isWide ? 18 : 14),
+                _TicketToolbar(
+                  searchCtrl: _searchCtrl,
+                  statusFilter: _statusFilter,
+                  officeFilter: _officeFilter,
+                  categoryFilter: _categoryFilter,
+                  officeOptions: officeOptions,
+                  categoryOptions: categoryOptions,
+                  onStatusChanged:
+                      (value) => setState(() => _statusFilter = value),
+                  onOfficeChanged:
+                      (value) => setState(() => _officeFilter = value),
+                  onCategoryChanged:
+                      (value) => setState(() => _categoryFilter = value),
+                  hasActiveFilters: hasActiveFilters,
+                  onClear:
+                      () => setState(() {
+                        _searchCtrl.clear();
+                        _statusFilter = 'All';
+                        _officeFilter = 'All Offices';
+                        _categoryFilter = 'All Categories';
+                      }),
+                ),
+                SizedBox(height: isWide ? 16 : 12),
+                if (_loading && _tickets.isEmpty)
+                  const TicketLoadingState()
+                else if (_error != null)
+                  _TicketError(message: _error!, onRetry: _loadTickets)
+                else
+                  TicketsList(
+                    tickets: filteredTickets,
+                    hasAnyTickets: _tickets.isNotEmpty,
+                    onTicketTap: _openTicketDetails,
+                  ),
+              ],
+            ),
+          ),
+        );
+
+        final submitView = SingleChildScrollView(
+          child: CreateTicketForm(
+            initialQuestion: widget.initialQuestion,
+            onCreated: _ticketCreated,
+            compact: !isWide,
+          ),
+        );
 
         final bodyContent = StudentPage(
-          maxWidth: 1120,
+          maxWidth: 1780,
           scroll: isWide,
-          padding: isWide
-              ? const EdgeInsets.fromLTRB(24, 22, 24, 28)
-              : const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          padding:
+              isWide
+                  ? const EdgeInsets.fromLTRB(24, 22, 24, 28)
+                  : const EdgeInsets.fromLTRB(16, 12, 16, 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const PublicBackToHomeButton(
-                padding: EdgeInsets.only(bottom: 10),
+              // Neither tab shows a "Back to ..." row above the hero -- the
+              // navbar's own My Tickets nav item (kept active on both tabs)
+              // already provides navigation, matching both approved targets.
+              _TicketsHeroBanner(
+                tabController: _tabController,
+                isWide: isWide,
+                isFaculty: AuthScope.of(context).role == 'faculty',
               ),
-              HeaderRow(isWide: isWide),
-              SizedBox(height: isWide ? 18 : 10),
-              TabsRow(tabController: _tabController, filled: !isWide),
-              SizedBox(height: isWide ? 18 : 12),
+              SizedBox(height: isWide ? 20 : 14),
               if (isWide)
                 SizedBox(
                   height: 760,
                   child: TabBarView(
                     controller: _tabController,
-                    children: [
-                      RefreshIndicator(
-                        onRefresh: () async {
-                          await _loadTickets();
-                          await _loadNotifications();
-                        },
-                        color: DesignTokens.maroon,
-                        child: SingleChildScrollView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (_unreadNotifications > 0) ...[
-                                _NotificationsBanner(
-                                  notifications: _notifications
-                                      .where((item) => !item.isRead)
-                                      .take(3)
-                                      .toList(),
-                                  unreadCount: _unreadNotifications,
-                                  onDismiss: _markAllNotificationsRead,
-                                ),
-                                const SizedBox(height: 16),
-                              ],
-                              StatsCards(tickets: _tickets),
-                              const SizedBox(height: 18),
-                              TicketFilters(
-                                searchCtrl: _searchCtrl,
-                                statusFilter: _statusFilter,
-                                onStatusChanged: (value) =>
-                                    setState(() => _statusFilter = value),
-                                onRefresh: () async {
-                                  await _loadTickets();
-                                  await _loadNotifications();
-                                },
-                                isRefreshing: _loading,
-                              ),
-                              const SizedBox(height: 16),
-                              if (_loading && _tickets.isEmpty)
-                                const TicketLoadingState()
-                              else if (_error != null)
-                                _TicketError(
-                                    message: _error!, onRetry: _loadTickets)
-                              else
-                                TicketsList(
-                                  tickets: filteredTickets,
-                                  hasAnyTickets: _tickets.isNotEmpty,
-                                  onTicketTap: _openTicketDetails,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      SingleChildScrollView(
-                        child: CreateTicketForm(
-                          initialQuestion: widget.initialQuestion,
-                          onCreated: _ticketCreated,
-                        ),
-                      ),
-                    ],
+                    children: [listView, submitView],
                   ),
                 )
               else
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,
-                    children: [
-                      RefreshIndicator(
-                        onRefresh: () async {
-                          await _loadTickets();
-                          await _loadNotifications();
-                        },
-                        color: DesignTokens.maroon,
-                        child: SingleChildScrollView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (_unreadNotifications > 0) ...[
-                                _NotificationsBanner(
-                                  notifications: _notifications
-                                      .where((item) => !item.isRead)
-                                      .take(3)
-                                      .toList(),
-                                  unreadCount: _unreadNotifications,
-                                  onDismiss: _markAllNotificationsRead,
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                              StatsCards(tickets: _tickets, compact: true),
-                              const SizedBox(height: 12),
-                              TicketFilters(
-                                searchCtrl: _searchCtrl,
-                                statusFilter: _statusFilter,
-                                onStatusChanged: (value) =>
-                                    setState(() => _statusFilter = value),
-                                onRefresh: () async {
-                                  await _loadTickets();
-                                  await _loadNotifications();
-                                },
-                                isRefreshing: _loading,
-                              ),
-                              const SizedBox(height: 12),
-                              if (_loading && _tickets.isEmpty)
-                                const TicketLoadingState()
-                              else if (_error != null)
-                                _TicketError(
-                                    message: _error!, onRetry: _loadTickets)
-                              else
-                                TicketsList(
-                                  tickets: filteredTickets,
-                                  hasAnyTickets: _tickets.isNotEmpty,
-                                  onTicketTap: _openTicketDetails,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      SingleChildScrollView(
-                        child: CreateTicketForm(
-                          initialQuestion: widget.initialQuestion,
-                          onCreated: _ticketCreated,
-                          compact: true,
-                        ),
-                      ),
-                    ],
+                    children: [listView, submitView],
                   ),
                 ),
             ],
@@ -527,92 +544,234 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   }
 }
 
-class HeaderRow extends StatelessWidget {
+List<String> _distinctSorted(Iterable<String> values) {
+  final set = <String>{};
+  for (final value in values) {
+    final trimmed = value.trim();
+    if (trimmed.isNotEmpty) set.add(trimmed);
+  }
+  final list = set.toList()..sort();
+  return list;
+}
+
+/// Shared hero banner for the My Tickets / Submit Ticket experience --
+/// carries the same restrained light-maroon/pink wave language as the
+/// approved homepage hero (a soft gradient with a single gentle curved
+/// edge), without literally reusing the homepage's own multi-layer wave
+/// painter. Reacts to [tabController] so the eyebrow/heading/subtitle swap
+/// between the list and submit views instead of each view rendering its
+/// own separate header.
+class _TicketsHeroBanner extends StatelessWidget {
+  final TabController tabController;
   final bool isWide;
-  const HeaderRow({required this.isWide});
+  final bool isFaculty;
+
+  const _TicketsHeroBanner({
+    required this.tabController,
+    required this.isWide,
+    required this.isFaculty,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (!isWide) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 4),
-        child: Text(
-          'Tickets',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
-            color: DesignTokens.ink,
-          ),
-        ),
-      );
-    }
-    final isFaculty = AuthScope.of(context).role == 'faculty';
-    return StudentPanel(
-      padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const StudentIconBox(
-            icon: Icons.support_agent_rounded,
-            color: DesignTokens.maroon,
-            size: 48,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return AnimatedBuilder(
+      animation: tabController,
+      builder: (context, _) {
+        final onSubmitView = tabController.index == 1;
+        final eyebrow = onSubmitView ? 'SUBMIT TICKET' : 'TICKETS';
+        final title = onSubmitView ? 'Submit a Support Request' : 'My Tickets';
+        final subtitle =
+            onSubmitView
+                ? 'Share your concern and any details the office will need to help you.'
+                : isFaculty
+                ? 'Create faculty support requests, track progress, and read office replies in one place.'
+                : 'Create support requests, track progress, and read office replies in one place.';
+
+        return ClipRect(
+          child: Container(
+            width: double.infinity,
+            color: const Color(0xFFFDF1F2),
+            child: Stack(
               children: [
-                Text(
-                  isFaculty ? 'Faculty Tickets' : 'Student Tickets',
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w900,
-                    color: DesignTokens.ink,
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(painter: _TicketsHeroWavePainter()),
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  isFaculty
-                      ? 'Create faculty support requests, track progress, and read office replies in one place.'
-                      : 'Create support requests, track progress, and read office replies in one place.',
-                  style: const TextStyle(fontSize: 14, color: DesignTokens.muted),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    isWide ? 28 : 18,
+                    isWide ? 26 : 20,
+                    isWide ? 28 : 18,
+                    isWide ? 46 : 34,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        eyebrow,
+                        style: const TextStyle(
+                          color: DesignTokens.maroon,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: isWide ? 37 : 24,
+                          fontWeight: FontWeight.w900,
+                          // Both hero titles share the same maroon
+                          // treatment -- intentional visual consistency
+                          // between My Tickets and Submit Ticket.
+                          color: DesignTokens.maroon,
+                          height: 1.05,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: isWide ? 620 : 420,
+                        ),
+                        child: Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: isWide ? 14 : 13,
+                            color: DesignTokens.muted,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-          if (isWide)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: DesignTokens.maroon.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: DesignTokens.maroon.withOpacity(0.14),
-                ),
-              ),
-              child: Text(
-                isFaculty ? 'Faculty support' : 'Support Center',
-                style: const TextStyle(
-                  color: DesignTokens.maroon,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
+}
+
+/// Wave shapes across the hero, rebuilt from pixel measurements of the
+/// approved target screenshot (1672x941): a per-column scan for sustained
+/// dusty-rose color found genuine wave presence only in the left ~14% and
+/// right ~28% of the hero's width, with a wide, essentially flat/pale
+/// middle band (x roughly 15%-70%) showing no sustained wave color at all.
+/// That is a materially different silhouette from a single continuous
+/// crest-and-valley: two independent, edge-anchored bands rather than one
+/// wave spanning the full width. A soft top-to-bottom base tint (measured
+/// going from ~(248,237,240) just below the navbar to ~(240,225,228) at
+/// the hero's bottom edge, uniform across x) supplies the remaining depth
+/// through that flat middle, standing in for the background gradient the
+/// target shows there.
+class _TicketsHeroWavePainter extends CustomPainter {
+  const _TicketsHeroWavePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Uniform base gradient (not x-dependent): the measured middle band has
+    // no distinct wave shape, just a gentle top-to-bottom deepening.
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFFDF1F2), Color(0xFFF6E1E4)],
+        ).createShader(Offset.zero & size),
+    );
+
+    // Full-width soft wave: a single gentle S-curve visible across the whole
+    // hero, at a light-enough tint that it doesn't register as "sustained
+    // deep rose" in a strict per-column color scan (which is why the edge-
+    // measurement below found the middle "empty") but still reads visually
+    // as a continuous curved band, matching the target's overall softness.
+    _paintLayer(
+      canvas,
+      size,
+      color: const Color(0xFFEFC3CA).withValues(alpha: 0.40),
+      anchors: const [
+        Offset(0.00, 0.40),
+        Offset(0.25, 0.58),
+        Offset(0.50, 0.76),
+        Offset(0.75, 0.62),
+        Offset(1.00, 0.50),
+      ],
+    );
+
+    // Left band: measured sustained-rose top edge rises from ~49% of the
+    // hero height at x=0 to ~90% (nearly gone) by x=~14%, then stays absent
+    // through the wide middle.
+    _paintLayer(
+      canvas,
+      size,
+      color: const Color(0xFFC17E88).withValues(alpha: 0.42),
+      anchors: const [
+        Offset(0.00, 0.49),
+        Offset(0.05, 0.60),
+        Offset(0.10, 0.74),
+        Offset(0.15, 0.95),
+      ],
+    );
+
+    // Right band: reappears around x=~72% (top edge ~90% down, i.e. barely
+    // present) and thickens steadily toward the right edge (top edge ~55%
+    // down at x=100%), the strongest/deepest point of the whole hero.
+    _paintLayer(
+      canvas,
+      size,
+      color: const Color(0xFFC17E88).withValues(alpha: 0.55),
+      anchors: const [
+        Offset(0.65, 0.98),
+        Offset(0.72, 0.90),
+        Offset(0.85, 0.75),
+        Offset(1.00, 0.55),
+      ],
+    );
+  }
+
+  void _paintLayer(
+    Canvas canvas,
+    Size size, {
+    required Color color,
+    required List<Offset> anchors,
+  }) {
+    final pts = <Offset>[
+      for (final a in anchors) Offset(size.width * a.dx, size.height * a.dy),
+    ];
+    final path =
+        Path()
+          ..moveTo(0, size.height)
+          ..lineTo(pts.first.dx, pts.first.dy);
+    for (var i = 0; i < pts.length - 1; i++) {
+      final p0 = i == 0 ? pts[i] : pts[i - 1];
+      final p1 = pts[i];
+      final p2 = pts[i + 1];
+      final p3 = (i + 2 < pts.length) ? pts[i + 2] : pts[i + 1];
+      final c1 = p1 + (p2 - p0) / 6;
+      final c2 = p2 - (p3 - p1) / 6;
+      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
+    }
+    path
+      ..lineTo(size.width, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TicketsHeroWavePainter oldDelegate) => false;
 }
 
 class _LoginRequiredPage extends StatelessWidget {
   final StudentNavItem current;
   final WidgetBuilder returnTo;
 
-  const _LoginRequiredPage({
-    required this.current,
-    required this.returnTo,
-  });
+  const _LoginRequiredPage({required this.current, required this.returnTo});
 
   @override
   Widget build(BuildContext context) {
@@ -644,14 +803,16 @@ class _LoginRequiredPage extends StatelessWidget {
             ),
             const SizedBox(height: 22),
             ElevatedButton(
-              onPressed: () => Navigator.of(context).pushReplacement(
-                MaterialPageRoute(
-                  builder: (_) => LoginPage(
-                    returnTo: returnTo,
-                    message: loginRequiredMessage,
+              onPressed:
+                  () => Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder:
+                          (_) => LoginPage(
+                            returnTo: returnTo,
+                            message: loginRequiredMessage,
+                          ),
+                    ),
                   ),
-                ),
-              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: DesignTokens.maroon,
                 foregroundColor: Colors.white,
@@ -680,129 +841,20 @@ class _LoginRequiredPage extends StatelessWidget {
   }
 }
 
-class TabsRow extends StatelessWidget {
-  final TabController tabController;
-  final bool filled;
-  const TabsRow({required this.tabController, this.filled = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: tabController,
-      builder: (context, _) {
-        return Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: DesignTokens.border),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: _TicketSegmentTab(
-                  selected: tabController.index == 0,
-                  icon: Icons.fact_check_rounded,
-                  label: filled ? 'My tickets' : 'My Tickets',
-                  filled: filled,
-                  onTap: () => tabController.animateTo(0),
-                ),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: _TicketSegmentTab(
-                  selected: tabController.index == 1,
-                  icon: Icons.add_task_rounded,
-                  label: filled ? 'New request' : 'Submit Ticket',
-                  filled: filled,
-                  onTap: () => tabController.animateTo(1),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _TicketSegmentTab extends StatelessWidget {
-  final bool selected;
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool filled;
-
-  const _TicketSegmentTab({
-    required this.selected,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.filled = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected
-          ? (filled
-              ? DesignTokens.maroon
-              : DesignTokens.maroon.withValues(alpha: 0.08))
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 48),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border(
-              bottom: BorderSide(
-                color: selected && !filled
-                    ? DesignTokens.maroon
-                    : Colors.transparent,
-                width: 2.5,
-              ),
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 18,
-                color: selected
-                    ? (filled ? Colors.white : DesignTokens.maroon)
-                    : DesignTokens.muted,
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                    color: selected
-                        ? (filled ? Colors.white : DesignTokens.maroon)
-                        : DesignTokens.muted,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class StatsCards extends StatelessWidget {
+/// Real ticket counts presented as plain numbers/labels -- no status icons
+/// or icon containers, per the redesign's "typography over icons" mandate.
+/// The primary Submit Ticket action lives here (right side on desktop,
+/// full-width below the stats on narrow layouts).
+class _TicketStatsSummary extends StatelessWidget {
   final List<TicketEntry> tickets;
-  final bool compact;
-  const StatsCards({super.key, required this.tickets, this.compact = false});
+  final bool isWide;
+  final VoidCallback onSubmitTicket;
+
+  const _TicketStatsSummary({
+    required this.tickets,
+    required this.isWide,
+    required this.onSubmitTicket,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -812,146 +864,171 @@ class StatsCards extends StatelessWidget {
     final closedCount = tickets.where((t) => t.status == 'Closed').length;
     final totalCount = tickets.length;
 
-    return LayoutBuilder(
+    final blocks = [
+      _StatBlock(
+        number: '$openCount',
+        label: 'Open',
+        caption: 'Awaiting office response',
+        color: const Color(0xFF2563EB),
+      ),
+      _StatBlock(
+        number: '$progressCount',
+        label: 'In Progress',
+        caption: 'Being handled by the office',
+        color: const Color(0xFFF97316),
+      ),
+      _StatBlock(
+        number: '$closedCount',
+        label: 'Closed',
+        caption: 'Resolved tickets',
+        color: const Color(0xFF16A34A),
+      ),
+      _StatBlock(
+        number: '$totalCount',
+        label: 'Total',
+        caption: 'All time tickets',
+        color: DesignTokens.maroon,
+      ),
+    ];
+
+    final submitButton = SizedBox(
+      height: 42,
+      child: ElevatedButton(
+        onPressed: onSubmitTicket,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: DesignTokens.maroon,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 22),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        child: const Text(
+          'Submit Ticket',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        ),
+      ),
+    );
+
+    // Wide layout: a single row with a subtle vertical divider between each
+    // metric, matching the approved target's summary card exactly.
+    // IntrinsicHeight is required here: VerticalDivider wants to fill all
+    // available height, which is unbounded inside this scrollable column,
+    // so without it the layout throws a "RenderBox was not laid out"
+    // assertion.
+    final wideStatsRow = IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < blocks.length; i++) ...[
+            if (i > 0)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 18),
+                child: VerticalDivider(
+                  width: 1,
+                  thickness: 1,
+                  color: DesignTokens.border,
+                ),
+              ),
+            Expanded(child: blocks[i]),
+          ],
+        ],
+      ),
+    );
+
+    final narrowStatsGrid = LayoutBuilder(
       builder: (context, constraints) {
-        final columns = compact
-            ? 4
-            : constraints.maxWidth >= 860
-                ? 4
-                : constraints.maxWidth >= 560
-                    ? 2
-                    : 1;
+        final columns = constraints.maxWidth >= 380 ? 2 : 1;
         return StudentResponsiveWrap(
           columns: columns,
-          spacing: compact ? 6 : 14,
-          children: [
-            StatCard(
-              number: '$openCount',
-              label: compact ? 'Open' : 'Open',
-              accent: const Color(0xFF2563EB),
-              icon: Icons.mark_email_unread_outlined,
-              compact: compact,
-            ),
-            StatCard(
-              number: '$progressCount',
-              label: compact ? 'Progress' : 'In Progress',
-              accent: const Color(0xFFF97316),
-              icon: Icons.sync_rounded,
-              compact: compact,
-            ),
-            StatCard(
-              number: '$closedCount',
-              label: 'Closed',
-              accent: const Color(0xFF16A34A),
-              icon: Icons.check_circle_outline_rounded,
-              compact: compact,
-            ),
-            StatCard(
-              number: '$totalCount',
-              label: 'Total',
-              accent: DesignTokens.maroon,
-              icon: Icons.confirmation_num_outlined,
-              compact: compact,
-            ),
-          ],
+          spacing: 12,
+          children: blocks,
         );
       },
+    );
+
+    return StudentPanel(
+      padding: EdgeInsets.symmetric(
+        horizontal: isWide ? 20 : 14,
+        vertical: isWide ? 12 : 14,
+      ),
+      child:
+          isWide
+              ? Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: wideStatsRow),
+                  const SizedBox(width: 22),
+                  submitButton,
+                ],
+              )
+              : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  narrowStatsGrid,
+                  const SizedBox(height: 14),
+                  submitButton,
+                ],
+              ),
     );
   }
 }
 
-class StatCard extends StatelessWidget {
+class _StatBlock extends StatelessWidget {
   final String number;
   final String label;
-  final Color accent;
-  final IconData icon;
+  final String caption;
+  final Color color;
 
-  final bool compact;
-
-  const StatCard({
-    super.key,
+  const _StatBlock({
     required this.number,
     required this.label,
-    required this.accent,
-    required this.icon,
-    this.compact = false,
+    required this.caption,
+    required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (compact) {
-      return Container(
-        height: 64,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: DesignTokens.border),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              number,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                color: accent,
-                height: 1,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 10,
-                color: DesignTokens.muted,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
     return Container(
-      height: 104,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: DesignTokens.softShadow(0.04),
-        border: Border.all(color: DesignTokens.border),
+        // A very subtle per-metric tint (matching the target) -- not a
+        // solid fill, just enough to distinguish each metric's zone.
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
       ),
-      padding: const EdgeInsets.all(16),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          StudentIconBox(icon: icon, color: accent, size: 42),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  number,
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w900,
-                    color: accent,
-                    height: 1,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: DesignTokens.muted,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+          Text(
+            number,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: color,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: DesignTokens.ink,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            caption,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              color: DesignTokens.muted,
+              height: 1.2,
             ),
           ),
         ],
@@ -960,91 +1037,137 @@ class StatCard extends StatelessWidget {
   }
 }
 
-class TicketFilters extends StatelessWidget {
+/// Search + filters toolbar. Status filtering preserves the real existing
+/// values; Office/Category filtering is new but derived entirely from
+/// already-loaded ticket data (no API/backend change) per the redesign
+/// brief. Text-based Refresh/Clear actions replace the old icon buttons.
+/// Search + filters toolbar. On desktop this renders as the single row
+/// shown in the approved target (search, Status, Offices, Categories,
+/// Clear); narrower widths stack it. Manual pull-to-refresh remains fully
+/// available via the page's own [RefreshIndicator] (swipe-to-refresh),
+/// which this toolbar never controlled -- only the separate, always-
+/// visible "Refresh" text button (added in an earlier pass, not present
+/// in the approved target) has been removed here.
+class _TicketToolbar extends StatelessWidget {
   final TextEditingController searchCtrl;
   final String statusFilter;
+  final String officeFilter;
+  final String categoryFilter;
+  final List<String> officeOptions;
+  final List<String> categoryOptions;
   final ValueChanged<String> onStatusChanged;
-  final Future<void> Function() onRefresh;
-  final bool isRefreshing;
+  final ValueChanged<String> onOfficeChanged;
+  final ValueChanged<String> onCategoryChanged;
+  final bool hasActiveFilters;
+  final VoidCallback onClear;
 
-  const TicketFilters({
-    super.key,
+  const _TicketToolbar({
     required this.searchCtrl,
     required this.statusFilter,
+    required this.officeFilter,
+    required this.categoryFilter,
+    required this.officeOptions,
+    required this.categoryOptions,
     required this.onStatusChanged,
-    required this.onRefresh,
-    required this.isRefreshing,
+    required this.onOfficeChanged,
+    required this.onCategoryChanged,
+    required this.hasActiveFilters,
+    required this.onClear,
   });
 
   @override
   Widget build(BuildContext context) {
     return StudentPanel(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       shadow: false,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 720;
+          final isNarrow = constraints.maxWidth < 900;
+          // A tighter content padding than the shared `_inputDecoration`
+          // default -- scoped to this toolbar only via `.copyWith` so
+          // Submit Ticket's own fields (which also use `_inputDecoration`)
+          // are not affected.
           final searchField = TextField(
             controller: searchCtrl,
             decoration: _inputDecoration(
-              hintText: 'Search ticket ID, subject, office, or category',
-              icon: Icons.search_rounded,
-            ),
-          );
-          final statusDropdown = SizedBox(
-            width: isNarrow ? null : 200,
-            child: _FilterDropdown(
-              label: 'Status',
-              value: statusFilter,
-              values: _statusOptions,
-              onChanged: onStatusChanged,
-            ),
-          );
-          final refreshButton = Tooltip(
-            message: 'Refresh tickets',
-            child: Container(
-              decoration: BoxDecoration(
-                color: DesignTokens.maroon.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: IconButton(
-                color: DesignTokens.maroon,
-                onPressed: isRefreshing ? null : () => onRefresh(),
-                icon: isRefreshing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh_rounded),
+              hintText: 'Search ticket ID, subject, office, or category...',
+            ).copyWith(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
               ),
             ),
+          );
+          final statusDropdown = _FilterDropdown(
+            label: 'All Status',
+            value: statusFilter,
+            values: _statusOptions,
+            displayValues: _statusOptionsDisplay,
+            onChanged: onStatusChanged,
+          );
+          final officeDropdown = _FilterDropdown(
+            label: 'All Offices',
+            value: officeFilter,
+            values: officeOptions,
+            onChanged: onOfficeChanged,
+          );
+          final categoryDropdown = _FilterDropdown(
+            label: 'All Categories',
+            value: categoryFilter,
+            values: categoryOptions,
+            onChanged: onCategoryChanged,
+          );
+          final clearAction = TextButton(
+            onPressed: hasActiveFilters ? onClear : null,
+            style: TextButton.styleFrom(
+              backgroundColor: const Color(0xFFFBF2F3),
+              foregroundColor: DesignTokens.maroon,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              minimumSize: const Size(0, 0),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text('Clear'),
           );
 
           if (isNarrow) {
             return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 searchField,
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(child: statusDropdown),
-                    const SizedBox(width: 12),
-                    refreshButton,
-                  ],
-                ),
+                statusDropdown,
+                const SizedBox(height: 10),
+                officeDropdown,
+                const SizedBox(height: 10),
+                categoryDropdown,
+                const SizedBox(height: 10),
+                Align(alignment: Alignment.centerRight, child: clearAction),
               ],
             );
           }
 
-          return Row(
-            children: [
-              Expanded(child: searchField),
-              const SizedBox(width: 12),
-              statusDropdown,
-              const SizedBox(width: 12),
-              refreshButton,
-            ],
+          // IntrinsicHeight is required: CrossAxisAlignment.stretch needs a
+          // bounded cross-axis (height) size to stretch into, which a bare
+          // Row can't provide inside this unbounded-height scrollable
+          // column -- without it this throws the same class of layout
+          // assertion as an unwrapped VerticalDivider would.
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(flex: 6, child: searchField),
+                const SizedBox(width: 10),
+                SizedBox(width: 150, child: statusDropdown),
+                const SizedBox(width: 10),
+                SizedBox(width: 170, child: officeDropdown),
+                const SizedBox(width: 10),
+                SizedBox(width: 170, child: categoryDropdown),
+                const SizedBox(width: 10),
+                clearAction,
+              ],
+            ),
           );
         },
       ),
@@ -1052,16 +1175,22 @@ class TicketFilters extends StatelessWidget {
   }
 }
 
+/// [displayValues], when given, supplies the visible label for each entry
+/// in [values] at the same index -- purely cosmetic (e.g. showing "All
+/// Status" for the real underlying filter value "All") so the real value
+/// used for equality checks/onChanged is never renamed.
 class _FilterDropdown extends StatelessWidget {
   final String label;
   final String value;
   final List<String> values;
+  final List<String>? displayValues;
   final ValueChanged<String> onChanged;
 
   const _FilterDropdown({
     required this.label,
     required this.value,
     required this.values,
+    this.displayValues,
     required this.onChanged,
   });
 
@@ -1070,13 +1199,22 @@ class _FilterDropdown extends StatelessWidget {
     return DropdownButtonFormField<String>(
       value: value,
       isExpanded: true,
-      decoration: _inputDecoration(
-        hintText: label,
-        icon: Icons.tune_rounded,
+      decoration: _inputDecoration(hintText: label).copyWith(
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
       ),
-      items: values
-          .map((item) => DropdownMenuItem(value: item, child: Text(item)))
-          .toList(),
+      items: [
+        for (var i = 0; i < values.length; i++)
+          DropdownMenuItem(
+            value: values[i],
+            child: Text(
+              displayValues != null ? displayValues![i] : values[i],
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
       onChanged: (value) {
         if (value != null) onChanged(value);
       },
@@ -1100,29 +1238,35 @@ class TicketsList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (tickets.isEmpty) {
       return TicketEmptyState(
-        icon:
-            hasAnyTickets ? Icons.manage_search_rounded : Icons.inbox_outlined,
         title: hasAnyTickets ? 'No matching tickets' : 'No tickets yet',
-        message: hasAnyTickets
-            ? 'Try changing the search text, status, or priority filter.'
-            : 'Submitted support requests will appear here with status updates and office replies.',
+        message:
+            hasAnyTickets
+                ? 'Try changing the search text, status, or priority filter.'
+                : 'Submitted support requests will appear here with status updates and office replies.',
       );
     }
 
     return Column(
-      children: tickets
-          .map(
-            (ticket) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child:
-                  TicketCard(ticket: ticket, onTap: () => onTicketTap(ticket)),
-            ),
-          )
-          .toList(),
+      children:
+          tickets
+              .map(
+                (ticket) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: TicketCard(
+                    ticket: ticket,
+                    onTap: () => onTicketTap(ticket),
+                  ),
+                ),
+              )
+              .toList(),
     );
   }
 }
 
+/// Wide horizontal card matching the approved target: a left ID/date
+/// column, a vertical divider, a main column (status/priority, subject,
+/// office/category/replies, description preview), and a trailing chevron.
+/// Stacks (ID+date above main) on narrower widths instead of overflowing.
 class TicketCard extends StatelessWidget {
   final TicketEntry ticket;
   final VoidCallback onTap;
@@ -1131,93 +1275,125 @@ class TicketCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final idAndDate = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          ticket.id,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: DesignTokens.maroon,
+            fontWeight: FontWeight.w900,
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _formatDate(ticket.updatedAt),
+          style: const TextStyle(color: DesignTokens.muted, fontSize: 12.5),
+        ),
+      ],
+    );
+
+    final mainColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            TicketStatusChip(status: ticket.status),
+            TicketPriorityChip(priority: ticket.priority),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          ticket.subject,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: DesignTokens.ink,
+            fontWeight: FontWeight.w900,
+            fontSize: 17,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _TicketMetaLine(
+          parts: [
+            ticket.assignedOffice,
+            ticket.category,
+            '${ticket.messages.length} '
+                '${ticket.messages.length == 1 ? 'reply' : 'replies'}',
+          ],
+        ),
+        if (ticket.description.trim().isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            ticket.description,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: DesignTokens.muted,
+              fontSize: 13,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ],
+    );
+
     return StudentInkCard(
       onTap: onTap,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 640;
+          if (isNarrow) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          ticket.id,
-                          style: const TextStyle(
-                            color: DesignTokens.maroon,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 13,
-                          ),
-                        ),
-                        TicketStatusChip(status: ticket.status),
-                        TicketPriorityChip(priority: ticket.priority),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      ticket.subject,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: DesignTokens.ink,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 17,
-                        height: 1.25,
-                      ),
+                    Expanded(child: idAndDate),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: DesignTokens.muted,
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 10),
-              const Icon(Icons.chevron_right_rounded,
-                  color: DesignTokens.muted),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              _MetaItem(
-                icon: Icons.apartment_rounded,
-                label: ticket.assignedOffice,
-              ),
-              _MetaItem(
-                icon: Icons.category_outlined,
-                label: ticket.category,
-              ),
-              _MetaItem(
-                icon: Icons.schedule_rounded,
-                label: 'Updated ${_formatDate(ticket.updatedAt)}',
-              ),
-              _MetaItem(
-                icon: Icons.forum_outlined,
-                label: '${ticket.messages.length} replies',
-              ),
-            ],
-          ),
-          if (ticket.description.trim().isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              ticket.description,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: DesignTokens.muted,
-                height: 1.35,
-                fontSize: 13,
-              ),
+                const SizedBox(height: 12),
+                mainColumn,
+              ],
+            );
+          }
+
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(width: 180, child: idAndDate),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 18),
+                  child: VerticalDivider(
+                    width: 1,
+                    thickness: 1,
+                    color: DesignTokens.border,
+                  ),
+                ),
+                Expanded(child: mainColumn),
+                const SizedBox(width: 10),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: DesignTokens.muted,
+                ),
+              ],
             ),
-          ],
-        ],
+          );
+        },
       ),
     );
   }
@@ -1227,11 +1403,7 @@ class TicketDetailsPage extends StatefulWidget {
   final TicketEntry ticket;
   final ValueChanged<TicketEntry>? onUpdated;
 
-  const TicketDetailsPage({
-    super.key,
-    required this.ticket,
-    this.onUpdated,
-  });
+  const TicketDetailsPage({super.key, required this.ticket, this.onUpdated});
 
   @override
   State<TicketDetailsPage> createState() => _TicketDetailsPageState();
@@ -1276,9 +1448,7 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
 
   bool get _canStudentReply {
     final status = _ticket.status;
-    return status == 'Open' ||
-        status == 'In Progress' ||
-        status == 'Resolved';
+    return status == 'Open' || status == 'In Progress' || status == 'Resolved';
   }
 
   Future<void> _refreshTicket({bool silent = false}) async {
@@ -1295,7 +1465,8 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
         return;
       }
       final updated = TicketEntry.fromJson(data);
-      final changed = updated.messages.length != _ticket.messages.length ||
+      final changed =
+          updated.messages.length != _ticket.messages.length ||
           updated.attachments.length != _ticket.attachments.length ||
           updated.status != _ticket.status ||
           updated.updatedAt != _ticket.updatedAt;
@@ -1358,11 +1529,11 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
     if (!_canStudentReply || _attaching || _sending) return;
     try {
       final picked = await pickAppFile(
-        allowedExtensions: imagesOnly
-            ? const ['png', 'jpg', 'jpeg', 'gif', 'webp']
-            : const ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
-        dialogTitle:
-            imagesOnly ? 'Attach image' : 'Attach file (PDF or image)',
+        allowedExtensions:
+            imagesOnly
+                ? const ['png', 'jpg', 'jpeg', 'gif', 'webp']
+                : const ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp'],
+        dialogTitle: imagesOnly ? 'Attach image' : 'Attach file (PDF or image)',
       );
       if (picked == null || !mounted) return;
       if (picked.bytes.length > 10 * 1024 * 1024) {
@@ -1396,9 +1567,7 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
         headers: headers,
       );
       final data = _decodeObject(refresh.body);
-      if (refresh.statusCode >= 200 &&
-          refresh.statusCode < 300 &&
-          mounted) {
+      if (refresh.statusCode >= 200 && refresh.statusCode < 300 && mounted) {
         final updated = TicketEntry.fromJson(data);
         setState(() => _ticket = updated);
         widget.onUpdated?.call(updated);
@@ -1448,9 +1617,10 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
   @override
   Widget build(BuildContext context) {
     final ticket = _ticket;
-    final officeReplies = ticket.messages
-        .where((message) => message.senderRole.toLowerCase() != 'student')
-        .length;
+    final officeReplies =
+        ticket.messages
+            .where((message) => message.senderRole.toLowerCase() != 'student')
+            .length;
     final isWide = MediaQuery.sizeOf(context).width >= 960;
     final phone = MediaQuery.sizeOf(context).width < kPhoneLayoutBreakpoint;
 
@@ -1572,83 +1742,81 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
           ),
           SizedBox(height: phone ? 8 : 16),
           Expanded(
-            child: isWide
-                ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        flex: 7,
-                        child: StudentPanel(
-                          shadow: false,
-                          padding: EdgeInsets.zero,
-                          child: conversation,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      SizedBox(
-                        width: 320,
-                        child: detailsPanel,
-                      ),
-                    ],
-                  )
-                : Column(
-                    children: [
-                      Theme(
-                        data: Theme.of(context).copyWith(
-                          dividerColor: Colors.transparent,
-                        ),
-                        child: StudentPanel(
-                          shadow: false,
-                          padding: EdgeInsets.zero,
-                          child: ExpansionTile(
-                            initiallyExpanded: false,
-                            tilePadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 0,
-                            ),
-                            childrenPadding: const EdgeInsets.fromLTRB(
-                              12,
-                              0,
-                              12,
-                              12,
-                            ),
-                            title: const Text(
-                              'Ticket details',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14,
-                                color: DesignTokens.ink,
-                              ),
-                            ),
-                            subtitle: Text(
-                              '${ticket.category} · ${ticket.assignedOffice}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: DesignTokens.muted,
-                                fontSize: 12,
-                              ),
-                            ),
-                            children: [
-                              _TicketDetailsSidePanel(
-                                ticket: ticket,
-                                embed: true,
-                              ),
-                            ],
+            child:
+                isWide
+                    ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 7,
+                          child: StudentPanel(
+                            shadow: false,
+                            padding: EdgeInsets.zero,
+                            child: conversation,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      Expanded(
-                        child: _PhoneConversationLaunchCard(
-                          ticket: ticket,
-                          officeReplies: officeReplies,
-                          onOpen: () =>
-                              setState(() => _phoneThreadOpen = true),
+                        const SizedBox(width: 16),
+                        SizedBox(width: 320, child: detailsPanel),
+                      ],
+                    )
+                    : Column(
+                      children: [
+                        Theme(
+                          data: Theme.of(
+                            context,
+                          ).copyWith(dividerColor: Colors.transparent),
+                          child: StudentPanel(
+                            shadow: false,
+                            padding: EdgeInsets.zero,
+                            child: ExpansionTile(
+                              initiallyExpanded: false,
+                              tilePadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 0,
+                              ),
+                              childrenPadding: const EdgeInsets.fromLTRB(
+                                12,
+                                0,
+                                12,
+                                12,
+                              ),
+                              title: const Text(
+                                'Ticket details',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
+                                  color: DesignTokens.ink,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '${ticket.category} · ${ticket.assignedOffice}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: DesignTokens.muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              children: [
+                                _TicketDetailsSidePanel(
+                                  ticket: ticket,
+                                  embed: true,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: _PhoneConversationLaunchCard(
+                            ticket: ticket,
+                            officeReplies: officeReplies,
+                            onOpen:
+                                () => setState(() => _phoneThreadOpen = true),
+                          ),
+                        ),
+                      ],
+                    ),
           ),
         ],
       ),
@@ -1664,59 +1832,61 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
         body: Padding(
           padding: EdgeInsets.only(bottom: phoneKeyboardInset(context)),
           child: Column(
-          children: [
-            SafeArea(
-              bottom: false,
-              child: Material(
-                color: Colors.white,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 12, 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Back to ticket',
-                        onPressed: () =>
-                            setState(() => _phoneThreadOpen = false),
-                        icon: const Icon(Icons.arrow_back_rounded),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Conversation',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: DesignTokens.muted,
-                              ),
-                            ),
-                            Text(
-                              ticket.subject,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 15,
-                                color: DesignTokens.ink,
-                              ),
-                            ),
-                          ],
+            children: [
+              SafeArea(
+                bottom: false,
+                child: Material(
+                  color: Colors.white,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 4, 12, 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'Back to ticket',
+                          onPressed:
+                              () => setState(() => _phoneThreadOpen = false),
+                          icon: const Icon(Icons.arrow_back_rounded),
                         ),
-                      ),
-                      IconButton(
-                        tooltip: 'Refresh',
-                        onPressed: () => _refreshTicket(),
-                        icon: const Icon(Icons.refresh_rounded, size: 20),
-                      ),
-                    ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Conversation',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: DesignTokens.muted,
+                                ),
+                              ),
+                              Text(
+                                ticket.subject,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
+                                  color: DesignTokens.ink,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Refresh',
+                          onPressed: () => _refreshTicket(),
+                          icon: const Icon(Icons.refresh_rounded, size: 20),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            Expanded(child: ColoredBox(color: Colors.white, child: conversation)),
-          ],
-        ),
+              Expanded(
+                child: ColoredBox(color: Colors.white, child: conversation),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -1823,113 +1993,112 @@ class _TicketDetailsSidePanel extends StatelessWidget {
   final TicketEntry ticket;
   final bool embed;
 
-  const _TicketDetailsSidePanel({
-    required this.ticket,
-    this.embed = false,
-  });
+  const _TicketDetailsSidePanel({required this.ticket, this.embed = false});
 
   @override
   Widget build(BuildContext context) {
     final content = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!embed) ...[
-              const Text(
-                'Ticket details',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 14,
-                  color: DesignTokens.ink,
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-            _DetailGrid(ticket: ticket),
-            const SizedBox(height: 16),
-            const Text(
-              'Description',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-                color: DesignTokens.ink,
-              ),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!embed) ...[
+          const Text(
+            'Ticket details',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+              color: DesignTokens.ink,
             ),
-            const SizedBox(height: 8),
-            Text(
-              ticket.description.trim().isEmpty
-                  ? 'No additional description provided.'
-                  : ticket.description,
-              style: const TextStyle(
-                color: DesignTokens.ink,
-                height: 1.45,
-                fontSize: 13,
-              ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        _DetailGrid(ticket: ticket),
+        const SizedBox(height: 16),
+        const Text(
+          'Description',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 13,
+            color: DesignTokens.ink,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          ticket.description.trim().isEmpty
+              ? 'No additional description provided.'
+              : ticket.description,
+          style: const TextStyle(
+            color: DesignTokens.ink,
+            height: 1.45,
+            fontSize: 13,
+          ),
+        ),
+        if (ticket.attachments.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          const Text(
+            'Attachments',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+              color: DesignTokens.ink,
             ),
-            if (ticket.attachments.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Text(
-                'Attachments',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
-                  color: DesignTokens.ink,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ...ticket.attachments.map(
-                (file) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: InkWell(
-                    onTap: () async {
-                      try {
-                        final result = await ApiClient.send(
-                          method: 'GET',
-                          url:
-                              '${AppConfig.resolvedApiBase}${file.downloadUrl}',
-                          headers: AuthScope.of(context).ticketHeaders(),
-                          asBytes: true,
-                        );
-                        if (!result.ok) {
-                          throw StateError('Could not download file.');
-                        }
-                        await downloadBytesFile(
-                          filename: file.originalFilename,
-                          bytes: result.bytes,
-                        );
-                      } catch (error) {
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            behavior: SnackBarBehavior.floating,
-                            backgroundColor: const Color(0xFF991B1B),
-                            content: Text(_friendlyError(error)),
-                          ),
-                        );
-                      }
-                    },
-                    child: Row(
-                      children: [
-                        const Icon(Icons.attach_file_rounded,
-                            size: 18, color: DesignTokens.maroon),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            file.originalFilename,
-                            style: const TextStyle(
-                              color: DesignTokens.maroon,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
+          ),
+          const SizedBox(height: 8),
+          ...ticket.attachments.map(
+            (file) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: InkWell(
+                onTap: () async {
+                  try {
+                    final result = await ApiClient.send(
+                      method: 'GET',
+                      url: '${AppConfig.resolvedApiBase}${file.downloadUrl}',
+                      headers: AuthScope.of(context).ticketHeaders(),
+                      asBytes: true,
+                    );
+                    if (!result.ok) {
+                      throw StateError('Could not download file.');
+                    }
+                    await downloadBytesFile(
+                      filename: file.originalFilename,
+                      bytes: result.bytes,
+                    );
+                  } catch (error) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        behavior: SnackBarBehavior.floating,
+                        backgroundColor: const Color(0xFF991B1B),
+                        content: Text(_friendlyError(error)),
+                      ),
+                    );
+                  }
+                },
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.attach_file_rounded,
+                      size: 18,
+                      color: DesignTokens.maroon,
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        file.originalFilename,
+                        style: const TextStyle(
+                          color: DesignTokens.maroon,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ],
-        );
+            ),
+          ),
+        ],
+      ],
+    );
 
     if (embed) return content;
     return StudentPanel(
@@ -1975,12 +2144,14 @@ class _TicketReplyComposer extends StatelessWidget {
         children: [
           TextField(
             controller: controller,
-            minLines: MediaQuery.sizeOf(context).width < kPhoneLayoutBreakpoint
-                ? 1
-                : 2,
-            maxLines: MediaQuery.sizeOf(context).width < kPhoneLayoutBreakpoint
-                ? 3
-                : 4,
+            minLines:
+                MediaQuery.sizeOf(context).width < kPhoneLayoutBreakpoint
+                    ? 1
+                    : 2,
+            maxLines:
+                MediaQuery.sizeOf(context).width < kPhoneLayoutBreakpoint
+                    ? 3
+                    : 4,
             enabled: !busy,
             textInputAction: TextInputAction.newline,
             decoration: InputDecoration(
@@ -2047,16 +2218,17 @@ class _TicketReplyComposer extends StatelessWidget {
               const Spacer(),
               ElevatedButton.icon(
                 onPressed: busy ? null : onSend,
-                icon: sending
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.send_rounded, size: 18),
+                icon:
+                    sending
+                        ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                        : const Icon(Icons.send_rounded, size: 18),
                 label: Text(sending ? 'Sending…' : 'Send reply'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: DesignTokens.maroon,
@@ -2171,11 +2343,20 @@ class _DetailGrid extends StatelessWidget {
     final details = [
       _DetailData('Category', ticket.category, Icons.category_outlined),
       _DetailData(
-          'Assigned office', ticket.assignedOffice, Icons.apartment_rounded),
-      _DetailData('Created', _formatFullDate(ticket.createdAt),
-          Icons.event_available_outlined),
+        'Assigned office',
+        ticket.assignedOffice,
+        Icons.apartment_rounded,
+      ),
       _DetailData(
-          'Updated', _formatFullDate(ticket.updatedAt), Icons.update_rounded),
+        'Created',
+        _formatFullDate(ticket.createdAt),
+        Icons.event_available_outlined,
+      ),
+      _DetailData(
+        'Updated',
+        _formatFullDate(ticket.updatedAt),
+        Icons.update_rounded,
+      ),
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -2183,52 +2364,53 @@ class _DetailGrid extends StatelessWidget {
         return StudentResponsiveWrap(
           columns: columns,
           spacing: 12,
-          children: details
-              .map(
-                (detail) => Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: DesignTokens.border),
-                  ),
-                  child: Row(
-                    children: [
-                      StudentIconBox(
-                        icon: detail.icon,
-                        color: DesignTokens.maroon,
-                        size: 34,
+          children:
+              details
+                  .map(
+                    (detail) => Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: DesignTokens.border),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              detail.label,
-                              style: const TextStyle(
-                                color: DesignTokens.muted,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
+                      child: Row(
+                        children: [
+                          StudentIconBox(
+                            icon: detail.icon,
+                            color: DesignTokens.maroon,
+                            size: 34,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  detail.label,
+                                  style: const TextStyle(
+                                    color: DesignTokens.muted,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  detail.value,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: DesignTokens.ink,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 3),
-                            Text(
-                              detail.value,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: DesignTokens.ink,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              )
-              .toList(),
+                    ),
+                  )
+                  .toList(),
         );
       },
     );
@@ -2267,9 +2449,10 @@ class ConversationTimeline extends StatelessWidget {
         ...replies.map(
           (message) => Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: message.senderRole.toLowerCase() == 'student'
-                ? _StudentReplyBubble(message: message)
-                : OfficeReplyBubble(message: message),
+            child:
+                message.senderRole.toLowerCase() == 'student'
+                    ? _StudentReplyBubble(message: message)
+                    : OfficeReplyBubble(message: message),
           ),
         ),
       if (ticket.attachments.isNotEmpty) ...[
@@ -2290,9 +2473,10 @@ class ConversationTimeline extends StatelessWidget {
               color: const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(10),
               child: InkWell(
-                onTap: onDownloadAttachment == null
-                    ? null
-                    : () => onDownloadAttachment!(file),
+                onTap:
+                    onDownloadAttachment == null
+                        ? null
+                        : () => onDownloadAttachment!(file),
                 borderRadius: BorderRadius.circular(10),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -2302,9 +2486,7 @@ class ConversationTimeline extends StatelessWidget {
                   child: Row(
                     children: [
                       Icon(
-                        file.isImage
-                            ? Icons.image
-                            : Icons.picture_as_pdf,
+                        file.isImage ? Icons.image : Icons.picture_as_pdf,
                         size: 18,
                         color: DesignTokens.maroon,
                       ),
@@ -2474,10 +2656,7 @@ class StudentConcernBubble extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               ticket.description,
-              style: const TextStyle(
-                color: DesignTokens.ink,
-                height: 1.45,
-              ),
+              style: const TextStyle(color: DesignTokens.ink, height: 1.45),
             ),
           ],
         ],
@@ -2605,8 +2784,10 @@ class OfficeReplyBubble extends StatelessWidget {
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.72),
                     borderRadius: BorderRadius.circular(999),
@@ -2718,10 +2899,7 @@ class _TicketFormattedText extends StatelessWidget {
 
 List<InlineSpan> _parseTicketFormattedSpans(String input) {
   if (input.isEmpty) return const [TextSpan(text: '')];
-  final pattern = RegExp(
-    r'\*\*(.+?)\*\*|_(.+?)_|<u>(.+?)</u>',
-    dotAll: true,
-  );
+  final pattern = RegExp(r'\*\*(.+?)\*\*|_(.+?)_|<u>(.+?)</u>', dotAll: true);
   final spans = <InlineSpan>[];
   var start = 0;
   for (final match in pattern.allMatches(input)) {
@@ -2729,20 +2907,26 @@ List<InlineSpan> _parseTicketFormattedSpans(String input) {
       spans.add(TextSpan(text: input.substring(start, match.start)));
     }
     if (match.group(1) != null) {
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: const TextStyle(fontWeight: FontWeight.w800),
-      ));
+      spans.add(
+        TextSpan(
+          text: match.group(1),
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      );
     } else if (match.group(2) != null) {
-      spans.add(TextSpan(
-        text: match.group(2),
-        style: const TextStyle(fontStyle: FontStyle.italic),
-      ));
+      spans.add(
+        TextSpan(
+          text: match.group(2),
+          style: const TextStyle(fontStyle: FontStyle.italic),
+        ),
+      );
     } else if (match.group(3) != null) {
-      spans.add(TextSpan(
-        text: match.group(3),
-        style: const TextStyle(decoration: TextDecoration.underline),
-      ));
+      spans.add(
+        TextSpan(
+          text: match.group(3),
+          style: const TextStyle(decoration: TextDecoration.underline),
+        ),
+      );
     }
     start = match.end;
   }
@@ -2760,7 +2944,7 @@ class TicketStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = _statusStyle(status);
-    return _ChipPill(label: status, icon: style.icon, color: style.color);
+    return _ChipPill(label: status, color: style.color);
   }
 }
 
@@ -2772,20 +2956,18 @@ class TicketPriorityChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = _priorityStyle(priority);
-    return _ChipPill(label: priority, icon: style.icon, color: style.color);
+    return _ChipPill(label: priority, color: style.color);
   }
 }
 
+/// Compact text-only status/priority pill -- the redesign removes the
+/// decorative per-status icon that used to sit inside this chip; color
+/// alone (from [_ChipStyle]) still carries the at-a-glance meaning.
 class _ChipPill extends StatelessWidget {
   final String label;
-  final IconData icon;
   final Color color;
 
-  const _ChipPill({
-    required this.label,
-    required this.icon,
-    required this.color,
-  });
+  const _ChipPill({required this.label, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -2796,33 +2978,24 @@ class _ChipPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: color.withOpacity(0.18)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              color: color,
-            ),
-          ),
-        ],
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+          color: color,
+        ),
       ),
     );
   }
 }
 
 class TicketEmptyState extends StatelessWidget {
-  final IconData icon;
   final String title;
   final String message;
 
   const TicketEmptyState({
     super.key,
-    required this.icon,
     required this.title,
     required this.message,
   });
@@ -2834,8 +3007,6 @@ class TicketEmptyState extends StatelessWidget {
       shadow: false,
       child: Column(
         children: [
-          StudentIconBox(icon: icon, color: DesignTokens.maroon, size: 52),
-          const SizedBox(height: 14),
           Text(
             title,
             style: const TextStyle(
@@ -2947,13 +3118,16 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
     if (seeded != null) {
       _officesRequested = true;
       _officesLoading = false;
-      _offices = seeded
-          .map((item) => _TicketOfficeOption(
-                id: (item['id'] ?? '').toString(),
-                name: (item['name'] ?? '').toString(),
-              ))
-          .where((office) => office.id.isNotEmpty && office.name.isNotEmpty)
-          .toList();
+      _offices =
+          seeded
+              .map(
+                (item) => _TicketOfficeOption(
+                  id: (item['id'] ?? '').toString(),
+                  name: (item['name'] ?? '').toString(),
+                ),
+              )
+              .where((office) => office.id.isNotEmpty && office.name.isNotEmpty)
+              .toList();
     }
   }
 
@@ -2981,14 +3155,19 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       if (items is! List) return;
       if (!mounted) return;
       setState(() {
-        _offices = items
-            .whereType<Map>()
-            .map((item) => _TicketOfficeOption(
-                  id: (item['id'] ?? '').toString(),
-                  name: (item['name'] ?? '').toString(),
-                ))
-            .where((office) => office.id.isNotEmpty && office.name.isNotEmpty)
-            .toList();
+        _offices =
+            items
+                .whereType<Map>()
+                .map(
+                  (item) => _TicketOfficeOption(
+                    id: (item['id'] ?? '').toString(),
+                    name: (item['name'] ?? '').toString(),
+                  ),
+                )
+                .where(
+                  (office) => office.id.isNotEmpty && office.name.isNotEmpty,
+                )
+                .toList();
       });
     } catch (_) {
       // Office list is a nice-to-have for manual selection only -- Automatic
@@ -3047,11 +3226,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       url: '${AppConfig.resolvedApiBase}/tickets/$ticketId/attachments',
       headers: AuthScope.of(context).ticketHeaders(),
       files: [
-        http.MultipartFile.fromBytes(
-          'file',
-          file.bytes,
-          filename: file.name,
-        ),
+        http.MultipartFile.fromBytes('file', file.bytes, filename: file.name),
       ],
     );
     final statusCode = result.statusCode;
@@ -3135,137 +3310,113 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
 
   @override
   Widget build(BuildContext context) {
-    return StudentPanel(
-      padding: widget.compact
-          ? const EdgeInsets.fromLTRB(16, 16, 16, 16)
-          : const EdgeInsets.fromLTRB(24, 24, 24, 22),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!widget.compact) ...[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                StudentIconBox(
-                  icon: Icons.support_agent_rounded,
-                  color: DesignTokens.maroon,
-                  size: 46,
-                ),
-                SizedBox(width: 14),
-                Expanded(
-                  child: StudentSectionTitle(
-                    title: 'Submit a Support Request',
-                    subtitle:
-                        'Share your concern and any details the office will need to help you.',
-                  ),
-                ),
-              ],
+    final form = Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(
+            number: 1,
+            label: 'Office (optional)',
+            helper: 'Select the office you want to send this ticket to.',
+          ),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String?>(
+            value: _selectedOfficeId,
+            isExpanded: true,
+            decoration: _inputDecoration(
+              hintText: 'Automatic routing — Let ASKa-Piyu choose',
             ),
-            const SizedBox(height: 24),
+            items: [
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('Automatic routing — Let ASKa-Piyu choose'),
+              ),
+              ..._offices.map(
+                (office) => DropdownMenuItem<String?>(
+                  value: office.id,
+                  child: Text(office.name),
+                ),
+              ),
             ],
-            _FieldLabel(
-              label: 'Office (optional)',
-              helper: 'Select the office you want to send this ticket to.',
+            onChanged:
+                _officesLoading && _offices.isEmpty
+                    ? null
+                    : (value) => setState(() => _selectedOfficeId = value),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Not sure which office handles your concern? Leave this on '
+            'Automatic Routing and ASKa-Piyu will send your ticket to the '
+            'appropriate office.',
+            style: const TextStyle(
+              color: DesignTokens.muted,
+              fontSize: 12.5,
+              height: 1.4,
             ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String?>(
-              value: _selectedOfficeId,
-              decoration: _inputDecoration(
-                hintText: 'Automatic routing — Let ASKa-Piyu choose',
-                icon: Icons.apartment_outlined,
-              ),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Automatic routing — Let ASKa-Piyu choose'),
-                ),
-                ..._offices.map(
-                  (office) => DropdownMenuItem<String?>(
-                    value: office.id,
-                    child: Text(office.name),
-                  ),
-                ),
-              ],
-              onChanged: _officesLoading && _offices.isEmpty
-                  ? null
-                  : (value) => setState(() => _selectedOfficeId = value),
+          ),
+          const SizedBox(height: 18),
+          _FieldLabel(
+            number: 2,
+            label: 'Subject',
+            helper: 'A short summary of what you need help with.',
+          ),
+          const SizedBox(height: 6),
+          TextFormField(
+            controller: _subjectCtrl,
+            validator: _validateTicketSubject,
+            textInputAction: TextInputAction.next,
+            decoration: _inputDecoration(
+              hintText: 'Example: How can I request my transcript of records?',
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Not sure which office handles your concern? Leave this on '
-              'Automatic Routing and ASKa-Piyu will send your ticket to the '
-              'appropriate office.',
-              style: const TextStyle(
-                color: DesignTokens.muted,
-                fontSize: 12.5,
-                height: 1.4,
-              ),
+          ),
+          const SizedBox(height: 18),
+          _FieldLabel(
+            number: 3,
+            label: 'Description',
+            helper:
+                'Include dates, reference numbers, offices visited, '
+                'or steps you already tried.',
+          ),
+          const SizedBox(height: 6),
+          TextFormField(
+            controller: _descCtrl,
+            validator: _validateTicketDescription,
+            minLines: widget.compact ? 4 : 5,
+            maxLines: widget.compact ? 6 : 7,
+            decoration: _inputDecoration(
+              hintText: 'Tell us what happened and what help you need.',
             ),
-            const SizedBox(height: 20),
-            _FieldLabel(
-              label: 'Subject',
-              helper: widget.compact
-                  ? ''
-                  : 'A short summary of what you need help with.',
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _subjectCtrl,
-              validator: _validateTicketSubject,
-              textInputAction: TextInputAction.next,
-              decoration: _inputDecoration(
-                hintText:
-                    'Example: How can I request my transcript of records?',
-                icon: Icons.subject_outlined,
-              ),
-            ),
-            const SizedBox(height: 20),
-            _FieldLabel(
-              label: widget.compact ? 'What happened' : 'Description',
-              helper: widget.compact
-                  ? 'Dates, office visited, what you already tried.'
-                  : 'Include dates, reference numbers, offices visited, or steps you already tried.',
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _descCtrl,
-              validator: _validateTicketDescription,
-              minLines: widget.compact ? 4 : 8,
-              maxLines: widget.compact ? 8 : 14,
-              decoration: _inputDecoration(
-                hintText: 'Tell us what happened and what help you need.',
-                icon: Icons.description_outlined,
-                alignIconTop: true,
-              ),
-            ),
-            const SizedBox(height: 20),
-            _FieldLabel(
-              label: widget.compact ? 'File (optional)' : 'Attachment (optional)',
-              helper: widget.compact
-                  ? 'JPG, PNG, PDF — max 10 MB'
-                  : 'Screenshot or document (JPG, PNG, WebP, GIF, PDF — max 10 MB).',
-            ),
-            const SizedBox(height: 8),
-            _AttachmentPicker(
-              fileName: _attachmentName,
-              onPick: _submitting ? null : _pickAttachment,
-              onClear: _submitting || _attachmentName == null
-                  ? null
-                  : () => setState(() {
-                        _attachmentFile = null;
-                        _attachmentName = null;
-                      }),
-            ),
-            const SizedBox(height: 24),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final isNarrow = constraints.maxWidth < 520;
-                final clearButton = OutlinedButton.icon(
-                  onPressed: _submitting
-                      ? null
-                      : () {
+          ),
+          const SizedBox(height: 18),
+          _FieldLabel(
+            number: 4,
+            label: 'Attachment (optional)',
+            helper:
+                'Screenshot or document ($_attachmentFormatsLabel — '
+                'max 10 MB).',
+          ),
+          const SizedBox(height: 6),
+          _AttachmentPicker(
+            fileName: _attachmentName,
+            onPick: _submitting ? null : _pickAttachment,
+            onClear:
+                _submitting || _attachmentName == null
+                    ? null
+                    : () => setState(() {
+                      _attachmentFile = null;
+                      _attachmentName = null;
+                    }),
+          ),
+          const SizedBox(height: 20),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 420;
+              final clearButton = OutlinedButton(
+                onPressed:
+                    _submitting
+                        ? null
+                        : () {
                           _subjectCtrl.clear();
                           _descCtrl.clear();
                           setState(() {
@@ -3274,72 +3425,256 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                             _selectedOfficeId = null;
                           });
                         },
-                  icon: const Icon(Icons.clear_rounded),
-                  label: const Text('Clear'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: DesignTokens.ink,
-                    side: const BorderSide(color: DesignTokens.border),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 15,
-                    ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: DesignTokens.ink,
+                  side: const BorderSide(color: DesignTokens.border),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 15,
                   ),
-                );
-                final submitButton = ElevatedButton.icon(
-                  onPressed: _submitting ? null : _submit,
-                  icon: _submitting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
+                ),
+                child: const Text('Clear'),
+              );
+              final submitButton = ElevatedButton(
+                onPressed: _submitting ? null : _submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: DesignTokens.maroon,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 22,
+                    vertical: 15,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child:
+                    _submitting
+                        ? const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                            SizedBox(width: 10),
+                            Text('Submitting...'),
+                          ],
                         )
-                      : const Icon(Icons.send_rounded),
-                  label: Text(_submitting
-                      ? 'Submitting...'
-                      : widget.compact
-                          ? 'Submit'
-                          : 'Submit Ticket'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: DesignTokens.maroon,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 22,
-                      vertical: 15,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                );
+                        : const Text('Submit Ticket'),
+              );
 
-                if (isNarrow && !widget.compact) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      submitButton,
-                      const SizedBox(height: 10),
-                      clearButton,
-                    ],
-                  );
-                }
-
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+              if (isNarrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    clearButton,
-                    const SizedBox(width: 12),
                     submitButton,
+                    const SizedBox(height: 10),
+                    clearButton,
                   ],
                 );
-              },
-            ),
-          ],
-        ),
+              }
+
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  clearButton,
+                  const SizedBox(width: 12),
+                  submitButton,
+                ],
+              );
+            },
+          ),
+        ],
       ),
+    );
+
+    final guidance = _SubmitTicketGuidance(
+      attachmentFormatsLabel: _attachmentFormatsLabel,
+    );
+
+    // The form card and the guidance column are deliberately two independent
+    // pieces of composition, not one shared bordered container -- wrapping
+    // both in a single StudentPanel made the right column's white background
+    // stretch down to match the (much taller) form, leaving a huge empty
+    // bordered region below "File requirements". The guidance column's own
+    // two cards already carry their own borders/backgrounds, so it needs no
+    // outer panel at all; it simply sizes to its content.
+    final formCard = StudentPanel(
+      padding:
+          widget.compact
+              ? const EdgeInsets.fromLTRB(16, 16, 16, 16)
+              : const EdgeInsets.fromLTRB(24, 24, 22, 22),
+      child: form,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 760) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(flex: 7, child: formCard),
+              const SizedBox(width: 24),
+              Expanded(flex: 3, child: guidance),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [formCard, const SizedBox(height: 20), guidance],
+        );
+      },
+    );
+  }
+}
+
+/// The real, accurate list of file types [pickAppFile] accepts for ticket
+/// attachments (see [_CreateTicketFormState._pickAttachment]) -- kept as a
+/// single source of truth so the field helper and the guidance panel never
+/// drift from what the picker actually allows.
+const _attachmentFormatsLabel =
+    'JPG, JPEG, PNG, WebP, GIF, BMP, HEIC, TIFF, or PDF';
+
+/// Right-side (desktop) / below-form (narrow) guidance column for the
+/// Submit Ticket view. The "Tips" list is static UI copy; the file
+/// requirements line always reflects the real accepted formats/size/count.
+class _SubmitTicketGuidance extends StatelessWidget {
+  final String attachmentFormatsLabel;
+
+  const _SubmitTicketGuidance({required this.attachmentFormatsLabel});
+
+  static const _tips = [
+    'Provide a clear and specific subject',
+    'Include important details such as dates or reference numbers',
+    'Attach relevant screenshots or documents',
+    'Choose the correct office if you know it',
+    "Use Automatic Routing if you're not sure",
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFBF2F3),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE8B4B8)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Before submitting',
+                style: TextStyle(
+                  color: DesignTokens.maroon,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Providing clear and complete details helps the office '
+                'respond faster.',
+                style: TextStyle(
+                  color: DesignTokens.muted,
+                  fontSize: 12.5,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Divider(height: 1, color: Color(0xFFE8B4B8)),
+              const SizedBox(height: 14),
+              const Text(
+                'Tips for a faster response',
+                style: TextStyle(
+                  color: DesignTokens.ink,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (var i = 0; i < _tips.length; i++)
+                Padding(
+                  padding: EdgeInsets.only(
+                    bottom: i == _tips.length - 1 ? 0 : 8,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 18,
+                        child: Text(
+                          '${i + 1}',
+                          style: const TextStyle(
+                            color: DesignTokens.maroon,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          _tips[i],
+                          style: const TextStyle(
+                            color: DesignTokens.muted,
+                            fontSize: 12.5,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: DesignTokens.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'File requirements',
+                style: TextStyle(
+                  color: DesignTokens.ink,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'You can attach one file ($attachmentFormatsLabel) with a '
+                'maximum size of 10 MB.',
+                style: const TextStyle(
+                  color: DesignTokens.muted,
+                  fontSize: 12.5,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -3351,15 +3686,19 @@ class _TicketOfficeOption {
   const _TicketOfficeOption({required this.id, required this.name});
 }
 
+/// Field label with an optional small numbered marker (1-4) -- a
+/// navigation/hierarchy element for the Submit Ticket flow's numbered
+/// steps, not a decorative icon.
 class _FieldLabel extends StatelessWidget {
   final String label;
   final String helper;
+  final int? number;
 
-  const _FieldLabel({required this.label, required this.helper});
+  const _FieldLabel({required this.label, required this.helper, this.number});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final text = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
@@ -3370,21 +3709,49 @@ class _FieldLabel extends StatelessWidget {
           ),
         ),
         if (helper.isNotEmpty) ...[
-        const SizedBox(height: 4),
-        Text(
-          helper,
-          style: const TextStyle(
-            color: DesignTokens.muted,
-            fontSize: 12,
-            height: 1.35,
+          const SizedBox(height: 4),
+          Text(
+            helper,
+            style: const TextStyle(
+              color: DesignTokens.muted,
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ],
+    );
+    if (number == null) return text;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: DesignTokens.maroon.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Text(
+            '$number',
+            style: const TextStyle(
+              color: DesignTokens.maroon,
+              fontWeight: FontWeight.w900,
+              fontSize: 12,
+            ),
           ),
         ),
-        ],
+        const SizedBox(width: 10),
+        Expanded(child: text),
       ],
     );
   }
 }
 
+/// Click-to-select attachment picker. The application only ever supports
+/// a native file picker dialog (no drag-and-drop), so the wording here
+/// stays accurate to that -- "Choose a file", never drag-and-drop copy.
 class _AttachmentPicker extends StatelessWidget {
   final String? fileName;
   final VoidCallback? onPick;
@@ -3398,75 +3765,97 @@ class _AttachmentPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: Row(
-        children: [
-          const StudentIconBox(
-            icon: Icons.attach_file_rounded,
-            color: DesignTokens.maroon,
-            size: 38,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              fileName == null || fileName!.isEmpty
-                  ? 'No file selected'
-                  : fileName!,
-              style: TextStyle(
-                color: fileName == null ? DesignTokens.muted : DesignTokens.ink,
-                height: 1.35,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          if (onClear != null)
-            TextButton(
-              onPressed: onClear,
-              child: const Text('Remove'),
-            ),
-          TextButton.icon(
-            onPressed: onPick,
-            icon: const Icon(Icons.upload_file_rounded, size: 18),
-            label: Text(fileName == null ? 'Choose file' : 'Change'),
-          ),
-        ],
+    final hasFile = fileName != null && fileName!.isNotEmpty;
+    return InkWell(
+      onTap: onPick,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFBF2F3),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: DesignTokens.border),
+        ),
+        child:
+            hasFile
+                ? Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        fileName!,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: DesignTokens.ink,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (onClear != null)
+                      TextButton(
+                        onPressed: onClear,
+                        child: const Text('Remove'),
+                      ),
+                    TextButton(onPressed: onPick, child: const Text('Change')),
+                  ],
+                )
+                : Column(
+                  children: [
+                    const Text(
+                      'Choose a file',
+                      style: TextStyle(
+                        color: DesignTokens.maroon,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'No file selected',
+                      style: TextStyle(color: DesignTokens.muted, fontSize: 12),
+                    ),
+                  ],
+                ),
       ),
     );
   }
 }
 
-class _MetaItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
+/// Plain, bullet-separated ticket metadata (office • category • updated •
+/// replies) -- typography and a simple separator carry the hierarchy
+/// instead of a row of decorative metadata icons. Each piece truncates on
+/// its own so long office/category text can't break the card layout.
+class _TicketMetaLine extends StatelessWidget {
+  final List<String> parts;
 
-  const _MetaItem({required this.icon, required this.label});
+  const _TicketMetaLine({required this.parts});
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    final nonEmpty = parts.where((p) => p.trim().isNotEmpty).toList();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Icon(icon, size: 16, color: DesignTokens.muted),
-        const SizedBox(width: 5),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 240),
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+        for (var i = 0; i < nonEmpty.length; i++) ...[
+          if (i > 0)
+            const Text(
+              '•',
+              style: TextStyle(color: DesignTokens.muted, fontSize: 12),
+            ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 220),
+            child: Text(
+              nonEmpty[i],
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: DesignTokens.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -3474,25 +3863,15 @@ class _MetaItem extends StatelessWidget {
 
 class _ChipStyle {
   final Color color;
-  final IconData icon;
 
-  const _ChipStyle(this.color, this.icon);
+  const _ChipStyle(this.color);
 }
 
-InputDecoration _inputDecoration({
-  required String hintText,
-  required IconData icon,
-  bool alignIconTop = false,
-}) {
+InputDecoration _inputDecoration({required String hintText}) {
   return InputDecoration(
     hintText: hintText,
     filled: true,
     fillColor: const Color(0xFFF8FAFC),
-    prefixIcon: Padding(
-      padding:
-          alignIconTop ? const EdgeInsets.only(bottom: 86) : EdgeInsets.zero,
-      child: Icon(icon, size: 20),
-    ),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
       borderSide: const BorderSide(color: DesignTokens.border),
@@ -3515,32 +3894,30 @@ InputDecoration _inputDecoration({
 _ChipStyle _statusStyle(String status) {
   switch (status) {
     case 'Open':
-      return const _ChipStyle(
-          Color(0xFF2563EB), Icons.mark_email_unread_outlined);
+      return const _ChipStyle(Color(0xFF2563EB));
     case 'In Progress':
-      return const _ChipStyle(Color(0xFFF97316), Icons.sync_rounded);
+      return const _ChipStyle(Color(0xFFF97316));
     case 'Resolved':
-      return const _ChipStyle(Color(0xFF7C3AED), Icons.task_alt_rounded);
+      return const _ChipStyle(Color(0xFF7C3AED));
     case 'Closed':
-      return const _ChipStyle(Color(0xFF16A34A), Icons.check_circle_outline);
+      return const _ChipStyle(Color(0xFF16A34A));
     default:
-      return const _ChipStyle(DesignTokens.muted, Icons.help_outline_rounded);
+      return const _ChipStyle(DesignTokens.muted);
   }
 }
 
 _ChipStyle _priorityStyle(String priority) {
   switch (priority) {
     case 'Urgent':
-      return const _ChipStyle(Color(0xFFDC2626), Icons.priority_high_rounded);
+      return const _ChipStyle(Color(0xFFDC2626));
     case 'High':
-      return const _ChipStyle(
-          Color(0xFFEA580C), Icons.keyboard_double_arrow_up);
+      return const _ChipStyle(Color(0xFFEA580C));
     case 'Medium':
-      return const _ChipStyle(Color(0xFFD97706), Icons.remove_rounded);
+      return const _ChipStyle(Color(0xFFD97706));
     case 'Low':
-      return const _ChipStyle(Color(0xFF0F766E), Icons.keyboard_arrow_down);
+      return const _ChipStyle(Color(0xFF0F766E));
     default:
-      return const _ChipStyle(DesignTokens.muted, Icons.flag_outlined);
+      return const _ChipStyle(DesignTokens.muted);
   }
 }
 
@@ -3641,8 +4018,10 @@ class _NotificationsBanner extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.notifications_active_rounded,
-                  color: DesignTokens.maroon),
+              const Icon(
+                Icons.notifications_active_rounded,
+                color: DesignTokens.maroon,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -3764,11 +4143,12 @@ String? _unreadableTicketTextMessage(
   List<String> words, {
   int minLetters = 10,
 }) {
-  final letters = cleaned
-      .toLowerCase()
-      .split('')
-      .where((ch) => RegExp(r'[a-zà-ÿ]').hasMatch(ch))
-      .toList();
+  final letters =
+      cleaned
+          .toLowerCase()
+          .split('')
+          .where((ch) => RegExp(r'[a-zà-ÿ]').hasMatch(ch))
+          .toList();
   if (letters.length < minLetters) {
     return 'Please write a clearer message in plain language.';
   }
@@ -3781,14 +4161,15 @@ String? _unreadableTicketTextMessage(
   for (final word in words) {
     if (word.length < 10) continue;
     final wordLetters = word.toLowerCase().split('');
-    final wordVowels =
-        wordLetters.where((ch) => vowels.contains(ch)).length;
+    final wordVowels = wordLetters.where((ch) => vowels.contains(ch)).length;
     if (wordVowels / wordLetters.length < 0.2) {
       return 'This contains unreadable text. Please rewrite it in plain language.';
     }
   }
-  if (RegExp(r'[bcdfghjklmnpqrstvwxyz]{6,}', caseSensitive: false)
-      .hasMatch(cleaned)) {
+  if (RegExp(
+    r'[bcdfghjklmnpqrstvwxyz]{6,}',
+    caseSensitive: false,
+  ).hasMatch(cleaned)) {
     return 'This contains unreadable text. Please rewrite it in plain language.';
   }
   final lowered = cleaned.toLowerCase();
@@ -3837,7 +4218,7 @@ String _formatDate(DateTime date) {
     'Sep',
     'Oct',
     'Nov',
-    'Dec'
+    'Dec',
   ];
   final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
   final minute = date.minute.toString().padLeft(2, '0');

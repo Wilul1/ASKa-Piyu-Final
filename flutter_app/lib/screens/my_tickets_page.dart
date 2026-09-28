@@ -864,31 +864,41 @@ class _TicketStatsSummary extends StatelessWidget {
     final closedCount = tickets.where((t) => t.status == 'Closed').length;
     final totalCount = tickets.length;
 
-    final blocks = [
-      _StatBlock(
+    final metrics = [
+      (
         number: '$openCount',
         label: 'Open',
         caption: 'Awaiting office response',
         color: const Color(0xFF2563EB),
       ),
-      _StatBlock(
+      (
         number: '$progressCount',
         label: 'In Progress',
         caption: 'Being handled by the office',
         color: const Color(0xFFF97316),
       ),
-      _StatBlock(
+      (
         number: '$closedCount',
         label: 'Closed',
         caption: 'Resolved tickets',
         color: const Color(0xFF16A34A),
       ),
-      _StatBlock(
+      (
         number: '$totalCount',
         label: 'Total',
         caption: 'All time tickets',
         color: DesignTokens.maroon,
       ),
+    ];
+
+    final blocks = [
+      for (final m in metrics)
+        _StatBlock(
+          number: m.number,
+          label: m.label,
+          caption: m.caption,
+          color: m.color,
+        ),
     ];
 
     final submitButton = SizedBox(
@@ -937,15 +947,24 @@ class _TicketStatsSummary extends StatelessWidget {
       ),
     );
 
-    final narrowStatsGrid = LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 380 ? 2 : 1;
-        return StudentResponsiveWrap(
-          columns: columns,
-          spacing: 12,
-          children: blocks,
-        );
-      },
+    // Fixed 2x2 grid on mobile (Open/In Progress on top, Closed/Total below)
+    // -- previously this fell back to a single stacked column because the
+    // page's own horizontal padding left less than 380px of content width
+    // at common phone sizes (e.g. ~358px at a 390px viewport), so the old
+    // ">= 380" threshold never actually triggered on a real phone.
+    final narrowStatsGrid = StudentResponsiveWrap(
+      columns: 2,
+      spacing: 10,
+      children: [
+        for (final m in metrics)
+          _StatBlock(
+            number: m.number,
+            label: m.label,
+            caption: m.caption,
+            color: m.color,
+            compact: true,
+          ),
+      ],
     );
 
     return StudentPanel(
@@ -980,18 +999,26 @@ class _StatBlock extends StatelessWidget {
   final String label;
   final String caption;
   final Color color;
+  // Mobile-only density tweak: slightly smaller number, and the caption
+  // wraps to 2 lines instead of truncating to 1 -- the desktop card (the
+  // default, compact: false) is completely unchanged.
+  final bool compact;
 
   const _StatBlock({
     required this.number,
     required this.label,
     required this.caption,
     required this.color,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 12,
+        vertical: compact ? 8 : 8,
+      ),
       decoration: BoxDecoration(
         // A very subtle per-metric tint (matching the target) -- not a
         // solid fill, just enough to distinguish each metric's zone.
@@ -1005,7 +1032,7 @@ class _StatBlock extends StatelessWidget {
           Text(
             number,
             style: TextStyle(
-              fontSize: 24,
+              fontSize: compact ? 20 : 24,
               fontWeight: FontWeight.w900,
               color: color,
               height: 1,
@@ -1023,7 +1050,7 @@ class _StatBlock extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             caption,
-            maxLines: 1,
+            maxLines: compact ? 2 : 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 11,
@@ -1048,7 +1075,7 @@ class _StatBlock extends StatelessWidget {
 /// which this toolbar never controlled -- only the separate, always-
 /// visible "Refresh" text button (added in an earlier pass, not present
 /// in the approved target) has been removed here.
-class _TicketToolbar extends StatelessWidget {
+class _TicketToolbar extends StatefulWidget {
   final TextEditingController searchCtrl;
   final String statusFilter;
   final String officeFilter;
@@ -1076,6 +1103,18 @@ class _TicketToolbar extends StatelessWidget {
   });
 
   @override
+  State<_TicketToolbar> createState() => _TicketToolbarState();
+}
+
+class _TicketToolbarState extends State<_TicketToolbar> {
+  // Mobile-only presentation state: whether the advanced filters (Status /
+  // Office / Category / Clear) are expanded below Search. Purely a UI
+  // disclosure toggle -- the actual filter VALUES always live in the
+  // parent's state (via widget.statusFilter etc.), so collapsing this never
+  // resets a selection; it only hides/shows the controls that edit it.
+  bool _filtersExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
     return StudentPanel(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1088,7 +1127,7 @@ class _TicketToolbar extends StatelessWidget {
           // Submit Ticket's own fields (which also use `_inputDecoration`)
           // are not affected.
           final searchField = TextField(
-            controller: searchCtrl,
+            controller: widget.searchCtrl,
             decoration: _inputDecoration(
               hintText: 'Search ticket ID, subject, office, or category...',
             ).copyWith(
@@ -1100,25 +1139,25 @@ class _TicketToolbar extends StatelessWidget {
           );
           final statusDropdown = _FilterDropdown(
             label: 'All Status',
-            value: statusFilter,
+            value: widget.statusFilter,
             values: _statusOptions,
             displayValues: _statusOptionsDisplay,
-            onChanged: onStatusChanged,
+            onChanged: widget.onStatusChanged,
           );
           final officeDropdown = _FilterDropdown(
             label: 'All Offices',
-            value: officeFilter,
-            values: officeOptions,
-            onChanged: onOfficeChanged,
+            value: widget.officeFilter,
+            values: widget.officeOptions,
+            onChanged: widget.onOfficeChanged,
           );
           final categoryDropdown = _FilterDropdown(
             label: 'All Categories',
-            value: categoryFilter,
-            values: categoryOptions,
-            onChanged: onCategoryChanged,
+            value: widget.categoryFilter,
+            values: widget.categoryOptions,
+            onChanged: widget.onCategoryChanged,
           );
           final clearAction = TextButton(
-            onPressed: hasActiveFilters ? onClear : null,
+            onPressed: widget.hasActiveFilters ? widget.onClear : null,
             style: TextButton.styleFrom(
               backgroundColor: const Color(0xFFFBF2F3),
               foregroundColor: DesignTokens.maroon,
@@ -1132,18 +1171,62 @@ class _TicketToolbar extends StatelessWidget {
           );
 
           if (isNarrow) {
+            // Advanced filters (Status/Office/Category/Clear) are collapsed
+            // by default so ticket cards appear sooner on mobile -- Search
+            // stays visible and fully usable either way. The count reflects
+            // active SELECTIONS, not matching tickets, and never includes
+            // Search (Search is not part of the collapsible section).
+            final activeAdvancedCount =
+                (widget.statusFilter != 'All' ? 1 : 0) +
+                (widget.officeFilter != 'All Offices' ? 1 : 0) +
+                (widget.categoryFilter != 'All Categories' ? 1 : 0);
+            final toggleLabel =
+                _filtersExpanded
+                    ? 'Hide filters'
+                    : activeAdvancedCount > 0
+                    ? 'Filters ($activeAdvancedCount)'
+                    : 'Filters';
+
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 searchField,
-                const SizedBox(height: 12),
-                statusDropdown,
-                const SizedBox(height: 10),
-                officeDropdown,
-                const SizedBox(height: 10),
-                categoryDropdown,
-                const SizedBox(height: 10),
-                Align(alignment: Alignment.centerRight, child: clearAction),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed:
+                        () => setState(
+                          () => _filtersExpanded = !_filtersExpanded,
+                        ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: DesignTokens.maroon,
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 6,
+                      ),
+                    ),
+                    child: Text(
+                      toggleLabel,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+                if (_filtersExpanded) ...[
+                  const SizedBox(height: 4),
+                  statusDropdown,
+                  const SizedBox(height: 10),
+                  officeDropdown,
+                  const SizedBox(height: 10),
+                  categoryDropdown,
+                  const SizedBox(height: 10),
+                  Align(alignment: Alignment.centerRight, child: clearAction),
+                ],
               ],
             );
           }

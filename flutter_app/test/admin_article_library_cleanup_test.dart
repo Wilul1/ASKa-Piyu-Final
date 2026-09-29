@@ -35,7 +35,7 @@ void main() {
     expect(home.contains('Icons.search'), isFalse);
 
     // Login entry points stay text-labeled.
-    expect(login, contains("label: 'LOGIN'"));
+    expect(login, contains("label: 'Login'"));
     expect(login.contains('Icons.login_rounded'), isFalse);
     expect(sidebar, contains("child: const Text('Login')"));
     expect(sidebar.contains('Icons.login_rounded'), isFalse);

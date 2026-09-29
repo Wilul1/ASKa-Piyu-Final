@@ -12,12 +12,7 @@ class SignupPage extends StatefulWidget {
   final String? message;
   final String? gateRole;
 
-  const SignupPage({
-    super.key,
-    this.returnTo,
-    this.message,
-    this.gateRole,
-  });
+  const SignupPage({super.key, this.returnTo, this.message, this.gateRole});
 
   @override
   State<SignupPage> createState() => _SignupPageState();
@@ -50,12 +45,14 @@ class _SignupPageState extends State<SignupPage> {
       _error = null;
     });
     try {
-      final user = await AuthScope.of(context).signup(SignupRequest(
-        fullName: _nameCtrl.text,
-        email: _emailCtrl.text,
-        password: _passwordCtrl.text,
-        role: 'student',
-      ));
+      final user = await AuthScope.of(context).signup(
+        SignupRequest(
+          fullName: _nameCtrl.text,
+          email: _emailCtrl.text,
+          password: _passwordCtrl.text,
+          role: 'student',
+        ),
+      );
       if (!mounted) return;
       redirectAfterAuth(
         context,
@@ -92,98 +89,134 @@ class _SignupPageState extends State<SignupPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'SIGN UP',
+              'Sign Up',
               style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w900,
+                fontSize: 30,
+                fontWeight: FontWeight.w800,
                 color: AuthSplitShell.maroon,
-                letterSpacing: 1.0,
               ),
             ),
             const SizedBox(height: 8),
             const Text(
-              'Use your real email (like Gmail). We will send a 6-digit code to verify it before you can submit tickets. Create a password for ASKa-Piyu only — not your email password.',
+              'Create your ASKa-Piyu account to access student services '
+              'and support.',
               style: TextStyle(
                 color: Color(0xFF6B7280),
                 height: 1.4,
-                fontSize: 13,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Secondary, visually quieter -- keeps the full email/password
+            // verification guidance without letting it dominate the top
+            // of the form the way a single long paragraph did before.
+            const Text(
+              'Use your real email (like Gmail). We will send a 6-digit '
+              'code to verify it before you can submit tickets. Create a '
+              'password for ASKa-Piyu only — not your email password.',
+              style: TextStyle(
+                color: Color(0xFF9CA3AF),
+                height: 1.4,
+                fontSize: 12,
               ),
             ),
             if (widget.message != null) ...[
               const SizedBox(height: 10),
               Text(
                 widget.message!,
-                style: const TextStyle(
-                  color: Color(0xFF6B7280),
-                  height: 1.4,
-                ),
+                style: const TextStyle(color: Color(0xFF6B7280), height: 1.4),
               ),
             ],
-            const SizedBox(height: 22),
-            TextFormField(
-              controller: _nameCtrl,
-              textInputAction: TextInputAction.next,
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'Enter your full name.'
-                  : null,
-              decoration: authFieldDecoration('Full name'),
+            const SizedBox(height: 20),
+            AuthLabeledField(
+              label: 'Full name',
+              field: TextFormField(
+                controller: _nameCtrl,
+                textInputAction: TextInputAction.next,
+                validator:
+                    (value) =>
+                        (value == null || value.trim().isEmpty)
+                            ? 'Enter your full name.'
+                            : null,
+                decoration: authFieldDecoration('Enter your full name'),
+              ),
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _emailCtrl,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-              validator: _validateEmail,
-              decoration: authFieldDecoration('Email (e.g. your Gmail)'),
+            AuthLabeledField(
+              label: 'Email',
+              field: TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                validator: _validateEmail,
+                decoration: authFieldDecoration(
+                  'Enter your email (e.g. your Gmail)',
+                ),
+              ),
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _passwordCtrl,
-              obscureText: _obscurePassword,
-              textInputAction: TextInputAction.next,
-              validator: (value) {
-                final text = value ?? '';
-                if (text.isEmpty) return 'Enter a password.';
-                if (text.length < 10) {
-                  return 'Use at least 10 characters.';
-                }
-                final hasLetter = text.contains(RegExp(r'[A-Za-z]'));
-                final hasDigit = text.contains(RegExp(r'\d'));
-                if (!hasLetter || !hasDigit) {
-                  return 'Include at least one letter and one number.';
-                }
-                return null;
-              },
-              decoration: authFieldDecoration('ASKa-Piyu password').copyWith(
-                suffixIcon: IconButton(
-                  onPressed: () =>
-                      setState(() => _obscurePassword = !_obscurePassword),
-                  icon: Icon(
-                    _obscurePassword
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
-                    color: const Color(0xFF9CA3AF),
+            AuthLabeledField(
+              label: 'Password',
+              field: TextFormField(
+                controller: _passwordCtrl,
+                obscureText: _obscurePassword,
+                textInputAction: TextInputAction.next,
+                validator: (value) {
+                  final text = value ?? '';
+                  if (text.isEmpty) return 'Enter a password.';
+                  if (text.length < 10) {
+                    return 'Use at least 10 characters.';
+                  }
+                  final hasLetter = text.contains(RegExp(r'[A-Za-z]'));
+                  final hasDigit = text.contains(RegExp(r'\d'));
+                  if (!hasLetter || !hasDigit) {
+                    return 'Include at least one letter and one number.';
+                  }
+                  return null;
+                },
+                decoration: authFieldDecoration(
+                  'Create an ASKa-Piyu password',
+                ).copyWith(
+                  suffixIcon: IconButton(
+                    onPressed:
+                        () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      color: const Color(0xFF9CA3AF),
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _confirmCtrl,
-              obscureText: _obscureConfirm,
-              onFieldSubmitted: (_) => _submit(),
-              validator: (value) => value != _passwordCtrl.text
-                  ? 'Passwords do not match.'
-                  : null,
-              decoration: authFieldDecoration('Confirm password').copyWith(
-                suffixIcon: IconButton(
-                  onPressed: () =>
-                      setState(() => _obscureConfirm = !_obscureConfirm),
-                  icon: Icon(
-                    _obscureConfirm
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
-                    color: const Color(0xFF9CA3AF),
+            AuthLabeledField(
+              label: 'Confirm password',
+              field: TextFormField(
+                controller: _confirmCtrl,
+                obscureText: _obscureConfirm,
+                onFieldSubmitted: (_) => _submit(),
+                validator:
+                    (value) =>
+                        value != _passwordCtrl.text
+                            ? 'Passwords do not match.'
+                            : null,
+                decoration: authFieldDecoration(
+                  'Re-enter your password',
+                ).copyWith(
+                  suffixIcon: IconButton(
+                    onPressed:
+                        () =>
+                            setState(() => _obscureConfirm = !_obscureConfirm),
+                    icon: Icon(
+                      _obscureConfirm
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      color: const Color(0xFF9CA3AF),
+                    ),
                   ),
                 ),
               ),
@@ -194,7 +227,7 @@ class _SignupPageState extends State<SignupPage> {
             ],
             const SizedBox(height: 20),
             AuthPrimaryButton(
-              label: 'SIGN UP',
+              label: 'Sign Up',
               loading: _loading,
               onPressed: _submit,
             ),
@@ -202,7 +235,7 @@ class _SignupPageState extends State<SignupPage> {
             const AuthOrDivider(text: 'Already have an account?'),
             const SizedBox(height: 16),
             AuthSecondaryButton(
-              label: 'LOGIN',
+              label: 'Login',
               onPressed: _loading ? null : _openLogin,
             ),
           ],

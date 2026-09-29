@@ -13,15 +13,11 @@ class LoginPage extends StatefulWidget {
 
   final WidgetBuilder? returnTo;
   final String? message;
+
   /// When set, [returnTo] is honored only if the logged-in role matches.
   final String? gateRole;
 
-  const LoginPage({
-    super.key,
-    this.returnTo,
-    this.message,
-    this.gateRole,
-  });
+  const LoginPage({super.key, this.returnTo, this.message, this.gateRole});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -95,54 +91,76 @@ class _LoginPageState extends State<LoginPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'SIGN IN',
+              'Sign In',
               style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w900,
+                fontSize: 32,
+                fontWeight: FontWeight.w800,
                 color: AuthSplitShell.maroon,
-                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Access your ASKa-Piyu account to continue using '
+              'student services.',
+              style: TextStyle(
+                color: Color(0xFF6B7280),
+                height: 1.4,
+                fontSize: 14,
               ),
             ),
             if (widget.message != null) ...[
               const SizedBox(height: 10),
               Text(
                 widget.message!,
-                style: const TextStyle(
-                  color: Color(0xFF6B7280),
-                  height: 1.4,
-                ),
+                style: const TextStyle(color: Color(0xFF6B7280), height: 1.4),
               ),
             ],
-            const SizedBox(height: 28),
-            TextFormField(
-              controller: _emailCtrl,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-              validator: _validateEmail,
-              decoration: authFieldDecoration('Email'),
+            const SizedBox(height: 26),
+            AuthLabeledField(
+              label: 'Email',
+              field: TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                validator: _validateEmail,
+                decoration: authFieldDecoration('Enter your email'),
+              ),
             ),
             const SizedBox(height: 14),
-            TextFormField(
-              controller: _passwordCtrl,
-              obscureText: _obscurePassword,
-              onFieldSubmitted: (_) => _submit(),
-              validator: (value) => (value == null || value.isEmpty)
-                  ? 'Enter your password.'
-                  : null,
-              decoration: authFieldDecoration('Password').copyWith(
-                suffixIcon: IconButton(
-                  onPressed: () =>
-                      setState(() => _obscurePassword = !_obscurePassword),
-                  icon: Icon(
-                    _obscurePassword
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
-                    color: const Color(0xFF9CA3AF),
+            AuthLabeledField(
+              label: 'Password',
+              field: TextFormField(
+                controller: _passwordCtrl,
+                obscureText: _obscurePassword,
+                onFieldSubmitted: (_) => _submit(),
+                validator:
+                    (value) =>
+                        (value == null || value.isEmpty)
+                            ? 'Enter your password.'
+                            : null,
+                decoration: authFieldDecoration('Enter your password').copyWith(
+                  suffixIcon: IconButton(
+                    onPressed:
+                        () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      color: const Color(0xFF9CA3AF),
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 12),
+            // Expanded (not a bare Spacer) between the label and the
+            // button: it still pushes "Forgot password?" to the row's far
+            // right like the old Spacer-based layout did, but its child
+            // can shrink with an ellipsis instead of forcing overflow --
+            // at ~390px the previous fixed-width Text + Spacer combination
+            // overflowed the form column by ~73px.
             Row(
               children: [
                 SizedBox(
@@ -150,23 +168,25 @@ class _LoginPageState extends State<LoginPage> {
                   height: 22,
                   child: Checkbox(
                     value: _rememberMe,
-                    onChanged: (value) =>
-                        setState(() => _rememberMe = value ?? false),
+                    onChanged:
+                        (value) => setState(() => _rememberMe = value ?? false),
                     activeColor: AuthSplitShell.maroon,
                     side: const BorderSide(color: AuthSplitShell.maroon),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'Remember me!',
-                  style: TextStyle(
-                    color: AuthSplitShell.maroon,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
+                Expanded(
+                  child: const Text(
+                    'Remember me!',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AuthSplitShell.maroon,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 TextButton(
                   onPressed: () {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -185,10 +205,8 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   child: const Text(
                     'Forgot password?',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                   ),
                 ),
               ],
@@ -199,7 +217,7 @@ class _LoginPageState extends State<LoginPage> {
             ],
             const SizedBox(height: 22),
             AuthPrimaryButton(
-              label: 'LOGIN',
+              label: 'Login',
               loading: _loading,
               onPressed: _submit,
             ),
@@ -207,7 +225,7 @@ class _LoginPageState extends State<LoginPage> {
             const AuthOrDivider(text: "Don't have an account?"),
             const SizedBox(height: 18),
             AuthSecondaryButton(
-              label: 'SIGN UP',
+              label: 'Sign Up',
               onPressed: _loading ? null : _openSignup,
             ),
           ],

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
@@ -143,7 +145,15 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
             child: CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
-                const SliverToBoxAdapter(child: PublicSiteHeader()),
+                // The navbar now lives INSIDE _HeroSection's own Stack
+                // (as the first item of its sizing column) instead of a
+                // separate preceding sliver -- see _HeroSectionState.build.
+                // That is what lets the decorative top wave paint as one
+                // continuous page-level layer behind both the navbar and
+                // the upper hero, instead of being trapped inside a Stack
+                // sized to the navbar's own ~80px box (which is why it
+                // used to read as flat horizontal strips no matter how the
+                // curve's control points changed).
                 SliverToBoxAdapter(child: _HeroSection(isNarrow: isNarrow)),
                 SliverToBoxAdapter(
                   child: Center(
@@ -160,6 +170,7 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
                                 Text(
                                   'Resources',
@@ -170,19 +181,17 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
                                   ),
                                 ),
                                 const Spacer(),
-                                if (isNarrow && _categories.isNotEmpty)
-                                  TextButton(
-                                    onPressed:
+                                if (_categories.isNotEmpty)
+                                  _SeeAllPill(
+                                    label:
+                                        isNarrow
+                                            ? 'See all'
+                                            : 'See all categories',
+                                    onTap:
                                         () => softPush(
                                           context,
                                           const KnowledgeBasePage(),
                                         ),
-                                    child: const Text(
-                                      'See all',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
                                   ),
                               ],
                             ),
@@ -225,26 +234,6 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
                                 categories: _categories,
                                 isNarrow: isNarrow,
                               ),
-                            if (!_loading &&
-                                _error == null &&
-                                _categories.isNotEmpty &&
-                                !isNarrow) ...[
-                              const SizedBox(height: 14),
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: TextButton.icon(
-                                  onPressed:
-                                      () => softPush(
-                                        context,
-                                        const KnowledgeBasePage(),
-                                      ),
-                                  icon: const Icon(Icons.menu_book_outlined),
-                                  label: const Text(
-                                    'Browse all categories in Knowledge Base',
-                                  ),
-                                ),
-                              ),
-                            ],
                             const SizedBox(height: 42),
                             Text(
                               'Quick links',
@@ -296,6 +285,193 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
   }
 }
 
+/// Large, translucent, organic blush shape flowing behind the navbar's
+/// ASKa-Piyu brand mark -- purely decorative, painted behind the header
+/// content (see the Stack in [_StudentHomePageState.build]). Confined to
+/// the far upper-left and tapering to nothing well before the nav links, so
+/// it never competes with navigation/reading content. Several slim contour
+/// strokes echo the same flow at a lower alpha, per the approved reference.
+///
+/// The FILL is built from two independently-curved boundary paths (a top
+/// edge and a bottom edge, each its own short cubic-Bezier chain) that only
+/// ever meet at the shape's two endpoints -- never a single long chain of
+/// small segments sharing anchors, which is what caused an earlier attempt
+/// to pinch into a visible gap/hole. A horizontal alpha-gradient shader
+/// fades the fill (and every contour stroke) out by ~42-58% width, well
+/// before the right-side nav links, instead of an abrupt geometric cutoff.
+/// Every curve swings through a large fraction of the painter's own height
+/// (not a shallow dip), so the curvature reads as genuine organic motion
+/// even in a short, wide navbar box, instead of a flat horizontal strip.
+class _TopBrandWavePainter extends CustomPainter {
+  const _TopBrandWavePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    // Full-strength color from x=0 out to `holdFraction`, then a linear
+    // fade down to zero alpha by `fadeEndFraction` -- used for the thin
+    // contour strokes, which should simply be strongest at the corner and
+    // taper away.
+    ui.Gradient fadeShader(
+      Color color, {
+      required double holdFraction,
+      required double fadeEndFraction,
+    }) {
+      final holdStop = (holdFraction / fadeEndFraction).clamp(0.0, 1.0);
+      return ui.Gradient.linear(
+        const Offset(0, 0),
+        Offset(w * fadeEndFraction, 0),
+        [color, color, color.withValues(alpha: 0)],
+        [0.0, holdStop, 1.0],
+      );
+    }
+
+    // Three GEOMETRICALLY INDEPENDENT closed ribbon paths -- not one big
+    // fill recolored in bands. Each has its own top/bottom boundary curves,
+    // its own vertical band, and its own horizontal reach, so their
+    // silhouettes only partially coincide: some areas are covered by one
+    // ribbon, some by two overlapping, and some by none at all (real pale
+    // negative space showing the page background through), which is what a
+    // single shared outline could never produce no matter how its fill
+    // color/alpha was varied.
+
+    // Ribbon 1 -- upper flow: thin, pale, enters just outside the top-left
+    // corner and curves directly behind/around the brand mark before
+    // tapering by ~30% width.
+    final ribbon1 = Path()
+      ..moveTo(-w * 0.06, -h * 0.03)
+      ..cubicTo(w * 0.02, h * 0.02, w * 0.08, -h * 0.02, w * 0.16, h * 0.08)
+      ..cubicTo(w * 0.22, h * 0.14, w * 0.26, h * 0.22, w * 0.30, h * 0.20)
+      ..cubicTo(w * 0.26, h * 0.34, w * 0.20, h * 0.38, w * 0.14, h * 0.30)
+      ..cubicTo(w * 0.08, h * 0.24, w * 0.00, h * 0.20, -w * 0.06, h * 0.14)
+      ..close();
+    canvas.drawPath(
+      ribbon1,
+      Paint()..shader = fadeShader(
+        const Color(0xFFF6DEE0).withValues(alpha: 0.68),
+        holdFraction: 0.05,
+        fadeEndFraction: 0.30,
+      ),
+    );
+
+    // Ribbon 2 -- main flow: the broadest, most visible ribbon, entering
+    // outside the left edge and sweeping down past the brand mark before
+    // tapering by ~40% width. Overlaps ribbon 1 only around the brand area
+    // (its own top boundary crosses through ribbon 1's lower half there);
+    // everywhere else it occupies fresh vertical space ribbon 1 never
+    // reaches, and leaves the band between ~0.38h-0.55h at the far left
+    // (x<0.05w) as visible pale gap.
+    final ribbon2 = Path()
+      ..moveTo(-w * 0.06, h * 0.22)
+      ..cubicTo(w * 0.04, h * 0.10, w * 0.14, h * 0.30, w * 0.22, h * 0.42)
+      ..cubicTo(w * 0.30, h * 0.52, w * 0.34, h * 0.60, w * 0.40, h * 0.55)
+      ..cubicTo(w * 0.34, h * 0.78, w * 0.24, h * 0.85, w * 0.14, h * 0.78)
+      ..cubicTo(w * 0.06, h * 0.72, -w * 0.02, h * 0.62, -w * 0.06, h * 0.55)
+      ..close();
+    canvas.drawPath(
+      ribbon2,
+      Paint()..shader = fadeShader(
+        const Color(0xFFEFCAD0).withValues(alpha: 0.60),
+        holdFraction: 0.06,
+        fadeEndFraction: 0.40,
+      ),
+    );
+
+    // Ribbon 3 -- secondary dusty-rose accent: narrower, concentrated in
+    // the upper-left, tapering earliest (~24% width) of the three. Partly
+    // overlaps ribbons 1 and 2 in the brand-mark zone for real depth, but
+    // its own boundary is independent, so it also covers a small sliver
+    // neither of the others reaches.
+    final ribbon3 = Path()
+      ..moveTo(-w * 0.04, h * 0.38)
+      ..cubicTo(w * 0.02, h * 0.30, w * 0.08, h * 0.48, w * 0.14, h * 0.40)
+      ..cubicTo(w * 0.19, h * 0.34, w * 0.22, h * 0.42, w * 0.24, h * 0.50)
+      ..cubicTo(w * 0.18, h * 0.62, w * 0.10, h * 0.66, w * 0.04, h * 0.60)
+      ..cubicTo(-w * 0.01, h * 0.56, -w * 0.04, h * 0.50, -w * 0.04, h * 0.46)
+      ..close();
+    canvas.drawPath(
+      ribbon3,
+      Paint()..shader = fadeShader(
+        const Color(0xFFD8A4A9).withValues(alpha: 0.50),
+        holdFraction: 0.04,
+        fadeEndFraction: 0.24,
+      ),
+    );
+
+    // Four slim contour lines echoing the same corner-hugging, steeply
+    // descending flow, each its own distinct Bezier path (different start
+    // height, control points, and fade reach) so they read as organic,
+    // non-parallel companions to the fill -- essentially gone by ~34-40%
+    // width, short of where the fill itself fades.
+    void drawContour(
+      Path path, {
+      required Color color,
+      required double w0,
+      required double holdFraction,
+      required double fadeEndFraction,
+    }) {
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = w0
+          ..strokeCap = StrokeCap.round
+          ..shader = fadeShader(
+            color,
+            holdFraction: holdFraction,
+            fadeEndFraction: fadeEndFraction,
+          ),
+      );
+    }
+
+    drawContour(
+      Path()
+        ..moveTo(-w * 0.04, -h * 0.02)
+        ..cubicTo(w * 0.05, h * 0.35, w * 0.12, -h * 0.10, w * 0.18, h * 0.22)
+        ..cubicTo(w * 0.24, h * 0.50, w * 0.28, h * 0.75, w * 0.34, h * 0.62),
+      color: const Color(0xFFB05A61).withValues(alpha: 0.40),
+      w0: 1.4,
+      holdFraction: 0.16,
+      fadeEndFraction: 0.36,
+    );
+    drawContour(
+      Path()
+        ..moveTo(-w * 0.04, h * 0.15)
+        ..cubicTo(w * 0.03, h * 0.75, w * 0.10, -h * 0.05, w * 0.16, h * 0.42)
+        ..cubicTo(w * 0.22, h * 0.68, w * 0.27, h * 0.30, w * 0.32, h * 0.50),
+      color: const Color(0xFFD79AA0).withValues(alpha: 0.40),
+      w0: 1.2,
+      holdFraction: 0.14,
+      fadeEndFraction: 0.34,
+    );
+    drawContour(
+      Path()
+        ..moveTo(-w * 0.03, h * 0.35)
+        ..cubicTo(w * 0.05, h * 0.90, w * 0.13, h * 0.15, w * 0.20, h * 0.62)
+        ..cubicTo(w * 0.26, h * 0.85, w * 0.30, h * 0.55, w * 0.36, h * 0.70),
+      color: const Color(0xFFB05A61).withValues(alpha: 0.36),
+      w0: 1.1,
+      holdFraction: 0.18,
+      fadeEndFraction: 0.38,
+    );
+    drawContour(
+      Path()
+        ..moveTo(-w * 0.02, h * 0.55)
+        ..cubicTo(w * 0.04, h * 0.20, w * 0.11, h * 0.85, w * 0.17, h * 0.48)
+        ..cubicTo(w * 0.22, h * 0.30, w * 0.27, h * 0.62, w * 0.33, h * 0.45),
+      color: const Color(0xFFD79AA0).withValues(alpha: 0.34),
+      w0: 1.0,
+      holdFraction: 0.15,
+      fadeEndFraction: 0.35,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TopBrandWavePainter oldDelegate) => false;
+}
+
 class _HeroSection extends StatefulWidget {
   final bool isNarrow;
 
@@ -342,12 +518,12 @@ class _HeroSectionState extends State<_HeroSection> {
               letterSpacing: 1.6,
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: isNarrow ? 8 : 16),
           RichText(
             text: TextSpan(
               style: TextStyle(
                 fontWeight: FontWeight.w900,
-                fontSize: isNarrow ? 38 : 52,
+                fontSize: isNarrow ? 32 : 52,
                 height: 1.1,
                 letterSpacing: -0.5,
               ),
@@ -366,13 +542,13 @@ class _HeroSectionState extends State<_HeroSection> {
               ],
             ),
           ),
-          const SizedBox(height: 18),
+          SizedBox(height: isNarrow ? 10 : 18),
           Text(
             subtitle,
             style: TextStyle(
               color: DesignTokens.muted,
-              fontSize: isNarrow ? 15 : 17,
-              height: 1.5,
+              fontSize: isNarrow ? 13.5 : 17,
+              height: 1.4,
             ),
           ),
         ],
@@ -397,38 +573,57 @@ class _HeroSectionState extends State<_HeroSection> {
         ),
         child: Row(
           children: [
-            const SizedBox(width: 18),
+            SizedBox(width: isNarrow ? 10 : 18),
+            // Leading search icon -- mobile only (see the approved mobile
+            // reference); the desktop bar has never had one and stays
+            // exactly as before.
+            if (isNarrow) ...[
+              const Icon(
+                Icons.search_rounded,
+                color: DesignTokens.maroon,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+            ],
             Expanded(
               child: TextField(
                 controller: _searchCtrl,
                 onSubmitted: (_) => _search(),
-                style: const TextStyle(fontSize: 16),
-                decoration: const InputDecoration(
+                style: TextStyle(fontSize: isNarrow ? 14 : 16),
+                decoration: InputDecoration(
                   hintText:
                       'Search articles, policies, offices, or procedures...',
                   border: InputBorder.none,
                   isDense: true,
-                  hintStyle: TextStyle(color: Color(0xFF9CA3AF), fontSize: 16),
+                  hintStyle: TextStyle(
+                    color: const Color(0xFF9CA3AF),
+                    fontSize: isNarrow ? 14 : 16,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            SizedBox(width: isNarrow ? 8 : 10),
             SizedBox(
-              height: 56,
+              height: isNarrow ? 44 : 56,
               child: ElevatedButton(
                 onPressed: _search,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: DesignTokens.maroon,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 30),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isNarrow ? 16 : 30,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(13),
                   ),
                 ),
-                child: const Text(
+                child: Text(
                   'Search',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: isNarrow ? 14 : 16,
+                  ),
                 ),
               ),
             ),
@@ -441,9 +636,9 @@ class _HeroSectionState extends State<_HeroSection> {
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(
         isNarrow ? 18 : 32,
-        isNarrow ? 44 : 68,
+        isNarrow ? 20 : 68,
         isNarrow ? 18 : 32,
-        isNarrow ? 72 : 88,
+        isNarrow ? 28 : 88,
       ),
       // Content alone drives the hero's height -- the building photo never
       // does. Text + search dominate the hierarchy; the photo and waves
@@ -451,7 +646,7 @@ class _HeroSectionState extends State<_HeroSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
-        children: [heading, const SizedBox(height: 30), searchBar],
+        children: [heading, SizedBox(height: isNarrow ? 16 : 30), searchBar],
       ),
     );
 
@@ -493,6 +688,23 @@ class _HeroSectionState extends State<_HeroSection> {
                     ),
                   ),
                 ),
+              ),
+            ),
+            // Page-level decorative top wave: a tall canvas (not clipped to
+            // the navbar's own ~80px box) anchored to this Stack's y=0,
+            // which is now the TRUE top of the page since the navbar is
+            // the first item of `foreground` below rather than a separate
+            // preceding sliver. This is what lets the ribbon have a real,
+            // large downward sweep instead of being squashed into a flat
+            // strip. It paints on top of the pale gradient above but
+            // behind the building/bottom-waves/navbar+hero content below.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: isNarrow ? 130 : 180,
+              child: IgnorePointer(
+                child: CustomPaint(painter: _TopBrandWavePainter()),
               ),
             ),
             if (!isNarrow)
@@ -546,6 +758,60 @@ class _HeroSectionState extends State<_HeroSection> {
                   ),
                 ),
               ),
+            // Mobile-only: the same right-anchored, left-to-right-fading
+            // building panel as desktop (not a short bottom band), just at
+            // a mobile-appropriate width fraction. This is what keeps the
+            // building genuinely visible in the background toward the
+            // right of the hero -- matching the approved mobile reference
+            // -- while the fade still keeps the left/center text area
+            // fully readable, exactly like the desktop treatment.
+            if (isNarrow)
+              Positioned(
+                top: 0,
+                bottom: 0,
+                right: 0,
+                width: heroWidth * 0.52,
+                child: IgnorePointer(
+                  child: Opacity(
+                    opacity: 0.55,
+                    child: ClipRect(
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.asset(
+                            'assets/images/lspu_admin_building.png',
+                            fit: BoxFit.cover,
+                            alignment: Alignment.center,
+                            filterQuality: FilterQuality.high,
+                          ),
+                          // Fade pushed further right than the desktop
+                          // panel's own stops -- at mobile widths the
+                          // "LAGUNA STATE POLYTECHNIC UNIVERSITY" label
+                          // spans nearly the full text column, so the pale
+                          // coverage needs to reach almost to the panel's
+                          // own right edge to keep that line clear of the
+                          // building's more solid roofline/sky detail.
+                          const DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.centerLeft,
+                                end: Alignment.centerRight,
+                                colors: [
+                                  Color(0xFFFFF5F6),
+                                  Color(0x99FFF5F6),
+                                  Color(0x40FFF5F6),
+                                  Color(0x00FFF5F6),
+                                ],
+                                stops: [0.0, 0.42, 0.68, 0.90],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             // Decorative wave artwork sits BEHIND the text/search content
             // (painted before `foreground` below) so its color can never
             // obscure the content, which always paints on top of it. The
@@ -566,13 +832,33 @@ class _HeroSectionState extends State<_HeroSection> {
                 bottom: -1,
                 child: IgnorePointer(
                   child: SizedBox(
-                    height: 80,
+                    height: 64,
                     width: double.infinity,
                     child: const CustomPaint(painter: _HeroWavePainter()),
                   ),
                 ),
               ),
-            foreground,
+            // Navbar is the first item of the Stack's one non-positioned
+            // sizing child (a Column), not a separate sliver -- this is
+            // what lets the decorative wave above paint as one continuous
+            // page-level layer behind both the navbar and the hero, while
+            // the navbar itself keeps its exact original padding/height
+            // and stays the topmost (clickable) layer. `slim: isNarrow`
+            // reuses PublicSiteHeader's own existing compact-header
+            // support (smaller logo + tighter vertical padding) to trim
+            // unnecessary mobile header height, without touching the
+            // shared header's code or its appearance on any other page.
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                PublicSiteHeader(
+                  transparentBackground: true,
+                  slim: isNarrow,
+                ),
+                foreground,
+              ],
+            ),
           ],
         );
       },
@@ -782,6 +1068,53 @@ class _HeroWaveFullPainter extends CustomPainter {
   bool shouldRepaint(covariant _HeroWaveFullPainter oldDelegate) => false;
 }
 
+/// Pale-blush pill button used for the Resources section's "See all
+/// categories" link, replacing the previous icon-led text link -- keeps the
+/// single "browse everything" entry point but matches the approved
+/// reference's placement (upper-right of the section header) and styling,
+/// without adding a decorative icon (only the small chevron, already on the
+/// allowed list).
+class _SeeAllPill extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _SeeAllPill({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFFCE8EA),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: DesignTokens.maroon,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13.5,
+                ),
+              ),
+              const SizedBox(width: 2),
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: DesignTokens.maroon,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ResourcesGrid extends StatelessWidget {
   final List<_LandingCategory> categories;
   final bool isNarrow;
@@ -824,47 +1157,87 @@ class _ResourcesGrid extends StatelessWidget {
                         constraints: BoxConstraints(
                           minHeight: isNarrow ? 76 : 140,
                         ),
-                        padding: EdgeInsets.all(isNarrow ? 12 : 24),
+                        // A single BoxDecoration cannot combine a
+                        // borderRadius with a Border whose sides have
+                        // different colors -- Flutter throws "A
+                        // borderRadius can only be given on borders with
+                        // uniform colors" at paint time, which silently
+                        // fails to paint this box (while InkWell/Material
+                        // above still handle hit-testing, so the card stays
+                        // clickable but invisible). The outer border here
+                        // is therefore uniform; the pink accent is a
+                        // separate clipped layer below, not a differently
+                        // colored BorderSide.
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(color: const Color(0xFFE5E7EB)),
                         ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        clipBehavior: Clip.antiAlias,
+                        child: Stack(
                           children: [
-                            Expanded(
-                              child: Column(
+                            // Pink accent strip -- clipped to the card's
+                            // rounded rect by the Container's clipBehavior
+                            // above, so its corners never poke past the
+                            // uniform outer border.
+                            const Positioned(
+                              left: 0,
+                              top: 0,
+                              bottom: 0,
+                              width: 4,
+                              child: ColoredBox(color: Color(0xFFE8B4B8)),
+                            ),
+                            Padding(
+                              // Left padding carries the extra 4px the
+                              // accent strip used to occupy as part of the
+                              // old (broken) left BorderSide's width, so
+                              // the text content lines up exactly as
+                              // before.
+                              padding: EdgeInsets.fromLTRB(
+                                (isNarrow ? 12 : 24) + 4,
+                                isNarrow ? 12 : 24,
+                                isNarrow ? 12 : 24,
+                                isNarrow ? 12 : 24,
+                              ),
+                              child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    category.name,
-                                    style: TextStyle(
-                                      color: DesignTokens.maroon,
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: isNarrow ? 14 : 17,
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          category.name,
+                                          style: TextStyle(
+                                            color: DesignTokens.maroon,
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: isNarrow ? 14 : 17,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          category.articleCount > 0
+                                              ? '${category.articleCount} article${category.articleCount == 1 ? '' : 's'}'
+                                              : 'Browse articles',
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Color(0xFF4B5563),
+                                            height: 1.4,
+                                            fontSize: isNarrow ? 12 : 14,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    category.articleCount > 0
-                                        ? '${category.articleCount} article${category.articleCount == 1 ? '' : 's'}'
-                                        : 'Browse articles',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: Color(0xFF4B5563),
-                                      height: 1.4,
-                                      fontSize: isNarrow ? 12 : 14,
-                                    ),
+                                  const SizedBox(width: 8),
+                                  Icon(
+                                    Icons.chevron_right_rounded,
+                                    size: isNarrow ? 18 : 20,
+                                    color: DesignTokens.maroon,
                                   ),
                                 ],
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Icon(
-                              Icons.chevron_right_rounded,
-                              size: isNarrow ? 18 : 20,
-                              color: DesignTokens.maroon,
                             ),
                           ],
                         ),
@@ -986,51 +1359,62 @@ class _QuickLinksSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final groups = _buildGroups();
 
-    final tabBar = SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final tab in tabs)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Material(
-                color: tab == selectedTab
-                    ? const Color(0xFFFCE8EA)
-                    : Colors.white,
+    final tabButtons = [
+      for (final tab in tabs)
+        Material(
+          color: tab == selectedTab ? const Color(0xFFFCE8EA) : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => onTabChanged(tab),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: isNarrow ? 12 : 16,
+                vertical: isNarrow ? 9 : 12,
+              ),
+              decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: () => onTabChanged(tab),
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: isNarrow ? 12 : 16,
-                      vertical: isNarrow ? 9 : 12,
-                    ),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: tab == selectedTab
-                            ? const Color(0xFFE8B4B8)
-                            : const Color(0xFFE5E7EB),
-                      ),
-                    ),
-                    child: Text(
-                      tab,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: isNarrow ? 13 : 14,
-                        color: tab == selectedTab
-                            ? DesignTokens.maroon
-                            : const Color(0xFF4B5563),
-                      ),
-                    ),
-                  ),
+                border: Border.all(
+                  color: tab == selectedTab
+                      ? const Color(0xFFE8B4B8)
+                      : const Color(0xFFE5E7EB),
+                ),
+              ),
+              child: Text(
+                tab,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: isNarrow ? 13 : 14,
+                  color: tab == selectedTab
+                      ? DesignTokens.maroon
+                      : const Color(0xFF4B5563),
                 ),
               ),
             ),
-        ],
-      ),
-    );
+          ),
+        ),
+    ];
+
+    // Mobile: a Wrap, not the horizontally-scrolling Row desktop still
+    // uses below -- at 390/360px the three real tab labels (unabbreviated,
+    // full size) don't fit one row, and a scrolling row left "Additional
+    // resources" clipped by the viewport edge unless the user discovered
+    // they could scroll it into view. Wrap lets the third tab fall to its
+    // own line instead, with every label fully visible.
+    final tabBar = isNarrow
+        ? Wrap(spacing: 8, runSpacing: 8, children: tabButtons)
+        : SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final button in tabButtons)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: button,
+                  ),
+              ],
+            ),
+          );
 
     final grid = groups.isEmpty
         ? const Padding(
@@ -1216,6 +1600,49 @@ class _FloatingChatButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Mobile (compact): icon-only circle, not the text pill. Quick Links
+    // renders full-width, edge-to-edge cards in a single column, so any
+    // fixed bottom-right floating button inevitably sits over some card's
+    // right edge while scrolling -- shrinking to the smallest recognizable
+    // footprint (a plain circular mark, ~48px, same color/icon/position as
+    // before) is the minimal way to stop it from covering a card's title
+    // text or chevron, without repositioning or redesigning either the
+    // button or Quick Links.
+    if (compact) {
+      // Tooltip carries the same accessible name the visible text used to
+      // provide ("Chat with ASKa-Piyu"), so removing the label for space
+      // doesn't remove it for screen readers/long-press hints.
+      return Tooltip(
+        message: 'Chat with ASKa-Piyu',
+        child: Material(
+          color: const Color(0xFF5C0A0F),
+          shape: const CircleBorder(),
+          elevation: 10,
+          shadowColor: Colors.black38,
+          child: InkWell(
+            onTap: onTap,
+            customBorder: const CircleBorder(),
+            child: Padding(
+              padding: const EdgeInsets.all(7),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(6),
+                child: Image.asset(
+                  'assets/logo.png',
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.high,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Material(
       color: const Color(0xFF5C0A0F),
       borderRadius: BorderRadius.circular(999),
@@ -1225,13 +1652,13 @@ class _FloatingChatButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Padding(
-          padding: EdgeInsets.fromLTRB(8, 8, compact ? 14 : 20, 8),
+          padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: compact ? 32 : 36,
-                height: compact ? 32 : 36,
+                width: 36,
+                height: 36,
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
@@ -1244,8 +1671,8 @@ class _FloatingChatButton extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Text(
-                compact ? 'Chat' : 'Chat with ASKa-Piyu',
+              const Text(
+                'Chat with ASKa-Piyu',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,

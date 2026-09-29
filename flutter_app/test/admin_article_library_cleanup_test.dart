@@ -28,11 +28,15 @@ void main() {
     final login = File('lib/screens/login_page.dart').readAsStringSync();
     final sidebar = File('lib/widgets/sidebar.dart').readAsStringSync();
 
-    // Public Search CTAs use text labels, not icon-labeled buttons.
+    // Public Search CTAs use text labels, not icon-labeled buttons. The
+    // homepage's Search button itself stays plain Text (never
+    // ElevatedButton.icon); a decorative leading search icon inside the
+    // mobile search FIELD (not the button) is a separate, approved
+    // mobile-only affordance and doesn't make the button icon-labeled.
     expect(kb, contains("child: const Text('Search')"));
     expect(kb.contains("label: const Text('Search')"), isFalse);
     expect(home, contains("'Search'"));
-    expect(home.contains('Icons.search'), isFalse);
+    expect(home.contains('ElevatedButton.icon'), isFalse);
 
     // Login entry points stay text-labeled.
     expect(login, contains("label: 'Login'"));

@@ -20,6 +20,13 @@ class PublicSiteHeader extends StatelessWidget {
   final bool accountActive;
   final bool slim;
 
+  /// True only on the homepage, where a decorative wave is painted behind
+  /// this header (see `_TopBrandWavePainter` in student_home.dart) and
+  /// needs to show through instead of being covered by an opaque white
+  /// background. Every other caller omits this and keeps the original
+  /// solid-white navbar unchanged.
+  final bool transparentBackground;
+
   const PublicSiteHeader({
     super.key,
     this.knowledgeBaseActive = false,
@@ -27,6 +34,7 @@ class PublicSiteHeader extends StatelessWidget {
     this.myTicketsActive = false,
     this.accountActive = false,
     this.slim = false,
+    this.transparentBackground = false,
   });
 
   bool get _onPublicPeerPage =>
@@ -54,11 +62,13 @@ class PublicSiteHeader extends StatelessWidget {
     final role = auth.role;
 
     return Material(
-      color: Colors.white,
+      color: transparentBackground ? Colors.transparent : Colors.white,
       child: Container(
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Color(0xFFEEF1F5))),
-        ),
+        decoration: transparentBackground
+            ? null
+            : const BoxDecoration(
+                border: Border(bottom: BorderSide(color: Color(0xFFEEF1F5))),
+              ),
         padding: EdgeInsets.symmetric(
           horizontal: isNarrow ? 12 : 32,
           // Desktop-only bump so the homepage's larger hero doesn't sit

@@ -23,15 +23,19 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Search'), findsOneWidget);
-    // Floating chat CTA uses full or compact label by viewport width.
-    expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is Text &&
-            (widget.data == 'Chat with ASKa-Piyu' || widget.data == 'Chat'),
-      ),
-      findsOneWidget,
-    );
+    // Floating chat CTA: a visible text label on wide viewports, or an
+    // icon-only circle on narrow ones (so it can't cover Quick Links card
+    // content while scrolling) -- either way it must carry the same
+    // accessible name, as a visible Text widget or a Tooltip.
+    final hasVisibleChatLabel = find
+        .byWidgetPredicate(
+          (widget) => widget is Text && widget.data == 'Chat with ASKa-Piyu',
+        )
+        .evaluate()
+        .isNotEmpty;
+    final hasChatTooltip =
+        find.byTooltip('Chat with ASKa-Piyu').evaluate().isNotEmpty;
+    expect(hasVisibleChatLabel || hasChatTooltip, isTrue);
     expect(find.textContaining('Knowledge Base'), findsWidgets);
     expect(find.text('Admin Dashboard'), findsNothing);
     expect(find.text('Office Dashboard'), findsNothing);

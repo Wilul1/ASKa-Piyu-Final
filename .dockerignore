@@ -1,6 +1,6 @@
-# Applies to the Heroku container build (heroku.yml -> backend/Dockerfile.
-# heroku-web), whose build context is the repo root (heroku.yml convention)
-# so both backend/ and flutter_app/ are reachable from the Dockerfile.
+# Applies to the Heroku container build (heroku.yml -> Dockerfile.heroku-web
+# at the repo root). The build context is this Dockerfile's own directory --
+# the repo root -- so both backend/ and flutter_app/ are reachable from it.
 # backend/.dockerignore is separate and still governs the *local* Compose
 # Dockerfile, whose context is ./backend only -- left untouched.
 
@@ -14,6 +14,11 @@
 # migration sandboxes. Lives in Chroma Cloud / Heroku Postgres / object
 # storage on Heroku -- never baked into the image.
 backend/data/
+
+# Database dumps -- never meant to ship in any image.
+*.dump
+*.sql
+*.sql.bak
 
 # Disposable backend venvs / caches -- never meant to ship anywhere.
 backend/venv/

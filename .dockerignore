@@ -1,0 +1,61 @@
+# Applies to the Heroku container build (heroku.yml -> backend/Dockerfile.
+# heroku-web), whose build context is the repo root (heroku.yml convention)
+# so both backend/ and flutter_app/ are reachable from the Dockerfile.
+# backend/.dockerignore is separate and still governs the *local* Compose
+# Dockerfile, whose context is ./backend only -- left untouched.
+
+# Secrets -- never bake a real .env into any image.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local backend runtime data: source documents (137MB corpus), ticket
+# attachments, KB media, local Chroma persistence, frozen backups,
+# migration sandboxes. Lives in Chroma Cloud / Heroku Postgres / object
+# storage on Heroku -- never baked into the image.
+backend/data/
+
+# Disposable backend venvs / caches -- never meant to ship anywhere.
+backend/venv/
+backend/.venv/
+backend/.heroku-web-venv/
+backend/.migration-venv*/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.py[cod]
+backend/.pytest_cache/
+backend/.pytest-tmp-*/
+backend/.mypy_cache/
+backend/.ruff_cache/
+
+# Not needed in the runtime image (tests/benchmarks never COPY'd into
+# stage 2; the compiled web/ output is all stage 2 needs from Flutter).
+backend/tests/
+backend/benchmarks/
+backend/run_server.bat
+
+# Flutter: stage 1 runs its own `flutter pub get` + `flutter build web`
+# fresh inside the image -- none of the host's own local build artifacts,
+# tool caches, or non-web platform targets are needed as build input.
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.idea/
+flutter_app/android/
+flutter_app/ios/
+flutter_app/linux/
+flutter_app/macos/
+flutter_app/windows/
+flutter_app/test/
+
+# Repo-root clutter never needed as build input.
+.claude/
+.cursor/
+.git/
+.gitignore
+.github/
+.vscode/
+Claude outputs/
+defense_smoke_evidence/
+deploy/
+docs/
+scripts/

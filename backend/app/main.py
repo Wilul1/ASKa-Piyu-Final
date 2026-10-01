@@ -6,8 +6,12 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import (
     DOTENV_PATH,
@@ -287,3 +291,39 @@ def database_health_check(_: None = Depends(require_admin_key)) -> dict:
 @app.get("/admin/debug/config")
 def admin_debug_config(_: None = Depends(require_admin_key)) -> dict:
     return safe_admin_config_diagnostics()
+
+
+# --- Flutter web (same-origin frontend) --------------------------------
+#
+# Registered last so every API router above always wins an exact-path
+# match first. Gated on the directory actually existing so a plain
+# backend-only local dev environment (no `flutter build web` output
+# present) behaves exactly as before -- no mount, no catch-all route, zero
+# change to existing behavior.
+_flutter_web_dir = Path(settings.flutter_web_dir).resolve()
+if _flutter_web_dir.is_dir():
+    for _asset_dir in ("assets", "canvaskit", "icons"):
+        _path = _flutter_web_dir / _asset_dir
+        if _path.is_dir():
+            app.mount(f"/{_asset_dir}", StaticFiles(directory=_path), name=f"flutter-{_asset_dir}")
+
+    _flutter_root_files = {
+        p.name for p in _flutter_web_dir.iterdir() if p.is_file()
+    }
+    # First path segment of every real API router registered above --
+    # never fall back to index.html under one of these, even if the exact
+    # sub-path doesn't match any endpoint (a typo'd API path must 404 as
+    # JSON, not silently return the SPA shell).
+    _reserved_api_prefixes = {
+        "health", "docs", "redoc", "openapi.json",
+        "admin", "announcements", "auth", "documents", "kb", "qa", "student", "tickets",
+    }
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_flutter_web(full_path: str):
+        first_segment = full_path.split("/", 1)[0]
+        if first_segment in _reserved_api_prefixes:
+            raise HTTPException(status_code=404, detail="Not Found")
+        if full_path in _flutter_root_files:
+            return FileResponse(_flutter_web_dir / full_path)
+        return FileResponse(_flutter_web_dir / "index.html")

@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     documents_persist_dir: str = "./data/documents"
     ticket_attachments_dir: str = "./data/ticket_attachments"
     kb_media_dir: str = "./data/kb_media"
+    # Compiled Flutter web build (`flutter build web`) to serve alongside the
+    # API on the same origin/dyno. Relative to the backend process's cwd —
+    # the Heroku image copies the build output here (see
+    # Dockerfile.heroku-web); absent in plain local API-only dev, which is
+    # the normal/expected case and leaves every API route unaffected (see
+    # main.py's directory-existence guard before mounting).
+    flutter_web_dir: str = "./flutter_web"
     auth_secret_key: str | None = None
     # Shorter default reduces stolen-token window (no server-side revoke list).
     auth_token_ttl_minutes: int = 60 * 8

@@ -11,3 +11,6 @@ dist/
 build/
 .EasyOCR/
 data/
+# Compiled Flutter web build copied here by Dockerfile.heroku-web -- never
+# committed; generated fresh on every image build.
+flutter_web/

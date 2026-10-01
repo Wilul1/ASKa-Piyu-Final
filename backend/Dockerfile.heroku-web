@@ -1,13 +1,37 @@
-# Lightweight Heroku web-dyno image. Separate from the existing Dockerfile
-# (which remains the full local/Docker-Compose image, untouched) -- this one
-# installs requirements-web.txt instead of requirements.txt, so it never
-# includes torch/torchvision/sentence-transformers/easyocr. Admin document
-# ingestion/OCR/rebuild endpoints are intentionally unavailable when running
-# from this image (see app/services/ingestion_runtime.py's availability
-# guard) -- everything else (auth, KB browsing, chatbot/RAG, citations,
-# tickets) is unaffected, since embeddings come from the Hugging Face remote
-# backend (ASKA_EMBEDDING_BACKEND=huggingface) and the vector store is
-# Chroma Cloud (ASKA_CHROMA_BACKEND=cloud), not local/torch-backed.
+# Lightweight Heroku web-dyno image serving BOTH the FastAPI backend and the
+# compiled Flutter web frontend on the same origin/dyno. Separate from the
+# existing Dockerfile (which remains the full local/Docker-Compose image,
+# untouched). Built via `heroku.yml` at the repo root, so the build context
+# is the repo root -- every COPY below is repo-root-relative.
+#
+# Stage 1 builds Flutter web; only its compiled static output (not the
+# Flutter/Dart SDK) is copied into the final stage, so the final runtime
+# stays exactly as lightweight as the backend-only image: requirements-web.txt
+# still never installs torch/torchvision/sentence-transformers/easyocr.
+# Admin document ingestion/OCR/rebuild endpoints are intentionally
+# unavailable when running from this image (see app/services/
+# ingestion_runtime.py's availability guard) -- everything else (auth, KB
+# browsing, chatbot/RAG, citations, tickets) is unaffected, since embeddings
+# come from the Hugging Face remote backend (ASKA_EMBEDDING_BACKEND=
+# huggingface) and the vector store is Chroma Cloud (ASKA_CHROMA_BACKEND=
+# cloud), not local/torch-backed.
+
+FROM ghcr.io/cirruslabs/flutter:3.29.3 AS flutter-builder
+
+WORKDIR /flutter_app
+
+COPY flutter_app/pubspec.yaml flutter_app/pubspec.lock* ./
+RUN flutter pub get
+
+COPY flutter_app/ .
+
+# Production origin Flutter calls the API on -- same origin as this dyno, so
+# every request AppConfig.resolvedApiBase builds is effectively same-origin
+# (no CORS preflight in production). Override at build time for a custom
+# domain: `docker build --build-arg ASKA_API_BASE_URL=https://your-domain ...`
+ARG ASKA_API_BASE_URL=https://aska-piyu-6b05cafc5bd1.herokuapp.com
+RUN flutter build web --release --dart-define=ASKA_API_BASE_URL=${ASKA_API_BASE_URL}
+
 
 FROM python:3.12-slim
 
@@ -21,10 +45,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # needs to compile torch/easyocr's native extensions -- every package in
 # requirements-web.txt ships prebuilt wheels for this base image.
 
-COPY requirements-web.txt .
+COPY backend/requirements-web.txt .
 RUN pip install --no-cache-dir -r requirements-web.txt
 
-COPY . .
+COPY backend/ .
+COPY --from=flutter-builder /flutter_app/build/web ./flutter_web
 
 EXPOSE 8000
 

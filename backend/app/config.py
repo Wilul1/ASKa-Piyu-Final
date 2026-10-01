@@ -80,6 +80,18 @@ class Settings(BaseSettings):
     # always uses Chroma's bundled default embedding to keep tests fast/offline.
     embedding_model_name: str = "intfloat/multilingual-e5-small"
     embedding_device: str = "cpu"
+    # "local" (default, unchanged behavior) runs sentence-transformers/torch
+    # in-process. "huggingface" calls HF's hosted inference router instead,
+    # so the web process never loads sentence-transformers/torch -- proven
+    # numerically equivalent to the local intfloat/multilingual-e5-small
+    # model via a manual compatibility check (cosine ~1.0, max abs diff
+    # ~1e-7; see scripts/compare_hf_embeddings.py). HF does not let us pin an
+    # exact model revision, so the local backend must stay available and
+    # this stays an explicit opt-in, never a silent default change.
+    embedding_backend: str = "local"
+    hf_token: str | None = None
+    hf_embedding_model: str = "intfloat/multilingual-e5-small"
+    hf_embedding_timeout_seconds: float = 15.0
 
     # --- Student Q&A (retrieval only; no OCR) ---
     rag_top_k: int = 5

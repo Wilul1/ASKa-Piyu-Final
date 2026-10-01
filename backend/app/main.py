@@ -184,17 +184,28 @@ async def validate_startup_configuration() -> None:
 
 
 def _warm_embedding_model() -> None:
-    """Load the local embedding model in the background so the first /qa/ask
-    is not blocked for 20–60s on a cold sentence-transformers download/load.
-    Failures are logged only — chat can still fall back later if needed.
+    """Warm up the configured embedding backend in the background so the
+    first /qa/ask is not blocked on a cold load.
+
+    LOCAL backend (default): loads sentence-transformers/torch and the model
+    weights — this is the slow (20-60s) cold path this warm-up originally
+    existed for. HUGGINGFACE backend: makes one small request to the hosted
+    inference router using only this tiny synthetic string (no institutional
+    data) — confirms the token/connectivity are working, and does NOT import
+    sentence-transformers/torch at all, since get_embedding_function()
+    returns HFRemoteEmbeddingFunction whose _encode() only ever calls out
+    over HTTPS.
+
+    Either way, a failure here is logged only, never fatal — chat can still
+    surface a graceful error later if the backend is genuinely broken.
     """
     try:
         from app.services.embeddings import get_embedding_function
 
-        get_embedding_function()(["query: warmup"])
-        logger.info("Embedding model warm-up complete")
+        get_embedding_function().embed_query(["warmup"])
+        logger.info("Embedding backend (%s) warm-up complete", settings.embedding_backend)
     except Exception:
-        logger.exception("Embedding model warm-up failed")
+        logger.exception("Embedding backend (%s) warm-up failed", settings.embedding_backend)
 
 
 @asynccontextmanager

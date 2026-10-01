@@ -145,12 +145,30 @@ class RetrievedChunk:
         return self.rerank_score - self.vector_similarity
 
 
+def _build_chroma_client() -> Any:
+    """Local (default) or Cloud, selected by ``ASKA_CHROMA_BACKEND``.
+
+    Cloud never creates/resets the target collection here -- the existing,
+    already-migrated ``aska_knowledge_base`` collection is only ever opened.
+    Never logs the API key: credentials are passed straight through to the
+    chromadb client, never interpolated into a log/print statement.
+    """
+    backend = (settings.chroma_backend or "local").strip().lower()
+    if backend == "cloud":
+        return chromadb.CloudClient(
+            api_key=settings.chroma_api_key,
+            tenant=settings.chroma_tenant,
+            database=settings.chroma_database,
+        )
+    return chromadb.PersistentClient(
+        path=settings.chroma_persist_dir,
+        settings=ChromaSettings(anonymized_telemetry=False),
+    )
+
+
 class KnowledgeBaseStore:
     def __init__(self) -> None:
-        self._client = chromadb.PersistentClient(
-            path=settings.chroma_persist_dir,
-            settings=ChromaSettings(anonymized_telemetry=False),
-        )
+        self._client = _build_chroma_client()
         self._collection = _get_or_create_collection_with_fallback(
             self._client,
             name=settings.chroma_collection_name,

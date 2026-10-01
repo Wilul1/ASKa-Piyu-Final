@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,10 +55,31 @@ class Settings(BaseSettings):
     admin_api_key: str | None = None
     chroma_persist_dir: str = "./data/chroma"
     chroma_collection_name: str = "aska_knowledge_base"
+    # "local" (default, unchanged behavior): chromadb.PersistentClient against
+    # chroma_persist_dir. "cloud": chromadb.CloudClient against the existing,
+    # already-migrated aska_knowledge_base collection on Chroma Cloud -- never
+    # created/reset/re-uploaded by this app, only opened.
+    chroma_backend: str = "local"
+    # Deliberately NOT ASKA_-prefixed: these reuse the exact variable names
+    # `chroma db connect --env-file` already writes to backend/.env, so no
+    # separate Heroku Config Var naming/aliasing is needed for Chroma Cloud.
+    chroma_api_key: str | None = Field(default=None, validation_alias="CHROMA_API_KEY")
+    chroma_tenant: str | None = Field(default=None, validation_alias="CHROMA_TENANT")
+    chroma_database: str | None = Field(default=None, validation_alias="CHROMA_DATABASE")
     kb_categories_path: str = "knowledge_base_categories.json"
     kb_rebuild_document_paths: str | None = None
     ticket_store_path: str = "./data/tickets.json"
-    database_url: str | None = None
+    # ASKA_DATABASE_URL takes precedence; Heroku's own DATABASE_URL (no ASKA_
+    # prefix) is used only as a fallback when ASKA_DATABASE_URL is unset, so
+    # the Heroku Postgres add-on's injected var works with zero extra config.
+    # Normalized centrally below (see _normalize_postgres_scheme) so both the
+    # SQLAlchemy engine (db/session.py) and Alembic (alembic/env.py) -- which
+    # both just read settings.database_url -- consume the same already-fixed
+    # URL without either needing its own scheme-handling logic.
+    database_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ASKA_DATABASE_URL", "DATABASE_URL"),
+    )
     test_database_url: str | None = None
     database_init_on_startup: bool = False
     # development | test | production — when env=test, active DB must end with _test
@@ -183,6 +205,25 @@ class Settings(BaseSettings):
     resend_from_email: str = "ASKa-Piyu <onboarding@resend.dev>"
     email_verification_code_ttl_minutes: int = 30
     email_verification_resend_cooldown_seconds: int = 60
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _normalize_postgres_scheme(cls, value: str | None) -> str | None:
+        """Rewrite a bare ``postgres://``/``postgresql://`` URL (what Heroku's
+        own DATABASE_URL and some external providers use) to the
+        ``postgresql+psycopg://`` scheme this project's SQLAlchemy engine and
+        Alembic both require. A no-op for URLs that already specify a driver
+        (``postgresql+psycopg://``, ``postgresql+asyncpg://``, etc.) or any
+        non-Postgres value (e.g. a sqlite test URL), so this never corrupts an
+        already-correct or intentionally different URL.
+        """
+        if not value:
+            return value
+        if value.startswith("postgres://"):
+            return "postgresql+psycopg://" + value[len("postgres://") :]
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg://" + value[len("postgresql://") :]
+        return value
 
 
 settings = Settings()

@@ -47,6 +47,7 @@ from app.services.admin.article_candidate_generator import (
     generate_candidates_from_preview,
 )
 from app.services.chroma_store import get_knowledge_base_store
+from app.services.ingestion_runtime import INGESTION_UNAVAILABLE_MESSAGE, ingestion_available
 from app.services.document_ingestion import (
     EmptyDocumentError,
     UnsupportedDocumentError,
@@ -456,6 +457,8 @@ async def admin_extract_document(
 
     Use before full ingest, or to verify scan quality.
     """
+    if not ingestion_available():
+        raise HTTPException(status_code=503, detail=INGESTION_UNAVAILABLE_MESSAGE)
     content = await _read_upload(file)
     try:
         # OCR/structuring is CPU-bound; keep the event loop free for /health.
@@ -540,6 +543,8 @@ async def admin_ingest_document(
 
     Run at deployment, policy updates, and maintenance — not from the student app.
     """
+    if not ingestion_available():
+        raise HTTPException(status_code=503, detail=INGESTION_UNAVAILABLE_MESSAGE)
     content = await _read_upload(file)
     try:
         result = await asyncio.to_thread(
@@ -623,6 +628,8 @@ async def admin_kb_statistics(_: None = Depends(require_admin_key)) -> Knowledge
     summary="[Admin] Reset and rebuild the ChromaDB knowledge base",
 )
 async def admin_rebuild_knowledge_base(_: None = Depends(require_admin_only_key)) -> dict:
+    if not ingestion_available():
+        raise HTTPException(status_code=503, detail=INGESTION_UNAVAILABLE_MESSAGE)
     started = time.perf_counter()
     collection = settings.chroma_collection_name
     logger.info("Knowledge base rebuild requested: collection=%s", collection)

@@ -1,0 +1,36 @@
+# Lightweight Heroku web-dyno image. Separate from the existing Dockerfile
+# (which remains the full local/Docker-Compose image, untouched) -- this one
+# installs requirements-web.txt instead of requirements.txt, so it never
+# includes torch/torchvision/sentence-transformers/easyocr. Admin document
+# ingestion/OCR/rebuild endpoints are intentionally unavailable when running
+# from this image (see app/services/ingestion_runtime.py's availability
+# guard) -- everything else (auth, KB browsing, chatbot/RAG, citations,
+# tickets) is unaffected, since embeddings come from the Hugging Face remote
+# backend (ASKA_EMBEDDING_BACKEND=huggingface) and the vector store is
+# Chroma Cloud (ASKA_CHROMA_BACKEND=cloud), not local/torch-backed.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ASKA_DATABASE_INIT_ON_STARTUP=false
+
+# No build-essential/libgl1/libglib2.0-0: unlike the full image, nothing here
+# needs to compile torch/easyocr's native extensions -- every package in
+# requirements-web.txt ships prebuilt wheels for this base image.
+
+COPY requirements-web.txt .
+RUN pip install --no-cache-dir -r requirements-web.txt
+
+COPY . .
+
+EXPOSE 8000
+
+# Heroku injects $PORT at runtime; ${PORT:-8000} keeps `docker run` (no PORT
+# set) working identically to the full local image's fixed :8000. Migrations
+# run here (not a separate Heroku release-phase step) to stay consistent
+# with the existing, already-proven Dockerfile pattern -- alembic upgrade
+# head is idempotent, so this is safe on every boot, not just the first.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

@@ -1,0 +1,40 @@
+# Lightweight requirements for the Heroku web dyno ONLY.
+#
+# This is a SEPARATE file from requirements.txt (which remains the full local
+# development / ingestion environment, unchanged). Do not add this app's
+# heavy local ML/OCR dependencies here:
+#
+#   - sentence-transformers / easyocr are intentionally excluded. torch /
+#     torchvision were never direct entries in requirements.txt -- they are
+#     pulled in transitively by those two packages (see requirements.txt's
+#     own comment) -- so excluding sentence-transformers/easyocr already
+#     keeps torch/torchvision out, with no separate exclusion needed.
+#
+# What this preserves: FastAPI, PostgreSQL (SQLAlchemy + Alembic + psycopg),
+# Chroma Cloud (HTTP client, no local vector index), auth, KB browsing,
+# chatbot/RAG + citations (via the existing Hugging Face remote embedding
+# backend, HTTP-only), tickets, the student-facing PDF citation viewer
+# (pymupdf), and outbound HTTP calls to Hugging Face / the configured LLM
+# provider (httpx, already used for both).
+#
+# chromadb is pinned to an EXACT version here (unlike requirements.txt's
+# unpinned >=0.5.0 floor) because this is the specific version this project
+# has concretely verified end-to-end against: it's what performed and
+# verified the actual 727-record Chroma Cloud migration this session,
+# confirmed installed locally (`chromadb.__version__ == "1.5.9"`). Pinning
+# avoids the Heroku image silently resolving a different, unverified version
+# at build time the way the unpinned local requirements.txt currently can.
+
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+pymupdf>=1.24.0
+Pillow>=10.2.0
+numpy>=1.26.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+psycopg[binary]>=3.1.0
+httpx>=0.27.0
+chromadb==1.5.9

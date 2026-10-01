@@ -1,0 +1,44 @@
+# Applies to any Docker build using backend/ as its context (the existing
+# local Dockerfile via docker-compose.yml's `build: context: ./backend`, and
+# the new Dockerfile.heroku-web). Keeps local-only data/credentials/caches
+# out of every image -- none of this was ever meant to be baked in; runtime
+# data belongs in Docker volumes (local) or Chroma Cloud / Heroku Postgres /
+# object storage (Heroku), never the image itself.
+
+# Secrets -- never bake a real .env into any image.
+.env
+.env.*
+!.env.example
+
+# Local runtime data: source documents (127MB corpus), ticket attachments,
+# KB media, local Chroma persistence, frozen backups, migration sandboxes,
+# the local tickets.json store. All of this is either a runtime-mounted
+# volume (local Compose) or lives in Chroma Cloud / Heroku Postgres / object
+# storage (Heroku) -- never baked into the image.
+data/
+
+# Disposable throwaway venvs created during local Chroma-version diagnostics
+# this session -- never meant to ship anywhere.
+.migration-venv*
+venv/
+.venv/
+
+# Python / test caches.
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp-*/
+.mypy_cache/
+.ruff_cache/
+
+# Not needed in a production runtime image.
+tests/
+benchmarks/
+run_server.bat
+
+# Editor/VCS cruft that should never be in a build context anyway.
+.git/
+.gitignore
+.vscode/
+.idea/

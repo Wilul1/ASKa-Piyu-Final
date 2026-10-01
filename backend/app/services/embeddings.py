@@ -218,7 +218,16 @@ class HFRemoteEmbeddingFunction:
         # vectors in the same (already L2-normalized) space as the local
         # model for this model — do not renormalize or otherwise alter
         # numerically compatible output here.
-        return _validate_and_extract_vectors(payload, expected_count=len(texts))
+        vectors = _validate_and_extract_vectors(payload, expected_count=len(texts))
+        # Chroma's Cloud/FastAPI query path calls .tolist() on each query
+        # embedding (chromadb/api/fastapi.py's convert_np_embeddings_to_list),
+        # which assumes ndarray elements; plain python lists raise
+        # AttributeError there. The local backend's PersistentClient path
+        # does not hit that function, which is why only the remote backend
+        # needs this conversion.
+        import numpy as np
+
+        return [np.asarray(vector, dtype=np.float32) for vector in vectors]
 
     @staticmethod
     def name() -> str:

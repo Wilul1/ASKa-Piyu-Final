@@ -3,6 +3,11 @@
 backend/.env
 backend/.env.production
 backend/.env.development.bak
+# Catch-all for any other local env file/backup under backend/ (e.g. ad hoc
+# backend/.env.bak_* snapshots) not covered by the explicit entries above.
+# backend/.env.example stays tracked -- gitignore patterns never untrack an
+# already-tracked file, only affect what's picked up as new/untracked.
+backend/.env*
 deploy/BOOTSTRAP_CREDENTIALS.txt
 deploy/SANTA_CRUZ_OFFICE_CREDENTIALS.txt
 deploy/BACKUP_PASSPHRASE.txt

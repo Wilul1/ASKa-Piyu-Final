@@ -3,7 +3,11 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aska_piyu/auth/auth_state.dart';
+import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/admin_kb_workspace.dart';
+import 'package:aska_piyu/screens/admin_panel_page.dart';
+import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/services/file_pick.dart';
 import 'package:aska_piyu/services/kb_workspace_session.dart';
 import 'package:aska_piyu/widgets/admin_action_buttons.dart';
@@ -401,10 +405,102 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('Admin Knowledge Base page (real composition)', () {
+    // Renders the actual route an admin reaches via the "Knowledge Base"
+    // sidebar item (AdminPanelPage, wrapped the same way main.dart wraps
+    // every page: AuthScope > KbWorkspaceScope > MaterialApp), not just
+    // AdminKbWorkspace/_DigitalIngestionCard in isolation. This is the
+    // regression test for "the card doesn't show up on the live page even
+    // though the strings are in the deployed bundle" -- it proves the
+    // widget composition itself is correct.
+    testWidgets(
+        'Digital PDF Processing (Zero-Cost) is visible on the real Admin Knowledge Base page',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final controller = AuthController(service: _TestAuthService(_testAdminUser()));
+      await controller.login(
+        const LoginRequest(email: 'admin@example.edu', password: 'password'),
+      );
+
+      final session = KbWorkspaceSession();
+      addTearDown(session.dispose);
+
+      await tester.pumpWidget(
+        AuthScope(
+          controller: controller,
+          child: KbWorkspaceScope(
+            session: session,
+            child: const MaterialApp(home: AdminPanelPage()),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Sanity check: the existing extract/ingest workflow is still there.
+      expect(find.text('Extract & Index'), findsOneWidget);
+      expect(find.text('Active Document'), findsOneWidget);
+
+      // The actual regression assertion.
+      expect(find.text('Digital PDF Processing (Zero-Cost)'), findsOneWidget);
+      expect(find.text('Choose PDF'), findsOneWidget);
+      expect(find.text('Upload & Process'), findsOneWidget);
+    });
+  });
 }
 
 /// Small fixed PDF-ish byte fixture so PickedAppFile can be constructed
 /// without a real file picker in these widget/unit tests.
 class Uint8ListFixture {
   static final Uint8List pdf = Uint8List.fromList(List<int>.generate(16, (i) => i));
+}
+
+AuthUser _testAdminUser() {
+  return const AuthUser(
+    id: 'admin-1',
+    email: 'admin@example.edu',
+    fullName: 'Campus Admin',
+    role: 'admin',
+    officeId: null,
+    officeName: null,
+    emailVerified: true,
+    createdAt: null,
+    updatedAt: null,
+  );
+}
+
+class _TestAuthService extends AuthService {
+  final AuthUser user;
+  String? _token;
+
+  _TestAuthService(this.user);
+
+  @override
+  Future<String?> readAccessToken() async => _token;
+
+  @override
+  Future<void> storeAccessToken(String token, {required bool persist}) async {
+    _token = token;
+  }
+
+  @override
+  Future<void> clearAccessToken() async {
+    _token = null;
+  }
+
+  @override
+  Future<AuthResponse> login(LoginRequest payload) async {
+    _token = 'token';
+    return AuthResponse(
+      accessToken: 'token',
+      tokenType: 'bearer',
+      user: user,
+    );
+  }
+
+  @override
+  Future<AuthUser> getCurrentUser(String token) async => user;
 }

@@ -538,6 +538,61 @@ class KnowledgeBaseStore:
             self._collection.delete(ids=ids)
         return len(ids)
 
+    def document_chunk_count(self, document_id: str) -> int:
+        """Count chunks currently indexed under an exact ``document_id``.
+
+        Used to verify a newly-added version's chunk count before deleting
+        the old version it replaces -- never guessed, always queried fresh.
+        """
+        doc_id = (document_id or "").strip()
+        if not doc_id or self._collection.count() == 0:
+            return 0
+        existing = self._collection.get(where={"document_id": doc_id})
+        return len(existing.get("ids") or [])
+
+    def document_id_for_source_filename(self, source_filename: str) -> str | None:
+        """Currently-published document_id for a filename, if any chunks exist.
+
+        Read-only lookup only -- never used as a deletion key itself.
+        Callers use the returned document_id with :meth:`delete_by_document_id`.
+        """
+        name = (source_filename or "").strip()
+        if not name or self._collection.count() == 0:
+            return None
+        existing = self._collection.get(where={"source_filename": name}, include=["metadatas"])
+        metadatas = existing.get("metadatas") or []
+        doc_ids = {m.get("document_id") for m in metadatas if m and m.get("document_id")}
+        if not doc_ids:
+            return None
+        if len(doc_ids) > 1:
+            logger.warning(
+                "Multiple distinct document_ids found for source_filename=%r: %s "
+                "-- caller will only replace the first one found.",
+                name,
+                doc_ids,
+            )
+        return next(iter(doc_ids))
+
+    def delete_by_document_id(self, document_id: str) -> int:
+        """Remove chunks for an EXACT ``document_id`` only.
+
+        Unlike :meth:`delete_by_source_filename` (which matches on the
+        ``source_filename`` metadata string -- identical for an old and a
+        replacement version of the same document), this matches the
+        Chroma-internal ``document_id`` field, which is unique per
+        ingestion/version. Safe to call after a replacement version has
+        already been added under a NEW document_id: it can never touch the
+        new version's chunks, only the old one's.
+        """
+        doc_id = (document_id or "").strip()
+        if not doc_id or self._collection.count() == 0:
+            return 0
+        existing = self._collection.get(where={"document_id": doc_id})
+        ids = list(dict.fromkeys(existing.get("ids") or []))
+        if ids:
+            self._collection.delete(ids=ids)
+        return len(ids)
+
     def search(
         self,
         query: str,

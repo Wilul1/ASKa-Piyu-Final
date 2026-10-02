@@ -116,11 +116,17 @@ def enrich_chunks_with_category_metadata(
     *,
     title: str | None = None,
     source_document: str | None = None,
+    allow_llm: bool = True,
 ) -> list[DocumentChunk]:
+    """``allow_llm=False`` skips classify_chunk's Groq fallback for every
+    chunk (see classify_chunk's own docstring) -- one LLM call per
+    low-confidence chunk makes ingesting a large document take minutes and
+    costs real API usage; the zero-cost digital-ingestion path opts out of
+    this explicitly and accepts rule/similarity-only classification."""
     enriched: list[DocumentChunk] = []
     for chunk in chunks:
         metadata = dict(chunk.metadata or {})
-        classification = classify_chunk(chunk.text, metadata=metadata, title=title)
+        classification = classify_chunk(chunk.text, metadata=metadata, title=title, allow_llm=allow_llm)
         page = _page_number(metadata)
         campus = _campus_value(metadata)
         keywords = _metadata_keywords(metadata, classification)

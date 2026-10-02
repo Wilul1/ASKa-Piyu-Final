@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -343,6 +343,54 @@ class SourceDocument(Base):
     page_width: Mapped[float | None] = mapped_column(Float, nullable=True)
     page_height: Mapped[float | None] = mapped_column(Float, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+
+class IngestionJob(Base):
+    """Zero-cost digital-PDF background ingestion job.
+
+    Lives entirely in the existing Heroku Postgres instance -- no Redis, no
+    separate worker/queue service. ``pdf_bytes`` replaces local-filesystem
+    persistence for this path (the web dyno's disk is ephemeral).
+
+    ``document_id`` is set only once the job reaches ``published`` -- it is
+    the Chroma ``document_id`` for the NEW version's chunks. ``needs_
+    reconciliation`` means the new version published successfully but
+    cleanup of the OLD version's chunks (by ``replaced_document_id``) failed
+    partway through and must be retried/inspected manually -- the old
+    version is intentionally left in place rather than guessed at.
+    """
+
+    __tablename__ = "ingestion_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','processing','published','failed','ocr_required','needs_reconciliation')",
+            name="ck_ingestion_jobs_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True, nullable=False)
+    status_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # NEW chroma document_id, set once chunks are successfully added (publish step).
+    document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # OLD chroma document_id this job is replacing, if any (version-aware replacement).
+    replaced_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    chunks_indexed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

@@ -13,11 +13,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 
 from app.config import settings
-from app.db.session import get_session_factory
-from app.models.db_models import User
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db_session, get_session_factory
+from app.models.db_models import IngestionJob, User
 from app.models.schemas import (
     ErrorResponse,
     AdminBulkArticlesRequest,
@@ -48,6 +51,11 @@ from app.services.admin.article_candidate_generator import (
 )
 from app.services.chroma_store import get_knowledge_base_store
 from app.services.ingestion_runtime import INGESTION_UNAVAILABLE_MESSAGE, ingestion_available
+from app.services.admin.digital_ingestion import (
+    compute_sha256,
+    process_ingestion_job,
+    validate_pdf_bytes,
+)
 from app.services.document_ingestion import (
     EmptyDocumentError,
     UnsupportedDocumentError,
@@ -584,6 +592,124 @@ async def admin_ingest_document(
         knowledge_units=result.knowledge_units or [],
         chunk_preview=result.chunk_preview or [],
         kb_statistics=result.kb_statistics,
+    )
+
+
+class IngestDigitalResponse(BaseModel):
+    job_id: str
+    status: str
+    duplicate_of_existing_job: bool = False
+
+
+class IngestionJobStatusResponse(BaseModel):
+    job_id: str
+    source_filename: str
+    status: str
+    status_detail: str | None = None
+    page_count: int | None = None
+    document_id: str | None = None
+    replaced_document_id: str | None = None
+    chunks_indexed: int | None = None
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
+
+
+@router.post(
+    "/ingest-digital",
+    response_model=IngestDigitalResponse,
+    responses={422: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="[Admin] Zero-cost digital-PDF ingestion (background job, Heroku web dyno safe)",
+)
+async def admin_ingest_digital(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="Digital/selectable-text PDF only -- no OCR on this path"),
+    _: None = Depends(require_admin_key),
+    session: Session = Depends(get_db_session),
+) -> IngestDigitalResponse:
+    """
+    Upload -> validate -> SHA-256 dedup -> return job_id immediately.
+
+    Extraction/cleaning/chunking/embedding/publishing all happen in a
+    background task on this SAME dyno (see app.services.admin.
+    digital_ingestion) so this request itself always returns in well under
+    Heroku's 30s router limit regardless of document size. Poll
+    GET /admin/knowledge-base/jobs/{job_id} for progress/result.
+
+    Does NOT attempt OCR under any circumstance -- a document without
+    enough digital text gets status="ocr_required" from the background job,
+    never a crash or a silent wrong answer.
+    """
+    content = await _read_upload(file)
+    try:
+        validate_pdf_bytes(content, content_type=file.content_type)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    sha256_hash = compute_sha256(content)
+
+    existing = session.query(IngestionJob).filter(IngestionJob.sha256_hash == sha256_hash).first()
+    if existing is not None:
+        return IngestDigitalResponse(job_id=existing.id, status=existing.status, duplicate_of_existing_job=True)
+
+    active = (
+        session.query(IngestionJob)
+        .filter(IngestionJob.status.in_(["queued", "processing"]))
+        .first()
+    )
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Another ingestion job (id={active.id}) is already in progress. "
+                "Only one ingestion job runs at a time on this dyno. Please wait "
+                "for it to finish and try again."
+            ),
+        )
+
+    job = IngestionJob(
+        source_filename=file.filename or "untitled.pdf",
+        sha256_hash=sha256_hash,
+        status="queued",
+        pdf_bytes=content,
+        content_type=file.content_type,
+        byte_size=len(content),
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    background_tasks.add_task(process_ingestion_job, job.id)
+
+    return IngestDigitalResponse(job_id=job.id, status=job.status)
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=IngestionJobStatusResponse,
+    responses={404: {"model": ErrorResponse}},
+    summary="[Admin] Poll a digital-ingestion job's status",
+)
+async def admin_get_ingestion_job(
+    job_id: str,
+    _: None = Depends(require_admin_key),
+    session: Session = Depends(get_db_session),
+) -> IngestionJobStatusResponse:
+    job = session.get(IngestionJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Ingestion job not found.")
+    return IngestionJobStatusResponse(
+        job_id=job.id,
+        source_filename=job.source_filename,
+        status=job.status,
+        status_detail=job.status_detail,
+        page_count=job.page_count,
+        document_id=job.document_id,
+        replaced_document_id=job.replaced_document_id,
+        chunks_indexed=job.chunks_indexed,
+        error_message=job.error_message,
+        created_at=job.created_at.isoformat(),
+        updated_at=job.updated_at.isoformat(),
     )
 
 

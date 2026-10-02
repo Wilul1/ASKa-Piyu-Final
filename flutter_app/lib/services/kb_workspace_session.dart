@@ -18,6 +18,22 @@ String sanitizePipelineStageLabel(String label) {
   return label;
 }
 
+/// Never surface stack traces or multi-line technical dumps in the admin UI.
+/// Exposed at top level (rather than private) so the digital-ingestion
+/// error-display contract can be unit tested directly.
+String sanitizeDigitalIngestionError(String raw) {
+  var text = raw.trim();
+  if (text.isEmpty) {
+    return 'An unexpected error occurred. Please try again.';
+  }
+  final firstLine = text.split('\n').first.trim();
+  text = firstLine.isNotEmpty ? firstLine : text;
+  if (text.length > 240) {
+    text = '${text.substring(0, 240)}…';
+  }
+  return text;
+}
+
 /// Survives Knowledge Base page disposal so extract/ingest keep running when
 /// the admin navigates away and comes back.
 class KbWorkspaceSession extends ChangeNotifier {
@@ -44,6 +60,49 @@ class KbWorkspaceSession extends ChangeNotifier {
   int _progressStep = 0;
   int _operationToken = 0;
 
+  // --- Digital (selectable-text) PDF ingestion workflow state ---
+  // Kept fully separate from the extract/ingest fields above so this new
+  // workflow (POST /admin/knowledge-base/ingest-digital + job polling) never
+  // interferes with the existing extract/publish pipeline.
+  PickedAppFile? digitalSelectedFile;
+  String? digitalSelectedFileName;
+  String digitalJobStatus = 'ready';
+  String? digitalJobId;
+  String? digitalStatusDetail;
+  int? digitalPageCount;
+  int? digitalChunksIndexed;
+  String? digitalDocumentId;
+  String? digitalReplacedDocumentId;
+  String? digitalErrorMessage;
+  bool digitalDuplicateOfExistingJob = false;
+
+  Timer? _digitalPollTimer;
+  int _digitalPollToken = 0;
+  int _digitalPollAttempts = 0;
+  int _digitalPollFailureStreak = 0;
+
+  static const Duration _digitalPollInterval = Duration(seconds: 3);
+  static const int _digitalMaxPollAttempts = 200; // ~10 minutes at 3s/attempt
+  static const int _digitalMaxConsecutiveFailures = 5;
+
+  static const Set<String> digitalTerminalStatuses = {
+    'published',
+    'failed',
+    'ocr_required',
+    'needs_reconciliation',
+  };
+  static const Set<String> _digitalActiveStatuses = {
+    'uploading',
+    'queued',
+    'processing',
+  };
+
+  bool get digitalIsBusy => _digitalActiveStatuses.contains(digitalJobStatus);
+  bool get digitalIsTerminal =>
+      digitalTerminalStatuses.contains(digitalJobStatus);
+  bool get digitalIsPolling =>
+      _digitalPollTimer != null && _digitalPollTimer!.isActive;
+
   void clear() {
     _progressTimer?.cancel();
     _progressTimer = null;
@@ -67,7 +126,276 @@ class KbWorkspaceSession extends ChangeNotifier {
     isExtracting = false;
     isIndexing = false;
     _progressStep = 0;
+    resetDigitalJob();
     notifyListeners();
+  }
+
+  void setDigitalSelectedFile(PickedAppFile file) {
+    _digitalPollTimer?.cancel();
+    _digitalPollTimer = null;
+    _digitalPollToken++;
+    digitalSelectedFile = file;
+    digitalSelectedFileName = file.name;
+    digitalJobStatus = 'ready';
+    digitalJobId = null;
+    digitalStatusDetail = null;
+    digitalPageCount = null;
+    digitalChunksIndexed = null;
+    digitalDocumentId = null;
+    digitalReplacedDocumentId = null;
+    digitalErrorMessage = null;
+    digitalDuplicateOfExistingJob = false;
+    _digitalPollAttempts = 0;
+    _digitalPollFailureStreak = 0;
+    notifyListeners();
+  }
+
+  /// Clears the digital-ingestion job state only. Never touches Chroma or
+  /// the backend job record -- this just resets what this tab displays so
+  /// the admin can pick another file after a terminal state.
+  void resetDigitalJob() {
+    _digitalPollTimer?.cancel();
+    _digitalPollTimer = null;
+    _digitalPollToken++;
+    digitalSelectedFile = null;
+    digitalSelectedFileName = null;
+    digitalJobStatus = 'ready';
+    digitalJobId = null;
+    digitalStatusDetail = null;
+    digitalPageCount = null;
+    digitalChunksIndexed = null;
+    digitalDocumentId = null;
+    digitalReplacedDocumentId = null;
+    digitalErrorMessage = null;
+    digitalDuplicateOfExistingJob = false;
+    _digitalPollAttempts = 0;
+    _digitalPollFailureStreak = 0;
+    notifyListeners();
+  }
+
+  Future<void> uploadDigital({
+    required void Function(Map<String, String> headers) setAdminHeader,
+    required String Function(String message) authError,
+    required String Function(int? status, dynamic detail) requestError,
+  }) async {
+    final file = digitalSelectedFile;
+    if (file == null) {
+      digitalErrorMessage = 'Choose a digital PDF first.';
+      notifyListeners();
+      return;
+    }
+    if (digitalIsBusy) {
+      // Duplicate-submission guard: a job is already active for this tab.
+      return;
+    }
+
+    final token = ++_digitalPollToken;
+    digitalJobStatus = 'uploading';
+    digitalStatusDetail = null;
+    digitalErrorMessage = null;
+    digitalDuplicateOfExistingJob = false;
+    _digitalPollAttempts = 0;
+    _digitalPollFailureStreak = 0;
+    notifyListeners();
+
+    try {
+      final headers = <String, String>{};
+      setAdminHeader(headers);
+      final result = await ApiClient.multipart(
+        method: 'POST',
+        url:
+            '${AppConfig.resolvedApiBase}/admin/knowledge-base/ingest-digital',
+        headers: headers,
+        files: [
+          http.MultipartFile.fromBytes('file', file.bytes, filename: file.name),
+        ],
+        timeout: const Duration(minutes: 2),
+      );
+      if (token != _digitalPollToken) return;
+
+      final decoded = result.json;
+      final data = decoded is Map<String, dynamic>
+          ? decoded
+          : <String, dynamic>{'response': decoded};
+
+      if (result.statusCode == 200) {
+        digitalJobId = data['job_id']?.toString();
+        digitalJobStatus = (data['status'] ?? 'queued').toString();
+        digitalDuplicateOfExistingJob =
+            data['duplicate_of_existing_job'] == true;
+        if (digitalJobId != null) {
+          _startPollingDigitalJob(
+            token,
+            setAdminHeader: setAdminHeader,
+            authError: authError,
+            requestError: requestError,
+          );
+        }
+      } else if (result.statusCode == 409) {
+        digitalJobStatus = 'ready';
+        digitalErrorMessage =
+            'Another ingestion job is already in progress. Wait for it to finish, then try again.';
+      } else {
+        digitalJobStatus = 'failed';
+        digitalErrorMessage = sanitizeDigitalIngestionError(
+            requestError(result.statusCode, data['detail']));
+      }
+    } on StateError catch (error) {
+      if (token != _digitalPollToken) return;
+      digitalJobStatus = 'ready';
+      digitalErrorMessage = authError(error.message);
+    } on TimeoutException {
+      if (token != _digitalPollToken) return;
+      digitalJobStatus = 'failed';
+      digitalErrorMessage =
+          'Upload timed out. Check your connection and try again.';
+    } catch (error) {
+      if (token != _digitalPollToken) return;
+      digitalJobStatus = 'failed';
+      digitalErrorMessage = 'Could not reach the backend.';
+    } finally {
+      if (token == _digitalPollToken) notifyListeners();
+    }
+  }
+
+  void _startPollingDigitalJob(
+    int token, {
+    required void Function(Map<String, String> headers) setAdminHeader,
+    required String Function(String message) authError,
+    required String Function(int? status, dynamic detail) requestError,
+  }) {
+    _digitalPollTimer?.cancel();
+    _digitalPollTimer = Timer.periodic(_digitalPollInterval, (_) {
+      _pollDigitalJobOnce(
+        token,
+        setAdminHeader: setAdminHeader,
+        authError: authError,
+        requestError: requestError,
+      );
+    });
+  }
+
+  Future<void> _pollDigitalJobOnce(
+    int token, {
+    required void Function(Map<String, String> headers) setAdminHeader,
+    required String Function(String message) authError,
+    required String Function(int? status, dynamic detail) requestError,
+  }) async {
+    if (token != _digitalPollToken) {
+      _digitalPollTimer?.cancel();
+      return;
+    }
+    final jobId = digitalJobId;
+    if (jobId == null) {
+      _digitalPollTimer?.cancel();
+      return;
+    }
+    _digitalPollAttempts++;
+    if (_digitalPollAttempts > _digitalMaxPollAttempts) {
+      _digitalPollTimer?.cancel();
+      digitalStatusDetail =
+          'Still processing on the server. Automatic checking stopped after 10 minutes -- use "Check status now" below.';
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final headers = <String, String>{};
+      setAdminHeader(headers);
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/admin/knowledge-base/jobs/$jobId',
+        headers: headers,
+        timeout: const Duration(seconds: 20),
+      );
+      if (token != _digitalPollToken) return;
+
+      if (result.statusCode == 200) {
+        _digitalPollFailureStreak = 0;
+        final decoded = result.json;
+        final data =
+            decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+        applyDigitalJobStatus(data);
+        if (digitalIsTerminal) {
+          _digitalPollTimer?.cancel();
+        }
+      } else if (result.statusCode == 404) {
+        _digitalPollTimer?.cancel();
+        digitalJobStatus = 'failed';
+        digitalErrorMessage =
+            'The ingestion job could not be found. It may have been cleared from the server.';
+      } else if (result.statusCode == 401) {
+        _digitalPollTimer?.cancel();
+        digitalErrorMessage = authError('missing_admin_token');
+      } else {
+        _digitalPollFailureStreak++;
+        if (_digitalPollFailureStreak >= _digitalMaxConsecutiveFailures) {
+          _digitalPollTimer?.cancel();
+          digitalStatusDetail =
+              'Lost contact with the server while checking status. Use "Check status now" below.';
+        }
+      }
+    } on StateError catch (error) {
+      _digitalPollTimer?.cancel();
+      digitalJobStatus = 'ready';
+      digitalErrorMessage = authError(error.message);
+    } catch (_) {
+      _digitalPollFailureStreak++;
+      if (_digitalPollFailureStreak >= _digitalMaxConsecutiveFailures) {
+        _digitalPollTimer?.cancel();
+        digitalStatusDetail =
+            'Lost contact with the server while checking status. Use "Check status now" below.';
+      }
+    } finally {
+      if (token == _digitalPollToken) notifyListeners();
+    }
+  }
+
+  /// Parses a GET /admin/knowledge-base/jobs/{id} response (the
+  /// IngestionJobStatusResponse schema) onto this session's fields. Public
+  /// (rather than private) so the parsing contract can be unit tested
+  /// directly against sample backend payloads.
+  void applyDigitalJobStatus(Map<String, dynamic> data) {
+    digitalJobStatus = (data['status'] ?? digitalJobStatus).toString();
+    digitalStatusDetail = data['status_detail']?.toString();
+    digitalPageCount = _asInt(data['page_count']);
+    digitalChunksIndexed = _asInt(data['chunks_indexed']);
+    digitalDocumentId = data['document_id']?.toString();
+    digitalReplacedDocumentId = data['replaced_document_id']?.toString();
+    final rawError = data['error_message']?.toString();
+    digitalErrorMessage = (rawError == null || rawError.trim().isEmpty)
+        ? null
+        : sanitizeDigitalIngestionError(rawError);
+  }
+
+  /// One-off manual status check, for recovery after polling stopped due to
+  /// a network interruption or the 10-minute automatic-polling ceiling.
+  Future<void> checkDigitalJobNow({
+    required void Function(Map<String, String> headers) setAdminHeader,
+    required String Function(String message) authError,
+    required String Function(int? status, dynamic detail) requestError,
+  }) async {
+    if (digitalJobId == null) return;
+    final token = _digitalPollToken;
+    await _pollDigitalJobOnce(
+      token,
+      setAdminHeader: setAdminHeader,
+      authError: authError,
+      requestError: requestError,
+    );
+    if (token == _digitalPollToken &&
+        digitalJobId != null &&
+        !digitalIsTerminal &&
+        !digitalIsPolling) {
+      _digitalPollFailureStreak = 0;
+      _digitalPollAttempts = 0;
+      _startPollingDigitalJob(
+        token,
+        setAdminHeader: setAdminHeader,
+        authError: authError,
+        requestError: requestError,
+      );
+    }
   }
 
   void setStatusMessage(String value) {
@@ -489,6 +817,7 @@ class KbWorkspaceSession extends ChangeNotifier {
   @override
   void dispose() {
     _progressTimer?.cancel();
+    _digitalPollTimer?.cancel();
     super.dispose();
   }
 }

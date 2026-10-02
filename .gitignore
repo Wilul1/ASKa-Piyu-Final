@@ -11,6 +11,7 @@ backend/.env*
 deploy/BOOTSTRAP_CREDENTIALS.txt
 deploy/SANTA_CRUZ_OFFICE_CREDENTIALS.txt
 deploy/BACKUP_PASSPHRASE.txt
+deploy/OFFICE_ACCOUNTS_CREDENTIALS_*.txt
 aska_piyu_demo.sql
 *.sql.bak
 

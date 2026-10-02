@@ -233,6 +233,46 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     session.setSelectedFile(picked);
   }
 
+  Future<void> _pickDigitalFile() async {
+    final session = KbWorkspaceScope.of(context);
+    if (session.digitalIsBusy) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Wait for the current digital ingestion job to finish before choosing another file.',
+          ),
+        ),
+      );
+      return;
+    }
+    final picked = await pickAppFile(
+      allowedExtensions: const ['pdf'],
+      dialogTitle: 'Select a digital PDF',
+    );
+    if (picked == null) {
+      return;
+    }
+    session.setDigitalSelectedFile(picked);
+  }
+
+  Future<void> _uploadDigital() async {
+    final session = KbWorkspaceScope.of(context);
+    await session.uploadDigital(
+      setAdminHeader: _setAdminHeader,
+      authError: _adminAuthError,
+      requestError: _adminRequestError,
+    );
+  }
+
+  Future<void> _checkDigitalJobNow() async {
+    final session = KbWorkspaceScope.of(context);
+    await session.checkDigitalJobNow(
+      setAdminHeader: _setAdminHeader,
+      authError: _adminAuthError,
+      requestError: _adminRequestError,
+    );
+  }
+
   Future<void> _extractPreview() async {
     final session = KbWorkspaceScope.of(context);
     await session.runExtract(
@@ -470,6 +510,21 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         onSelectOutline: (index) {
           session.setSelectedOutlineIndex(index);
         },
+        digitalFileName: session.digitalSelectedFileName,
+        digitalFileSizeBytes: session.digitalSelectedFile?.bytes.length,
+        digitalJobStatus: session.digitalJobStatus,
+        digitalStatusDetail: session.digitalStatusDetail,
+        digitalPageCount: session.digitalPageCount,
+        digitalChunksIndexed: session.digitalChunksIndexed,
+        digitalErrorMessage: session.digitalErrorMessage,
+        digitalDuplicateOfExistingJob: session.digitalDuplicateOfExistingJob,
+        digitalIsBusy: session.digitalIsBusy,
+        digitalIsPolling: session.digitalIsPolling,
+        digitalHasJob: session.digitalJobId != null,
+        onPickDigitalFile: _pickDigitalFile,
+        onUploadDigital: _uploadDigital,
+        onResetDigitalJob: session.resetDigitalJob,
+        onCheckDigitalJobNow: _checkDigitalJobNow,
       ),
     ];
   }

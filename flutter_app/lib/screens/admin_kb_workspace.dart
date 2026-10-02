@@ -63,6 +63,21 @@ class AdminKbWorkspace extends StatelessWidget {
     required this.onExtract,
     required this.onIngest,
     required this.onSelectOutline,
+    required this.digitalFileName,
+    required this.digitalFileSizeBytes,
+    required this.digitalJobStatus,
+    required this.digitalStatusDetail,
+    required this.digitalPageCount,
+    required this.digitalChunksIndexed,
+    required this.digitalErrorMessage,
+    required this.digitalDuplicateOfExistingJob,
+    required this.digitalIsBusy,
+    required this.digitalIsPolling,
+    required this.digitalHasJob,
+    required this.onPickDigitalFile,
+    required this.onUploadDigital,
+    required this.onResetDigitalJob,
+    required this.onCheckDigitalJobNow,
   });
 
   final String? fileName;
@@ -85,6 +100,23 @@ class AdminKbWorkspace extends StatelessWidget {
   final VoidCallback onExtract;
   final VoidCallback onIngest;
   final ValueChanged<int> onSelectOutline;
+
+  // --- Digital (selectable-text) PDF ingestion workflow ---
+  final String? digitalFileName;
+  final int? digitalFileSizeBytes;
+  final String digitalJobStatus;
+  final String? digitalStatusDetail;
+  final int? digitalPageCount;
+  final int? digitalChunksIndexed;
+  final String? digitalErrorMessage;
+  final bool digitalDuplicateOfExistingJob;
+  final bool digitalIsBusy;
+  final bool digitalIsPolling;
+  final bool digitalHasJob;
+  final VoidCallback onPickDigitalFile;
+  final VoidCallback onUploadDigital;
+  final VoidCallback onResetDigitalJob;
+  final VoidCallback onCheckDigitalJobNow;
 
   bool get _hasExtractionResult {
     final extractionText = buildFullExtractionText(
@@ -152,7 +184,409 @@ class AdminKbWorkspace extends StatelessWidget {
           collapsible: _hasExtractionResult,
           initiallyExpanded: !_hasExtractionResult,
         ),
+        const SizedBox(height: 20),
+        _DigitalIngestionCard(
+          fileName: digitalFileName,
+          fileSizeBytes: digitalFileSizeBytes,
+          jobStatus: digitalJobStatus,
+          statusDetail: digitalStatusDetail,
+          pageCount: digitalPageCount,
+          chunksIndexed: digitalChunksIndexed,
+          errorMessage: digitalErrorMessage,
+          duplicateOfExistingJob: digitalDuplicateOfExistingJob,
+          isBusy: digitalIsBusy,
+          isPolling: digitalIsPolling,
+          hasJob: digitalHasJob,
+          onPickFile: onPickDigitalFile,
+          onUpload: onUploadDigital,
+          onReset: onResetDigitalJob,
+          onCheckNow: onCheckDigitalJobNow,
+        ),
       ],
+    );
+  }
+}
+
+/// Digital (selectable-text) PDF ingestion workflow.
+///
+/// This is a separate pipeline from the extract/structure/ingest workflow
+/// above: it calls POST /admin/knowledge-base/ingest-digital then polls
+/// GET /admin/knowledge-base/jobs/{id} until a terminal status is reached.
+/// It never touches OCR, Azure, or the embedding/model configuration -- see
+/// backend/app/services/admin/digital_ingestion.py.
+class _DigitalIngestionCard extends StatelessWidget {
+  const _DigitalIngestionCard({
+    required this.fileName,
+    required this.fileSizeBytes,
+    required this.jobStatus,
+    required this.statusDetail,
+    required this.pageCount,
+    required this.chunksIndexed,
+    required this.errorMessage,
+    required this.duplicateOfExistingJob,
+    required this.isBusy,
+    required this.isPolling,
+    required this.hasJob,
+    required this.onPickFile,
+    required this.onUpload,
+    required this.onReset,
+    required this.onCheckNow,
+  });
+
+  final String? fileName;
+  final int? fileSizeBytes;
+  final String jobStatus;
+  final String? statusDetail;
+  final int? pageCount;
+  final int? chunksIndexed;
+  final String? errorMessage;
+  final bool duplicateOfExistingJob;
+  final bool isBusy;
+  final bool isPolling;
+  final bool hasJob;
+  final VoidCallback onPickFile;
+  final VoidCallback onUpload;
+  final VoidCallback onReset;
+  final VoidCallback onCheckNow;
+
+  static const Set<String> _terminalStatuses = {
+    'published',
+    'failed',
+    'ocr_required',
+    'needs_reconciliation',
+  };
+
+  bool get _isTerminal => _terminalStatuses.contains(jobStatus);
+
+  Color get _tone {
+    switch (jobStatus) {
+      case 'published':
+        return const Color(0xFF2C9C5B);
+      case 'failed':
+        return const Color(0xFFB42318);
+      case 'ocr_required':
+        return const Color(0xFF2563EB);
+      case 'needs_reconciliation':
+        return const Color(0xFFB45309);
+      case 'uploading':
+      case 'queued':
+      case 'processing':
+        return const Color(0xFFD97706);
+      default:
+        return DesignTokens.muted;
+    }
+  }
+
+  String get _statusLabel {
+    switch (jobStatus) {
+      case 'ready':
+        return 'Ready';
+      case 'uploading':
+        return 'Uploading';
+      case 'queued':
+        return 'Queued';
+      case 'processing':
+        return 'Processing';
+      case 'published':
+        return 'Published';
+      case 'failed':
+        return 'Failed';
+      case 'ocr_required':
+        return 'OCR Required';
+      case 'needs_reconciliation':
+        return 'Needs Reconciliation';
+      default:
+        return jobStatus;
+    }
+  }
+
+  Widget _statusChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _tone.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _tone.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isBusy) ...[
+            SizedBox(
+              width: 11,
+              height: 11,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(_tone),
+              ),
+            ),
+            const SizedBox(width: 7),
+          ],
+          Text(
+            _statusLabel,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: _tone,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _banner({required String title, required String body, Widget? extra}) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: _tone.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _tone.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: _tone,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            body,
+            style: const TextStyle(
+              fontSize: 12.5,
+              height: 1.45,
+              color: DesignTokens.ink,
+            ),
+          ),
+          if (extra != null) ...[
+            const SizedBox(height: 10),
+            extra,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget? _terminalBanner() {
+    switch (jobStatus) {
+      case 'published':
+        final chunks = chunksIndexed ?? 0;
+        return _banner(
+          title: 'Published',
+          body:
+              '${fileName ?? 'This document'} was processed and published. $chunks chunk${chunks == 1 ? '' : 's'} indexed for Ask ASKa-Piyu retrieval.',
+          extra: AdminSecondaryButton(
+            label: 'Process Another PDF',
+            minWidth: 180,
+            onPressed: onReset,
+          ),
+        );
+      case 'ocr_required':
+        return _banner(
+          title: 'OCR Required',
+          body:
+              'This PDF does not contain enough selectable digital text and requires OCR processing. This zero-cost workflow only accepts digital PDFs with selectable text, so it will not retry this file through OCR.',
+          extra: AdminSecondaryButton(
+            label: 'Choose a Different File',
+            minWidth: 190,
+            onPressed: onReset,
+          ),
+        );
+      case 'failed':
+        return _banner(
+          title: 'Failed',
+          body: errorMessage ?? 'The ingestion job failed. Please try again.',
+          extra: AdminSecondaryButton(
+            label: 'Try Again',
+            minWidth: 140,
+            onPressed: onReset,
+          ),
+        );
+      case 'needs_reconciliation':
+        return _banner(
+          title: 'Needs Reconciliation — Administrator Attention Required',
+          body: errorMessage ??
+              'The new version was published, but cleanup of the previous version may be incomplete. This will not be retried or deleted automatically -- an administrator should review the knowledge base before continuing.',
+          extra: AdminSecondaryButton(
+            label: 'Dismiss',
+            minWidth: 120,
+            onPressed: onReset,
+          ),
+        );
+      default:
+        return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = fileName?.trim().isNotEmpty == true
+        ? fileName!
+        : 'Choose a digital PDF (selectable text, no OCR)';
+    final metaParts = <String>[
+      if (fileSizeBytes != null) _formatBytes(fileSizeBytes!),
+      if (pageCount != null) '$pageCount pages',
+    ];
+    final terminalBanner = _terminalBanner();
+    // isBusy mirrors active job statuses (queued/processing/etc.), so a job
+    // that is legitimately still running is also "busy" -- gate the manual
+    // recovery action on polling having actually stopped, not on isBusy.
+    final showStuckPollingRecovery = hasJob && !_isTerminal && !isPolling;
+
+    return _SoftCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Digital PDF Processing (Zero-Cost)',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.maroon,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Upload a digital/selectable-text PDF to publish it directly to Ask ASKa-Piyu. Scanned pages without a text layer are not processed here -- use "OCR Required" documents through the standard extract workflow instead.',
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.45,
+              color: DesignTokens.muted,
+            ),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stacked = constraints.maxWidth < 620;
+              final meta = Expanded(
+                child: InkWell(
+                  onTap: isBusy ? null : onPickFile,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: DesignTokens.ink,
+                        ),
+                      ),
+                      if (metaParts.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          metaParts.join(' · '),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: DesignTokens.muted,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      _statusChip(),
+                    ],
+                  ),
+                ),
+              );
+              final actions = Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  AdminSecondaryButton(
+                    label: 'Choose PDF',
+                    minWidth: 140,
+                    onPressed: isBusy ? null : onPickFile,
+                  ),
+                  AdminPrimaryButton(
+                    label: 'Upload & Process',
+                    minWidth: 170,
+                    onPressed:
+                        (isBusy || fileName == null || fileName!.trim().isEmpty)
+                            ? null
+                            : onUpload,
+                  ),
+                ],
+              );
+              if (stacked) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(children: [meta]),
+                    const SizedBox(height: 14),
+                    actions,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  meta,
+                  const SizedBox(width: 16),
+                  actions,
+                ],
+              );
+            },
+          ),
+          if (duplicateOfExistingJob) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'This file was already submitted before -- showing the existing job\'s status.',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontStyle: FontStyle.italic,
+                color: DesignTokens.muted,
+              ),
+            ),
+          ],
+          if (!_isTerminal &&
+              statusDetail != null &&
+              statusDetail!.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              statusDetail!,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: DesignTokens.muted,
+                height: 1.4,
+              ),
+            ),
+          ],
+          if (!_isTerminal &&
+              errorMessage != null &&
+              errorMessage!.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              errorMessage!,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFFB42318),
+                height: 1.4,
+              ),
+            ),
+          ],
+          if (showStuckPollingRecovery) ...[
+            const SizedBox(height: 10),
+            AdminSecondaryButton(
+              label: 'Check Status Now',
+              minWidth: 160,
+              onPressed: onCheckNow,
+            ),
+          ],
+          if (terminalBanner != null) terminalBanner,
+        ],
+      ),
     );
   }
 }

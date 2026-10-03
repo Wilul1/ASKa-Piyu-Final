@@ -35,7 +35,7 @@ import hashlib
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 import fitz  # PyMuPDF
 
@@ -57,9 +57,31 @@ MIN_DIGITAL_CHARS_PER_PAGE = 20
 
 MAX_PDF_BYTES = 25 * 1024 * 1024  # 25 MB -- generous for a policy/handbook PDF, bounds memory use
 
+# Chroma Cloud enforces a per-request "Number of records" quota on the Add
+# action (separate from total collection size -- see the 2026-10-03 incident:
+# a single 371-record add() was rejected with "current usage of 371 exceeds
+# limit of 300" while the collection already held 728 records overall). 250
+# leaves headroom under that 300 ceiling for any per-tenant variance.
+CHROMA_ADD_MAX_BATCH_SIZE = 250
+
 
 class DigitalIngestionError(RuntimeError):
-    """Raised for conditions that should stop the job with status='failed'."""
+    """Raised for conditions that should stop the job with status='failed'.
+
+    Always means: the new version never became visible in Chroma, and the
+    old version (if any) was never touched. Safe for the admin to retry.
+    """
+
+
+class DigitalIngestionReconciliationError(RuntimeError):
+    """Raised when automatic cleanup could not fully restore a known-good
+    state and a human must inspect/reconcile Chroma manually.
+
+    Maps to status='needs_reconciliation', never 'failed' (which would
+    wrongly imply it's simply safe to retry) and never silently
+    'published'. The message always carries whatever document_id a human
+    needs to find the leftover chunks.
+    """
 
 
 def compute_sha256(file_bytes: bytes) -> str:
@@ -161,6 +183,38 @@ def build_chunks_with_pages(
     )
 
 
+def _rollback_orphaned_new_version(
+    store: KnowledgeBaseStore, new_document_id: str, *, add_error: Exception
+) -> None:
+    """Best-effort cleanup of whatever batches of the new version already
+    landed in Chroma before a later batch or verification step failed.
+
+    Deletes strictly by ``new_document_id`` (never by filename -- see
+    module docstring), then re-queries to CONFIRM zero chunks remain
+    rather than trusting the delete call's return value alone. Raises
+    DigitalIngestionReconciliationError (never silently swallows) if the
+    rollback cannot be verified complete, so the caller marks the job
+    needs_reconciliation -- never 'failed', which would wrongly imply it's
+    simply safe to retry while an orphan may still sit in Chroma.
+    """
+    try:
+        store.delete_by_document_id(new_document_id)
+        remaining = store.document_chunk_count(new_document_id)
+    except Exception as cleanup_exc:
+        raise DigitalIngestionReconciliationError(
+            f"Adding the new version failed ({add_error}) and automatic rollback of its "
+            f"partially-added chunks also failed ({cleanup_exc}). Partially-added chunks "
+            f"may remain in Chroma under document_id={new_document_id}; manual cleanup is "
+            "required before retrying this document."
+        ) from cleanup_exc
+    if remaining != 0:
+        raise DigitalIngestionReconciliationError(
+            f"Adding the new version failed ({add_error}) and {remaining} chunk(s) remain "
+            f"in Chroma under document_id={new_document_id} after attempted rollback. "
+            "Manual cleanup is required before retrying this document."
+        )
+
+
 def publish_new_version(
     store: KnowledgeBaseStore,
     *,
@@ -168,69 +222,86 @@ def publish_new_version(
     title: str,
     source_filename: str,
     replaced_document_id: str | None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> tuple[str, int]:
-    """Add the new version, verify it, then (only then) delete the old version.
+    """Add the new version in batches, verify it, then (only then) delete
+    the old version.
 
-    Returns (new_document_id, chunks_indexed). Raises DigitalIngestionError
-    if the new version cannot be added/verified -- in that case nothing is
-    deleted and the old version (if any) is left exactly as it was.
+    Returns (new_document_id, chunks_indexed).
 
-    If deleting the old version fails AFTER the new version is confirmed,
-    this re-raises a distinguishable error so the caller can mark the job
-    needs_reconciliation instead of silently dropping the inconsistency.
+    The add is split into sequential Chroma ``add()`` calls of at most
+    CHROMA_ADD_MAX_BATCH_SIZE records each (Chroma Cloud enforces a
+    per-request "Number of records" quota on the Add action, independent
+    of total collection size). Unlike a single atomic add, a later batch
+    can fail after earlier batches already succeeded -- so failure here
+    always attempts a rollback (delete-by-new-document_id, verified down
+    to zero) before raising:
+
+    - DigitalIngestionError: the new version never became visible and the
+      rollback was verified complete. Old version untouched. Safe to retry.
+    - DigitalIngestionReconciliationError: the new version failed AND its
+      rollback could not be verified complete (an orphan may remain under
+      new_document_id), OR the new version published successfully but
+      deleting the old version failed/left chunks behind. Old version is
+      never touched by this function in either case -- only ever read,
+      never deleted, until the new version is fully confirmed below.
     """
     new_document_id = str(uuid.uuid4())
+    expected = len(chunks)
 
     # Everything up to and including verification is "new version not yet
-    # safe" -- ANY failure here (embedding errors, Chroma write errors,
-    # count mismatches) must surface as DigitalIngestionError so the caller
-    # treats it as a plain, safe failure, never as needs_reconciliation.
-    # needs_reconciliation is reserved exclusively for failures in the
-    # DELETE-OLD step below, which only runs after this block has already
-    # succeeded.
+    # safe". A failure here means either a clean DigitalIngestionError
+    # (rollback verified complete) or a DigitalIngestionReconciliationError
+    # (rollback itself could not be verified) -- never silently nothing.
     try:
-        indexed = store.add_document_chunks(
+        store.add_document_chunks(
             document_id=new_document_id,
             title=title,
             source_filename=source_filename,
             document_type="information",
             chunks=chunks,
+            max_batch_size=CHROMA_ADD_MAX_BATCH_SIZE,
+            on_batch_complete=progress_callback,
         )
         actual_count = store.document_chunk_count(new_document_id)
     except Exception as exc:
-        try:
-            store.delete_by_document_id(new_document_id)
-        except Exception:
-            logger.exception(
-                "Best-effort cleanup of a partially-added new version (document_id=%s) "
-                "also failed; it may be left orphaned in Chroma for manual review.",
-                new_document_id,
-            )
+        _rollback_orphaned_new_version(store, new_document_id, add_error=exc)
         raise DigitalIngestionError(f"Adding the new version failed: {exc}") from exc
 
-    if actual_count != len(chunks) or actual_count == 0:
-        # Best-effort cleanup of the partially-added new version; the OLD
-        # version was never touched, so RAG continues serving it unchanged.
-        store.delete_by_document_id(new_document_id)
+    if actual_count != expected or actual_count == 0:
+        _rollback_orphaned_new_version(
+            store,
+            new_document_id,
+            add_error=RuntimeError(f"expected {expected} chunks, found {actual_count}"),
+        )
         raise DigitalIngestionError(
-            f"New version verification failed: expected {len(chunks)} chunks, found {actual_count}."
+            f"New version verification failed: expected {expected} chunks, found {actual_count}."
         )
 
-    # From this point on, the new version is CONFIRMED published. Only the
-    # old-version cleanup remains, and only its failures should ever reach
-    # the caller as a non-DigitalIngestionError (-> needs_reconciliation).
+    # From this point on, the new version is CONFIRMED published (exact
+    # expected count verified, no partial batches). Only the old-version
+    # cleanup remains, and its failures map to needs_reconciliation, never
+    # failed -- the new version is already live and must not be re-added.
     if replaced_document_id and replaced_document_id != new_document_id:
-        deleted = store.delete_by_document_id(replaced_document_id)
-        if deleted == 0:
-            logger.warning(
-                "Old version document_id=%s had 0 chunks at cleanup time "
-                "(already gone?) while publishing new document_id=%s for %r.",
-                replaced_document_id,
-                new_document_id,
-                source_filename,
+        try:
+            store.delete_by_document_id(replaced_document_id)
+            remaining_old = store.document_chunk_count(replaced_document_id)
+        except Exception as exc:
+            raise DigitalIngestionReconciliationError(
+                f"New version document_id={new_document_id} was published and verified "
+                f"({expected} chunks), but deleting the OLD version "
+                f"(document_id={replaced_document_id}) failed: {exc}. The old version may "
+                "still be partially present; remove it manually after inspection."
+            ) from exc
+        if remaining_old != 0:
+            raise DigitalIngestionReconciliationError(
+                f"New version document_id={new_document_id} was published and verified "
+                f"({expected} chunks), but {remaining_old} chunk(s) under the OLD "
+                f"document_id={replaced_document_id} remain after cleanup and must be "
+                "removed manually."
             )
 
-    return new_document_id, indexed
+    return new_document_id, expected
 
 
 def process_ingestion_job(job_id: str) -> None:
@@ -298,9 +369,14 @@ def process_ingestion_job(job_id: str) -> None:
         store = get_knowledge_base_store()
         replaced_document_id = store.document_id_for_source_filename(job.source_filename)
 
-        job.status_detail = f"Embedding and publishing {len(chunks)} chunks..."
+        total_chunks = len(chunks)
+        job.status_detail = f"Embedding and publishing {total_chunks} chunks..."
         job.replaced_document_id = replaced_document_id
         session.commit()
+
+        def _on_batch_complete(added_so_far: int, total: int) -> None:
+            job.status_detail = f"Embedding and publishing chunk {added_so_far}/{total}..."
+            session.commit()
 
         try:
             new_document_id, indexed = publish_new_version(
@@ -309,18 +385,28 @@ def process_ingestion_job(job_id: str) -> None:
                 title=title,
                 source_filename=job.source_filename,
                 replaced_document_id=replaced_document_id,
+                progress_callback=_on_batch_complete,
             )
+        except DigitalIngestionReconciliationError as exc:
+            # Either a failed add's rollback could not be verified complete
+            # (an orphan may remain under some new document_id -- see the
+            # message for it), or the new version published but deleting
+            # the old version failed/left chunks behind. Never guess or
+            # retry automatically: surface for manual reconciliation.
+            job.status = "needs_reconciliation"
+            job.error_message = str(exc)
+            session.commit()
+            return
         except DigitalIngestionError as exc:
-            # New version never became visible; old version (if any) is untouched.
+            # New version never became visible (rollback verified complete);
+            # old version (if any) is untouched. Safe for the admin to retry.
             job.status = "failed"
             job.error_message = str(exc)
             session.commit()
             return
-        except Exception as exc:  # noqa: BLE001 -- see needs_reconciliation docstring note
-            # The new version was already added and verified inside
-            # publish_new_version by this point -- only the old-version
-            # cleanup step could still raise here. Do not guess or retry
-            # automatically: surface for manual reconciliation.
+        except Exception as exc:  # noqa: BLE001 -- last-resort safety net; see module docstring
+            # Should not normally be reached now that publish_new_version
+            # raises typed exceptions for every known failure mode above.
             job.status = "needs_reconciliation"
             job.error_message = (
                 f"New version published but cleanup of the old version may be incomplete: {exc}"

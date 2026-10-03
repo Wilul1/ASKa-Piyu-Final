@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Any
+from typing import Any, Callable
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -223,7 +223,23 @@ class KnowledgeBaseStore:
         document_type: str,
         chunks: list,
         document_metadata: dict[str, Any] | None = None,
+        max_batch_size: int | None = None,
+        on_batch_complete: Callable[[int, int], None] | None = None,
     ) -> int:
+        """Add chunks under ``document_id``.
+
+        ``max_batch_size`` is opt-in and defaults to ``None``, which keeps
+        the original single-``add()``-call behavior byte-for-byte for every
+        existing caller. Pass it to split a large add into sequential
+        ``collection.add()`` calls of at most that many records each --
+        added for the digital-ingestion path, whose Chroma Cloud account
+        enforces a per-request "Number of records" quota on the ``Add``
+        action (separate from total collection size). If any batch raises,
+        whatever earlier batches already succeeded remain tagged with this
+        ``document_id`` in Chroma; callers needing all-or-nothing semantics
+        must roll back by ``document_id`` on failure (see
+        app/services/admin/digital_ingestion.py).
+        """
         if not chunks:
             return 0
 
@@ -256,7 +272,22 @@ class KnowledgeBaseStore:
             _enrich_chunk_citation_metadata(metadata, chunk_text=chunk.text)
             metadatas.append(metadata)
 
-        self._collection.add(ids=ids, documents=documents, metadatas=metadatas)
+        if max_batch_size is None or max_batch_size <= 0 or len(ids) <= max_batch_size:
+            self._collection.add(ids=ids, documents=documents, metadatas=metadatas)
+            if on_batch_complete is not None:
+                on_batch_complete(len(ids), len(ids))
+            return len(chunks)
+
+        total = len(ids)
+        for start in range(0, total, max_batch_size):
+            end = min(start + max_batch_size, total)
+            self._collection.add(
+                ids=ids[start:end],
+                documents=documents[start:end],
+                metadatas=metadatas[start:end],
+            )
+            if on_batch_complete is not None:
+                on_batch_complete(end, total)
         return len(chunks)
 
     def collection_statistics(self) -> dict[str, Any]:

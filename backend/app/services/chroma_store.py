@@ -39,6 +39,19 @@ _SOURCE_FOOTER_RE = re.compile(
     r"\n{0,2}S?ource Information\n(?=(?:Document|Service|Office|Page)\s*:)[\s\S]*\Z"
 )
 
+# Chroma Cloud enforces a per-request "Get" action quota (documented max:
+# 300 results per collection.get() call). Omitting `limit` does NOT raise
+# an error -- it silently returns at most this many matches with no
+# indication of truncation. An explicit limit ABOVE this value hard-fails
+# instead ("Quota exceeded: 'Limit value' exceeded quota limit for action
+# 'Get'"). Discovered 2026-10-04: a 371-chunk verification read silently
+# capped at 300, and the rollback that followed only ever saw/deleted
+# that same capped page, leaving 71 chunks (index 300-370) orphaned. Every
+# safety-critical ingestion read/delete must page through
+# KnowledgeBaseStore._get_all_matching below instead of calling
+# collection.get(where=...) directly with no limit.
+CHROMA_GET_PAGE_SIZE = 300
+
 
 def _strip_indexed_metadata_block(text: str) -> str:
     if _INDEXED_METADATA_MARKER in text:
@@ -569,16 +582,65 @@ class KnowledgeBaseStore:
             self._collection.delete(ids=ids)
         return len(ids)
 
+    def _get_all_matching(
+        self,
+        *,
+        where: dict[str, Any],
+        include: list[str] | None = None,
+    ) -> dict[str, list]:
+        """Exhaustively page through ``collection.get(where=...)``.
+
+        A bare ``collection.get(where=...)`` with no ``limit`` is NOT
+        exhaustive on Chroma Cloud -- see ``CHROMA_GET_PAGE_SIZE``'s
+        docstring above. This pages with an explicit limit/offset
+        (never exceeding ``CHROMA_GET_PAGE_SIZE``, since a larger explicit
+        limit hard-fails) until a page comes back short, which correctly
+        terminates on exact multiples of the page size too (an exact-size
+        final page is always followed by one confirming empty page).
+        Every safety-critical ingestion read must go through this, never
+        a direct ``collection.get(where=...)``.
+        """
+        page_include = include or []
+        ids: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        documents: list[str] = []
+        offset = 0
+        while True:
+            page = self._collection.get(
+                where=where,
+                limit=CHROMA_GET_PAGE_SIZE,
+                offset=offset,
+                include=page_include,
+            )
+            page_ids = page.get("ids") or []
+            ids.extend(page_ids)
+            if "metadatas" in page_include:
+                metadatas.extend(page.get("metadatas") or [])
+            if "documents" in page_include:
+                documents.extend(page.get("documents") or [])
+            if len(page_ids) < CHROMA_GET_PAGE_SIZE:
+                break
+            offset += CHROMA_GET_PAGE_SIZE
+        result: dict[str, list] = {"ids": ids}
+        if "metadatas" in page_include:
+            result["metadatas"] = metadatas
+        if "documents" in page_include:
+            result["documents"] = documents
+        return result
+
     def document_chunk_count(self, document_id: str) -> int:
         """Count chunks currently indexed under an exact ``document_id``.
 
         Used to verify a newly-added version's chunk count before deleting
         the old version it replaces -- never guessed, always queried fresh.
+        Exhaustive (paginated): a bare, unpaginated get() silently caps at
+        CHROMA_GET_PAGE_SIZE results on Chroma Cloud, which is exactly how
+        a 371-chunk document was miscounted as 300 on 2026-10-04.
         """
         doc_id = (document_id or "").strip()
         if not doc_id or self._collection.count() == 0:
             return 0
-        existing = self._collection.get(where={"document_id": doc_id})
+        existing = self._get_all_matching(where={"document_id": doc_id})
         return len(existing.get("ids") or [])
 
     def document_id_for_source_filename(self, source_filename: str) -> str | None:
@@ -586,11 +648,12 @@ class KnowledgeBaseStore:
 
         Read-only lookup only -- never used as a deletion key itself.
         Callers use the returned document_id with :meth:`delete_by_document_id`.
+        Exhaustive (paginated) -- see :meth:`_get_all_matching`.
         """
         name = (source_filename or "").strip()
         if not name or self._collection.count() == 0:
             return None
-        existing = self._collection.get(where={"source_filename": name}, include=["metadatas"])
+        existing = self._get_all_matching(where={"source_filename": name}, include=["metadatas"])
         metadatas = existing.get("metadatas") or []
         doc_ids = {m.get("document_id") for m in metadatas if m and m.get("document_id")}
         if not doc_ids:
@@ -614,14 +677,20 @@ class KnowledgeBaseStore:
         ingestion/version. Safe to call after a replacement version has
         already been added under a NEW document_id: it can never touch the
         new version's chunks, only the old one's.
+
+        Exhaustive (paginated) enumeration via :meth:`_get_all_matching`,
+        then deletes in the same <=CHROMA_GET_PAGE_SIZE-sized pages it
+        discovered -- defensively, in case collection.delete(ids=...) has
+        its own undocumented cap mirroring the Get-action one.
         """
         doc_id = (document_id or "").strip()
         if not doc_id or self._collection.count() == 0:
             return 0
-        existing = self._collection.get(where={"document_id": doc_id})
+        existing = self._get_all_matching(where={"document_id": doc_id})
         ids = list(dict.fromkeys(existing.get("ids") or []))
-        if ids:
-            self._collection.delete(ids=ids)
+        for start in range(0, len(ids), CHROMA_GET_PAGE_SIZE):
+            batch_ids = ids[start : start + CHROMA_GET_PAGE_SIZE]
+            self._collection.delete(ids=batch_ids)
         return len(ids)
 
     def search(

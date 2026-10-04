@@ -73,13 +73,21 @@ class FakeChromaCollection:
         for _id, meta in zip(ids, metadatas):
             self._records[_id] = meta
 
-    def get(self, where=None, include=None):
-        if where and "document_id" in where:
+    def get(self, where=None, include=None, limit=None, offset=0, ids=None):
+        if ids is not None:
+            matched_ids = [i for i in ids if i in self._records]
+        elif where and "document_id" in where:
             wanted = where["document_id"]
-            ids = [i for i, m in self._records.items() if m.get("document_id") == wanted]
+            matched_ids = [i for i, m in self._records.items() if m.get("document_id") == wanted]
+        elif where and "source_filename" in where:
+            wanted = where["source_filename"]
+            matched_ids = [i for i, m in self._records.items() if m.get("source_filename") == wanted]
         else:
-            ids = list(self._records.keys())
-        return {"ids": ids, "metadatas": [self._records[i] for i in ids]}
+            matched_ids = list(self._records.keys())
+        # Deterministic order (insertion order via dict), mirroring real
+        # Chroma's stable paging -- required for offset/limit to make sense.
+        page = matched_ids[offset:] if limit is None else matched_ids[offset : offset + limit]
+        return {"ids": page, "metadatas": [self._records[i] for i in page]}
 
     def delete(self, *, ids):
         if self.fail_all_deletes:

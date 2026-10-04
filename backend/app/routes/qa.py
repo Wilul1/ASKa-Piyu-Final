@@ -22,6 +22,28 @@ from app.services.qa_rate_limit import enforce_qa_rate_limit
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/qa", tags=["ASKa-Piyu QA"])
 
+# Friendly, retry-oriented copy -- never a raw exception or provider detail.
+# See qa_ask's internal asyncio.wait_for(..., timeout=settings.qa_ask_timeout_seconds).
+QA_ASK_TIMEOUT_ANSWER = (
+    "This is taking longer than usual to answer. Please try asking again — "
+    "a shorter or more specific question is often faster."
+)
+
+
+def _qa_ask_timeout_response() -> QAAskResponse:
+    """Built when the internal pipeline exceeds settings.qa_ask_timeout_seconds,
+    so a slow upstream LLM/embedding call cannot cause Heroku's router to kill
+    the request with a bare H12/503. Uses the existing degraded-answer
+    contract (same shape as a normal low-confidence answer) -- no new fields,
+    no citation job is scheduled for this response (nothing to verify)."""
+    return QAAskResponse(
+        answer=QA_ASK_TIMEOUT_ANSWER,
+        sources=[],
+        citations=[],
+        confidence="low",
+        degraded=True,
+    )
+
 
 @router.get("/health", summary="Check ASKa-Piyu QA readiness")
 async def qa_health(_: User = Depends(require_admin_user)) -> dict:
@@ -63,14 +85,30 @@ async def qa_ask(
         async_verification_sink: dict = {}
         # answer_qa_question is sync (embeddings + HTTP). Run off the event
         # loop so health checks and KB routes stay responsive during slow LLM calls.
-        result = await asyncio.to_thread(
-            answer_qa_question,
-            payload.question,
-            user_role=user_role,
-            history=history,
-            client_active_service=payload.active_service,
-            async_verification_sink=async_verification_sink,
-        )
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    answer_qa_question,
+                    payload.question,
+                    user_role=user_role,
+                    history=history,
+                    client_active_service=payload.active_service,
+                    async_verification_sink=async_verification_sink,
+                ),
+                timeout=settings.qa_ask_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            # Stop AWAITING the slow call -- the background thread cannot be
+            # forcibly killed, but abandoning it here means we never read its
+            # result and never schedule a citation-verification job for it,
+            # so nothing is left orphaned. Return a valid, friendly, already-
+            # supported degraded response instead of letting Heroku's router
+            # terminate the connection with a bare H12/503.
+            logger.warning(
+                "qa_ask exceeded the %.0fs internal timeout; returning degraded fallback",
+                settings.qa_ask_timeout_seconds,
+            )
+            return _qa_ask_timeout_response()
     except EmptyKnowledgeBaseError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

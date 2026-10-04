@@ -124,6 +124,13 @@ class Settings(BaseSettings):
 
     # --- Student Q&A (retrieval only; no OCR) ---
     rag_top_k: int = 5
+    # Outer deadline for the WHOLE /qa/ask pipeline (retrieval + rerank + LLM
+    # call), enforced at the route level -- distinct from groq_timeout_seconds
+    # below, which only bounds a single LLM HTTP call. Kept safely under
+    # Heroku's ~30s router timeout so a slow upstream call returns our own
+    # degraded answer instead of the platform killing the connection with a
+    # bare H12/503 (observed in production 2026-10-04).
+    qa_ask_timeout_seconds: float = 25.0
     # Optional: set for LLM-generated answers; otherwise uses extractive RAG template
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"

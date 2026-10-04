@@ -17,6 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTT
 from pydantic import BaseModel
 
 from app.config import settings
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session, get_session_factory
@@ -648,9 +649,45 @@ async def admin_ingest_digital(
 
     sha256_hash = compute_sha256(content)
 
-    existing = session.query(IngestionJob).filter(IngestionJob.sha256_hash == sha256_hash).first()
-    if existing is not None:
-        return IngestDigitalResponse(job_id=existing.id, status=existing.status, duplicate_of_existing_job=True)
+    # Per-status duplicate semantics for a previously-seen file (same bytes):
+    #   queued/processing       -> return that job (it's already in flight)
+    #   published                -> return it (already indexed; don't redo it)
+    #   needs_reconciliation      -> return it (blocked pending manual review --
+    #                                never auto-retried)
+    #   ocr_required              -> return it (identical bytes extract the same
+    #                                digital text deterministically, so a retry
+    #                                would just land on ocr_required again;
+    #                                "retrying" this document means uploading an
+    #                                actually-different, OCR'd file, which gets
+    #                                a different hash and isn't blocked here)
+    #   failed (and nothing else) -> fall through and create a NEW job. A
+    #                                failure (e.g. a transient quota/provider
+    #                                error) must not permanently block the
+    #                                exact same file from ever being retried.
+    #                                The old failed row is never modified.
+    existing_active = (
+        session.query(IngestionJob)
+        .filter(IngestionJob.sha256_hash == sha256_hash, IngestionJob.status.in_(["queued", "processing"]))
+        .first()
+    )
+    if existing_active is not None:
+        return IngestDigitalResponse(
+            job_id=existing_active.id, status=existing_active.status, duplicate_of_existing_job=True
+        )
+
+    existing_blocking = (
+        session.query(IngestionJob)
+        .filter(
+            IngestionJob.sha256_hash == sha256_hash,
+            IngestionJob.status.in_(["published", "needs_reconciliation", "ocr_required"]),
+        )
+        .order_by(IngestionJob.updated_at.desc())
+        .first()
+    )
+    if existing_blocking is not None:
+        return IngestDigitalResponse(
+            job_id=existing_blocking.id, status=existing_blocking.status, duplicate_of_existing_job=True
+        )
 
     active = (
         session.query(IngestionJob)
@@ -676,7 +713,24 @@ async def admin_ingest_digital(
         byte_size=len(content),
     )
     session.add(job)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # Lost a race against a concurrent request for the exact same file --
+        # the partial unique index on sha256_hash (active statuses only) is
+        # the real guard, not the query above. Hand back whichever job won.
+        session.rollback()
+        winner = (
+            session.query(IngestionJob)
+            .filter(IngestionJob.sha256_hash == sha256_hash, IngestionJob.status.in_(["queued", "processing"]))
+            .first()
+        )
+        if winner is not None:
+            return IngestDigitalResponse(job_id=winner.id, status=winner.status, duplicate_of_existing_job=True)
+        raise HTTPException(
+            status_code=409,
+            detail="Another identical upload is already being processed. Please try again.",
+        )
     session.refresh(job)
 
     background_tasks.add_task(process_ingestion_job, job.id)

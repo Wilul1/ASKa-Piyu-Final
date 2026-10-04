@@ -3,7 +3,19 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -364,6 +376,15 @@ class IngestionJob(Base):
     cleanup of the OLD version's chunks (by ``replaced_document_id``) failed
     partway through and must be retried/inspected manually -- the old
     version is intentionally left in place rather than guessed at.
+
+    ``sha256_hash`` is deliberately NOT globally unique: a ``failed`` row
+    must never permanently block retrying the exact same file (2026-10-04
+    fix). Only ONE row with an ACTIVE status (queued/processing) may exist
+    per hash at a time -- enforced by the partial unique index below, the
+    real concurrency guard (see app/routes/admin/knowledge_base.py's
+    IntegrityError handling for the race it protects against), not an
+    application-only check. Historical failed/published/etc. rows for the
+    same hash are retained side by side for audit.
     """
 
     __tablename__ = "ingestion_jobs"
@@ -372,11 +393,17 @@ class IngestionJob(Base):
             "status IN ('queued','processing','published','failed','ocr_required','needs_reconciliation')",
             name="ck_ingestion_jobs_status",
         ),
+        Index(
+            "uq_ingestion_jobs_sha256_active_status",
+            "sha256_hash",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'processing')"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    sha256_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="queued", index=True, nullable=False)
     status_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

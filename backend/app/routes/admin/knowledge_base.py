@@ -53,12 +53,19 @@ from app.services.admin.article_candidate_generator import (
 from app.services.chroma_store import get_knowledge_base_store
 from app.services.ingestion_runtime import INGESTION_UNAVAILABLE_MESSAGE, ingestion_available
 from app.services.admin.digital_ingestion import (
+    DigitalIngestionActiveJobError,
     DigitalIngestionError,
+    DigitalIngestionJobStateError,
     DigitalIngestionReconciliationError,
     build_lightweight_preview,
     build_lightweight_publish,
+    build_preview_from_job,
     compute_sha256,
+    process_extraction_preview_job,
+    process_indexing_job,
     process_ingestion_job,
+    start_extraction_job,
+    start_indexing_job,
     validate_pdf_bytes,
 )
 from app.services.document_ingestion import (
@@ -454,6 +461,7 @@ async def _read_upload(file: UploadFile) -> bytes:
     summary="[Admin] Extract text only (preview, no ChromaDB)",
 )
 async def admin_extract_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Handbook, policy PDF, or scanned image"),
     document_type: str | None = Form(
         None,
@@ -464,6 +472,7 @@ async def admin_extract_document(
         description="Optional preview path for requirement/form documents",
     ),
     _: None = Depends(require_admin_key),
+    session: Session = Depends(get_db_session),
 ) -> ExtractDocumentResponse:
     """
     Preview step for admins: run OCR/PDF extraction and cleaning without indexing.
@@ -473,22 +482,54 @@ async def admin_extract_document(
     content = await _read_upload(file)
 
     if not ingestion_available():
-        # Lightweight/cloud-safe path (e.g. Heroku web dyno): PyMuPDF digital
-        # extraction, falling back to the remote AWS OCR worker when
-        # configured. Never writes to Chroma. See
-        # app.services.admin.digital_ingestion.build_lightweight_preview.
+        # Lightweight/cloud-safe path (e.g. Heroku web dyno). Creates an
+        # explicit IngestionJob for THIS upload only (never reuses/recovers
+        # any existing row -- see start_extraction_job's docstring). Digital
+        # text finishes synchronously (fast, well under Heroku's 30s router
+        # limit); OCR-required documents are handed to a background task so
+        # this request always returns quickly -- see the 2026-10-05 H12
+        # incident on this endpoint. See
+        # app.services.admin.digital_ingestion.start_extraction_job /
+        # process_extraction_preview_job.
         try:
-            result = await asyncio.to_thread(
-                build_lightweight_preview,
+            job, preview = await asyncio.to_thread(
+                start_extraction_job,
                 content,
                 filename=file.filename,
                 content_type=file.content_type,
+                session=session,
             )
+        except DigitalIngestionActiveJobError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Another job (id={exc.active_job_id}) is already in progress on this dyno. "
+                    "Please wait for it to finish and try again."
+                ),
+            ) from exc
         except DigitalIngestionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise _admin_internal_error("Document extraction failed.", exc) from exc
-        return ExtractDocumentResponse(**result)
+
+        if preview is None:
+            # OCR required -- do not block this request waiting for it.
+            background_tasks.add_task(process_extraction_preview_job, job.id)
+            return ExtractDocumentResponse(
+                status="processing",
+                job_id=job.id,
+                document_type="",
+                raw_text="",
+                cleaned_text="",
+                review_text="",
+                extracted_text="",
+                page_count=job.page_count or 0,
+                extraction_method="pending",
+                structuring_method="pending",
+                pipeline_stages=[],
+                structured=None,
+            )
+        return ExtractDocumentResponse(job_id=job.id, **preview)
 
     try:
         # OCR/structuring is CPU-bound; keep the event loop free for /health.
@@ -736,7 +777,11 @@ async def admin_ingest_digital(
 
     active = (
         session.query(IngestionJob)
-        .filter(IngestionJob.status.in_(["queued", "processing"]))
+        # "indexing" included too -- the single-dyno concurrency guard must
+        # also account for a background publish started by the newer
+        # job-based Extract & Structure / Index for Chatbot Retrieval flow
+        # (see start_extraction_job / process_indexing_job).
+        .filter(IngestionJob.status.in_(["queued", "processing", "indexing"]))
         .first()
     )
     if active is not None:
@@ -810,6 +855,85 @@ async def admin_get_ingestion_job(
         created_at=job.created_at.isoformat(),
         updated_at=job.updated_at.isoformat(),
     )
+
+
+@router.get(
+    "/jobs/{job_id}/preview",
+    response_model=ExtractDocumentResponse,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    summary="[Admin] Fetch the rebuilt Extract & Structure preview for a review_ready job",
+)
+async def admin_get_job_preview(
+    job_id: str,
+    _: None = Depends(require_admin_key),
+    session: Session = Depends(get_db_session),
+) -> ExtractDocumentResponse:
+    """
+    Polled by the Flutter client once a job (created by POST /extract on the
+    lightweight/cloud-safe path) reaches status="review_ready" after OCR
+    ran in the background. Rebuilds the same ExtractDocumentResponse shape
+    the synchronous digital-fast-path already returns directly -- cheap,
+    local work only (no OCR, no Chroma write; see build_preview_from_job).
+    """
+    job = session.get(IngestionJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.status not in ("review_ready", "indexing", "published"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is not ready for preview yet (status={job.status}).",
+        )
+    try:
+        preview = await asyncio.to_thread(build_preview_from_job, job)
+    except DigitalIngestionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _admin_internal_error("Failed to rebuild extraction preview.", exc) from exc
+    return ExtractDocumentResponse(job_id=job.id, **preview)
+
+
+class IndexJobRequest(BaseModel):
+    reviewed_text: str | None = None
+
+
+class IndexJobResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+@router.post(
+    "/jobs/{job_id}/index",
+    response_model=IndexJobResponse,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    summary="[Admin] Publish a review_ready extraction job to ChromaDB (background)",
+)
+async def admin_index_job(
+    job_id: str,
+    payload: IndexJobRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(require_admin_key),
+    session: Session = Depends(get_db_session),
+) -> IndexJobResponse:
+    """
+    Publishes a review_ready job -- i.e. the Index for Chatbot Retrieval
+    step after Extract & Structure. Reuses the job's already-extracted
+    (possibly OCR'd) page texts; never re-reads job.pdf_bytes and never
+    calls the OCR worker again (see process_indexing_job). Returns
+    immediately; the Flutter client polls GET /jobs/{job_id} until a
+    terminal status (published/failed/needs_reconciliation).
+    """
+    job = session.get(IngestionJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    try:
+        start_indexing_job(job, session=session)
+    except DigitalIngestionJobStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is not ready to index (status={exc.status}). It must be review_ready.",
+        ) from exc
+    background_tasks.add_task(process_indexing_job, job.id, payload.reviewed_text)
+    return IndexJobResponse(job_id=job.id, status="indexing")
 
 
 @kb_tools_router.post(

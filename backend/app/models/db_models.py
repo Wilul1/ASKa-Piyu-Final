@@ -385,12 +385,25 @@ class IngestionJob(Base):
     IntegrityError handling for the race it protects against), not an
     application-only check. Historical failed/published/etc. rows for the
     same hash are retained side by side for audit.
+
+    ``review_ready``/``indexing`` (2026-10-05) split the Heroku-web-dyno
+    lightweight pipeline into a preview phase and a separate publish phase,
+    so a slow remote-OCR extraction never has to run inside a single
+    synchronous HTTP request (see digital_ingestion.py's
+    process_extraction_preview_job / process_indexing_job). A job reaches
+    ``review_ready`` once its (possibly OCR'd) page texts are persisted in
+    ``extracted_pages_json`` -- nothing has been published yet. ``indexing``
+    means a publish is in progress for a job that already passed review;
+    it is kept distinct from ``processing`` (used for the pre-review
+    extract/OCR/clean/chunk phase) so a page refresh mid-publish is never
+    ambiguous with mid-extraction.
     """
 
     __tablename__ = "ingestion_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued','processing','published','failed','ocr_required','needs_reconciliation')",
+            "status IN ('queued','processing','published','failed','ocr_required',"
+            "'needs_reconciliation','review_ready','indexing')",
             name="ck_ingestion_jobs_status",
         ),
         Index(
@@ -416,6 +429,11 @@ class IngestionJob(Base):
     replaced_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     chunks_indexed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON {"pages": [...], "extraction_method": "..."} once a review_ready/
+    # indexing/published job's (possibly OCR'd) page texts are known. NULL
+    # until then; never the full preview/knowledge-units/validation payload,
+    # which is cheap to rebuild on demand from these page texts.
+    extracted_pages_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

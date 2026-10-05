@@ -226,48 +226,83 @@ def test_ingestion_available_false_when_packages_missing():
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
-def test_admin_extract_uses_lightweight_path_when_ingestion_unavailable():
+def test_admin_extract_uses_job_based_lightweight_path_when_ingestion_unavailable():
     """/extract no longer 503s when local easyocr/sentence-transformers are
-    unavailable (e.g. the Heroku web dyno) -- it now calls
-    build_lightweight_preview (PyMuPDF + optional remote OCR worker) and
-    returns 200 with the same ExtractDocumentResponse shape the Flutter
-    Extract & Structure UI already understands. See
-    app.services.admin.digital_ingestion.build_lightweight_preview."""
+    unavailable (e.g. the Heroku web dyno) -- it now creates an explicit
+    IngestionJob via start_extraction_job and, for a digital-text PDF,
+    finishes synchronously (fast path) returning 200 with job_id plus the
+    same ExtractDocumentResponse shape the Flutter Extract & Structure UI
+    already understands (2026-10-05 review_ready/indexing split -- see
+    app.services.admin.digital_ingestion.start_extraction_job). The
+    OCR-required/background-job path is covered by its own dedicated test
+    file (test_extraction_review_index_jobs.py), not here."""
+    import uuid as uuid_mod
+
+    import fitz
     from fastapi.testclient import TestClient
     from app.main import app
+    from app.db.safety import assert_destructive_database_ops_allowed
+    from app.db.session import get_session_factory
+    from app.models.db_models import IngestionJob
+    from app.services.chroma_store import KnowledgeBaseStore
 
     client = TestClient(app)
     ingestion_available.cache_clear()
-    lightweight_result = {
-        "document_type": "information",
-        "raw_text": "hello world",
-        "cleaned_text": "hello world",
-        "review_text": "hello world",
-        "extracted_text": "hello world",
-        "page_count": 1,
-        "extraction_method": "pymupdf_digital",
-        "structuring_method": "generic_chunking",
-        "pipeline_stages": [],
-        "structured": {"fields": [], "formatted_text": "hello world"},
-    }
+
+    # Never touch a real Chroma client (local or cloud) -- assemble_preview_
+    # payload's cheap kb_statistics() read must be satisfied by a fake store.
+    fake_collection = MagicMock()
+    fake_collection.count.return_value = 0
+    fake_collection.get.return_value = {"ids": [], "metadatas": []}
+    fake_store = KnowledgeBaseStore.__new__(KnowledgeBaseStore)
+    fake_store._collection = fake_collection
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Heroku adaptation test: plenty of real selectable digital text.")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    filename = f"heroku_adaptation_test_{uuid_mod.uuid4().hex}.pdf"
     try:
         with (
             patch("app.routes.admin.knowledge_base.ingestion_available", return_value=False),
             patch(
-                "app.routes.admin.knowledge_base.build_lightweight_preview",
-                return_value=lightweight_result,
-            ) as mock_preview,
+                "app.services.admin.knowledge_base_pipeline.get_knowledge_base_store",
+                return_value=fake_store,
+            ),
         ):
             response = client.post(
                 "/admin/knowledge-base/extract",
                 headers={"X-Admin-Key": "test-admin-key"},
-                files={"file": ("test.pdf", b"%PDF-1.4 fake", "application/pdf")},
+                files={"file": (filename, pdf_bytes, "application/pdf")},
             )
         assert response.status_code == 200
-        assert response.json()["extraction_method"] == "pymupdf_digital"
-        mock_preview.assert_called_once()
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["job_id"]
+        assert data["extraction_method"] == "pymupdf_digital"
+        assert "selectable digital text" in data["review_text"]
+
+        session = get_session_factory()()
+        try:
+            job = session.get(IngestionJob, data["job_id"])
+            assert job is not None
+            assert job.status == "review_ready"
+            assert job.extracted_pages_json
+        finally:
+            session.close()
     finally:
         ingestion_available.cache_clear()
+        assert_destructive_database_ops_allowed()
+        session = get_session_factory()()
+        try:
+            session.query(IngestionJob).filter(IngestionJob.source_filename == filename).delete(
+                synchronize_session=False
+            )
+            session.commit()
+        finally:
+            session.close()
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")

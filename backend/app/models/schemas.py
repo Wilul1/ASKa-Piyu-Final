@@ -135,24 +135,33 @@ class KnowledgeBaseStatisticsSchema(BaseModel):
 
 
 class ExtractDocumentResponse(BaseModel):
-    """Preview extraction only; does not update ChromaDB."""
+    """Preview extraction only; does not update ChromaDB.
+
+    ``job_id`` is set only on the lightweight/cloud-safe runtime (see
+    app.services.admin.digital_ingestion.start_extraction_job) -- the
+    legacy local/Docker pipeline never populates it. When ``status`` is
+    "processing" (OCR running in a background job), the text/structure
+    fields below are placeholders; the Flutter client polls
+    GET /jobs/{job_id} then GET /jobs/{job_id}/preview for the real values.
+    """
 
     status: str = "success"
     flow: str = "admin_extraction"
-    document_type: str
+    job_id: str | None = None
+    document_type: str = ""
     document_profile: str | None = None
     admin_selected_document_type: str | None = None
     parser_document_type: str | None = None
     source_type: str | None = None
-    raw_text: str = Field(..., description="Raw OCR/PDF extraction before final review")
-    cleaned_text: str = Field(..., description="Deterministically cleaned extraction")
-    review_text: str = Field(..., description="Draft text admin should review before indexing")
-    extracted_text: str = Field(..., description="Backward-compatible alias for review_text")
-    page_count: int
-    extraction_method: str
-    structuring_method: str
-    pipeline_stages: list[PipelineStageSchema]
-    structured: StructuredDocumentSchema
+    raw_text: str = Field("", description="Raw OCR/PDF extraction before final review")
+    cleaned_text: str = Field("", description="Deterministically cleaned extraction")
+    review_text: str = Field("", description="Draft text admin should review before indexing")
+    extracted_text: str = Field("", description="Backward-compatible alias for review_text")
+    page_count: int = 0
+    extraction_method: str = ""
+    structuring_method: str = ""
+    pipeline_stages: list[PipelineStageSchema] = Field(default_factory=list)
+    structured: StructuredDocumentSchema | None = None
     diagnostic_report: dict | None = None
     validation_report: KnowledgeValidationReportSchema | None = None
     detected_document_type: DocumentTypeDetectionSchema | None = None

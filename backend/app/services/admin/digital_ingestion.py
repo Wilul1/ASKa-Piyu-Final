@@ -32,6 +32,7 @@ path for the Heroku web dyno specifically:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -92,6 +93,32 @@ class DigitalIngestionReconciliationError(RuntimeError):
     'published'. The message always carries whatever document_id a human
     needs to find the leftover chunks.
     """
+
+
+class DigitalIngestionActiveJobError(RuntimeError):
+    """Raised when a new job cannot be created because another job is
+    already queued/processing/indexing on this single dyno.
+
+    Deliberately NOT a sha256-based duplicate check (see module docstring
+    for start_extraction_job) -- this is purely the single-worker
+    concurrency guard already used by the existing /ingest-digital path,
+    extended to also cover the new review/index split.
+    """
+
+    def __init__(self, active_job_id: str) -> None:
+        super().__init__(f"Another job (id={active_job_id}) is already in progress on this dyno.")
+        self.active_job_id = active_job_id
+
+
+class DigitalIngestionJobStateError(RuntimeError):
+    """Raised when an operation is requested against an IngestionJob whose
+    current status doesn't allow it (e.g. indexing a job that isn't
+    review_ready yet). Carries the job's actual status for the caller to
+    report back."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__(f"Job is not in a valid state for this operation (status={status}).")
+        self.status = status
 
 
 def compute_sha256(file_bytes: bytes) -> str:
@@ -307,24 +334,24 @@ def _extract_or_ocr(file_bytes: bytes) -> tuple[list[str], list[int], str]:
     return page_texts, page_offsets, extraction_method
 
 
-def build_lightweight_preview(
-    file_bytes: bytes,
+def assemble_preview_payload(
+    page_texts: list[str],
     *,
-    filename: str | None,
-    content_type: str | None,
+    title: str,
+    source_filename: str,
+    extraction_method: str,
 ) -> dict[str, Any]:
-    """Cloud-safe equivalent of knowledge_base_pipeline.extract_document_preview
-    for runtimes without local easyocr/sentence-transformers (see
-    app.services.ingestion_runtime.ingestion_available). Never writes to
-    Chroma. Returns a dict matching the ExtractDocumentResponse schema
-    exactly, so the existing Flutter Extract & Structure UI needs no change.
+    """Pure (page_texts -> ExtractDocumentResponse-shaped dict) assembly --
+    cleaning, chunking, and the cheap preview/validation/pipeline-stage
+    helpers. No network/OCR call, no Chroma write. Shared by:
+      - build_lightweight_preview (digital-fast synchronous path, where
+        page_texts was just extracted/OCR'd in the same call), and
+      - build_preview_from_job (rebuilds the SAME shape on demand from a
+        review_ready/indexing/published job's persisted extracted_pages_json
+        -- see that function's docstring for why this is cheap enough to
+        never need to be persisted itself).
     """
-    validate_pdf_bytes(file_bytes, content_type=content_type)
-    title = (filename or "Untitled document").rsplit(".", 1)[0]
-    source_document = filename or "Untitled document"
-
-    page_texts, page_offsets, extraction_method = _extract_or_ocr(file_bytes)
-
+    page_offsets = _page_offsets_from_texts(page_texts)
     full_text = "\n".join(page_texts)
     cleaned = clean_extracted_text(full_text, page_texts=page_texts)
 
@@ -334,7 +361,7 @@ def build_lightweight_preview(
         chunk_size=settings.chunk_max_chars,
         chunk_overlap=settings.chunk_overlap,
         title=title,
-        source_filename=source_document,
+        source_filename=source_filename,
     )
     chunks = _mirror_page_range_metadata(chunks)
 
@@ -361,7 +388,7 @@ def build_lightweight_preview(
         "extraction_method": extraction_method,
         "structuring_method": "generic_chunking",
         "pipeline_stages": stages,
-        "structured": _lightweight_structured_response(cleaned, source_document=source_document),
+        "structured": _lightweight_structured_response(cleaned, source_document=source_filename),
         "diagnostic_report": None,
         "validation_report": validation,
         "detected_document_type": _lightweight_detected_document_type(
@@ -371,6 +398,73 @@ def build_lightweight_preview(
         "chunk_preview": previews,
         "kb_statistics": knowledge_base_statistics(),
     }
+
+
+def build_lightweight_preview(
+    file_bytes: bytes,
+    *,
+    filename: str | None,
+    content_type: str | None,
+) -> dict[str, Any]:
+    """Cloud-safe equivalent of knowledge_base_pipeline.extract_document_preview
+    for runtimes without local easyocr/sentence-transformers (see
+    app.services.ingestion_runtime.ingestion_available). Never writes to
+    Chroma. Returns a dict matching the ExtractDocumentResponse schema
+    exactly, so the existing Flutter Extract & Structure UI needs no change.
+
+    Used directly only when the whole extraction (including OCR, if
+    needed) can safely run inside a single synchronous call -- i.e. never
+    from the HTTP route when OCR is required (see start_extraction_job),
+    only from contexts (tests, the legacy-shaped /ingest route) that accept
+    a potentially slow synchronous call.
+    """
+    validate_pdf_bytes(file_bytes, content_type=content_type)
+    title = (filename or "Untitled document").rsplit(".", 1)[0]
+    source_document = filename or "Untitled document"
+
+    page_texts, _page_offsets, extraction_method = _extract_or_ocr(file_bytes)
+    return assemble_preview_payload(
+        page_texts, title=title, source_filename=source_document, extraction_method=extraction_method
+    )
+
+
+def chunks_from_pages_or_reviewed_text(
+    page_texts: list[str],
+    reviewed_text: str | None,
+    *,
+    title: str,
+    source_filename: str,
+) -> list[DocumentChunk]:
+    """Build chunks either from the original (possibly OCR'd) page texts, or
+    from the admin's edited reviewed_text when provided -- shared by
+    build_lightweight_publish (legacy-shaped, re-OCRs/re-extracts upstream of
+    this) and process_indexing_job (reuses persisted page texts, never
+    re-OCRs). The admin's free-text edit has no page boundaries of its own,
+    so it's treated as a single page, exactly like the legacy /ingest path's
+    equivalent reviewed_text override already accepts (see
+    knowledge_base_pipeline._best_review_text) -- page_number/page_start/
+    page_end all collapse to 1 for every resulting chunk in that case.
+    """
+    reviewed = (reviewed_text or "").strip()
+    if reviewed:
+        chunks = build_chunks_with_pages(
+            [reviewed],
+            [0],
+            chunk_size=settings.chunk_max_chars,
+            chunk_overlap=settings.chunk_overlap,
+            title=title,
+            source_filename=source_filename,
+        )
+    else:
+        chunks = build_chunks_with_pages(
+            page_texts,
+            _page_offsets_from_texts(page_texts),
+            chunk_size=settings.chunk_max_chars,
+            chunk_overlap=settings.chunk_overlap,
+            title=title,
+            source_filename=source_filename,
+        )
+    return _mirror_page_range_metadata(chunks)
 
 
 def build_lightweight_publish(
@@ -388,38 +482,21 @@ def build_lightweight_publish(
     Uses publish_new_version() -- staged add-new/verify/delete-old -- NEVER
     delete_by_source_filename()-then-add(). Returns a dict matching the
     IngestKnowledgeBaseResponse schema exactly.
+
+    Superseded, for the admin UI, by the review_ready/indexing job split
+    (start_extraction_job / process_indexing_job), which avoids re-running
+    OCR here. Kept working and tested as its own independent entry point
+    (e.g. for direct API use) -- see knowledge_base.py's /ingest route.
     """
     validate_pdf_bytes(file_bytes, content_type=content_type)
     display_title = title or (filename or "Untitled document").rsplit(".", 1)[0]
     source_document = filename or "Untitled document"
 
-    page_texts, page_offsets, extraction_method = _extract_or_ocr(file_bytes)
+    page_texts, _page_offsets, extraction_method = _extract_or_ocr(file_bytes)
 
-    reviewed = (reviewed_text or "").strip()
-    if reviewed:
-        # The admin's free-text edit has no page boundaries of its own --
-        # treated as a single page, exactly like the legacy /ingest path's
-        # equivalent reviewed_text override already accepts (see
-        # knowledge_base_pipeline._best_review_text). page_number/page_start/
-        # page_end all collapse to 1 for every resulting chunk.
-        chunks = build_chunks_with_pages(
-            [reviewed],
-            [0],
-            chunk_size=settings.chunk_max_chars,
-            chunk_overlap=settings.chunk_overlap,
-            title=display_title,
-            source_filename=source_document,
-        )
-    else:
-        chunks = build_chunks_with_pages(
-            page_texts,
-            page_offsets,
-            chunk_size=settings.chunk_max_chars,
-            chunk_overlap=settings.chunk_overlap,
-            title=display_title,
-            source_filename=source_document,
-        )
-    chunks = _mirror_page_range_metadata(chunks)
+    chunks = chunks_from_pages_or_reviewed_text(
+        page_texts, reviewed_text, title=display_title, source_filename=source_document
+    )
 
     if not chunks:
         raise DigitalIngestionError("No chunks produced from extracted text.")
@@ -444,7 +521,7 @@ def build_lightweight_publish(
         indexed=True,
         chunks_indexed=indexed,
     )
-    index_text = reviewed or "\n".join(page_texts)
+    index_text = (reviewed_text or "").strip() or "\n".join(page_texts)
     preview_text = index_text[:500] + ("..." if len(index_text) > 500 else "")
 
     return {
@@ -468,6 +545,343 @@ def build_lightweight_publish(
         "chunk_preview": previews,
         "kb_statistics": store.collection_statistics(),
     }
+
+
+# --- review_ready / indexing job split (2026-10-05) --------------------------
+#
+# Splits the lightweight pipeline into two independently-triggered phases so
+# a slow remote-OCR extraction never has to complete inside a single
+# synchronous HTTP request (Heroku's router enforces a flat 30s timeout --
+# H12 -- regardless of what the app is doing; see the 2026-10-05 production
+# incident on /admin/knowledge-base/extract). Only the (possibly OCR'd) page
+# texts are persisted (extracted_pages_json) -- everything else in the
+# preview (cleaning, chunking, knowledge units, validation report) is cheap,
+# local, pure-Python work and is rebuilt on demand by build_preview_from_job
+# rather than stored.
+
+
+def extracted_pages_payload(page_texts: list[str], extraction_method: str) -> str:
+    return json.dumps({"pages": page_texts, "extraction_method": extraction_method})
+
+
+def load_extracted_pages(job: IngestionJob) -> tuple[list[str], str]:
+    if not job.extracted_pages_json:
+        raise DigitalIngestionError(
+            f"Job {job.id} has no persisted extraction result yet (status={job.status})."
+        )
+    try:
+        data = json.loads(job.extracted_pages_json)
+        pages = data["pages"]
+        extraction_method = data.get("extraction_method", "unknown")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise DigitalIngestionError(f"Job {job.id}'s persisted extraction result is corrupt.") from exc
+    return pages, extraction_method
+
+
+def build_preview_from_job(job: IngestionJob) -> dict[str, Any]:
+    """Rebuilds the exact ExtractDocumentResponse-shaped payload for a
+    review_ready/indexing/published job from its persisted
+    extracted_pages_json -- no OCR, no Chroma access beyond the existing
+    read-only knowledge_base_statistics() call inside assemble_preview_payload.
+    """
+    page_texts, extraction_method = load_extracted_pages(job)
+    title = (job.source_filename or "Untitled document").rsplit(".", 1)[0]
+    return assemble_preview_payload(
+        page_texts, title=title, source_filename=job.source_filename, extraction_method=extraction_method
+    )
+
+
+_ACTIVE_JOB_STATUSES = ("queued", "processing", "indexing")
+
+
+def start_extraction_job(
+    file_bytes: bytes,
+    *,
+    filename: str | None,
+    content_type: str | None,
+    session: Session,
+) -> tuple[IngestionJob, dict[str, Any] | None]:
+    """Creates a brand-new IngestionJob row for this specific upload and
+    either finishes synchronously (digital text sufficient -- returns
+    (job, preview_dict), job.status == "review_ready") or leaves the job at
+    status="processing" for the caller to dispatch
+    process_extraction_preview_job(job.id) as a background task (returns
+    (job, None)).
+
+    Deliberately does NOT do sha256-based duplicate lookup/reuse of any
+    existing row (unlike /ingest-digital's dedup) -- every call creates a
+    fresh job explicitly for this operation, so this path can never return
+    or attach an old job (including, critically, never the historical
+    Student Handbook needs_reconciliation row) merely because it happens to
+    share a filename or hash. The only existing-row check here is the
+    single-dyno "something else is already running" concurrency guard,
+    which never inspects job content/history, only current status.
+    """
+    validate_pdf_bytes(file_bytes, content_type=content_type)
+
+    active = (
+        session.query(IngestionJob)
+        .filter(IngestionJob.status.in_(_ACTIVE_JOB_STATUSES))
+        .first()
+    )
+    if active is not None:
+        raise DigitalIngestionActiveJobError(active.id)
+
+    job = IngestionJob(
+        source_filename=filename or "untitled.pdf",
+        sha256_hash=compute_sha256(file_bytes),
+        status="processing",
+        pdf_bytes=file_bytes,
+        content_type=content_type,
+        byte_size=len(file_bytes),
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    try:
+        page_texts, _page_offsets = extract_digital_text_only(file_bytes)
+    except DigitalIngestionError as exc:
+        job.status = "failed"
+        job.error_message = str(exc)
+        session.commit()
+        raise
+
+    job.page_count = len(page_texts)
+
+    if not has_usable_digital_text(page_texts):
+        session.commit()
+        return job, None  # caller dispatches process_extraction_preview_job(job.id)
+
+    title = (filename or "Untitled document").rsplit(".", 1)[0]
+    try:
+        preview = assemble_preview_payload(
+            page_texts, title=title, source_filename=job.source_filename, extraction_method="pymupdf_digital"
+        )
+        job.extracted_pages_json = extracted_pages_payload(page_texts, "pymupdf_digital")
+        job.status = "review_ready"
+        session.commit()
+    except DigitalIngestionError as exc:
+        job.status = "failed"
+        job.error_message = str(exc)
+        session.commit()
+        raise
+    return job, preview
+
+
+def process_extraction_preview_job(job_id: str) -> None:
+    """Background-task entry point for the OCR-required extraction path.
+
+    Mirrors process_ingestion_job's structure/error-handling conventions but
+    STOPS at status="review_ready" -- it NEVER calls publish_new_version()
+    and NEVER writes/deletes anything in Chroma. Only the (possibly OCR'd)
+    page texts are persisted; cleaning/chunking/preview-building is re-done
+    on demand by build_preview_from_job rather than stored here.
+    """
+    from app.db.session import get_session_factory
+
+    session_factory = get_session_factory()
+    session: Session = session_factory()
+    try:
+        job = session.get(IngestionJob, job_id)
+        if job is None:
+            logger.error("Extraction preview job %s vanished before processing started.", job_id)
+            return
+
+        job.status = "processing"
+        job.status_detail = "Extracting digital text..."
+        session.commit()
+
+        try:
+            page_texts, _page_offsets = extract_digital_text_only(job.pdf_bytes)
+        except DigitalIngestionError as exc:
+            job.status = "failed"
+            job.error_message = str(exc)
+            session.commit()
+            return
+
+        job.page_count = len(page_texts)
+        extraction_method = "pymupdf_digital"
+
+        if not has_usable_digital_text(page_texts):
+            if not ocr_worker_configured():
+                job.status = "failed"
+                job.error_message = (
+                    "This document does not contain enough selectable/digital text, "
+                    "and the remote OCR worker is not configured."
+                )
+                session.commit()
+                return
+            job.status_detail = (
+                "Digital text insufficient; running OCR via the external worker "
+                "(this can take several minutes for scanned documents)..."
+            )
+            session.commit()
+            try:
+                page_texts, _page_offsets = run_ocr_worker(job.pdf_bytes)
+            except DigitalIngestionError as exc:
+                job.status = "failed"
+                job.error_message = str(exc)
+                session.commit()
+                return
+            job.page_count = len(page_texts)
+            extraction_method = "remote_ocr_worker"
+
+        job.status_detail = "Cleaning and structuring..."
+        session.commit()
+
+        title = (job.source_filename or "Untitled document").rsplit(".", 1)[0]
+        try:
+            # Validate the preview can actually be built (e.g. catches "no
+            # usable text remained after cleaning") -- result discarded; the
+            # fetch endpoint rebuilds it fresh from extracted_pages_json.
+            assemble_preview_payload(
+                page_texts, title=title, source_filename=job.source_filename, extraction_method=extraction_method
+            )
+        except DigitalIngestionError as exc:
+            job.status = "failed"
+            job.error_message = str(exc)
+            session.commit()
+            return
+
+        job.extracted_pages_json = extracted_pages_payload(page_texts, extraction_method)
+        job.status = "review_ready"
+        job.status_detail = None
+        session.commit()
+    except Exception:
+        logger.exception("Unhandled error processing extraction preview job %s", job_id)
+        try:
+            job = session.get(IngestionJob, job_id)
+            if job is not None:
+                job.status = "failed"
+                job.error_message = "Unhandled internal error during extraction."
+                session.commit()
+        except Exception:
+            logger.exception("Failed to record failure state for extraction preview job %s", job_id)
+    finally:
+        session.close()
+
+
+def start_indexing_job(job: IngestionJob, *, session: Session) -> None:
+    """Validates and transitions a review_ready job to status="indexing".
+
+    The actual publish happens in the caller's dispatched background task
+    (process_indexing_job) -- this function only performs the synchronous
+    state-transition part so the HTTP route can return immediately.
+    """
+    if job.status != "review_ready":
+        raise DigitalIngestionJobStateError(job.status)
+    job.status = "indexing"
+    session.commit()
+
+
+def process_indexing_job(job_id: str, reviewed_text: str | None) -> None:
+    """Background-task entry point for the publish phase of a review_ready
+    job. Reuses the job's persisted extracted_pages_json -- NEVER re-opens
+    job.pdf_bytes and NEVER calls the OCR worker again. publish_new_version()
+    remains the only Chroma-write primitive, identical to process_ingestion_job's
+    publish tail and build_lightweight_publish.
+    """
+    from app.db.session import get_session_factory
+
+    session_factory = get_session_factory()
+    session: Session = session_factory()
+    try:
+        job = session.get(IngestionJob, job_id)
+        if job is None:
+            logger.error("Indexing job %s vanished before processing started.", job_id)
+            return
+        if job.status != "indexing":
+            logger.error(
+                "process_indexing_job called for job %s with unexpected status=%s (expected indexing).",
+                job_id,
+                job.status,
+            )
+            return
+
+        try:
+            page_texts, _extraction_method = load_extracted_pages(job)
+        except DigitalIngestionError as exc:
+            job.status = "failed"
+            job.error_message = str(exc)
+            session.commit()
+            return
+
+        title = (job.source_filename or "Untitled document").rsplit(".", 1)[0]
+        try:
+            chunks = chunks_from_pages_or_reviewed_text(
+                page_texts, reviewed_text, title=title, source_filename=job.source_filename
+            )
+        except DigitalIngestionError as exc:
+            job.status = "failed"
+            job.error_message = str(exc)
+            session.commit()
+            return
+
+        if not chunks:
+            job.status = "failed"
+            job.error_message = "No chunks produced from extracted text."
+            session.commit()
+            return
+
+        store = get_knowledge_base_store()
+        replaced_document_id = store.document_id_for_source_filename(job.source_filename)
+
+        total_chunks = len(chunks)
+        job.status_detail = f"Embedding and publishing {total_chunks} chunks..."
+        job.replaced_document_id = replaced_document_id
+        session.commit()
+
+        def _on_batch_complete(added_so_far: int, total: int) -> None:
+            job.status_detail = f"Embedding and publishing chunk {added_so_far}/{total}..."
+            session.commit()
+
+        try:
+            new_document_id, indexed = publish_new_version(
+                store,
+                chunks=chunks,
+                title=title,
+                source_filename=job.source_filename,
+                replaced_document_id=replaced_document_id,
+                progress_callback=_on_batch_complete,
+            )
+        except DigitalIngestionReconciliationError as exc:
+            job.status = "needs_reconciliation"
+            job.error_message = str(exc)
+            session.commit()
+            return
+        except DigitalIngestionError as exc:
+            job.status = "failed"
+            job.error_message = str(exc)
+            session.commit()
+            return
+        except Exception as exc:  # noqa: BLE001 -- last-resort safety net, mirrors process_ingestion_job
+            job.status = "needs_reconciliation"
+            job.error_message = (
+                f"New version published but cleanup of the old version may be incomplete: {exc}"
+            )
+            session.commit()
+            return
+
+        job.status = "published"
+        job.document_id = new_document_id
+        job.chunks_indexed = indexed
+        job.status_detail = None
+        session.commit()
+    except Exception:
+        logger.exception("Unhandled error processing indexing job %s", job_id)
+        try:
+            job = session.get(IngestionJob, job_id)
+            if job is not None:
+                # needs_reconciliation (not failed): publish_new_version may
+                # have partially run before the unhandled exception.
+                job.status = "needs_reconciliation"
+                job.error_message = "Unhandled internal error during indexing; manual verification required."
+                session.commit()
+        except Exception:
+            logger.exception("Failed to record failure state for indexing job %s", job_id)
+    finally:
+        session.close()
 
 
 def _rollback_orphaned_new_version(

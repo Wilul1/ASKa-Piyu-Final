@@ -43,10 +43,19 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.db_models import IngestionJob
+from app.models.schemas import DocumentFieldSchema, StructuredDocumentSchema
+from app.services.admin.knowledge_base_pipeline import (
+    chunk_preview,
+    knowledge_base_statistics,
+    knowledge_units_for_extraction,
+    pipeline_stages,
+    validation_report,
+)
 from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
+from app.services.structured_document_parser import build_structured_document, format_structured_document
 from app.services.text_cleaner import clean_extracted_text
 
 logger = logging.getLogger(__name__)
@@ -232,6 +241,233 @@ def build_chunks_with_pages(
     return enrich_chunks_with_category_metadata(
         chunks, title=title, source_document=source_filename, allow_llm=False
     )
+
+
+def _mirror_page_range_metadata(chunks: list[DocumentChunk]) -> list[DocumentChunk]:
+    """Mirror page_number into page_start/page_end on each chunk's metadata.
+
+    The admin preview/validation helpers reused below (knowledge_units_for_
+    extraction / chunk_preview, built for the legacy pipeline's chunker)
+    read page_start/page_end; this pipeline's chunks only carry page_number
+    (consumed separately by citation grounding -- see chroma_store.py /
+    question_answering.py). Purely additive: page_number is left untouched.
+    """
+    for chunk in chunks:
+        metadata = chunk.metadata or {}
+        if "page_number" in metadata and "page_start" not in metadata:
+            metadata["page_start"] = metadata["page_number"]
+            metadata["page_end"] = metadata["page_number"]
+    return chunks
+
+
+def _lightweight_structured_response(text: str, *, source_document: str) -> StructuredDocumentSchema:
+    """Mirrors knowledge_base_pipeline._structured_text_response. Reimplemented
+    here (rather than importing that still-private helper) since this is its
+    only caller in this module."""
+    structured = build_structured_document(text, source_document=source_document, preview_file_path="")
+    if isinstance(structured, dict):
+        return StructuredDocumentSchema(fields=[], formatted_text=format_structured_document(structured) or text)
+    return StructuredDocumentSchema(
+        fields=[DocumentFieldSchema(**f.to_dict()) for f in structured.fields],
+        formatted_text=structured.formatted_text or text,
+    )
+
+
+def _lightweight_detected_document_type(*, reason: str) -> dict[str, Any]:
+    return {
+        "document_type": "information",
+        "base_document_type": "information",
+        "reason": reason,
+        "scores": {},
+        "manual_override": False,
+        "admin_selected_document_type": None,
+        "parser_kind": None,
+    }
+
+
+def _extract_or_ocr(file_bytes: bytes) -> tuple[list[str], list[int], str]:
+    """Shared by build_lightweight_preview/build_lightweight_publish: PyMuPDF
+    digital extraction, falling back to the remote OCR worker exactly as
+    process_ingestion_job already does. Raises DigitalIngestionError if
+    digital text is insufficient and the worker is unavailable/misconfigured
+    -- never silently proceeds with empty/garbage text.
+    """
+    page_texts, page_offsets = extract_digital_text_only(file_bytes)
+    extraction_method = "pymupdf_digital"
+    if not has_usable_digital_text(page_texts):
+        if not ocr_worker_configured():
+            raise DigitalIngestionError(
+                "This document does not contain enough selectable/digital text, "
+                "and the remote OCR worker is not configured. Configure the OCR "
+                "worker, or use the full local/Docker admin environment, to "
+                "extract this document."
+            )
+        page_texts, page_offsets = run_ocr_worker(file_bytes)
+        extraction_method = "remote_ocr_worker"
+    return page_texts, page_offsets, extraction_method
+
+
+def build_lightweight_preview(
+    file_bytes: bytes,
+    *,
+    filename: str | None,
+    content_type: str | None,
+) -> dict[str, Any]:
+    """Cloud-safe equivalent of knowledge_base_pipeline.extract_document_preview
+    for runtimes without local easyocr/sentence-transformers (see
+    app.services.ingestion_runtime.ingestion_available). Never writes to
+    Chroma. Returns a dict matching the ExtractDocumentResponse schema
+    exactly, so the existing Flutter Extract & Structure UI needs no change.
+    """
+    validate_pdf_bytes(file_bytes, content_type=content_type)
+    title = (filename or "Untitled document").rsplit(".", 1)[0]
+    source_document = filename or "Untitled document"
+
+    page_texts, page_offsets, extraction_method = _extract_or_ocr(file_bytes)
+
+    full_text = "\n".join(page_texts)
+    cleaned = clean_extracted_text(full_text, page_texts=page_texts)
+
+    chunks = build_chunks_with_pages(
+        page_texts,
+        page_offsets,
+        chunk_size=settings.chunk_max_chars,
+        chunk_overlap=settings.chunk_overlap,
+        title=title,
+        source_filename=source_document,
+    )
+    chunks = _mirror_page_range_metadata(chunks)
+
+    units = knowledge_units_for_extraction(None, chunks, kb_document_type=None)
+    previews = chunk_preview(chunks)
+    validation = validation_report(document_type="information", units=units, chunks=chunks)
+    stages = pipeline_stages(
+        extraction_method=extraction_method,
+        structuring_method="generic_chunking",
+        indexed=False,
+    )
+
+    return {
+        "document_type": "information",
+        "document_profile": "information",
+        "admin_selected_document_type": None,
+        "parser_document_type": None,
+        "source_type": None,
+        "raw_text": full_text,
+        "cleaned_text": cleaned,
+        "review_text": cleaned,
+        "extracted_text": cleaned,
+        "page_count": len(page_texts),
+        "extraction_method": extraction_method,
+        "structuring_method": "generic_chunking",
+        "pipeline_stages": stages,
+        "structured": _lightweight_structured_response(cleaned, source_document=source_document),
+        "diagnostic_report": None,
+        "validation_report": validation,
+        "detected_document_type": _lightweight_detected_document_type(
+            reason="Lightweight cloud-safe pipeline: generic chunking, no document-type detection."
+        ),
+        "knowledge_units": units,
+        "chunk_preview": previews,
+        "kb_statistics": knowledge_base_statistics(),
+    }
+
+
+def build_lightweight_publish(
+    file_bytes: bytes,
+    *,
+    filename: str | None,
+    content_type: str | None,
+    title: str | None = None,
+    reviewed_text: str | None = None,
+) -> dict[str, Any]:
+    """Cloud-safe equivalent of
+    knowledge_base_pipeline.ingest_document_into_knowledge_base for runtimes
+    without local easyocr/sentence-transformers.
+
+    Uses publish_new_version() -- staged add-new/verify/delete-old -- NEVER
+    delete_by_source_filename()-then-add(). Returns a dict matching the
+    IngestKnowledgeBaseResponse schema exactly.
+    """
+    validate_pdf_bytes(file_bytes, content_type=content_type)
+    display_title = title or (filename or "Untitled document").rsplit(".", 1)[0]
+    source_document = filename or "Untitled document"
+
+    page_texts, page_offsets, extraction_method = _extract_or_ocr(file_bytes)
+
+    reviewed = (reviewed_text or "").strip()
+    if reviewed:
+        # The admin's free-text edit has no page boundaries of its own --
+        # treated as a single page, exactly like the legacy /ingest path's
+        # equivalent reviewed_text override already accepts (see
+        # knowledge_base_pipeline._best_review_text). page_number/page_start/
+        # page_end all collapse to 1 for every resulting chunk.
+        chunks = build_chunks_with_pages(
+            [reviewed],
+            [0],
+            chunk_size=settings.chunk_max_chars,
+            chunk_overlap=settings.chunk_overlap,
+            title=display_title,
+            source_filename=source_document,
+        )
+    else:
+        chunks = build_chunks_with_pages(
+            page_texts,
+            page_offsets,
+            chunk_size=settings.chunk_max_chars,
+            chunk_overlap=settings.chunk_overlap,
+            title=display_title,
+            source_filename=source_document,
+        )
+    chunks = _mirror_page_range_metadata(chunks)
+
+    if not chunks:
+        raise DigitalIngestionError("No chunks produced from extracted text.")
+
+    store = get_knowledge_base_store()
+    replaced_document_id = store.document_id_for_source_filename(source_document)
+
+    new_document_id, indexed = publish_new_version(
+        store,
+        chunks=chunks,
+        title=display_title,
+        source_filename=source_document,
+        replaced_document_id=replaced_document_id,
+    )
+
+    units = knowledge_units_for_extraction(None, chunks, kb_document_type=None)
+    previews = chunk_preview(chunks)
+    validation = validation_report(document_type="information", units=units, chunks=chunks)
+    stages = pipeline_stages(
+        extraction_method=extraction_method,
+        structuring_method="generic_chunking",
+        indexed=True,
+        chunks_indexed=indexed,
+    )
+    index_text = reviewed or "\n".join(page_texts)
+    preview_text = index_text[:500] + ("..." if len(index_text) > 500 else "")
+
+    return {
+        "document_id": new_document_id,
+        "document_type": "information",
+        "source_filename": source_document,
+        "title": display_title,
+        "chunks_indexed": indexed,
+        "page_count": len(page_texts),
+        "extraction_method": extraction_method,
+        "extracted_text_preview": preview_text,
+        "structured": _lightweight_structured_response(index_text, source_document=source_document),
+        "structuring_method": "generic_chunking",
+        "pipeline_stages": stages,
+        "diagnostic_report": None,
+        "validation_report": validation,
+        "detected_document_type": _lightweight_detected_document_type(
+            reason="Lightweight cloud-safe pipeline: generic chunking, no document-type detection."
+        ),
+        "knowledge_units": units,
+        "chunk_preview": previews,
+        "kb_statistics": store.collection_statistics(),
+    }
 
 
 def _rollback_orphaned_new_version(

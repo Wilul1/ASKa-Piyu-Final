@@ -730,6 +730,19 @@ def _validation_report(*, document_type: str, units: list[dict], chunks: list[Do
     }
 
 
+# --- Public re-exports for the lightweight/cloud-safe pipeline ---------------
+#
+# app/services/admin/digital_ingestion.py (Heroku web-dyno path, no local
+# easyocr/sentence-transformers) reuses these pure (extraction, chunks) ->
+# preview/validation functions instead of duplicating them. They were
+# originally module-private; these thin wrappers are the only change --
+# behavior is identical, nothing here is re-implemented.
+pipeline_stages = _pipeline_stages
+chunk_preview = _chunk_preview
+knowledge_units_for_extraction = _knowledge_units_for_extraction
+validation_report = _validation_report
+
+
 def _campus_validation_from_units(units: list[dict]) -> tuple[set[str], set[str], list[dict[str, str]]]:
     campus_values: set[str] = set()
     program_campus_values: set[str] = set()

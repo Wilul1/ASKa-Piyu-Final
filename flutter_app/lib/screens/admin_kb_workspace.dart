@@ -184,36 +184,27 @@ class AdminKbWorkspace extends StatelessWidget {
           collapsible: _hasExtractionResult,
           initiallyExpanded: !_hasExtractionResult,
         ),
-        const SizedBox(height: 20),
-        _DigitalIngestionCard(
-          fileName: digitalFileName,
-          fileSizeBytes: digitalFileSizeBytes,
-          jobStatus: digitalJobStatus,
-          statusDetail: digitalStatusDetail,
-          pageCount: digitalPageCount,
-          chunksIndexed: digitalChunksIndexed,
-          errorMessage: digitalErrorMessage,
-          duplicateOfExistingJob: digitalDuplicateOfExistingJob,
-          isBusy: digitalIsBusy,
-          isPolling: digitalIsPolling,
-          hasJob: digitalHasJob,
-          onPickFile: onPickDigitalFile,
-          onUpload: onUploadDigital,
-          onReset: onResetDigitalJob,
-          onCheckNow: onCheckDigitalJobNow,
-        ),
+        // The separate "Digital PDF Processing (Zero-Cost)" card has been
+        // removed from this view: Extract & Structure / Index for Chatbot
+        // Retrieval above now cover the same cloud-safe pipeline on
+        // runtimes without local easyocr/sentence-transformers (see
+        // app.services.admin.digital_ingestion.build_lightweight_preview /
+        // build_lightweight_publish). The underlying ingest-digital /
+        // jobs/{id} / process_ingestion_job backend endpoints are
+        // intentionally kept, just no longer exposed as a second visible
+        // workflow here. digital* fields/callbacks below remain threaded
+        // through for now so this widget's public constructor is unchanged.
       ],
     );
   }
 }
 
-/// Digital (selectable-text) PDF ingestion workflow.
-///
-/// This is a separate pipeline from the extract/structure/ingest workflow
-/// above: it calls POST /admin/knowledge-base/ingest-digital then polls
-/// GET /admin/knowledge-base/jobs/{id} until a terminal status is reached.
-/// It never touches OCR, Azure, or the embedding/model configuration -- see
-/// backend/app/services/admin/digital_ingestion.py.
+/// Digital (selectable-text) PDF ingestion workflow -- no longer rendered by
+/// AdminKbWorkspace (see the comment above), but kept so the backend
+/// endpoints it talks to (POST /admin/knowledge-base/ingest-digital, GET
+/// /admin/knowledge-base/jobs/{id}) remain exercised by Dart if ever
+/// re-enabled. Retained class, unused in the current build() tree.
+// ignore: unused_element
 class _DigitalIngestionCard extends StatelessWidget {
   const _DigitalIngestionCard({
     required this.fileName,

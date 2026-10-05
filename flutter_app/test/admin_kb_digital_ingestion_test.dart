@@ -206,7 +206,22 @@ void main() {
     });
   });
 
-  group('AdminKbWorkspace digital ingestion UI states', () {
+  group('AdminKbWorkspace no longer renders the Digital PDF Processing card',
+      () {
+    // The lightweight/cloud-safe pipeline (PyMuPDF + remote AWS OCR
+    // fallback + publish_new_version) is now reached through the SAME
+    // Extract & Structure / Index for Chatbot Retrieval buttons the legacy
+    // local pipeline already used -- see
+    // backend/app/services/admin/digital_ingestion.py
+    // (build_lightweight_preview / build_lightweight_publish) and
+    // backend/app/routes/admin/knowledge_base.py's ingestion_available()
+    // branch. The separate "Digital PDF Processing (Zero-Cost)" card is
+    // removed from the rendered tree; its digital*/onXDigital fields stay
+    // on AdminKbWorkspace's constructor (unused by build()) only so this
+    // widget's public API doesn't need to change everywhere it's
+    // constructed. The backend endpoints it used to drive
+    // (POST /ingest-digital, GET /jobs/{id}, process_ingestion_job) are
+    // intentionally untouched -- see the KbWorkspaceSession tests above.
     Widget wrap(Widget child, {Size size = const Size(1200, 1000)}) {
       return MediaQuery(
         data: MediaQueryData(size: size),
@@ -220,13 +235,6 @@ void main() {
     AdminKbWorkspace buildWorkspace({
       String digitalJobStatus = 'ready',
       String? digitalFileName,
-      String? digitalStatusDetail,
-      int? digitalChunksIndexed,
-      String? digitalErrorMessage,
-      bool digitalDuplicateOfExistingJob = false,
-      bool digitalIsBusy = false,
-      bool digitalIsPolling = false,
-      bool digitalHasJob = false,
     }) {
       return AdminKbWorkspace(
         fileName: null,
@@ -252,14 +260,14 @@ void main() {
         digitalFileName: digitalFileName,
         digitalFileSizeBytes: null,
         digitalJobStatus: digitalJobStatus,
-        digitalStatusDetail: digitalStatusDetail,
+        digitalStatusDetail: null,
         digitalPageCount: null,
-        digitalChunksIndexed: digitalChunksIndexed,
-        digitalErrorMessage: digitalErrorMessage,
-        digitalDuplicateOfExistingJob: digitalDuplicateOfExistingJob,
-        digitalIsBusy: digitalIsBusy,
-        digitalIsPolling: digitalIsPolling,
-        digitalHasJob: digitalHasJob,
+        digitalChunksIndexed: null,
+        digitalErrorMessage: null,
+        digitalDuplicateOfExistingJob: false,
+        digitalIsBusy: false,
+        digitalIsPolling: false,
+        digitalHasJob: false,
         onPickDigitalFile: () {},
         onUploadDigital: () {},
         onResetDigitalJob: () {},
@@ -267,123 +275,24 @@ void main() {
       );
     }
 
-    testWidgets('ready state shows the picker and a disabled upload button',
+    testWidgets(
+        'the Digital PDF Processing card and its controls are not rendered',
+        (tester) async {
+      await tester.pumpWidget(wrap(buildWorkspace(
+        digitalFileName: 'handbook.pdf',
+        digitalJobStatus: 'published',
+      )));
+      expect(find.text('Digital PDF Processing (Zero-Cost)'), findsNothing);
+      expect(find.text('Choose PDF'), findsNothing);
+      expect(find.text('Upload & Process'), findsNothing);
+    });
+
+    testWidgets(
+        'the existing Extract & Structure / Index for Chatbot Retrieval buttons still render',
         (tester) async {
       await tester.pumpWidget(wrap(buildWorkspace()));
-      expect(find.text('Choose PDF'), findsOneWidget);
-      expect(find.text('Upload & Process'), findsOneWidget);
-      expect(find.text('Ready'), findsOneWidget);
-
-      final button = tester.widget<AdminPrimaryButton>(
-        find.widgetWithText(AdminPrimaryButton, 'Upload & Process'),
-      );
-      expect(button.onPressed, isNull); // no file chosen yet
-    });
-
-    testWidgets('a selected file enables the upload button', (tester) async {
-      await tester.pumpWidget(
-          wrap(buildWorkspace(digitalFileName: 'handbook.pdf')));
-      final button = tester.widget<AdminPrimaryButton>(
-        find.widgetWithText(AdminPrimaryButton, 'Upload & Process'),
-      );
-      expect(button.onPressed, isNotNull);
-    });
-
-    testWidgets(
-        'uploading/queued/processing disable the upload button (duplicate-submission guard)',
-        (tester) async {
-      for (final status in ['uploading', 'queued', 'processing']) {
-        await tester.pumpWidget(wrap(buildWorkspace(
-          digitalFileName: 'handbook.pdf',
-          digitalJobStatus: status,
-          digitalIsBusy: true,
-        )));
-        final button = tester.widget<AdminPrimaryButton>(
-          find.widgetWithText(AdminPrimaryButton, 'Upload & Process'),
-        );
-        expect(button.onPressed, isNull, reason: status);
-      }
-    });
-
-    testWidgets('published state shows filename, chunk count, and a reset action',
-        (tester) async {
-      await tester.pumpWidget(wrap(buildWorkspace(
-        digitalFileName: 'handbook.pdf',
-        digitalJobStatus: 'published',
-        digitalChunksIndexed: 87,
-      )));
-      expect(find.textContaining('87 chunks indexed'), findsOneWidget);
-      expect(find.text('Process Another PDF'), findsOneWidget);
-    });
-
-    testWidgets('ocr_required explains the limitation and never offers a retry',
-        (tester) async {
-      await tester.pumpWidget(wrap(buildWorkspace(
-        digitalFileName: 'scanned.pdf',
-        digitalJobStatus: 'ocr_required',
-      )));
-      expect(
-        find.textContaining(
-            'This PDF does not contain enough selectable digital text and requires OCR processing.'),
-        findsOneWidget,
-      );
-      expect(find.text('Choose a Different File'), findsOneWidget);
-      expect(find.text('Retry'), findsNothing);
-    });
-
-    testWidgets('failed state shows the sanitized error and a Try Again action',
-        (tester) async {
-      await tester.pumpWidget(wrap(buildWorkspace(
-        digitalFileName: 'handbook.pdf',
-        digitalJobStatus: 'failed',
-        digitalErrorMessage: 'Adding the new version failed: HTTP 401.',
-      )));
-      expect(
-          find.text('Adding the new version failed: HTTP 401.'), findsOneWidget);
-      expect(find.text('Try Again'), findsOneWidget);
-    });
-
-    testWidgets(
-        'needs_reconciliation warns that admin attention is required and offers no auto-retry',
-        (tester) async {
-      await tester.pumpWidget(wrap(buildWorkspace(
-        digitalFileName: 'handbook.pdf',
-        digitalJobStatus: 'needs_reconciliation',
-        digitalErrorMessage: 'Cleanup of the old version may be incomplete.',
-      )));
-      expect(find.textContaining('Administrator Attention Required'),
-          findsOneWidget);
-      expect(find.text('Dismiss'), findsOneWidget);
-      expect(find.text('Try Again'), findsNothing);
-      expect(find.text('Retry'), findsNothing);
-    });
-
-    testWidgets('duplicate-of-existing-job note is shown when flagged',
-        (tester) async {
-      await tester.pumpWidget(wrap(buildWorkspace(
-        digitalFileName: 'handbook.pdf',
-        digitalJobStatus: 'published',
-        digitalDuplicateOfExistingJob: true,
-      )));
-      expect(
-        find.textContaining('This file was already submitted before'),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets(
-        'a stalled (non-terminal, non-polling) job offers a manual Check Status Now action',
-        (tester) async {
-      await tester.pumpWidget(wrap(buildWorkspace(
-        digitalFileName: 'handbook.pdf',
-        digitalJobStatus: 'processing',
-        digitalIsBusy: false,
-        digitalIsPolling: false,
-        digitalHasJob: true,
-        digitalStatusDetail:
-            'Lost contact with the server while checking status. Use "Check status now" below.',
-      )));
-      expect(find.text('Check Status Now'), findsOneWidget);
+      expect(find.text('Extract & Structure'), findsOneWidget);
+      expect(find.text('Index for Chatbot Retrieval'), findsOneWidget);
     });
 
     testWidgets('renders without overflow at a narrow mobile width',
@@ -410,12 +319,12 @@ void main() {
     // Renders the actual route an admin reaches via the "Knowledge Base"
     // sidebar item (AdminPanelPage, wrapped the same way main.dart wraps
     // every page: AuthScope > KbWorkspaceScope > MaterialApp), not just
-    // AdminKbWorkspace/_DigitalIngestionCard in isolation. This is the
-    // regression test for "the card doesn't show up on the live page even
-    // though the strings are in the deployed bundle" -- it proves the
-    // widget composition itself is correct.
+    // AdminKbWorkspace in isolation. Extract & Index is now the one and
+    // only document-processing workflow visible here -- the separate
+    // "Digital PDF Processing (Zero-Cost)" card must not appear on the
+    // live page composition.
     testWidgets(
-        'Digital PDF Processing (Zero-Cost) is visible on the real Admin Knowledge Base page',
+        'Digital PDF Processing (Zero-Cost) is no longer visible on the real Admin Knowledge Base page',
         (tester) async {
       await tester.binding.setSurfaceSize(const Size(1400, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -440,14 +349,20 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      // Sanity check: the existing extract/ingest workflow is still there.
+      // Sanity check: the existing extract/ingest workflow is still there
+      // and still wired to its buttons (requirement: these remain the
+      // primary production document-processing workflow).
       expect(find.text('Extract & Index'), findsOneWidget);
       expect(find.text('Active Document'), findsOneWidget);
+      expect(find.text('Extract & Structure'), findsOneWidget);
+      expect(find.text('Index for Chatbot Retrieval'), findsOneWidget);
 
-      // The actual regression assertion.
-      expect(find.text('Digital PDF Processing (Zero-Cost)'), findsOneWidget);
-      expect(find.text('Choose PDF'), findsOneWidget);
-      expect(find.text('Upload & Process'), findsOneWidget);
+      // The actual regression assertion: the separate zero-cost digital
+      // card is gone from the real page composition, not just from the
+      // isolated widget tests above.
+      expect(find.text('Digital PDF Processing (Zero-Cost)'), findsNothing);
+      expect(find.text('Choose PDF'), findsNothing);
+      expect(find.text('Upload & Process'), findsNothing);
     });
   });
 }

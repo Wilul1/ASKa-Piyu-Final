@@ -53,6 +53,10 @@ from app.services.admin.article_candidate_generator import (
 from app.services.chroma_store import get_knowledge_base_store
 from app.services.ingestion_runtime import INGESTION_UNAVAILABLE_MESSAGE, ingestion_available
 from app.services.admin.digital_ingestion import (
+    DigitalIngestionError,
+    DigitalIngestionReconciliationError,
+    build_lightweight_preview,
+    build_lightweight_publish,
     compute_sha256,
     process_ingestion_job,
     validate_pdf_bytes,
@@ -466,9 +470,26 @@ async def admin_extract_document(
 
     Use before full ingest, or to verify scan quality.
     """
-    if not ingestion_available():
-        raise HTTPException(status_code=503, detail=INGESTION_UNAVAILABLE_MESSAGE)
     content = await _read_upload(file)
+
+    if not ingestion_available():
+        # Lightweight/cloud-safe path (e.g. Heroku web dyno): PyMuPDF digital
+        # extraction, falling back to the remote AWS OCR worker when
+        # configured. Never writes to Chroma. See
+        # app.services.admin.digital_ingestion.build_lightweight_preview.
+        try:
+            result = await asyncio.to_thread(
+                build_lightweight_preview,
+                content,
+                filename=file.filename,
+                content_type=file.content_type,
+            )
+        except DigitalIngestionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise _admin_internal_error("Document extraction failed.", exc) from exc
+        return ExtractDocumentResponse(**result)
+
     try:
         # OCR/structuring is CPU-bound; keep the event loop free for /health.
         result = await asyncio.to_thread(
@@ -552,9 +573,33 @@ async def admin_ingest_document(
 
     Run at deployment, policy updates, and maintenance — not from the student app.
     """
-    if not ingestion_available():
-        raise HTTPException(status_code=503, detail=INGESTION_UNAVAILABLE_MESSAGE)
     content = await _read_upload(file)
+
+    if not ingestion_available():
+        # Lightweight/cloud-safe path: uses publish_new_version() (staged
+        # add-new/verify/delete-old) -- never delete_by_source_filename()
+        # followed by add(). See
+        # app.services.admin.digital_ingestion.build_lightweight_publish.
+        try:
+            result = await asyncio.to_thread(
+                build_lightweight_publish,
+                content,
+                filename=file.filename,
+                content_type=file.content_type,
+                title=title,
+                reviewed_text=reviewed_text,
+            )
+        except DigitalIngestionReconciliationError as exc:
+            raise _admin_internal_error(
+                "Ingest failed; the previous published version may require manual reconciliation.",
+                exc,
+            ) from exc
+        except DigitalIngestionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise _admin_internal_error("Ingest failed.", exc) from exc
+        return IngestKnowledgeBaseResponse(**result)
+
     try:
         result = await asyncio.to_thread(
             ingest_document_into_knowledge_base,

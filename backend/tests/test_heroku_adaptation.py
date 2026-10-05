@@ -226,21 +226,190 @@ def test_ingestion_available_false_when_packages_missing():
 
 
 @patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
-def test_admin_extract_returns_503_when_ingestion_unavailable():
+def test_admin_extract_uses_lightweight_path_when_ingestion_unavailable():
+    """/extract no longer 503s when local easyocr/sentence-transformers are
+    unavailable (e.g. the Heroku web dyno) -- it now calls
+    build_lightweight_preview (PyMuPDF + optional remote OCR worker) and
+    returns 200 with the same ExtractDocumentResponse shape the Flutter
+    Extract & Structure UI already understands. See
+    app.services.admin.digital_ingestion.build_lightweight_preview."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    ingestion_available.cache_clear()
+    lightweight_result = {
+        "document_type": "information",
+        "raw_text": "hello world",
+        "cleaned_text": "hello world",
+        "review_text": "hello world",
+        "extracted_text": "hello world",
+        "page_count": 1,
+        "extraction_method": "pymupdf_digital",
+        "structuring_method": "generic_chunking",
+        "pipeline_stages": [],
+        "structured": {"fields": [], "formatted_text": "hello world"},
+    }
+    try:
+        with (
+            patch("app.routes.admin.knowledge_base.ingestion_available", return_value=False),
+            patch(
+                "app.routes.admin.knowledge_base.build_lightweight_preview",
+                return_value=lightweight_result,
+            ) as mock_preview,
+        ):
+            response = client.post(
+                "/admin/knowledge-base/extract",
+                headers={"X-Admin-Key": "test-admin-key"},
+                files={"file": ("test.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            )
+        assert response.status_code == 200
+        assert response.json()["extraction_method"] == "pymupdf_digital"
+        mock_preview.assert_called_once()
+    finally:
+        ingestion_available.cache_clear()
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
+def test_admin_ingest_uses_lightweight_path_when_ingestion_unavailable():
+    """/ingest no longer 503s when local easyocr/sentence-transformers are
+    unavailable -- it now calls build_lightweight_publish (which uses
+    publish_new_version(), never delete_by_source_filename()+add()) and
+    returns 200 with the same IngestKnowledgeBaseResponse shape. See
+    app.services.admin.digital_ingestion.build_lightweight_publish."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    ingestion_available.cache_clear()
+    lightweight_result = {
+        "document_id": "doc-123",
+        "document_type": "information",
+        "source_filename": "test.pdf",
+        "title": "test",
+        "chunks_indexed": 3,
+        "page_count": 1,
+        "extraction_method": "pymupdf_digital",
+        "structuring_method": "generic_chunking",
+        "pipeline_stages": [],
+        "extracted_text_preview": "hello world",
+        "structured": {"fields": [], "formatted_text": "hello world"},
+    }
+    try:
+        with (
+            patch("app.routes.admin.knowledge_base.ingestion_available", return_value=False),
+            patch(
+                "app.routes.admin.knowledge_base.build_lightweight_publish",
+                return_value=lightweight_result,
+            ) as mock_publish,
+        ):
+            response = client.post(
+                "/admin/knowledge-base/ingest",
+                headers={"X-Admin-Key": "test-admin-key"},
+                files={"file": ("test.pdf", b"%PDF-1.4 fake", "application/pdf")},
+                data={"title": "test", "reviewed_text": "hello world"},
+            )
+        assert response.status_code == 200
+        assert response.json()["document_id"] == "doc-123"
+        mock_publish.assert_called_once()
+        _, kwargs = mock_publish.call_args
+        assert kwargs["reviewed_text"] == "hello world"
+    finally:
+        ingestion_available.cache_clear()
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
+def test_admin_extract_never_calls_lightweight_path_when_ingestion_available():
+    """Regression guard: local/Docker (ingestion_available()==True) must
+    keep using the existing local extract_document_preview pipeline
+    byte-for-byte -- the lightweight branch must be unreachable there."""
     from fastapi.testclient import TestClient
     from app.main import app
 
     client = TestClient(app)
     ingestion_available.cache_clear()
     try:
-        with patch("app.routes.admin.knowledge_base.ingestion_available", return_value=False):
+        with (
+            patch("app.routes.admin.knowledge_base.ingestion_available", return_value=True),
+            patch("app.routes.admin.knowledge_base.build_lightweight_preview") as mock_preview,
+            patch("app.routes.admin.knowledge_base.extract_document_preview") as mock_legacy,
+        ):
+            mock_legacy.return_value = {
+                "document_type": "information",
+                "document_profile": None,
+                "admin_selected_document_type": None,
+                "parser_document_type": None,
+                "source_type": None,
+                "raw_text": "hello",
+                "cleaned_text": "hello",
+                "review_text": "hello",
+                "extracted_text": "hello",
+                "page_count": 1,
+                "extraction_method": "pymupdf_digital",
+                "structuring_method": "generic_chunking",
+                "pipeline_stages": [],
+                "structured": {"fields": [], "formatted_text": "hello"},
+            }
             response = client.post(
                 "/admin/knowledge-base/extract",
                 headers={"X-Admin-Key": "test-admin-key"},
                 files={"file": ("test.pdf", b"%PDF-1.4 fake", "application/pdf")},
             )
-        assert response.status_code == 503
-        assert response.json()["detail"] == INGESTION_UNAVAILABLE_MESSAGE
+        assert response.status_code == 200
+        mock_legacy.assert_called_once()
+        mock_preview.assert_not_called()
+    finally:
+        ingestion_available.cache_clear()
+
+
+@patch("app.routes.admin.knowledge_base.settings.admin_api_key", "test-admin-key")
+def test_admin_ingest_never_calls_lightweight_path_when_ingestion_available():
+    """Same regression guard for /ingest: local/Docker keeps using
+    ingest_document_into_knowledge_base (delete_by_source_filename + add)
+    unchanged -- this change does not retrofit that pipeline."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    ingestion_available.cache_clear()
+    try:
+        with (
+            patch("app.routes.admin.knowledge_base.ingestion_available", return_value=True),
+            patch("app.routes.admin.knowledge_base.build_lightweight_publish") as mock_publish,
+            patch("app.routes.admin.knowledge_base.ingest_document_into_knowledge_base") as mock_legacy,
+        ):
+            mock_legacy.return_value = type(
+                "FakeResult",
+                (),
+                {
+                    "document_id": "legacy-doc-1",
+                    "document_type": "information",
+                    "source_filename": "test.pdf",
+                    "title": "test",
+                    "chunks_indexed": 1,
+                    "page_count": 1,
+                    "extraction_method": "pymupdf_digital",
+                    "extracted_text_preview": "hello",
+                    "structured": {"fields": [], "formatted_text": "hello"},
+                    "structuring_method": "generic_chunking",
+                    "pipeline_stages": [],
+                    "diagnostic_report": None,
+                    "validation_report": None,
+                    "detected_document_type": None,
+                    "knowledge_units": [],
+                    "chunk_preview": [],
+                    "kb_statistics": None,
+                },
+            )()
+            response = client.post(
+                "/admin/knowledge-base/ingest",
+                headers={"X-Admin-Key": "test-admin-key"},
+                files={"file": ("test.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            )
+        assert response.status_code == 200
+        assert response.json()["document_id"] == "legacy-doc-1"
+        mock_legacy.assert_called_once()
+        mock_publish.assert_not_called()
     finally:
         ingestion_available.cache_clear()
 

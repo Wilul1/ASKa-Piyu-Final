@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.db_models import IngestionJob
-from app.models.schemas import DocumentFieldSchema, StructuredDocumentSchema
+from app.models.schemas import StructuredDocumentSchema
 from app.services.admin.knowledge_base_pipeline import (
     chunk_preview,
     knowledge_base_statistics,
@@ -56,7 +56,6 @@ from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
-from app.services.structured_document_parser import build_structured_document, format_structured_document
 from app.services.text_cleaner import clean_extracted_text
 
 logger = logging.getLogger(__name__)
@@ -287,17 +286,27 @@ def _mirror_page_range_metadata(chunks: list[DocumentChunk]) -> list[DocumentChu
     return chunks
 
 
-def _lightweight_structured_response(text: str, *, source_document: str) -> StructuredDocumentSchema:
-    """Mirrors knowledge_base_pipeline._structured_text_response. Reimplemented
-    here (rather than importing that still-private helper) since this is its
-    only caller in this module."""
-    structured = build_structured_document(text, source_document=source_document, preview_file_path="")
-    if isinstance(structured, dict):
-        return StructuredDocumentSchema(fields=[], formatted_text=format_structured_document(structured) or text)
-    return StructuredDocumentSchema(
-        fields=[DocumentFieldSchema(**f.to_dict()) for f in structured.fields],
-        formatted_text=structured.formatted_text or text,
-    )
+def _lightweight_structured_response(text: str) -> StructuredDocumentSchema:
+    """Cheap, O(n)-trivial "structured" display field for the lightweight
+    pipeline -- wraps the already-cleaned text directly, with no fields.
+
+    Deliberately does NOT call
+    app.services.structured_document_parser.build_structured_document() /
+    parse_structured_document() (generic service-block regex scanning
+    designed for the legacy local/Docker pipeline's Citizen's Charter /
+    form documents). On the 2026-10-05 LSPU Student Handbook incident,
+    that call alone took long enough on a 198-page/~343K-char document to
+    blow past Heroku's 30s router timeout (H12) -- a local, isolated
+    timing benchmark on comparably-sized synthetic text measured it at
+    over 1000 seconds, versus low-single-digit-seconds for every other
+    stage in this pipeline (cleaning, chunking, knowledge units, chunk
+    preview, validation report) combined. The lightweight pipeline's
+    "structured" field is a display convenience only -- the admin reviews
+    and edits review_text/cleaned_text, and Index publishes from the
+    persisted page texts, never from this field -- so there is nothing to
+    lose by never running that scan here.
+    """
+    return StructuredDocumentSchema(fields=[], formatted_text=text)
 
 
 def _lightweight_detected_document_type(*, reason: str) -> dict[str, Any]:
@@ -388,7 +397,7 @@ def assemble_preview_payload(
         "extraction_method": extraction_method,
         "structuring_method": "generic_chunking",
         "pipeline_stages": stages,
-        "structured": _lightweight_structured_response(cleaned, source_document=source_filename),
+        "structured": _lightweight_structured_response(cleaned),
         "diagnostic_report": None,
         "validation_report": validation,
         "detected_document_type": _lightweight_detected_document_type(
@@ -533,7 +542,7 @@ def build_lightweight_publish(
         "page_count": len(page_texts),
         "extraction_method": extraction_method,
         "extracted_text_preview": preview_text,
-        "structured": _lightweight_structured_response(index_text, source_document=source_document),
+        "structured": _lightweight_structured_response(index_text),
         "structuring_method": "generic_chunking",
         "pipeline_stages": stages,
         "diagnostic_report": None,
@@ -600,22 +609,36 @@ def start_extraction_job(
     filename: str | None,
     content_type: str | None,
     session: Session,
-) -> tuple[IngestionJob, dict[str, Any] | None]:
+) -> IngestionJob:
     """Creates a brand-new IngestionJob row for this specific upload and
-    either finishes synchronously (digital text sufficient -- returns
-    (job, preview_dict), job.status == "review_ready") or leaves the job at
-    status="processing" for the caller to dispatch
-    process_extraction_preview_job(job.id) as a background task (returns
-    (job, None)).
+    returns it immediately with status="queued" -- the caller dispatches
+    process_extraction_preview_job(job.id) as a background task and
+    returns a {job_id, status: "processing"} response without waiting for
+    any of it.
+
+    ALWAYS asynchronous now, regardless of whether the document turns out
+    to be digital-text-sufficient or needs OCR. This function used to run
+    PyMuPDF extraction synchronously and, for digital-sufficient documents,
+    also the full clean/chunk/preview-assembly pipeline inside the same
+    HTTP request ("the fast path"). The 2026-10-05 LSPU Student Handbook
+    incident proved that assumption false: a 198-page digital-text PDF's
+    downstream work (specifically, at the time, a since-removed
+    build_structured_document() call) took long enough to exceed Heroku's
+    30s router timeout (H12) even though PyMuPDF extraction itself was
+    fast. There is no size threshold under which the full pipeline can be
+    proven fast enough for a single synchronous request, so every /extract
+    call now goes through the same background-job path as OCR-required
+    documents always did.
 
     Deliberately does NOT do sha256-based duplicate lookup/reuse of any
     existing row (unlike /ingest-digital's dedup) -- every call creates a
     fresh job explicitly for this operation, so this path can never return
     or attach an old job (including, critically, never the historical
-    Student Handbook needs_reconciliation row) merely because it happens to
-    share a filename or hash. The only existing-row check here is the
-    single-dyno "something else is already running" concurrency guard,
-    which never inspects job content/history, only current status.
+    Student Handbook needs_reconciliation row, nor any other previously
+    orphaned job) merely because it happens to share a filename or hash.
+    The only existing-row check here is the single-dyno "something else is
+    already running" concurrency guard, which never inspects job
+    content/history, only current status.
     """
     validate_pdf_bytes(file_bytes, content_type=content_type)
 
@@ -630,7 +653,7 @@ def start_extraction_job(
     job = IngestionJob(
         source_filename=filename or "untitled.pdf",
         sha256_hash=compute_sha256(file_bytes),
-        status="processing",
+        status="queued",
         pdf_bytes=file_bytes,
         content_type=content_type,
         byte_size=len(file_bytes),
@@ -638,35 +661,7 @@ def start_extraction_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-
-    try:
-        page_texts, _page_offsets = extract_digital_text_only(file_bytes)
-    except DigitalIngestionError as exc:
-        job.status = "failed"
-        job.error_message = str(exc)
-        session.commit()
-        raise
-
-    job.page_count = len(page_texts)
-
-    if not has_usable_digital_text(page_texts):
-        session.commit()
-        return job, None  # caller dispatches process_extraction_preview_job(job.id)
-
-    title = (filename or "Untitled document").rsplit(".", 1)[0]
-    try:
-        preview = assemble_preview_payload(
-            page_texts, title=title, source_filename=job.source_filename, extraction_method="pymupdf_digital"
-        )
-        job.extracted_pages_json = extracted_pages_payload(page_texts, "pymupdf_digital")
-        job.status = "review_ready"
-        session.commit()
-    except DigitalIngestionError as exc:
-        job.status = "failed"
-        job.error_message = str(exc)
-        session.commit()
-        raise
-    return job, preview
+    return job
 
 
 def process_extraction_preview_job(job_id: str) -> None:

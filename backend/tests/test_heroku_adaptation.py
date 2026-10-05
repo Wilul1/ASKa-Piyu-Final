@@ -229,13 +229,16 @@ def test_ingestion_available_false_when_packages_missing():
 def test_admin_extract_uses_job_based_lightweight_path_when_ingestion_unavailable():
     """/extract no longer 503s when local easyocr/sentence-transformers are
     unavailable (e.g. the Heroku web dyno) -- it now creates an explicit
-    IngestionJob via start_extraction_job and, for a digital-text PDF,
-    finishes synchronously (fast path) returning 200 with job_id plus the
-    same ExtractDocumentResponse shape the Flutter Extract & Structure UI
-    already understands (2026-10-05 review_ready/indexing split -- see
-    app.services.admin.digital_ingestion.start_extraction_job). The
-    OCR-required/background-job path is covered by its own dedicated test
-    file (test_extraction_review_index_jobs.py), not here."""
+    IngestionJob via start_extraction_job and ALWAYS returns immediately
+    with {status: "processing", job_id}, even for a digital-text PDF --
+    there is no synchronous fast path anymore (2026-10-05: the LSPU
+    Student Handbook H12 incident proved digital extraction's downstream
+    work is not reliably fast enough for one HTTP request). Background
+    processing (which TestClient runs synchronously before .post()
+    returns) still reaches review_ready with the right extraction_method.
+    The OCR-required path is covered by its own dedicated test file
+    (test_extraction_review_index_jobs.py), not here."""
+    import json as json_mod
     import uuid as uuid_mod
 
     import fitz
@@ -279,10 +282,12 @@ def test_admin_extract_uses_job_based_lightweight_path_when_ingestion_unavailabl
             )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "success"
+        # Always the processing stub now -- never the full preview inline,
+        # even though the document is digital-sufficient.
+        assert data["status"] == "processing"
         assert data["job_id"]
-        assert data["extraction_method"] == "pymupdf_digital"
-        assert "selectable digital text" in data["review_text"]
+        assert data["review_text"] == ""
+        assert data["structured"] is None
 
         session = get_session_factory()()
         try:
@@ -290,6 +295,8 @@ def test_admin_extract_uses_job_based_lightweight_path_when_ingestion_unavailabl
             assert job is not None
             assert job.status == "review_ready"
             assert job.extracted_pages_json
+            pages = json_mod.loads(job.extracted_pages_json)
+            assert pages["extraction_method"] == "pymupdf_digital"
         finally:
             session.close()
     finally:

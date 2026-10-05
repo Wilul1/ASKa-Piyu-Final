@@ -484,15 +484,17 @@ async def admin_extract_document(
     if not ingestion_available():
         # Lightweight/cloud-safe path (e.g. Heroku web dyno). Creates an
         # explicit IngestionJob for THIS upload only (never reuses/recovers
-        # any existing row -- see start_extraction_job's docstring). Digital
-        # text finishes synchronously (fast, well under Heroku's 30s router
-        # limit); OCR-required documents are handed to a background task so
-        # this request always returns quickly -- see the 2026-10-05 H12
-        # incident on this endpoint. See
+        # any existing row -- see start_extraction_job's docstring) and
+        # ALWAYS processes it in a background task -- there is no
+        # synchronous fast path anymore, even for digital-text-sufficient
+        # documents. This request always returns quickly regardless of
+        # document size; see the 2026-10-05 H12 incident (a 198-page
+        # digital-text LSPU Student Handbook) that proved "digital
+        # extraction is always fast enough for one request" false. See
         # app.services.admin.digital_ingestion.start_extraction_job /
         # process_extraction_preview_job.
         try:
-            job, preview = await asyncio.to_thread(
+            job = await asyncio.to_thread(
                 start_extraction_job,
                 content,
                 filename=file.filename,
@@ -512,24 +514,21 @@ async def admin_extract_document(
         except Exception as exc:
             raise _admin_internal_error("Document extraction failed.", exc) from exc
 
-        if preview is None:
-            # OCR required -- do not block this request waiting for it.
-            background_tasks.add_task(process_extraction_preview_job, job.id)
-            return ExtractDocumentResponse(
-                status="processing",
-                job_id=job.id,
-                document_type="",
-                raw_text="",
-                cleaned_text="",
-                review_text="",
-                extracted_text="",
-                page_count=job.page_count or 0,
-                extraction_method="pending",
-                structuring_method="pending",
-                pipeline_stages=[],
-                structured=None,
-            )
-        return ExtractDocumentResponse(job_id=job.id, **preview)
+        background_tasks.add_task(process_extraction_preview_job, job.id)
+        return ExtractDocumentResponse(
+            status="processing",
+            job_id=job.id,
+            document_type="",
+            raw_text="",
+            cleaned_text="",
+            review_text="",
+            extracted_text="",
+            page_count=0,
+            extraction_method="pending",
+            structuring_method="pending",
+            pipeline_stages=[],
+            structured=None,
+        )
 
     try:
         # OCR/structuring is CPU-bound; keep the event loop free for /health.

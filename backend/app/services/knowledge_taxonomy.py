@@ -40,6 +40,22 @@ DEFAULT_OFFICE = "Student Affairs and Services"
 LOW_CONFIDENCE_THRESHOLD = 0.45
 RULE_CONFIDENCE_THRESHOLD = 0.72
 
+# Minimum classify_chunk() confidence required to actually stamp an
+# office/responsible_office onto chunk metadata during document
+# ingestion (see enrich_chunks_with_category_metadata). Deliberately
+# NOT applied inside classify_chunk/classify_question themselves -- those
+# are also used for live student-question ticket routing, which must
+# keep its existing best-guess behavior unchanged. A single coincidental
+# keyword hit anywhere in a 900-1200-char chunk is enough to "win" the
+# rule-based contest at low absolute confidence (e.g. one keyword match
+# scores ~0.31); below this floor, the office is genuinely ambiguous and
+# the existing "Unassigned" convention (see ticketing.py) is used instead
+# of guessing. category/subcategory are unaffected by this floor -- only
+# office/responsible_office, since those are what a false positive here
+# visibly mis-routes.
+OFFICE_ASSIGNMENT_CONFIDENCE_FLOOR = 0.55
+UNASSIGNED_OFFICE = "Unassigned"
+
 
 @dataclass(frozen=True)
 class SubcategoryConfig:
@@ -141,13 +157,24 @@ def enrich_chunks_with_category_metadata(
             doc_type in {"citizen_charter", "procedure", "service_process"}
             or article_type == "service_procedure"
         )
-        # Never overwrite an extracted Citizen's Charter office with taxonomy guesses.
+        # Never overwrite an extracted Citizen's Charter office with taxonomy guesses
+        # -- the document explicitly identified this office; that is strong evidence
+        # and must never be downgraded to Unassigned regardless of confidence.
         if is_charter_service and existing_office:
             office = existing_office
             responsible_office = existing_office
+        elif existing_office:
+            office = existing_office
+            responsible_office = existing_office
+        elif classification.confidence >= OFFICE_ASSIGNMENT_CONFIDENCE_FLOOR:
+            office = classification.office
+            responsible_office = classification.office
         else:
-            office = existing_office or classification.office
-            responsible_office = existing_office or classification.office
+            # Ambiguous: no explicit office evidence, and the keyword/
+            # similarity match was too weak to trust. Prefer staying
+            # unassigned over fabricating a responsible office.
+            office = UNASSIGNED_OFFICE
+            responsible_office = UNASSIGNED_OFFICE
         metadata.update(
             {
                 "category": classification.category,

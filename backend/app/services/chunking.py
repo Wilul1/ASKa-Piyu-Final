@@ -1,6 +1,8 @@
 """Chunking utilities for ASKa-Piyu knowledge-base indexing."""
 from __future__ import annotations
 
+import bisect
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,6 +71,27 @@ def chunk_text(text: str, max_chars: int = 900, overlap: int = 120) -> list[str]
 def create_chunks(text: str, max_chars: int = 900, overlap: int = 120) -> list[str]:
     return chunk_text(text, max_chars=max_chars, overlap=overlap)
 
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+_WORD_BOUNDARY_RE = re.compile(r"\s+")
+
+
+def _safe_break_points(block: str) -> list[int]:
+    """Character offsets where it is safe to start/end a slice of
+    ``block`` -- i.e. never inside a word. Always includes 0 and
+    len(block). Prefers sentence-ending boundaries; if the block has none
+    at all (e.g. one long run-on sentence with no terminal punctuation),
+    falls back to every whitespace-delimited word boundary instead, so a
+    slice still never cuts a word even without real sentence punctuation.
+    """
+    points = {0, len(block)}
+    for match in _SENTENCE_BOUNDARY_RE.finditer(block):
+        points.add(match.end())
+    if len(points) <= 2:
+        for match in _WORD_BOUNDARY_RE.finditer(block):
+            points.add(match.end())
+    return sorted(points)
+
+
 def _slice_oversized_block(
     block: str,
     block_start: int,
@@ -76,21 +99,60 @@ def _slice_oversized_block(
     chunk_size: int,
     chunk_overlap: int,
 ) -> None:
-    """Character-window fallback for a single block (paragraph, or the
-    whole text when it has no paragraph breaks at all) that on its own
-    still exceeds chunk_size. This is the only place plain char-count
-    slicing happens now — used as a last resort, not the default path."""
+    """Fallback for a single block (paragraph, or the whole text when it
+    has no paragraph breaks at all) that on its own still exceeds
+    chunk_size. Prefers sentence boundaries, then whole-word boundaries --
+    a chunk boundary is never intentionally placed inside a word. Plain
+    character-count slicing is now reachable only for a single token
+    that is itself longer than chunk_size (e.g. a URL or OCR garbage
+    run), which real document text essentially never contains.
+    """
+    break_points = _safe_break_points(block)
+    n = len(block)
+
+    if len(break_points) <= 2:
+        # No sentence or word boundary found at all -- nothing safe to
+        # break on (a single unbroken token longer than chunk_size).
+        start = 0
+        while start < n:
+            end = min(start + chunk_size, n)
+            piece = block[start:end].strip()
+            if piece:
+                chunks.append(
+                    DocumentChunk(text=piece, chunk_index=len(chunks), char_start=block_start + start)
+                )
+            if end >= n:
+                break
+            start = max(0, end - chunk_overlap)
+        return
+
     start = 0
-    while start < len(block):
-        end = min(start + chunk_size, len(block))
+    while start < n:
+        limit = start + chunk_size
+        idx = bisect.bisect_right(break_points, limit) - 1
+        end = break_points[idx] if idx >= 0 and break_points[idx] > start else None
+        if end is None:
+            # The very next safe break point already exceeds chunk_size
+            # on its own (one very long sentence/word) -- take it anyway
+            # rather than cut mid-word.
+            next_idx = bisect.bisect_right(break_points, start)
+            end = break_points[next_idx] if next_idx < len(break_points) else n
+
         piece = block[start:end].strip()
         if piece:
             chunks.append(
                 DocumentChunk(text=piece, chunk_index=len(chunks), char_start=block_start + start)
             )
-        if end >= len(block):
+        if end >= n:
             break
-        start = max(0, end - chunk_overlap)
+
+        # Snap the overlap start back to the nearest safe break point at
+        # or before (end - chunk_overlap), so the next slice also begins
+        # cleanly rather than mid-word.
+        target = max(start, end - chunk_overlap)
+        snap_idx = bisect.bisect_right(break_points, target) - 1
+        snapped = break_points[snap_idx] if snap_idx >= 0 else start
+        start = snapped if snapped > start else end
 
 
 def chunk_document_text(

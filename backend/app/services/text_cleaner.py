@@ -212,6 +212,169 @@ _LOWERCASE_START_RE = re.compile(r"^[a-z]")
 _MAJOR_SECTION_LINE_RE = re.compile(r"^[IVXLCDM]+\.\s+\S")
 _MAJOR_SECTION_KEY_RE = re.compile(r"^([IVXLCDM]+)\.\s+")
 
+# --- Generic TOC-entry / heading-candidate detection (2026-10-05) ----------
+#
+# "Faculty Official Time ........ 12" / "Submission of Grades    15" style
+# rows: a short heading-like phrase followed by a bare page number, with
+# or without dot/space leaders in between. Deliberately generic -- matches
+# on SHAPE only, never a specific document's section names or page-number
+# range -- so it works for any PDF's table of contents, not one document.
+_TOC_ENTRY_DOTTED_RE = re.compile(r"(?:\.{2,}|…)\s*\|?\s*\d{1,4}\s*$")
+_TOC_ENTRY_BARE_RE = re.compile(r"^([A-Z][A-Za-z0-9 ,&'()/.-]{2,90})\s+(\d{1,4})\s*$")
+_TOC_NOISE_WORDS_RE = re.compile(
+    r"\b(page|year|no\.?|percent|grade|gwa|minutes?|hours?|process|wherein|acceptable|time)\b",
+    re.I,
+)
+_ALLCAPS_HEADING_RE = re.compile(r"^[A-Z][A-Z0-9 ,&'()/.-]{2,80}$")
+_ARTICLE_CHAPTER_HEADING_RE = re.compile(
+    r"^(?:article|chapter|section|part)\s+[IVXLCDM0-9]+[:.]?\s*\S", re.I
+)
+_DECIMAL_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+[A-Z]\S")
+
+
+def looks_like_toc_entry_line(line: str) -> bool:
+    """True for a single line shaped like one table-of-contents row.
+
+    A single matching line is NOT, on its own, grounds to remove anything
+    -- see remove_toc_blocks, which requires a dense run of several such
+    lines close together before dropping anything, so an isolated real
+    heading that happens to end in a number (e.g. "Appendix 1") is never
+    touched just because it matches this shape test once.
+    """
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    if len(stripped) <= 140 and _TOC_ENTRY_DOTTED_RE.search(stripped):
+        return True
+    match = _TOC_ENTRY_BARE_RE.match(stripped)
+    if not match:
+        return False
+    title = match.group(1).strip()
+    if re.search(r"[.!?:;|]$", title):
+        return False
+    if _TOC_NOISE_WORDS_RE.search(title):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", title)
+    if not (1 <= len(words) <= 8):
+        return False
+    title_like = sum(1 for w in words if w[:1].isupper() or w.isupper())
+    return title_like / len(words) >= 0.6
+
+
+def remove_toc_blocks(
+    text: str,
+    *,
+    min_run: int = 3,
+    max_gap: int = 3,
+    max_connector_chars: int = 200,
+) -> str:
+    """Drops contiguous runs of table-of-contents-shaped lines from text
+    before it ever reaches chunking/indexing.
+
+    Safety model: a line is only ever removed when it falls inside a
+    CLUSTER of at least ``min_run`` TOC-shaped lines that are each within
+    ``max_gap`` lines of the next (allowing a few short connector/blank
+    lines -- e.g. a lone chapter label -- inside a real TOC run). A
+    cluster never bridges across a line longer than
+    ``max_connector_chars`` -- a run of real prose can never be swallowed
+    into a TOC block just because a TOC-shaped line appears somewhere
+    nearby. A single isolated TOC-shaped line (cluster size 1) is never
+    removed on its own.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    toc_indices = [i for i, line in enumerate(lines) if looks_like_toc_entry_line(line)]
+    if len(toc_indices) < min_run:
+        return text
+
+    clusters: list[list[int]] = [[toc_indices[0]]]
+    for idx in toc_indices[1:]:
+        prev = clusters[-1][-1]
+        gap_has_long_line = any(
+            len(lines[k].strip()) > max_connector_chars for k in range(prev + 1, idx)
+        )
+        if idx - prev <= max_gap and not gap_has_long_line:
+            clusters[-1].append(idx)
+        else:
+            clusters.append([idx])
+
+    drop = [False] * len(lines)
+    for cluster in clusters:
+        if len(cluster) >= min_run:
+            for k in range(cluster[0], cluster[-1] + 1):
+                drop[k] = True
+
+    kept = [line for idx, line in enumerate(lines) if not drop[idx]]
+    return "\n".join(kept)
+
+
+def is_heading_candidate(line: str) -> bool:
+    """Generic "this line looks like a section/subsection heading" test.
+
+    Reused by the lightweight ingestion pipeline to find the nearest real
+    heading for a chunk's title, instead of falling back to an arbitrary
+    first-line fragment (which can be a mid-sentence slice or a leftover
+    TOC row). Never true for anything that itself looks like a TOC entry.
+    """
+    stripped = (line or "").strip()
+    if not stripped or len(stripped) > 100:
+        return False
+    if looks_like_toc_entry_line(stripped):
+        return False
+    if _is_major_section_heading(stripped):
+        return True
+    if _ARTICLE_CHAPTER_HEADING_RE.match(stripped):
+        return True
+    if _DECIMAL_HEADING_RE.match(stripped):
+        return True
+    if (
+        _ALLCAPS_HEADING_RE.match(stripped)
+        and len(re.findall(r"[A-Z]{2,}", stripped)) >= 1
+        and len(stripped.split()) >= 2
+    ):
+        return True
+    if (
+        _looks_like_standalone_heading_text(stripped)
+        and len(stripped) <= 80
+        and not stripped.endswith((".", ":", ";", ","))
+    ):
+        return True
+    return False
+
+
+_HEADING_CONNECTOR_WORDS = {
+    "a", "an", "the", "of", "on", "in", "for", "to", "and", "or", "by", "as",
+}
+
+
+def _looks_like_standalone_heading_text(line: str) -> bool:
+    """A short (1-8 word) Title Case or ALL-CAPS phrase, standalone on its
+    own line -- e.g. "Grievance Machinery" or "Leave of Absence".
+
+    Deliberately more permissive than _looks_like_title_case_heading
+    (which requires >=3 words -- tuned for a different purpose, matching
+    multi-word breadcrumb-fragment headings in OCR output, and must not
+    be changed here since other callers rely on that exact threshold): a
+    real section heading is very often just one or two words.
+    """
+    words = [w for w in re.split(r"\s+", line.strip()) if w]
+    if not (1 <= len(words) <= 8):
+        return False
+    title_like = 0
+    for word in words:
+        bare = word.strip(".,;:()[]\"'/")
+        if not bare:
+            continue
+        if bare.casefold() in _HEADING_CONNECTOR_WORDS:
+            title_like += 1
+            continue
+        if _TITLE_CASE_WORD_RE.match(bare) or bare.isupper():
+            title_like += 1
+        else:
+            return False
+    return title_like >= 1
+
 
 def _is_separator_or_page_artifact(line: str) -> bool:
     stripped = line.strip()
@@ -393,6 +556,8 @@ def clean_rag_extraction_text(text: str) -> str:
     Clean PDF/OCR extraction text for RAG indexing.
 
     Applies general heuristics only (no document-specific hardcoded titles):
+    - drop whole table-of-contents blocks (see remove_toc_blocks) so TOC
+      rows never become retrievable knowledge units or chunk titles
     - drop TOC mashups, page/part markers, and separator lines
     - drop duplicate breadcrumb section labels and truncated fragment headings
     - repair hyphenated word breaks
@@ -402,6 +567,7 @@ def clean_rag_extraction_text(text: str) -> str:
         return ""
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = remove_toc_blocks(text)
     text = _fix_hyphenated_line_breaks(text)
     text = _fix_inline_hyphen_word_breaks(text)
 
@@ -535,6 +701,18 @@ def clean_rag_extraction_text(text: str) -> str:
     return normalize_whitespace(text)
 
 
+_DIGIT_RUN_RE = re.compile(r"\d+")
+
+
+def _furniture_template(line: str) -> str:
+    """Normalizes a header/footer candidate so a per-page-varying page
+    number doesn't prevent recognizing the same repeated template --
+    "Page 5 of 92" and "Page 6 of 92" both normalize to "Page # of #",
+    so they count as the same recurring template rather than two
+    one-off lines that each only ever appear once."""
+    return _DIGIT_RUN_RE.sub("#", line)
+
+
 def _strip_repeated_headers_footers(text: str, page_texts: list[str]) -> str:
     if len(page_texts) < 2:
         return text
@@ -543,14 +721,21 @@ def _strip_repeated_headers_footers(text: str, page_texts: list[str]) -> str:
     for page in page_texts:
         lines = [line.strip() for line in page.splitlines() if line.strip()]
         for candidate in set(lines[:3] + lines[-3:]):
-            counts[candidate] = counts.get(candidate, 0) + 1
+            template = _furniture_template(candidate)
+            counts[template] = counts.get(template, 0) + 1
 
-    threshold = max(2, int(len(page_texts) * 0.6))
-    repeated = {line for line, count in counts.items() if count >= threshold}
-    if not repeated:
+    # Lowered from an exact-match-only 0.6 -- a running header/footer
+    # legitimately varies per page (page numbers) and is sometimes absent
+    # on chapter-start pages, so requiring every instance to be byte-
+    # identical and present on 60% of ALL pages missed real furniture.
+    threshold = max(2, int(len(page_texts) * 0.4))
+    repeated_templates = {template for template, count in counts.items() if count >= threshold}
+    if not repeated_templates:
         return text
 
-    return "\n".join(line for line in text.splitlines() if line.strip() not in repeated)
+    return "\n".join(
+        line for line in text.splitlines() if _furniture_template(line.strip()) not in repeated_templates
+    )
 
 
 def clean_ocr_text(text: str, remove_table_headers: bool = False) -> str:

@@ -40,6 +40,7 @@ from app.services.knowledge_document_types import (
     detect_knowledge_document_type,
 )
 from app.services.structured_document_parser import build_structured_document, format_structured_document
+from app.services.text_cleaner import looks_like_toc_entry_line
 
 
 NEEDS_REVIEW = "[NEEDS REVIEW]"
@@ -391,36 +392,16 @@ def _title_from_metadata(metadata: dict | None) -> str:
 
 
 def _looks_toc_like(text: str) -> bool:
-    stripped = (text or "").strip()
-    return bool(
-        re.search(r"(?:\.{3,}|…)\s*\d+\s*$", stripped)
-        or re.fullmatch(r"[A-Z][A-Za-z0-9 ,&'()/.-]{2,90}\s+\d{1,4}", stripped)
-    )
-
-
-def _looks_toc_like(text: str) -> bool:
-    stripped = (text or "").strip()
-    if re.search(r"(?:\.{2,}|…|â€¦|Ã¢â‚¬Â¦)\s*\|?\s*\d+\s*$", stripped):
-        return True
-    if re.match(r"^(?:article|chapter|appendix|sec(?:tion)?\.?)\s+[A-Z0-9IVXLCDM]+[:\-.]?\s+.+$", stripped, flags=re.I) and re.search(r"(?:\.{2,}|…|â€¦|Ã¢â‚¬Â¦)\s*\|?\s*\d+\s*$", stripped):
-        return True
-    return _looks_like_title_page_reference(stripped)
-
-
-def _looks_like_title_page_reference(text: str) -> bool:
-    match = re.fullmatch(r"([A-Z][A-Za-z0-9 ,&'()/.-]{2,90})\s+(\d{1,4})", text)
-    if not match:
-        return False
-    title = match.group(1).strip()
-    if re.search(r"[.!?:;|]$", title):
-        return False
-    if re.search(r"\b(page|year|no\.?|percent|grade|gwa|minutes?|hours?|process|wherein|acceptable|time)\b", title, flags=re.I):
-        return False
-    words = re.findall(r"[A-Za-z][A-Za-z'-]*", title)
-    if not (1 <= len(words) <= 8):
-        return False
-    title_like = sum(1 for word in words if word[:1].isupper() or word.isupper())
-    return title_like / len(words) >= 0.6
+    """Delegates to the shared, generic TOC-entry-line detector (see
+    app.services.text_cleaner.looks_like_toc_entry_line) -- previously
+    two separate inline-regex definitions of this function existed in
+    this file (the first silently shadowed by the second, so only the
+    second ever actually ran); this is now the single definition, used
+    the same way it always was: as a per-unit/title SUSPICIOUS flag for
+    the admin preview, not as a filter. Actual TOC-block removal from the
+    text handed to the chunker happens upstream, in
+    text_cleaner.remove_toc_blocks (via clean_rag_extraction_text)."""
+    return looks_like_toc_entry_line(text)
 
 
 def _has_standalone_page_number_path_segment(path: str) -> bool:

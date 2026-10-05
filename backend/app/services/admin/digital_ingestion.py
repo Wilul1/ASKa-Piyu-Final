@@ -31,6 +31,7 @@ path for the Heroku web dyno specifically:
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import logging
@@ -56,7 +57,7 @@ from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
-from app.services.text_cleaner import clean_extracted_text
+from app.services.text_cleaner import clean_extracted_text, is_heading_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +231,49 @@ def _page_for_offset(char_start: int, page_offsets: list[int]) -> int:
     return page_index + 1
 
 
+def _heading_offsets(text: str) -> tuple[list[int], list[str]]:
+    """(sorted char offsets, heading text) for every heading-candidate
+    line in ``text``, in document order -- used to find the nearest
+    preceding heading for a given chunk's char_start."""
+    offsets: list[int] = []
+    headings: list[str] = []
+    running = 0
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped and is_heading_candidate(stripped):
+            offsets.append(running)
+            headings.append(stripped)
+        running += len(line) + 1  # +1 for the removed "\n"
+    return offsets, headings
+
+
+def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> list[DocumentChunk]:
+    """Attaches metadata["section_heading"] = the nearest preceding
+    detected heading line for each chunk, so titles reflect a real
+    section/subsection heading instead of an arbitrary first-line
+    fragment (which can be a mid-sentence slice or a leftover TOC row --
+    see _title_from_metadata in knowledge_base_pipeline.py, which already
+    prefers "section_heading" over any first-line fallback). No change
+    is made when a chunk has no preceding heading at all; the existing
+    first-line fallback still applies for that case, as before.
+    """
+    offsets, headings = _heading_offsets(cleaned_text)
+    if not offsets:
+        return chunks
+    updated: list[DocumentChunk] = []
+    for chunk in chunks:
+        idx = bisect.bisect_right(offsets, chunk.char_start) - 1
+        metadata = dict(chunk.metadata or {})
+        if idx >= 0:
+            metadata["section_heading"] = headings[idx]
+        updated.append(
+            DocumentChunk(
+                text=chunk.text, chunk_index=chunk.chunk_index, char_start=chunk.char_start, metadata=metadata
+            )
+        )
+    return updated
+
+
 def build_chunks_with_pages(
     page_texts: list[str],
     page_offsets: list[int],
@@ -260,6 +304,7 @@ def build_chunks_with_pages(
         )
         for c in raw_chunks
     ]
+    chunks = _attach_section_headings(chunks, cleaned)
     # allow_llm=False: this path must stay fast and free of per-chunk LLM
     # calls (classify_chunk's Groq fallback can take minutes and cost real
     # API usage across a multi-page document) -- rule/similarity-only

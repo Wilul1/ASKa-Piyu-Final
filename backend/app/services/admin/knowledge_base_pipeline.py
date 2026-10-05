@@ -40,7 +40,7 @@ from app.services.knowledge_document_types import (
     detect_knowledge_document_type,
 )
 from app.services.structured_document_parser import build_structured_document, format_structured_document
-from app.services.text_cleaner import looks_like_toc_entry_line
+from app.services.text_cleaner import looks_like_toc_entry_line, is_heading_candidate
 
 
 NEEDS_REVIEW = "[NEEDS REVIEW]"
@@ -356,12 +356,62 @@ def _hierarchy_path(metadata: dict | None) -> str:
     return " > ".join(deduped)
 
 
+_HONORIFIC_PREFIX_RE = re.compile(
+    r"^(?:hon\.?|dr\.?|mr\.?|mrs\.?|ms\.?|atty\.?|engr\.?|prof\.?|rev\.?|fr\.?)\s+[A-Z]",
+    re.I,
+)
+_TRAILING_SENTENCE_CONNECTOR_RE = re.compile(
+    r"\b(?:the|a|an|of|in|on|for|to|and|or|by|as|with|that|this|is|are|was|were|shall|will|who|which)\s*$",
+    re.I,
+)
+_TITLE_HEADING_MAX_WORDS = 9
+
+
+def is_trustworthy_title_heading(line: str) -> bool:
+    """Stricter than is_heading_candidate (which stays unchanged --
+    shared with TOC detection, frozen for this fix): rejects shapes that
+    pass is_heading_candidate's generic per-line shape test but are
+    clearly not a genuine section heading once actually used as a
+    chunk's title/metadata.
+
+    - A numbered/lettered heading-shaped line with too many words is
+      almost always a cut-off body sentence introduced by a list number
+      ("2. Teaching as a commitment recognizes the centrality of the
+      learner in the"), not a real section title -- genuine numbered
+      headings ("I. General Information", "Article 6. Procedure for
+      Major Disciplinary Actions") stay short and so stay valid.
+    - A line visibly trailing off mid-sentence (ending on a bare
+      connector word, no terminal punctuation) is a wrapped
+      continuation, not a heading.
+    - A line opening with a courtesy/honorific title ("Hon.", "Dr.",
+      "Atty.", ...) is a PERSON's name inside an officials roster, not
+      a section heading.
+    """
+    stripped = (line or "").strip()
+    if not stripped or not is_heading_candidate(stripped):
+        return False
+    if _HONORIFIC_PREFIX_RE.match(stripped):
+        return False
+    if _TRAILING_SENTENCE_CONNECTOR_RE.search(stripped):
+        return False
+    if len(stripped.split()) > _TITLE_HEADING_MAX_WORDS:
+        return False
+    return True
+
+
 def _title_from_chunk(chunk: DocumentChunk) -> str:
     metadata = chunk.metadata or {}
     metadata_title = _title_from_metadata(metadata)
     if metadata_title:
         return metadata_title
-    first_line = next((line.strip() for line in chunk.text.splitlines() if line.strip()), "")
+    first_line = next(
+        (
+            line.strip()
+            for line in chunk.text.splitlines()
+            if line.strip() and is_trustworthy_title_heading(line.strip())
+        ),
+        "",
+    )
     return first_line[:120] or "Untitled chunk"
 
 

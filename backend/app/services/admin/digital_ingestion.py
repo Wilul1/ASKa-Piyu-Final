@@ -48,6 +48,7 @@ from app.models.db_models import IngestionJob
 from app.models.schemas import StructuredDocumentSchema
 from app.services.admin.knowledge_base_pipeline import (
     chunk_preview,
+    is_trustworthy_title_heading,
     knowledge_base_statistics,
     knowledge_units_for_extraction,
     pipeline_stages,
@@ -57,7 +58,7 @@ from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
-from app.services.text_cleaner import clean_extracted_text, is_heading_candidate
+from app.services.text_cleaner import clean_extracted_text
 
 logger = logging.getLogger(__name__)
 
@@ -231,30 +232,78 @@ def _page_for_offset(char_start: int, page_offsets: list[int]) -> int:
     return page_index + 1
 
 
+_MIN_HEADING_BODY_GAP_CHARS = 40
+_DENSE_HEADING_RUN_MIN_SIZE = 4
+
+
 def _heading_offsets(text: str) -> tuple[list[int], list[str]]:
-    """(sorted char offsets, heading text) for every heading-candidate
-    line in ``text``, in document order -- used to find the nearest
-    preceding heading for a given chunk's char_start."""
-    offsets: list[int] = []
-    headings: list[str] = []
+    """(sorted char offsets, heading text) for every TRUSTWORTHY heading
+    line in ``text``, in document order -- used to find the governing
+    heading for a given chunk (see _attach_section_headings).
+
+    Filters through is_trustworthy_title_heading (stricter than plain
+    is_heading_candidate -- see its docstring) and additionally drops
+    any candidate belonging to a RUN of at least
+    _DENSE_HEADING_RUN_MIN_SIZE consecutive candidates each separated by
+    less than _MIN_HEADING_BODY_GAP_CHARS of body text: a letterhead/
+    roster block (e.g. "Laguna State Polytechnic University (LSPU)" /
+    "Province of Laguna" / "Regular Campuses:" / "LSPU-Los Baños
+    Campus" / ... -- 8 consecutive short candidates with virtually no
+    body prose between them) is a dense run like this, and none of its
+    members is a genuine section heading.
+
+    Requiring a RUN of several, not just two adjacent candidates, matters
+    because a legitimate compound heading is often itself 2-3 lines
+    packed just as tightly (e.g. "Chapter 3" / "UNDERGRADUATE ACADEMIC
+    POLICIES" / "Article 1. Classifications of Students" -- three lines,
+    one newline apart, all naming the SAME section boundary) -- treating
+    any tight pair as untrustworthy would wrongly suppress that, too.
+    """
+    raw_offsets: list[int] = []
+    raw_headings: list[str] = []
     running = 0
     for line in text.split("\n"):
         stripped = line.strip()
-        if stripped and is_heading_candidate(stripped):
-            offsets.append(running)
-            headings.append(stripped)
+        if stripped and is_trustworthy_title_heading(stripped):
+            raw_offsets.append(running)
+            raw_headings.append(stripped)
         running += len(line) + 1  # +1 for the removed "\n"
+
+    drop_indices: set[int] = set()
+    run: list[int] = [0] if raw_offsets else []
+    for i in range(1, len(raw_offsets)):
+        gap = raw_offsets[i] - (raw_offsets[i - 1] + len(raw_headings[i - 1]))
+        if gap < _MIN_HEADING_BODY_GAP_CHARS:
+            run.append(i)
+        else:
+            if len(run) >= _DENSE_HEADING_RUN_MIN_SIZE:
+                drop_indices.update(run)
+            run = [i]
+    if len(run) >= _DENSE_HEADING_RUN_MIN_SIZE:
+        drop_indices.update(run)
+
+    offsets = [o for i, o in enumerate(raw_offsets) if i not in drop_indices]
+    headings = [h for i, h in enumerate(raw_headings) if i not in drop_indices]
     return offsets, headings
 
 
 def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> list[DocumentChunk]:
-    """Attaches metadata["section_heading"] = the nearest preceding
-    detected heading line for each chunk, so titles reflect a real
+    """Attaches metadata["section_heading"] = the heading that governs
+    MOST of a chunk's own content, so titles reflect a real
     section/subsection heading instead of an arbitrary first-line
     fragment (which can be a mid-sentence slice or a leftover TOC row --
     see _title_from_metadata in knowledge_base_pipeline.py, which already
-    prefers "section_heading" over any first-line fallback). No change
-    is made when a chunk has no preceding heading at all; the existing
+    prefers "section_heading" over any first-line fallback).
+
+    Prefers the LATEST heading that begins WITHIN the chunk's own span
+    (char_start to char_start+len(text)) over the nearest heading
+    preceding only its start offset: a short section's trailing content
+    is sometimes packed into the same chunk as the START of the next
+    section (e.g. a short "PRAYER" immediately followed, in the same
+    chunk, by "Chapter 1" and its own opening paragraph) -- in that
+    case the chunk's bulk of actual content belongs to the LATER
+    heading, not the one technically preceding char_start. No change is
+    made when a chunk has no trustworthy heading at all; the existing
     first-line fallback still applies for that case, as before.
     """
     offsets, headings = _heading_offsets(cleaned_text)
@@ -262,7 +311,10 @@ def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> 
         return chunks
     updated: list[DocumentChunk] = []
     for chunk in chunks:
-        idx = bisect.bisect_right(offsets, chunk.char_start) - 1
+        chunk_end = chunk.char_start + len(chunk.text)
+        idx_start = bisect.bisect_right(offsets, chunk.char_start) - 1
+        idx_end = bisect.bisect_right(offsets, chunk_end) - 1
+        idx = idx_end if idx_end > idx_start else idx_start
         metadata = dict(chunk.metadata or {})
         if idx >= 0:
             metadata["section_heading"] = headings[idx]

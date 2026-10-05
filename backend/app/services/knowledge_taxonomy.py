@@ -127,6 +127,81 @@ def classify_question(question: str) -> ClassificationResult:
     return rule_result
 
 
+# Phrases that genuinely indicate a chunk's content is GOVERNED BY,
+# PROCESSED BY, or explicitly ASSIGNED TO an office -- as opposed to
+# merely MENTIONING that office/college/program by name somewhere in
+# the text (e.g. a historical-development narrative that happens to
+# name "College of Agriculture" while describing when it was founded).
+# Deliberately only ever used by enrich_chunks_with_category_metadata
+# (ingestion-time office assignment) -- never by classify_chunk/
+# classify_question, which remain unchanged for live ticket routing.
+_OFFICE_RESPONSIBILITY_PATTERN_RE = re.compile(
+    r"(?i)("
+    r"shall\s+be\s+(?:handled|processed|administered|managed|reviewed|approved|evaluated|filed|submitted|coordinated|endorsed|facilitated)\s+(?:by|with|to|at)"
+    r"|responsible\s+office"
+    r"|submit(?:ted)?\s+to\s+the\s+[a-z]"
+    r"|processed\s+by\s+the\s+[a-z]"
+    r"|administered\s+by\s+the\s+[a-z]"
+    r"|under\s+the\s+(?:jurisdiction|supervision|administration)\s+of\s+the\s+[a-z]"
+    r"|office\s+of\s+[a-z ]+\s+shall"
+    r"|coordinated\s+(?:with|by)\s+the\s+[a-z]"
+    r"|handled\s+by\s+the\s+office\s+of"
+    r"|shall\s+(?:coordinate|liaise)\s+with\s+the\s+[a-z]"
+    r"|requests?\s+(?:shall\s+be\s+|must\s+be\s+)?(?:filed|submitted|coursed)\s+(?:with|through|at)\s+the\s+[a-z]"
+    r")"
+)
+
+
+def _heading_names_classification(
+    section_heading: str | None, classification: ClassificationResult
+) -> bool:
+    """True when the chunk's OWN section heading -- not its body text --
+    is itself distinctively about the classified category/subcategory
+    (e.g. a heading literally titled "Scholarship Grants" or "Guidance
+    and Counseling Services"), which is authoritative structural
+    evidence of ownership. A heading like "Historical Development of
+    LSPU" or "General Information" never matches here even though the
+    BODY text happens to name a college/program/office in passing.
+    """
+    heading_norm = _normalize(section_heading or "")
+    if not heading_norm:
+        return False
+    category, subcategory = _find_taxonomy_entry(classification.category, classification.subcategory)
+    if subcategory is None:
+        return False
+    for name in (subcategory.name, category.name if category else ""):
+        name_norm = _normalize(name)
+        if name_norm and has_distinctive_token(name_norm, GENERIC_SERVICE_NAME_TOKENS) and name_norm in heading_norm:
+            return True
+    for keyword in subcategory.keywords:
+        kw_norm = _normalize(keyword)
+        if (
+            kw_norm
+            and len(kw_norm) >= 4
+            and has_distinctive_token(kw_norm, GENERIC_SERVICE_NAME_TOKENS)
+            and kw_norm in heading_norm
+        ):
+            return True
+    return False
+
+
+def _office_assignment_has_ownership_evidence(
+    text: str, *, section_heading: str | None, classification: ClassificationResult
+) -> bool:
+    """True when there is genuine evidence this chunk's content is
+    governed by/about the classified office -- never just that the
+    office/college/program's name happens to appear somewhere in the
+    body text. See module-level note on FALSE NEGATIVE > FALSE POSITIVE
+    for office metadata: a high rule-based classification confidence
+    alone (which can reach the 0.98 cap purely from an exact
+    office/college name match plus a couple of keyword hits in a
+    historical/narrative passage) is NOT, by itself, ownership evidence.
+    """
+    if _OFFICE_RESPONSIBILITY_PATTERN_RE.search(text or ""):
+        return True
+    return _heading_names_classification(section_heading, classification)
+
+
 def enrich_chunks_with_category_metadata(
     chunks: list[DocumentChunk],
     *,
@@ -166,13 +241,20 @@ def enrich_chunks_with_category_metadata(
         elif existing_office:
             office = existing_office
             responsible_office = existing_office
-        elif classification.confidence >= OFFICE_ASSIGNMENT_CONFIDENCE_FLOOR:
+        elif classification.confidence >= OFFICE_ASSIGNMENT_CONFIDENCE_FLOOR and _office_assignment_has_ownership_evidence(
+            chunk.text, section_heading=metadata.get("section_heading"), classification=classification
+        ):
             office = classification.office
             responsible_office = classification.office
         else:
-            # Ambiguous: no explicit office evidence, and the keyword/
-            # similarity match was too weak to trust. Prefer staying
-            # unassigned over fabricating a responsible office.
+            # Ambiguous: no explicit office evidence, and either the
+            # keyword/similarity match was too weak to trust, or it was
+            # confident only because the office/college/program's name
+            # was merely MENTIONED (e.g. in historical/narrative prose)
+            # rather than genuinely governing this chunk's content.
+            # Prefer staying unassigned over fabricating a responsible
+            # office -- false negative is an acceptable cost here,
+            # false positive is not.
             office = UNASSIGNED_OFFICE
             responsible_office = UNASSIGNED_OFFICE
         metadata.update(

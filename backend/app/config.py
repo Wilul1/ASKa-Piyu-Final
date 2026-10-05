@@ -51,6 +51,19 @@ class Settings(BaseSettings):
     ocr_threshold_value: int = 180
     max_upload_bytes: int = 50 * 1024 * 1024
 
+    # --- Optional external AWS EasyOCR worker (digital-ingestion OCR_REQUIRED
+    # documents only -- see app/services/admin/digital_ingestion.py). Disabled
+    # by default: unset/false preserves the existing ocr_required behavior
+    # exactly. The worker performs ONLY OCR -- embeddings, Chroma publishing,
+    # cleaning/chunking/metadata all stay on this dyno, unchanged.
+    ocr_worker_enabled: bool = False
+    ocr_worker_url: str | None = None
+    ocr_worker_token: str | None = None
+    # OCR runs ~10s/page on the worker; multi-page scanned documents can take
+    # minutes -- deliberately a much longer, separate budget from
+    # qa_ask_timeout_seconds (which bounds the unrelated /qa/ask chatbot path).
+    ocr_worker_timeout_seconds: float = 300.0
+
     # --- Knowledge base (ChromaDB) ---
     admin_api_key: str | None = None
     chroma_persist_dir: str = "./data/chroma"

@@ -43,6 +43,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.db_models import IngestionJob
+from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
@@ -101,12 +102,23 @@ def validate_pdf_bytes(file_bytes: bytes, *, content_type: str | None) -> None:
         raise DigitalIngestionError(f"Unsupported content type for this path: {content_type}")
 
 
+def _page_offsets_from_texts(page_texts: list[str]) -> list[int]:
+    """page_start_offsets[i] is the character offset, in the newline-joined
+    full text, at which page i's text begins -- shared by both the digital
+    (PyMuPDF) and OCR-worker text sources so page_number metadata is
+    computed identically regardless of which one produced the text."""
+    offsets: list[int] = []
+    running = 0
+    for text in page_texts:
+        offsets.append(running)
+        running += len(text) + 1  # +1 for the "\n" used to join pages below
+    return offsets
+
+
 def extract_digital_text_only(file_bytes: bytes) -> tuple[list[str], list[int]]:
     """PyMuPDF-only extraction. See module docstring for the OCR-avoidance guarantee.
 
-    Returns (page_texts, page_start_offsets): page_start_offsets[i] is the
-    character offset, in the newline-joined full text, at which page i's
-    text begins -- used later to recover each chunk's starting page number.
+    Returns (page_texts, page_start_offsets) -- see _page_offsets_from_texts.
     """
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -120,17 +132,56 @@ def extract_digital_text_only(file_bytes: bytes) -> tuple[list[str], list[int]]:
     finally:
         doc.close()
 
-    offsets: list[int] = []
-    running = 0
-    for text in page_texts:
-        offsets.append(running)
-        running += len(text) + 1  # +1 for the "\n" used to join pages below
-
-    return page_texts, offsets
+    return page_texts, _page_offsets_from_texts(page_texts)
 
 
 def has_usable_digital_text(page_texts: list[str]) -> bool:
     return any(len(t.strip()) > MIN_DIGITAL_CHARS_PER_PAGE for t in page_texts)
+
+
+def ocr_worker_configured() -> bool:
+    """Whether the external AWS EasyOCR worker is enabled AND safely
+    configured. Returns False (never raises) for any missing/insecure
+    configuration, so the caller falls back to the existing ocr_required
+    behavior rather than attempting an unsafe or broken call.
+    """
+    if not settings.ocr_worker_enabled:
+        return False
+    if not settings.ocr_worker_url or not settings.ocr_worker_token:
+        logger.error(
+            "ASKA_OCR_WORKER_ENABLED is true but ASKA_OCR_WORKER_URL/ASKA_OCR_WORKER_TOKEN "
+            "is not set -- falling back to ocr_required."
+        )
+        return False
+    if not settings.ocr_worker_url.startswith("https://"):
+        logger.error(
+            "ASKA_OCR_WORKER_ENABLED is true but ASKA_OCR_WORKER_URL does not start with "
+            "https:// -- refusing to call it insecurely. Falling back to ocr_required."
+        )
+        return False
+    return True
+
+
+def run_ocr_worker(file_bytes: bytes) -> tuple[list[str], list[int]]:
+    """Call the external OCR worker and return (page_texts, page_offsets) --
+    the exact same shape extract_digital_text_only returns, so the result
+    feeds into build_chunks_with_pages completely unchanged.
+
+    Raises DigitalIngestionError (never OcrWorkerError) on any failure --
+    this call happens strictly BEFORE anything is written to Chroma, so a
+    failure here is always a plain, safe-to-retry job failure, exactly
+    like any other pre-publish error on this path (see module docstring).
+    """
+    try:
+        page_texts = call_ocr_worker(
+            file_bytes,
+            url=settings.ocr_worker_url,
+            token=settings.ocr_worker_token,
+            timeout_seconds=settings.ocr_worker_timeout_seconds,
+        )
+    except OcrWorkerError as exc:
+        raise DigitalIngestionError(f"OCR worker failed: {exc}") from exc
+    return page_texts, _page_offsets_from_texts(page_texts)
 
 
 def _page_for_offset(char_start: int, page_offsets: list[int]) -> int:
@@ -338,14 +389,33 @@ def process_ingestion_job(job_id: str) -> None:
         job.page_count = len(page_texts)
 
         if not has_usable_digital_text(page_texts):
-            job.status = "ocr_required"
-            job.status_detail = (
-                "This document does not contain enough selectable/digital text. "
-                "OCR is required but is not available on this lightweight runtime -- "
-                "use the full local/Docker admin environment to ingest this document."
-            )
-            session.commit()
-            return
+            if ocr_worker_configured():
+                job.status_detail = (
+                    "Digital text insufficient; running OCR via the external worker "
+                    "(this can take several minutes for scanned documents)..."
+                )
+                session.commit()
+                try:
+                    page_texts, page_offsets = run_ocr_worker(job.pdf_bytes)
+                except DigitalIngestionError as exc:
+                    # OCR runs strictly before any Chroma write -- nothing
+                    # was ever published for this attempt, exactly like any
+                    # other pre-publish failure on this path. Original
+                    # pdf_bytes remain in the job row for the admin to retry.
+                    job.status = "failed"
+                    job.error_message = str(exc)
+                    session.commit()
+                    return
+                job.page_count = len(page_texts)
+            else:
+                job.status = "ocr_required"
+                job.status_detail = (
+                    "This document does not contain enough selectable/digital text. "
+                    "OCR is required but is not available on this lightweight runtime -- "
+                    "use the full local/Docker admin environment to ingest this document."
+                )
+                session.commit()
+                return
 
         job.status_detail = "Cleaning and chunking..."
         session.commit()

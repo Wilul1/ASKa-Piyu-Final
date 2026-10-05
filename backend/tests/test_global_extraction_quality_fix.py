@@ -1047,6 +1047,85 @@ def test_real_shape_toc_derived_text_never_reaches_office_classification():
         assert office not in {"Medical and Dental Services", "Scholarship and Financial Assistance", "Guidance and Counseling"}
 
 
+# --- 2026-10-05 third follow-up: real-PDF diagnosis against the ACTUAL --
+# LSPU Faculty Manual / Student Handbook PDFs (local, read-only, never
+# committed -- see backend/scripts/validate_real_pdfs_local.py) found
+# TWO further real-structure gaps the prior synthetic fixtures missed:
+#
+# 1. A TOC entry's title frequently WRAPS across two lines (e.g. "Time
+#    Allotment for Teaching Loads and other Assignment" / "of Faculty
+#    ......." / "13") in a way where NEITHER fragment alone passes any
+#    title-shape test -- the wrap point can split a title such that one
+#    half has a lowercase non-connector word (breaking the Title-Case
+#    check) and the other half is mostly connector words (failing the
+#    0.6 title-case ratio). The entry's own trailing page-number marker
+#    still reliably anchors the cluster across the wrap regardless.
+# 2. A real PDF's page boundary commonly lands as a run of 7+
+#    consecutive BLANK lines -- more than the old raw-index-distance
+#    max_gap allowed -- fragmenting one continuous TOC into separate
+#    clusters, each of which could then fail the anchor-proximity check
+#    on its own (even though the anchor falls WITHIN the reunited span).
+
+
+def test_wrapped_toc_title_bridged_via_bare_page_number_anchor():
+    toc = (
+        "Contents\n"
+        "Faculty Workload Policy ……………\n"
+        "10\n"
+        "Time Allotment for Teaching Loads and other Assignment\n"
+        "of Faculty…………………………….\n"
+        "13\n"
+        "Syllabus Preparation …………………\n"
+        "15\n"
+    )
+    body = (
+        "Grievance Machinery\n\n"
+        "Any faculty member who believes a decision was unfair may file a "
+        "written grievance with the designated committee within fifteen "
+        "working days of the event giving rise to the complaint itself.\n"
+    )
+    cleaned = remove_toc_blocks(toc + "\n" + body)
+    for fragment in [
+        "Faculty Workload Policy",
+        "Time Allotment for Teaching Loads",
+        "of Faculty…",
+        "Syllabus Preparation",
+    ]:
+        assert fragment not in cleaned, f"wrapped TOC row survived: {fragment!r}"
+    assert "Grievance Machinery" in cleaned
+    assert "written grievance with the designated committee" in cleaned
+
+
+def test_toc_cluster_survives_a_blank_line_page_break_run():
+    """A real page boundary can land as several consecutive blank lines
+    -- more than old raw-index-distance gap tolerance allowed -- which
+    must not fragment one continuous TOC into disconnected pieces."""
+    toc_before_break = (
+        "Contents\n"
+        "Foreword ……………\n"
+        "i\n"
+        "Board of Regents ……………\n"
+        "v\n"
+    )
+    blank_page_break = "\n" * 8
+    toc_after_break = (
+        "Article 1: Classification …………\n"
+        "1\n"
+        "Article 2: Admission Requirements …………\n"
+        "2\n"
+    )
+    body = (
+        "Article 3: Registration\n\n"
+        "Every student must complete registration through the official "
+        "online portal before the start of classes each academic term.\n"
+    )
+    cleaned = remove_toc_blocks(toc_before_break + blank_page_break + toc_after_break + "\n" + body)
+    for fragment in ["Foreword", "Board of Regents", "Article 1: Classification", "Article 2: Admission"]:
+        assert fragment not in cleaned, f"TOC row survived a page-break gap: {fragment!r}"
+    assert "Article 3: Registration" in cleaned
+    assert "complete registration through the official online portal" in cleaned
+
+
 def test_index_still_uses_publish_new_version_only():
     from app.services.admin.digital_ingestion import (
         chunks_from_pages_or_reviewed_text,

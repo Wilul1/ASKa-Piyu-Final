@@ -330,19 +330,34 @@ def looks_like_toc_region_row(line: str) -> bool:
 
 
 _BARE_SECTION_MARKER_RE = re.compile(
-    r"^(?:[IVXLCDM]{1,6}\.?|\d{1,3}(?:\.\d{1,3})*\.?|(?:article|chapter|section|part)\s+[IVXLCDM0-9]+[:.]?)\s*$",
+    r"^(?:[IVXLCDM]{1,6}\.?|\d{1,4}(?:\.\d{1,4})*\.?|(?:article|chapter|section|part)\s+[IVXLCDM0-9]+[:.]?)\s*$",
     re.I,
 )
 
 
 def _is_bare_section_marker(line: str) -> bool:
-    """True for a line that is JUST a section-numbering token ("I.",
-    "3.2", "Article IV") with no title text of its own -- real PDF
-    extraction commonly renders a heading's numbering and its title as
-    two separate lines. Used only to decide which disqualified lines a
-    bare marker may inherit disqualification from (see
-    _disqualify_real_heading_chains) -- never on its own grounds for
-    removal, since a bare marker alone carries no information either way.
+    """True for a line that is JUST a numbering/page token ("I.", "3.2",
+    "Article IV", or a bare "13" page reference) with no title text of
+    its own.
+
+    Two uses:
+    1. Decides which disqualified lines a bare marker may inherit
+       disqualification from (see _disqualify_real_heading_chains).
+    2. Fed into remove_toc_blocks's own row-shape arrays as a reliable
+       cluster-continuity signal: a real PDF's TOC entry very often
+       wraps its title across two or three lines (e.g. "Time Allotment
+       for Teaching Loads and other Assignment" / "of Faculty......." /
+       "13"), and the wrap point frequently lands such that NEITHER
+       fragment alone passes any title-shape test -- but the entry's
+       own trailing page-number marker reliably anchors the cluster
+       across the wrap regardless, so a run of real TOC entries doesn't
+       fragment into disconnected clusters (each individually too small
+       or too far from the "Contents" anchor to qualify) purely because
+       some of their titles happened to wrap.
+
+    Never, on its own, grounds for removal -- a bare marker carries no
+    retrievable information either way, so including it in a cluster's
+    index range has no effect on real content.
     """
     return bool(_BARE_SECTION_MARKER_RE.match((line or "").strip()))
 
@@ -404,16 +419,29 @@ def _disqualify_real_heading_chains(
 def _toc_row_clusters(
     lines: list[str], row_like: list[bool], *, max_gap: int, max_connector_chars: int
 ) -> list[list[int]]:
+    """Groups row-like indices into clusters, bridging a gap of up to
+    ``max_gap`` NON-BLANK filler lines (never bridging a line longer
+    than ``max_connector_chars``).
+
+    Counting only non-blank lines against the gap budget -- rather than
+    raw index distance -- matters because a real PDF's page boundary
+    commonly lands as a run of several consecutive blank lines (margin
+    whitespace) between two pages; raw index distance would count that
+    whole blank run against the budget and could fragment one
+    continuous TOC into several small, disconnected clusters purely
+    because it happened to span a page break, regardless of how many
+    real content lines actually separate two entries.
+    """
     indices = [i for i, is_row in enumerate(row_like) if is_row]
     if not indices:
         return []
     clusters: list[list[int]] = [[indices[0]]]
     for idx in indices[1:]:
         prev = clusters[-1][-1]
-        gap_has_long_line = any(
-            len(lines[k].strip()) > max_connector_chars for k in range(prev + 1, idx)
-        )
-        if idx - prev <= max_gap and not gap_has_long_line:
+        between = lines[prev + 1 : idx]
+        gap_has_long_line = any(len(l.strip()) > max_connector_chars for l in between)
+        non_blank_gap = sum(1 for l in between if l.strip())
+        if non_blank_gap <= max_gap and not gap_has_long_line:
             clusters[-1].append(idx)
         else:
             clusters.append([idx])
@@ -484,18 +512,41 @@ def remove_toc_blocks(
 
     anchor_indices = [i for i, line in enumerate(lines) if _is_toc_heading_anchor_line(line)]
     if anchor_indices:
-        broad_shape = [looks_like_toc_region_row(line) for line in lines]
+        # Bare marker lines (a lone "13", "iv", or "Article IV") are
+        # ALSO treated as row-like here (unlike the unanchored narrow
+        # pass above) -- a real TOC entry's title frequently wraps
+        # across two or three lines in a way where NEITHER fragment
+        # passes any title-shape test on its own (see
+        # _is_bare_section_marker's docstring), which would otherwise
+        # fragment one long run of real entries into several small,
+        # disconnected clusters -- each too far from the "Contents"
+        # anchor to qualify on its own. Scoped to the anchored pass
+        # only: without the anchor's corroborating evidence, bare
+        # numbers alone are too weak a signal (e.g. a short numbered
+        # list in ordinary body prose) to safely treat as TOC rows.
+        broad_shape = [
+            looks_like_toc_region_row(line) or _is_bare_section_marker(line) for line in lines
+        ]
         broad_row_like = _disqualify_real_heading_chains(lines, broad_shape, max_gap=max_gap)
         for cluster in _toc_row_clusters(lines, broad_row_like, max_gap=max_gap, max_connector_chars=max_connector_chars):
             if len(cluster) < anchored_min_run:
                 continue
-            start = cluster[0]
+            start, end = cluster[0], cluster[-1]
+            # An anchor confirms this cluster either by falling WITHIN
+            # its span (common once bare-marker bridging lets a cluster
+            # absorb content from before the literal "Contents" line
+            # too -- the cluster's own no-long-line-between guarantee
+            # already covers this case) or by sitting just before the
+            # cluster's start (the original, narrower case).
             anchor = next(
                 (
                     a
                     for a in anchor_indices
-                    if 0 <= start - a <= anchor_reach
-                    and not any(len(lines[k].strip()) > max_connector_chars for k in range(a, start))
+                    if start <= a <= end
+                    or (
+                        0 <= start - a <= anchor_reach
+                        and not any(len(lines[k].strip()) > max_connector_chars for k in range(a, start))
+                    )
                 ),
                 None,
             )
@@ -904,6 +955,7 @@ def clean_rag_extraction_text(text: str) -> str:
 _DIGIT_RUN_RE = re.compile(r"\d+")
 _ROMAN_PAGE_REF_RE = re.compile(r"(?i)\b(page|p\.?|of)(\s*[:.]?\s*)([ivxlcdm]{1,6})\b")
 _BARE_ROMAN_TOKEN_RE = re.compile(r"^[ivxlcdm]{1,6}$", re.I)
+_TRAILING_OF_TOTAL_RE = re.compile(r"\s*\bof\s+#\s*$", re.I)
 
 
 def _furniture_template(line: str) -> str:
@@ -923,12 +975,31 @@ def _furniture_template(line: str) -> str:
     "p."/"of" (case-insensitive), or when it is the ENTIRE line by
     itself -- never inside unrelated prose, where a short roman-letter-
     shaped word (e.g. "Mix") could otherwise be misread as a numeral.
+
+    Collapses whitespace runs to a single space -- confirmed against the
+    real LSPU Student Handbook PDF, PyMuPDF extraction does not render a
+    running footer byte-identically on every page: some pages render
+    "Page: 5 of 183" with a single space before the total, others
+    "Page: 5 of  183" with two (almost certainly a font-kerning artifact
+    on those specific pages), and these would otherwise count as two
+    DIFFERENT templates, each individually too rare to pass the
+    recurrence threshold even though they're the same footer.
+
+    Finally drops a trailing "of #" entirely -- confirmed against the
+    real LSPU Faculty Manual PDF, the SAME document can mix "Page: 5"
+    (no total) on most pages with "Page: 171 of 173" (WITH a total) on
+    a handful of others (e.g. an appendix carrying its own declared page
+    count). Dropping the suffix makes "Page: #" and "Page: # of #"
+    count as the same template, so the rare variant still joins the
+    dominant recurring bucket instead of being individually too rare on
+    its own to ever be recognized as furniture.
     """
     normalized = _DIGIT_RUN_RE.sub("#", line)
     normalized = _ROMAN_PAGE_REF_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}#", normalized)
     if _BARE_ROMAN_TOKEN_RE.match(normalized.strip()):
         return "#"
-    return normalized
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return _TRAILING_OF_TOTAL_RE.sub("", normalized).strip()
 
 
 _FURNITURE_MIN_EDGE_LINES = 3

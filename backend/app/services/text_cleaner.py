@@ -220,7 +220,14 @@ _MAJOR_SECTION_KEY_RE = re.compile(r"^([IVXLCDM]+)\.\s+")
 # on SHAPE only, never a specific document's section names or page-number
 # range -- so it works for any PDF's table of contents, not one document.
 _TOC_ENTRY_DOTTED_RE = re.compile(r"(?:\.{2,}|…)\s*\|?\s*\d{1,4}\s*$")
+# A dot/ellipsis LEADER with no trailing page number at all -- real PDF
+# extraction commonly puts the title+leader on one line and the page
+# number on the NEXT line entirely (or drops it). Requires a visually
+# substantial leader (4+ dots, or 2+ ellipsis characters) so an ordinary
+# sentence trailing off with "..." (exactly 3 dots) is never matched.
+_TOC_LEADER_ONLY_RE = re.compile(r"^(?P<title>.+?\S)\s*(?:\.{4,}|…{2,})\s*$")
 _TOC_ENTRY_BARE_RE = re.compile(r"^([A-Z][A-Za-z0-9 ,&'()/.-]{2,90})\s+(\d{1,4})\s*$")
+_CHAPTER_ARTICLE_NUMBERING_RE = re.compile(r"^(?:chapter|article|section|part)$", re.I)
 _TOC_NOISE_WORDS_RE = re.compile(
     r"\b(page|year|no\.?|percent|grade|gwa|minutes?|hours?|process|wherein|acceptable|time)\b",
     re.I,
@@ -230,6 +237,21 @@ _ARTICLE_CHAPTER_HEADING_RE = re.compile(
     r"^(?:article|chapter|section|part)\s+[IVXLCDM0-9]+[:.]?\s*\S", re.I
 )
 _DECIMAL_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+[A-Z]\S")
+
+
+def _toc_title_is_plausible(title: str) -> bool:
+    title = (title or "").strip()
+    if not title:
+        return False
+    if re.search(r"[.!?:;|]$", title):
+        return False
+    if _TOC_NOISE_WORDS_RE.search(title):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", title)
+    if not (1 <= len(words) <= 8):
+        return False
+    title_like = sum(1 for w in words if w[:1].isupper() or w.isupper())
+    return title_like / len(words) >= 0.6
 
 
 def looks_like_toc_entry_line(line: str) -> bool:
@@ -246,23 +268,44 @@ def looks_like_toc_entry_line(line: str) -> bool:
         return False
     if len(stripped) <= 140 and _TOC_ENTRY_DOTTED_RE.search(stripped):
         return True
+    if len(stripped) <= 140:
+        leader_match = _TOC_LEADER_ONLY_RE.match(stripped)
+        if leader_match and _toc_title_is_plausible(leader_match.group("title")):
+            return True
     match = _TOC_ENTRY_BARE_RE.match(stripped)
     if not match:
         return False
-    title = match.group(1).strip()
-    if re.search(r"[.!?:;|]$", title):
+    title = match.group(1)
+    if _CHAPTER_ARTICLE_NUMBERING_RE.match(title.strip()):
+        # "Chapter 1" / "Article 9" / "Section 3" / "Part 2" -- this is a
+        # real section-numbering heading convention, not a TOC "title
+        # followed by a page number" row (which this bare, leader-less
+        # shape would otherwise also match): a document's OWN "Chapter
+        # 1" heading, immediately introducing its own body paragraph,
+        # must never be mistaken for the TOC's "Chapter 1 .... 4" entry
+        # just because they share this shape once the leader is gone.
         return False
-    if _TOC_NOISE_WORDS_RE.search(title):
-        return False
-    words = re.findall(r"[A-Za-z][A-Za-z'-]*", title)
-    if not (1 <= len(words) <= 8):
-        return False
-    title_like = sum(1 for w in words if w[:1].isupper() or w.isupper())
-    return title_like / len(words) >= 0.6
+    return _toc_title_is_plausible(title)
 
 
-_TOC_HEADING_RE = re.compile(r"^(?:table\s+of\s+)?contents\s*:?\s*$", re.I)
+_TOC_HEADING_CORE_RE = re.compile(r"^(?:table\s+of\s+)?contents\b", re.I)
+_TOC_ANCHOR_SUFFIX_RE = re.compile(r"[\s.…]{2,}(?:[ivxlcdm]{1,6}|\d{1,4})?\s*$", re.I)
 _TOC_BODY_PROSE_MIN_CHARS = 80
+
+
+def _is_toc_heading_anchor_line(line: str) -> bool:
+    """True for a "Contents" / "Table of Contents" heading line, even
+    when -- as real PDF extraction often renders it -- the heading
+    itself carries its own trailing dot-leader and/or same-line page
+    self-reference, e.g. "Contents .......... ii": the TOC's own
+    self-listing is still unambiguous evidence of the TOC heading for
+    anchor purposes.
+    """
+    stripped = (line or "").strip()
+    if not stripped or len(stripped) > 60:
+        return False
+    core = _TOC_ANCHOR_SUFFIX_RE.sub("", stripped).strip()
+    return bool(_TOC_HEADING_CORE_RE.match(core)) and len(core) <= 25
 
 
 def looks_like_toc_region_row(line: str) -> bool:
@@ -286,29 +329,76 @@ def looks_like_toc_region_row(line: str) -> bool:
     return is_heading_candidate(line) or looks_like_toc_entry_line(line)
 
 
-def _immediately_precedes_body_prose(
-    lines: list[str], idx: int, *, max_gap: int
-) -> bool:
-    """True when the first non-blank line after ``idx`` (within
-    ``max_gap`` lines) is a real prose line rather than another
-    heading/TOC-row-shaped line.
+_BARE_SECTION_MARKER_RE = re.compile(
+    r"^(?:[IVXLCDM]{1,6}\.?|\d{1,3}(?:\.\d{1,3})*\.?|(?:article|chapter|section|part)\s+[IVXLCDM0-9]+[:.]?)\s*$",
+    re.I,
+)
 
-    A heading-shaped line that directly introduces a paragraph like this
-    is functioning as a genuine body section heading right there: a true
-    TOC entry is never immediately followed by the very paragraph it
-    refers to (that content lives elsewhere, pages away) -- it is
-    followed by more TOC rows, blank space, or the TOC simply ends. This
-    is what keeps a real section's own heading (e.g. "Faculty Official
-    Time" immediately above its actual policy paragraph) from being
-    swept into a TOC cluster just because the same heading text also
-    appears, TOC-row-shaped, a few lines above it.
+
+def _is_bare_section_marker(line: str) -> bool:
+    """True for a line that is JUST a section-numbering token ("I.",
+    "3.2", "Article IV") with no title text of its own -- real PDF
+    extraction commonly renders a heading's numbering and its title as
+    two separate lines. Used only to decide which disqualified lines a
+    bare marker may inherit disqualification from (see
+    _disqualify_real_heading_chains) -- never on its own grounds for
+    removal, since a bare marker alone carries no information either way.
     """
-    for k in range(idx + 1, min(idx + 1 + max_gap, len(lines))):
-        candidate = lines[k].strip()
-        if not candidate:
+    return bool(_BARE_SECTION_MARKER_RE.match((line or "").strip()))
+
+
+def _disqualify_real_heading_chains(
+    lines: list[str], shape: list[bool], *, max_gap: int
+) -> list[bool]:
+    """Returns ``shape`` with any line disqualified if it leads DIRECTLY
+    into a real prose paragraph.
+
+    Two passes, deliberately NOT a general transitive closure (an
+    unbounded walk would incorrectly cascade all the way back through
+    every earlier, separate, self-contained TOC entry too -- a real TOC
+    is itself a chain of mutually-adjacent rows that eventually leads
+    into body prose by construction, so "leads to something that leads
+    to prose" would disqualify the whole TOC):
+
+    1. Any shape-matching line whose own immediate next non-blank line
+       is real prose is disqualified. This is the base case for both a
+       plain single-line heading and the trailing (title) half of a
+       multi-line split.
+    2. A BARE section-marker line (just "I.", "3.2", "Article IV" --
+       no title text of its own) inherits disqualification from
+       whatever immediately follows it, ONE level deep: real PDF
+       extraction commonly splits a heading's numbering from its title
+       across two lines, and disqualifying the title alone would still
+       leave the bare marker free to be swept into a TOC cluster. A
+       line that already carries its own real title text never inherits
+       this way, so it can never cascade past one bare-marker hop.
+    """
+    disqualified = [False] * len(lines)
+
+    def _first_nonblank_after(i: int) -> int | None:
+        for k in range(i + 1, min(i + 1 + max_gap, len(lines))):
+            if lines[k].strip():
+                return k
+        return None
+
+    for i, is_row in enumerate(shape):
+        if not is_row:
             continue
-        return len(candidate) > _TOC_BODY_PROSE_MIN_CHARS and not looks_like_toc_region_row(candidate)
-    return False
+        k = _first_nonblank_after(i)
+        if k is None:
+            continue
+        candidate = lines[k].strip()
+        if len(candidate) > _TOC_BODY_PROSE_MIN_CHARS and not shape[k]:
+            disqualified[i] = True
+
+    for i, is_row in enumerate(shape):
+        if not is_row or disqualified[i] or not _is_bare_section_marker(lines[i]):
+            continue
+        k = _first_nonblank_after(i)
+        if k is not None and disqualified[k]:
+            disqualified[i] = True
+
+    return [is_row and not disqualified[i] for i, is_row in enumerate(shape)]
 
 
 def _toc_row_clusters(
@@ -336,7 +426,7 @@ def remove_toc_blocks(
     min_run: int = 3,
     anchored_min_run: int = 2,
     anchor_reach: int = 6,
-    max_gap: int = 3,
+    max_gap: int = 6,
     max_connector_chars: int = 200,
 ) -> str:
     """Drops contiguous runs of table-of-contents-shaped lines from text
@@ -367,10 +457,12 @@ def remove_toc_blocks(
        that heading is strong, unambiguous evidence the list right after
        it is navigation. The anchor heading line itself is removed too.
 
-    In both passes, a line that immediately introduces a real paragraph
-    (see _immediately_precedes_body_prose) is never treated as a TOC-row
-    candidate at all, regardless of shape -- a true TOC entry is never
-    immediately followed by the very paragraph it refers to.
+    In both passes, a line (or a multi-line chain of them -- e.g. a bare
+    section-marker line followed by its title on the next line, a common
+    real-world PDF rendering split) that leads directly into a real
+    paragraph is never treated as a TOC-row candidate at all, regardless
+    of shape -- see _disqualify_real_heading_chains. A true TOC entry is
+    never immediately followed by the very paragraph it refers to.
 
     A single isolated TOC-shaped line with no confirming run or anchor is
     never removed on its own -- this is what keeps a real body section
@@ -381,20 +473,19 @@ def remove_toc_blocks(
         return text
     lines = text.split("\n")
 
-    def _not_body_heading(i: int) -> bool:
-        return not _immediately_precedes_body_prose(lines, i, max_gap=max_gap)
-
     drop = [False] * len(lines)
 
-    narrow_row_like = [looks_like_toc_entry_line(line) and _not_body_heading(i) for i, line in enumerate(lines)]
+    narrow_shape = [looks_like_toc_entry_line(line) for line in lines]
+    narrow_row_like = _disqualify_real_heading_chains(lines, narrow_shape, max_gap=max_gap)
     for cluster in _toc_row_clusters(lines, narrow_row_like, max_gap=max_gap, max_connector_chars=max_connector_chars):
         if len(cluster) >= min_run:
             for k in range(cluster[0], cluster[-1] + 1):
                 drop[k] = True
 
-    anchor_indices = [i for i, line in enumerate(lines) if _TOC_HEADING_RE.match(line.strip())]
+    anchor_indices = [i for i, line in enumerate(lines) if _is_toc_heading_anchor_line(line)]
     if anchor_indices:
-        broad_row_like = [looks_like_toc_region_row(line) and _not_body_heading(i) for i, line in enumerate(lines)]
+        broad_shape = [looks_like_toc_region_row(line) for line in lines]
+        broad_row_like = _disqualify_real_heading_chains(lines, broad_shape, max_gap=max_gap)
         for cluster in _toc_row_clusters(lines, broad_row_like, max_gap=max_gap, max_connector_chars=max_connector_chars):
             if len(cluster) < anchored_min_run:
                 continue
@@ -811,6 +902,8 @@ def clean_rag_extraction_text(text: str) -> str:
 
 
 _DIGIT_RUN_RE = re.compile(r"\d+")
+_ROMAN_PAGE_REF_RE = re.compile(r"(?i)\b(page|p\.?|of)(\s*[:.]?\s*)([ivxlcdm]{1,6})\b")
+_BARE_ROMAN_TOKEN_RE = re.compile(r"^[ivxlcdm]{1,6}$", re.I)
 
 
 def _furniture_template(line: str) -> str:
@@ -818,8 +911,24 @@ def _furniture_template(line: str) -> str:
     number doesn't prevent recognizing the same repeated template --
     "Page 5 of 92" and "Page 6 of 92" both normalize to "Page # of #",
     so they count as the same recurring template rather than two
-    one-off lines that each only ever appear once."""
-    return _DIGIT_RUN_RE.sub("#", line)
+    one-off lines that each only ever appear once.
+
+    Also normalizes a ROMAN-numeral page reference the same way --
+    front-matter pages are conventionally paginated "i", "ii", "iii",
+    "iv", ... instead of arabic numbers, and _DIGIT_RUN_RE alone never
+    touches letters, so "Page: i" / "Page: ii" / "Page: iv" each looked
+    like a UNIQUE, non-recurring line (no two pages share the same
+    numeral) even though they're all the same running footer template.
+    Only normalizes a roman-numeral TOKEN immediately after "page"/
+    "p."/"of" (case-insensitive), or when it is the ENTIRE line by
+    itself -- never inside unrelated prose, where a short roman-letter-
+    shaped word (e.g. "Mix") could otherwise be misread as a numeral.
+    """
+    normalized = _DIGIT_RUN_RE.sub("#", line)
+    normalized = _ROMAN_PAGE_REF_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}#", normalized)
+    if _BARE_ROMAN_TOKEN_RE.match(normalized.strip()):
+        return "#"
+    return normalized
 
 
 _FURNITURE_MIN_EDGE_LINES = 3

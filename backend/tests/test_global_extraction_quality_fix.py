@@ -818,6 +818,235 @@ def test_representative_policy_body_text_survives_full_cleaning_pipeline():
     assert "Foreword" not in cleaned
 
 
+# --- 2026-10-05 second follow-up: REAL v27 runtime-shape regressions -------
+#
+# Real production Extract-only validation on the actual LSPU Faculty
+# Manual / Student Handbook (v27) showed the TOC and pagination fixes
+# still didn't match the REAL extracted structure: a TOC row's
+# title+dot-leader and its page number are on SEPARATE lines; a
+# roman-numeral section marker ("I.") is its own line, with the title on
+# the NEXT line; and front-matter pages are paginated with roman
+# numerals ("Page: iv") which _DIGIT_RUN_RE never normalized. These
+# fixtures mirror that REAL shape -- synthetic titles/prose only, never
+# actual manual content.
+
+_REAL_SHAPE_TOC_FRONT_MATTER = (
+    "Foreword ……………………\n"
+    "i\n"
+    "Contents ……………………\n"
+    "ii\n"
+    "Vision, Mission, and Quality Policy ……………\n"
+    "iv\n"
+    "Board of Regents ……………\n"
+    "v\n"
+    "Administrative Officials ………\n"
+    "vii\n"
+)
+
+_REAL_SHAPE_TOC_NUMBERED_SECTIONS = (
+    "I.\n"
+    "General Information ……………\n"
+    "1\n"
+    "II.\n"
+    "Historical Development ………\n"
+    "2\n"
+    "III.\n"
+    "Commitment of the Faculty ………\n"
+    "5\n"
+    "IV.\n"
+    "University Policies ………\n"
+    "9\n"
+    "Faculty Official Time ………\n"
+    "9\n"
+    "Faculty Attendance and Absence ………\n"
+    "10\n"
+)
+
+_REAL_SHAPE_TOC_CONTINUATION_PAGE = (
+    "Submission of Grades ………\n"
+    "16\n"
+    "XI.\n"
+    "Grievance Machinery ………\n"
+    "82\n"
+)
+
+
+def test_real_shape_faculty_toc_removed_vision_mission_body_preserved():
+    body = (
+        "Vision, Mission, and Quality Policy\n\n"
+        "The university commits itself to excellence in instruction, "
+        "research, extension, and production in service of the Filipino "
+        "people and the global community it is part of every single day.\n"
+    )
+    full_text = (
+        _REAL_SHAPE_TOC_FRONT_MATTER
+        + _REAL_SHAPE_TOC_NUMBERED_SECTIONS
+        + _REAL_SHAPE_TOC_CONTINUATION_PAGE
+        + "\n"
+        + body
+    )
+    cleaned = remove_toc_blocks(full_text)
+    for fragment in [
+        "Foreword ……",
+        "Contents ……",
+        "Board of Regents ……",
+        "Administrative Officials ……",
+        "Vision, Mission, and Quality Policy ……",
+        "General Information ……",
+        "Historical Development ……",
+        "Commitment of the Faculty ……",
+        "University Policies ……",
+        "Faculty Official Time ……",
+        "Faculty Attendance and Absence ……",
+        "Submission of Grades ……",
+        "Grievance Machinery ……",
+    ]:
+        assert fragment not in cleaned, f"TOC row survived: {fragment!r}"
+    # the real body heading (no leader) + its paragraph both survive
+    assert "Vision, Mission, and Quality Policy\n\nThe university commits" in cleaned
+    assert "excellence in instruction, research, extension" in cleaned
+
+
+def test_real_shape_handbook_toc_removed_chapter_body_preserved():
+    toc = (
+        "Chapter 1 ……………\n"
+        "Some Section Name ……………\n"
+        "4\n"
+        "Chapter 2 ……………\n"
+        "Another Section ……………\n"
+        "10\n"
+        "Article 1: Student Conduct ……………\n"
+        "14\n"
+    )
+    toc_continuation = (
+        "Chapter 3 ……………\n"
+        "Scholastic Delinquency ……………\n"
+        "20\n"
+        "Article 9: Grievance Procedure ……………\n"
+        "30\n"
+    )
+    body = (
+        "Chapter 1\n\n"
+        "Some Section Name\n\n"
+        "Every enrolled student is entitled to due process and fair "
+        "treatment under university policy during any disciplinary "
+        "proceeding brought against them by the administration.\n"
+    )
+    cleaned = remove_toc_blocks(toc + toc_continuation + "\n" + body)
+    for fragment in [
+        "Chapter 1 ……",
+        "Some Section Name ……",
+        "Chapter 2 ……",
+        "Another Section ……",
+        "Article 1: Student Conduct ……",
+        "Chapter 3 ……",
+        "Scholastic Delinquency ……",
+        "Article 9: Grievance Procedure ……",
+    ]:
+        assert fragment not in cleaned, f"TOC row survived: {fragment!r}"
+    assert "Chapter 1\n\nSome Section Name\n\nEvery enrolled student" in cleaned
+    assert "entitled to due process and fair treatment" in cleaned
+
+
+def test_real_shape_roman_numeral_page_furniture_removed():
+    """"Page: i" / "Page: iv" / "Page: v" (front-matter) and "Page: i of
+    183" / "Page: iv of 183" (mixed roman+arabic) must all normalize to
+    the SAME recurring template and be removed, exactly like an arabic
+    "Page 5 of 92" footer already was."""
+    roman_pages = []
+    for i, numeral in enumerate(["i", "ii", "iii", "iv", "v"], start=1):
+        tag = _PAGE_TAG_WORDS[i - 1]
+        body = "\n".join(f"{s} (section tag: {tag})" for s in _BODY_SENTENCE_TEMPLATES)
+        roman_pages.append(f"{body}\n\nPage: {numeral}")
+
+    mixed_pages = []
+    for i, numeral in enumerate(["i", "ii", "iii", "iv"], start=1):
+        tag = _PAGE_TAG_WORDS[i + 4]
+        body = "\n".join(f"{s} (section tag: {tag})" for s in _BODY_SENTENCE_TEMPLATES)
+        mixed_pages.append(f"{body}\n\nPage: {numeral} of 183")
+
+    all_pages = roman_pages + mixed_pages
+    cleaned = clean_extracted_text("\n".join(all_pages), page_texts=all_pages)
+    for numeral in ["i", "ii", "iii", "iv", "v"]:
+        assert f"Page: {numeral}" not in cleaned
+        assert f"Page: {numeral} of 183" not in cleaned
+    for i in range(1, 10):
+        tag = _PAGE_TAG_WORDS[i - 1]
+        assert f"(section tag: {tag})" in cleaned
+
+
+def test_real_shape_no_chunk_consists_primarily_of_toc_entries():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        body = (
+            "Vision, Mission, and Quality Policy\n\n"
+            "The university commits itself to excellence in instruction, "
+            "research, extension, and production in service of the "
+            "Filipino people and the global community every single day.\n"
+        )
+        page_texts = [
+            _REAL_SHAPE_TOC_FRONT_MATTER
+            + _REAL_SHAPE_TOC_NUMBERED_SECTIONS
+            + _REAL_SHAPE_TOC_CONTINUATION_PAGE
+            + "\n"
+            + body
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=300, chunk_overlap=30, title="T", source_filename="real_shape_test.pdf"
+        )
+    assert chunks
+    toc_entry_fragments = [
+        "Foreword", "Contents", "Board of Regents", "Administrative Officials",
+        "General Information", "Historical Development", "Commitment of the Faculty",
+        "University Policies", "Faculty Attendance and Absence", "Submission of Grades",
+        "Grievance Machinery",
+    ]
+    for chunk in chunks:
+        toc_like_hits = sum(1 for frag in toc_entry_fragments if frag in chunk.text)
+        assert toc_like_hits == 0, f"chunk is TOC-derived: {chunk.text[:200]!r}"
+
+
+def test_real_shape_toc_derived_text_never_reaches_office_classification():
+    """TOC rows must never survive long enough to BECOME a chunk at all,
+    so they can never reach office classification and produce a bogus
+    office guess (e.g. a "Medical Clinic"/"Scholarship Office" TOC row
+    being mistaken for that office's real content elsewhere)."""
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        toc = (
+            "Contents ……………………\n"
+            "ii\n"
+            "Medical and Dental Services ……………\n"
+            "40\n"
+            "Scholarship and Financial Assistance ……………\n"
+            "45\n"
+            "Guidance and Counseling ……………\n"
+            "50\n"
+        )
+        body = (
+            "Grievance Machinery\n\n"
+            "Any faculty member aggrieved by a decision may file a written "
+            "grievance with the appropriate committee for prompt review.\n"
+        )
+        page_texts = [toc + "\n" + body]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=300, chunk_overlap=30, title="T", source_filename="real_shape_office_test.pdf"
+        )
+    assert chunks
+    for chunk in chunks:
+        assert "Medical and Dental Services" not in chunk.text
+        assert "Scholarship and Financial Assistance" not in chunk.text
+        assert "Guidance and Counseling" not in chunk.text
+        office = chunk.metadata.get("office")
+        assert office not in {"Medical and Dental Services", "Scholarship and Financial Assistance", "Guidance and Counseling"}
+
+
 def test_index_still_uses_publish_new_version_only():
     from app.services.admin.digital_ingestion import (
         chunks_from_pages_or_reviewed_text,

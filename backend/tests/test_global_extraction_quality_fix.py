@@ -465,6 +465,359 @@ def test_extract_preview_assembly_never_writes_to_chroma():
     assert collection.delete_call_count == 0
 
 
+# --- 2026-10-05 follow-up: real-world TOC/header-footer/overlap fixes ------
+#
+# The real LSPU Faculty Manual validation run showed the first version of
+# this fix only partially worked: real PDF text extraction splits a TOC
+# row's title and page number onto SEPARATE lines (or drops the number
+# entirely), puts a multi-field header/footer template across MORE than 3
+# lines per page, and chunk_document_text's own paragraph-packing overlap
+# (separate code path from _slice_oversized_block) still took a raw
+# character slice. See looks_like_toc_region_row, _immediately_precedes_
+# body_prose, _furniture_edge_lines, and _safe_suffix for the fixes.
+
+from app.services.chunking import _safe_suffix
+from app.services.text_cleaner import looks_like_toc_region_row
+
+
+def test_multipage_toc_with_title_and_page_number_on_separate_lines_is_removed():
+    """Real PDF extraction commonly drops a TOC row's page number onto
+    its own line (or a separate column) instead of the dotted-leader
+    shape -- looks_like_toc_entry_line alone never matches any of these."""
+    toc = (
+        "Contents\n"
+        "Foreword\n"
+        "Board of Regents\n"
+        "Administrative Officials\n"
+        "I. General Information\n"
+        "12\n"
+        "II. Historical Development\n"
+        "15\n"
+        "III. Commitment of the Faculty\n"
+        "18\n"
+        "IV. University Policies\n"
+        "22\n"
+    )
+    body = (
+        "V. Faculty Responsibilities\n\n"
+        "Every faculty member shall discharge academic duties with diligence "
+        "and shall comply with the policies set forth by the university "
+        "administration and the Commission on Higher Education at all times.\n"
+    )
+    cleaned = remove_toc_blocks(toc + body)
+    for line in ["Foreword", "Board of Regents", "Administrative Officials"]:
+        assert line not in cleaned
+    assert "I. General Information" not in cleaned
+    assert "II. Historical Development" not in cleaned
+    # the page-number-only lines are swept away as part of the TOC run too
+    assert "\n12\n" not in cleaned
+    assert "\n15\n" not in cleaned
+    # the real section survives, heading and body both
+    assert "V. Faculty Responsibilities" in cleaned
+    assert "Every faculty member shall discharge academic duties" in cleaned
+
+
+def test_toc_continuation_across_simulated_page_break_is_removed():
+    toc_page_1 = (
+        "Contents\n"
+        "Foreword\n"
+        "Board of Regents\n"
+        "Administrative Officials\n"
+        "I. General Information\n"
+    )
+    toc_page_2 = (
+        "II. Historical Development\n"
+        "III. Commitment of the Faculty\n"
+        "IV. University Policies\n"
+        "V. Faculty Responsibilities\n"
+    )
+    body = (
+        "VI. Grievance Machinery\n\n"
+        "Any faculty member who believes a decision was unfair may file a "
+        "written grievance with the designated committee within fifteen "
+        "working days of the event giving rise to the complaint itself.\n"
+    )
+    # pages are joined with a single "\n", exactly like build_chunks_with_pages
+    cleaned = remove_toc_blocks(toc_page_1 + toc_page_2 + body)
+    assert "Foreword" not in cleaned
+    assert "III. Commitment of the Faculty" not in cleaned
+    assert "V. Faculty Responsibilities" not in cleaned
+    assert "VI. Grievance Machinery" in cleaned
+    assert "written grievance with the designated committee" in cleaned
+
+
+def test_real_body_heading_adjacent_to_toc_end_is_not_deleted():
+    """A real section's own heading, immediately following the TOC and
+    textually identical to its own TOC entry a few lines above, must
+    survive -- it's distinguished because it (unlike a TOC row) directly
+    introduces a real paragraph right there."""
+    toc = (
+        "Faculty Official Time .......... 12\n"
+        "Submission of Grades .......... 15\n"
+        "Leave of Absence .......... 20\n"
+        "Grievance Machinery .......... 25\n"
+    )
+    real_section = (
+        "\n\nFaculty Official Time\n\n"
+        "All faculty members shall observe the official time prescribed by "
+        "the university and render the required number of hours each week."
+    )
+    cleaned = remove_toc_blocks(toc + real_section)
+    for line in toc.strip().split("\n"):
+        assert line not in cleaned
+    assert "Faculty Official Time" in cleaned
+    assert "render the required number of hours each week" in cleaned
+
+
+def test_short_legitimate_list_is_not_mistaken_for_a_toc():
+    """A short requirements checklist that happens to be heading-shaped
+    must not be swept away just because it's a few short lines in a
+    row -- min_run/anchored_min_run require more evidence than that."""
+    text = (
+        "Requirements for Enrollment\n\n"
+        "Birth Certificate\n"
+        "Good Moral Certificate\n\n"
+        "Submit the above documents to the registrar's office before the "
+        "start of the enrollment period for processing and verification.\n"
+    )
+    cleaned = remove_toc_blocks(text)
+    assert "Birth Certificate" in cleaned
+    assert "Good Moral Certificate" in cleaned
+
+
+def test_looks_like_toc_region_row_accepts_heading_shaped_lines_without_page_numbers():
+    assert looks_like_toc_region_row("Faculty Official Time")
+    assert looks_like_toc_region_row("I. General Information")
+    assert looks_like_toc_region_row("Faculty Official Time .......... 12")
+    assert not looks_like_toc_region_row(
+        "The committee decided to review the contents of the proposal further."
+    )
+
+
+# --- multi-line structured header/footer templates --------------------------
+
+
+def test_multiline_structured_header_footer_template_removed():
+    """A real field-label header/footer block (Institution/Doc. No./Type/
+    Revision No./Title/Date/Page) often spans more than 3 lines -- the
+    old fixed first-3/last-3 window missed the interior fields."""
+    pages = []
+    for i in range(1, 9):
+        body = "\n".join(
+            f"{sentence} (page marker {i})" for sentence in _BODY_SENTENCE_TEMPLATES
+        )
+        pages.append(
+            "Institution: Laguna State Polytechnic University\n"
+            "Doc. No.: FM-2020-01\n"
+            "Type: Policy Manual\n"
+            "Revision No.: 2\n"
+            "Title: LSPU Faculty Manual 2020\n"
+            "Date: March 2021\n\n"
+            f"{body}\n\n"
+            f"Page {i}\n"
+            "of 8"
+        )
+    cleaned = clean_extracted_text("\n".join(pages), page_texts=pages)
+    for line in [
+        "Institution: Laguna State Polytechnic University",
+        "Doc. No.: FM-2020-01",
+        "Type: Policy Manual",
+        "Revision No.: 2",
+        "Title: LSPU Faculty Manual 2020",
+        "Date: March 2021",
+    ]:
+        assert line not in cleaned
+    for i in range(1, 9):
+        assert f"Page {i}" not in cleaned
+    assert "of 8" not in cleaned
+    for i in range(1, 9):
+        assert f"(page marker {i})" in cleaned
+
+
+def test_nonrecurring_body_use_of_title_and_date_words_is_preserved():
+    """Generic header/footer stripping is recurrence-based, never a
+    keyword blacklist -- a one-off body sentence using "Title" or "Date"
+    must never be deleted just because those words also appear in a
+    real recurring header elsewhere in the document."""
+    pages = []
+    for i in range(1, 7):
+        body = "\n".join(
+            f"{sentence} (page marker {i})" for sentence in _BODY_SENTENCE_TEMPLATES
+        )
+        pages.append(f"Title: LSPU Faculty Manual 2020\n\n{body}\n\nPage {i} of 6")
+    # A genuine one-off body sentence that uses both words, appearing on
+    # only ONE page -- must survive even though "Title:"/"Page N of 6"
+    # recur on every other page.
+    pages[2] += (
+        "\n\nThe effective Date of this policy and the official Title of "
+        "the signing officer are recorded in the appendix for reference."
+    )
+    cleaned = clean_extracted_text("\n".join(pages), page_texts=pages)
+    assert "Title: LSPU Faculty Manual 2020" not in cleaned
+    assert "The effective Date of this policy and the official Title" in cleaned
+
+
+# --- TOC/furniture can never become a chunk title ---------------------------
+
+
+def test_toc_entry_cannot_become_body_chunk_title():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        toc = (
+            "Contents\n"
+            "Foreword\n"
+            "Board of Regents\n"
+            "Administrative Officials\n"
+            "I. General Information\n"
+        )
+        page_texts = [
+            toc + "\n\nGrievance Machinery\n\n" + "Procedures must be filed in writing. " * 40
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=300, chunk_overlap=30, title="T", source_filename="toc_title_test.pdf"
+        )
+    assert chunks
+    for chunk in chunks:
+        heading = chunk.metadata.get("section_heading")
+        assert heading != "Contents"
+        assert heading != "Foreword"
+        assert heading != "Board of Regents"
+        assert heading == "Grievance Machinery"
+
+
+def test_page_furniture_cannot_become_body_chunk_title():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = []
+        for i in range(1, 7):
+            tag = _PAGE_TAG_WORDS[i - 1]
+            body = "\n".join(f"{s} (page tag: {tag})" for s in _BODY_SENTENCE_TEMPLATES)
+            page_texts.append(
+                "Title: LSPU Faculty Manual 2020\nDate: March 2021\n\n"
+                f"{body}\n\nPage {i} of 6"
+            )
+        page_offsets = []
+        running = 0
+        for p in page_texts:
+            page_offsets.append(running)
+            running += len(p) + 1
+        chunks = build_chunks_with_pages(
+            page_texts, page_offsets, chunk_size=300, chunk_overlap=30, title="T", source_filename="furniture_title_test.pdf"
+        )
+    assert chunks
+    for chunk in chunks:
+        heading = chunk.metadata.get("section_heading")
+        assert heading != "Title: LSPU Faculty Manual 2020"
+        assert "Page" not in (heading or "")
+
+
+# --- root cause C: paragraph-packing overlap must be boundary-safe ----------
+
+
+def test_safe_suffix_never_cuts_mid_word():
+    text = "This policy was approved by the Board of Regents on January 10, 2001 and took effect immediately."
+    suffix = _safe_suffix(text, 15)
+    assert suffix
+    assert not suffix.startswith("uary")
+    cut_point = len(text) - len(suffix)
+    assert cut_point == 0 or text[cut_point - 1].isspace()
+
+
+def test_safe_suffix_falls_back_to_raw_slice_only_for_unbroken_token():
+    text = "a" * 200
+    suffix = _safe_suffix(text, 20)
+    assert len(suffix) == 20
+
+
+def test_chunk_document_text_overlap_never_starts_or_ends_mid_word():
+    paragraph_a = (
+        "This policy was approved by the Board of Regents on January 10, 2001 "
+        "and implemented through a series of memoranda issued by the Office "
+        "of the Vice President for Academic Affairs during that same year."
+    )
+    paragraph_b = (
+        "Grievances expressed verbally or in writing by any faculty member "
+        "shall be received, logged, and forwarded to the appropriate "
+        "committee within five working days of receipt for review."
+    )
+    paragraph_c = (
+        "Faculty members who are repeatedly charged with the same offense "
+        "may face administrative sanctions up to and including dismissal "
+        "from service after due process has been properly observed."
+    )
+    text = "\n\n".join([paragraph_a, paragraph_b, paragraph_c])
+    chunks = chunk_document_text(text, chunk_size=150, chunk_overlap=40)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert not chunk.text.startswith("uary")
+        assert not chunk.text.startswith("ssed")
+        assert not chunk.text.startswith("ment")
+        assert not chunk.text.startswith("atedly")
+        start = chunk.char_start
+        if start > 0:
+            assert text[start - 1].isspace(), (
+                f"chunk at char_start={start} begins mid-word: {chunk.text[:20]!r}"
+            )
+        end = start + len(chunk.text)
+        if end < len(text):
+            assert text[end].isspace() or not text[end - 1].isalnum(), (
+                f"chunk ending at {end} ends mid-word: {chunk.text[-20:]!r}"
+            )
+
+
+# --- representative completeness: body content survives end to end --------
+
+
+def test_representative_policy_body_text_survives_full_cleaning_pipeline():
+    """TOC + multi-line header/footer furniture combined -- body content
+    near the start, middle, and end of the document must all survive."""
+    toc = (
+        "Contents\n"
+        "Foreword\n"
+        "Board of Regents\n"
+        "I. General Information\n"
+        "II. Faculty Official Time\n"
+        "III. Grading Policies\n"
+        "IV. Grievance Machinery\n"
+    )
+    pages = [
+        toc,
+        (
+            "Institution: Laguna State Polytechnic University\nDate: March 2021\n\n"
+            "Faculty Official Time\n\n"
+            "All faculty members shall observe the official time prescribed by "
+            "the university and render the required number of office hours.\n\n"
+            "Page 2 of 4"
+        ),
+        (
+            "Institution: Laguna State Polytechnic University\nDate: March 2021\n\n"
+            "Grading and Submission of Grades\n\n"
+            "Grades must be submitted within five calendar days after the end "
+            "of the examination period set by the registrar for that term.\n\n"
+            "Page 3 of 4"
+        ),
+        (
+            "Institution: Laguna State Polytechnic University\nDate: March 2021\n\n"
+            "Grievance Machinery\n\n"
+            "A faculty member aggrieved by an administrative decision may file "
+            "a written grievance with the appropriate committee for review.\n\n"
+            "Page 4 of 4"
+        ),
+    ]
+    cleaned = clean_extracted_text("\n".join(pages), page_texts=pages)
+    assert "render the required number of office hours" in cleaned
+    assert "Grades must be submitted within five calendar days" in cleaned
+    assert "file a written grievance with the appropriate committee" in cleaned
+    assert "Institution: Laguna State Polytechnic University" not in cleaned
+    assert "Foreword" not in cleaned
+
+
 def test_index_still_uses_publish_new_version_only():
     from app.services.admin.digital_ingestion import (
         chunks_from_pages_or_reviewed_text,

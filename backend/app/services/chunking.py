@@ -92,6 +92,33 @@ def _safe_break_points(block: str) -> list[int]:
     return sorted(points)
 
 
+def _safe_suffix(text: str, length: int) -> str:
+    """Suffix of ``text`` close to ``length`` characters, snapped to the
+    nearest sentence or (failing that) word boundary -- see
+    _safe_break_points -- so it never begins mid-word.
+
+    Used for the paragraph-packing overlap tail in chunk_document_text,
+    which previously took a raw ``text[-length:]`` slice -- the actual
+    source of real mid-word chunk starts like "uary 10, 2001" or "ssed
+    verbally..." (from "January 10, 2001" / "expressed verbally..."):
+    _slice_oversized_block's own boundary-aware fix never touches this
+    code path at all, since it only ever runs for a single block that
+    alone exceeds chunk_size, not for the overlap carried between two
+    packed paragraphs.
+    """
+    if length <= 0 or not text:
+        return ""
+    if length >= len(text):
+        return text
+    break_points = _safe_break_points(text)
+    target = len(text) - length
+    candidates = [p for p in break_points if 0 < p < len(text)]
+    if not candidates:
+        return text[target:]
+    start = min(candidates, key=lambda p: abs(p - target))
+    return text[start:]
+
+
 def _slice_oversized_block(
     block: str,
     block_start: int,
@@ -198,7 +225,7 @@ def chunk_document_text(
             current = candidate
             continue
 
-        overlap_tail = current[-chunk_overlap:] if (current and chunk_overlap) else ""
+        overlap_tail = _safe_suffix(current, chunk_overlap) if (current and chunk_overlap) else ""
         if current:
             chunks.append(DocumentChunk(text=current, chunk_index=len(chunks), char_start=current_start))
             current = ""

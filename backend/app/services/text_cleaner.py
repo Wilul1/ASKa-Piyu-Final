@@ -261,35 +261,64 @@ def looks_like_toc_entry_line(line: str) -> bool:
     return title_like / len(words) >= 0.6
 
 
-def remove_toc_blocks(
-    text: str,
-    *,
-    min_run: int = 3,
-    max_gap: int = 3,
-    max_connector_chars: int = 200,
-) -> str:
-    """Drops contiguous runs of table-of-contents-shaped lines from text
-    before it ever reaches chunking/indexing.
+_TOC_HEADING_RE = re.compile(r"^(?:table\s+of\s+)?contents\s*:?\s*$", re.I)
+_TOC_BODY_PROSE_MIN_CHARS = 80
 
-    Safety model: a line is only ever removed when it falls inside a
-    CLUSTER of at least ``min_run`` TOC-shaped lines that are each within
-    ``max_gap`` lines of the next (allowing a few short connector/blank
-    lines -- e.g. a lone chapter label -- inside a real TOC run). A
-    cluster never bridges across a line longer than
-    ``max_connector_chars`` -- a run of real prose can never be swallowed
-    into a TOC block just because a TOC-shaped line appears somewhere
-    nearby. A single isolated TOC-shaped line (cluster size 1) is never
-    removed on its own.
+
+def looks_like_toc_region_row(line: str) -> bool:
+    """Broader than looks_like_toc_entry_line: true for anything that
+    could plausibly be ONE ROW of a table of contents, whether or not a
+    page number survived onto the same line at all.
+
+    Real PDF text extraction frequently drops a TOC row's page number
+    onto its own separate line (or a separate column that lands far away
+    in reading order), or loses it entirely -- so matching only a
+    dotted-leader/trailing-page-number shape (looks_like_toc_entry_line)
+    misses most real-world TOC rows. A short heading-shaped line (Title
+    Case / ALL CAPS / roman-numeral / decimal / "Article"/"Chapter"
+    -prefixed -- see is_heading_candidate) is just as much a TOC-row
+    candidate, since that is exactly what a TOC entry's title portion
+    looks like on its own. Still only ever used by remove_toc_blocks,
+    which requires a DENSE RUN of such rows (or an explicit "Contents"
+    heading immediately followed by one) before anything is removed --
+    see that function's docstring for the full false-positive model.
     """
-    if not text:
-        return text
-    lines = text.split("\n")
-    toc_indices = [i for i, line in enumerate(lines) if looks_like_toc_entry_line(line)]
-    if len(toc_indices) < min_run:
-        return text
+    return is_heading_candidate(line) or looks_like_toc_entry_line(line)
 
-    clusters: list[list[int]] = [[toc_indices[0]]]
-    for idx in toc_indices[1:]:
+
+def _immediately_precedes_body_prose(
+    lines: list[str], idx: int, *, max_gap: int
+) -> bool:
+    """True when the first non-blank line after ``idx`` (within
+    ``max_gap`` lines) is a real prose line rather than another
+    heading/TOC-row-shaped line.
+
+    A heading-shaped line that directly introduces a paragraph like this
+    is functioning as a genuine body section heading right there: a true
+    TOC entry is never immediately followed by the very paragraph it
+    refers to (that content lives elsewhere, pages away) -- it is
+    followed by more TOC rows, blank space, or the TOC simply ends. This
+    is what keeps a real section's own heading (e.g. "Faculty Official
+    Time" immediately above its actual policy paragraph) from being
+    swept into a TOC cluster just because the same heading text also
+    appears, TOC-row-shaped, a few lines above it.
+    """
+    for k in range(idx + 1, min(idx + 1 + max_gap, len(lines))):
+        candidate = lines[k].strip()
+        if not candidate:
+            continue
+        return len(candidate) > _TOC_BODY_PROSE_MIN_CHARS and not looks_like_toc_region_row(candidate)
+    return False
+
+
+def _toc_row_clusters(
+    lines: list[str], row_like: list[bool], *, max_gap: int, max_connector_chars: int
+) -> list[list[int]]:
+    indices = [i for i, is_row in enumerate(row_like) if is_row]
+    if not indices:
+        return []
+    clusters: list[list[int]] = [[indices[0]]]
+    for idx in indices[1:]:
         prev = clusters[-1][-1]
         gap_has_long_line = any(
             len(lines[k].strip()) > max_connector_chars for k in range(prev + 1, idx)
@@ -298,10 +327,90 @@ def remove_toc_blocks(
             clusters[-1].append(idx)
         else:
             clusters.append([idx])
+    return clusters
+
+
+def remove_toc_blocks(
+    text: str,
+    *,
+    min_run: int = 3,
+    anchored_min_run: int = 2,
+    anchor_reach: int = 6,
+    max_gap: int = 3,
+    max_connector_chars: int = 200,
+) -> str:
+    """Drops contiguous runs of table-of-contents-shaped lines from text
+    before it ever reaches chunking/indexing.
+
+    Two independent passes, each gated differently, because a dense run
+    of plain heading-shaped lines (Title Case / ALL CAPS / roman
+    numerals, no page number at all) is, by shape alone, indistinguishable
+    from a title page or letterhead block (institution name, office name,
+    form code) -- which is NOT a table of contents. Real-world validation
+    against an actual document surfaced exactly this collision, so the
+    broader shape test is only ever trusted with corroborating evidence:
+
+    1. Unanchored, narrow shape (looks_like_toc_entry_line: a dotted
+       leader or a bare trailing page number): a dotted-leader-and-
+       page-number shape essentially never occurs by coincidence in a
+       title page or anywhere outside a real TOC, so a dense cluster of
+       at least ``min_run`` such lines (each within ``max_gap`` lines of
+       the next, never bridging a line longer than ``max_connector_chars``)
+       is removed with no further evidence required.
+    2. Anchored, broad shape (looks_like_toc_region_row: also matches a
+       plain heading-shaped line with no page number, since real PDF
+       extraction frequently drops a TOC row's page number onto its own
+       line or loses it entirely): a cluster of at least
+       ``anchored_min_run`` such lines is removed only when it starts
+       within ``anchor_reach`` lines of an explicit "Contents" / "Table
+       of Contents" heading line (same no-long-connector-line rule) --
+       that heading is strong, unambiguous evidence the list right after
+       it is navigation. The anchor heading line itself is removed too.
+
+    In both passes, a line that immediately introduces a real paragraph
+    (see _immediately_precedes_body_prose) is never treated as a TOC-row
+    candidate at all, regardless of shape -- a true TOC entry is never
+    immediately followed by the very paragraph it refers to.
+
+    A single isolated TOC-shaped line with no confirming run or anchor is
+    never removed on its own -- this is what keeps a real body section
+    that merely happens to be titled "Contents", or a lone heading that
+    happens to end in a number (e.g. "Appendix 1"), untouched.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+
+    def _not_body_heading(i: int) -> bool:
+        return not _immediately_precedes_body_prose(lines, i, max_gap=max_gap)
 
     drop = [False] * len(lines)
-    for cluster in clusters:
+
+    narrow_row_like = [looks_like_toc_entry_line(line) and _not_body_heading(i) for i, line in enumerate(lines)]
+    for cluster in _toc_row_clusters(lines, narrow_row_like, max_gap=max_gap, max_connector_chars=max_connector_chars):
         if len(cluster) >= min_run:
+            for k in range(cluster[0], cluster[-1] + 1):
+                drop[k] = True
+
+    anchor_indices = [i for i, line in enumerate(lines) if _TOC_HEADING_RE.match(line.strip())]
+    if anchor_indices:
+        broad_row_like = [looks_like_toc_region_row(line) and _not_body_heading(i) for i, line in enumerate(lines)]
+        for cluster in _toc_row_clusters(lines, broad_row_like, max_gap=max_gap, max_connector_chars=max_connector_chars):
+            if len(cluster) < anchored_min_run:
+                continue
+            start = cluster[0]
+            anchor = next(
+                (
+                    a
+                    for a in anchor_indices
+                    if 0 <= start - a <= anchor_reach
+                    and not any(len(lines[k].strip()) > max_connector_chars for k in range(a, start))
+                ),
+                None,
+            )
+            if anchor is None:
+                continue
+            drop[anchor] = True
             for k in range(cluster[0], cluster[-1] + 1):
                 drop[k] = True
 
@@ -713,6 +822,36 @@ def _furniture_template(line: str) -> str:
     return _DIGIT_RUN_RE.sub("#", line)
 
 
+_FURNITURE_MIN_EDGE_LINES = 3
+_FURNITURE_MAX_EDGE_LINES = 12
+_FURNITURE_LINE_MAX_CHARS = 70
+
+
+def _furniture_edge_lines(lines: list[str], *, from_start: bool) -> list[str]:
+    """Variable-length run of lines from one edge of a page that might
+    be running header/footer furniture.
+
+    A real structured-template header/footer (Institution:/Doc. No.:/
+    Type:/Revision No.:/Title:/Date:/Page: ..., or a standalone "of N"
+    fragment) is often a stack of MORE than 3 short label/value lines --
+    the old fixed first-3/last-3 window never even looked at the 4th+
+    line of such a block, so those interior lines were never counted as
+    recurring furniture no matter how often they repeated. This walks
+    inward from the edge, always taking at least
+    _FURNITURE_MIN_EDGE_LINES (unchanged floor, so existing short-header
+    documents behave exactly as before), and keeps extending (capped at
+    _FURNITURE_MAX_EDGE_LINES) only while each further line stays short
+    -- a real body paragraph is long, so it naturally stops the walk and
+    is never swept into the furniture candidate set.
+    """
+    ordered = lines if from_start else list(reversed(lines))
+    n = len(ordered)
+    count = min(_FURNITURE_MIN_EDGE_LINES, n)
+    while count < min(n, _FURNITURE_MAX_EDGE_LINES) and len(ordered[count]) <= _FURNITURE_LINE_MAX_CHARS:
+        count += 1
+    return ordered[:count]
+
+
 def _strip_repeated_headers_footers(text: str, page_texts: list[str]) -> str:
     if len(page_texts) < 2:
         return text
@@ -720,7 +859,9 @@ def _strip_repeated_headers_footers(text: str, page_texts: list[str]) -> str:
     counts: dict[str, int] = {}
     for page in page_texts:
         lines = [line.strip() for line in page.splitlines() if line.strip()]
-        for candidate in set(lines[:3] + lines[-3:]):
+        header = _furniture_edge_lines(lines, from_start=True)
+        footer = _furniture_edge_lines(lines, from_start=False)
+        for candidate in set(header + footer):
             template = _furniture_template(candidate)
             counts[template] = counts.get(template, 0) + 1
 

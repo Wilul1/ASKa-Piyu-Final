@@ -462,6 +462,415 @@ def test_metadata_enrichment_never_changes_chunk_text():
     assert enriched[0].text == original_text
 
 
+# --- 2026-10-06 follow-up: real v30 production title-metadata failures -----
+#
+# Real production Extract-only validation on v30 (commit c794b31) showed
+# three further title/section-heading false positives in the Faculty
+# Manual: a wrapped Foreword prose line ("Statutes, Omnibus Rules
+# Implementing Book V of Executive") promoted to a title; a person's
+# role/designation inside the Board of Regents roster ("LSPU President")
+# promoted to a title; and a repeated roster role label ("Member")
+# retained as a title even after the real "I. General Information"
+# heading began within the same chunk's span. All three fixtures below
+# mirror the REAL runtime shape -- synthetic names/text only.
+
+
+def test_wrapped_foreword_prose_is_not_promoted_to_a_title():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "FOREWORD\n\n"
+            "The information contained herein are based on the\n"
+            "Statutes, Omnibus Rules Implementing Book V of Executive\n"
+            "Order No. 292 (The Revised Administrative Code of 1987).\n"
+            "Department of Budget and Management Circulars/ Manual,\n"
+            "approved resolutions of the Board of Regents, University\n"
+            "Code, and other relevant documents from various units.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="foreword_test.pdf"
+        )
+    assert chunks
+    for chunk in chunks:
+        heading = chunk.metadata.get("section_heading")
+        assert heading != "Statutes, Omnibus Rules Implementing Book V of Executive"
+        assert heading == "FOREWORD"
+
+
+def test_persons_role_inside_roster_is_not_promoted_to_a_title():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "BOARD OF REGENTS\n\n"
+            "HON. LILIAN A. DE LAS LLAGAS\n"
+            "CHED Commissioner\n"
+            "Chairperson-Designate and Presiding Officer\n\n"
+            "HON. MARIO R. BRIONES\n"
+            "LSPU President\n"
+            "Vice-Chairman\n\n"
+            "HON. JOEL G. VILLANUEVA\n"
+            "Chairperson,\n"
+            "Senate Committee on Technical\n"
+            "and Vocational Education\n"
+            "Member\n\n"
+            "Represented by\n"
+            "ATTY. ZENON C. AGARAO\n\n"
+            "HON. MARK O. GO\n"
+            "Chairperson,\n"
+            "Committee on Higher Technical Education\n"
+            "Member\n\n"
+            "HON. LUIS G. BANUA\n"
+            "NEDA IV-A, Regional Director\n"
+            "Member\n\n"
+            "I. General Information\n\n"
+            "This university campus offers relevant curricular programs "
+            "with a large student population across several colleges and "
+            "serves as a key player in regional higher education policy.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=150, chunk_overlap=20, title="T", source_filename="roster_test.pdf"
+        )
+    assert chunks
+    headings = {c.metadata.get("section_heading") for c in chunks}
+    for bad in ["LSPU President", "Member", "Vice-Chairman", "Chairperson,", "Represented by", "CHED Commissioner"]:
+        assert bad not in headings, f"roster role/label survived as a heading: {bad!r}"
+    # the enclosing BOARD OF REGENTS heading governs where structurally
+    # appropriate, and the real "I. General Information" heading supersedes
+    # the stale roster metadata once it begins
+    assert "BOARD OF REGENTS" in headings
+    assert "I. General Information" in headings
+    last_chunk = chunks[-1]
+    assert "key player in regional higher education policy" in last_chunk.text
+    assert last_chunk.metadata.get("section_heading") == "I. General Information"
+
+
+def test_represented_by_label_is_not_promoted_to_a_title():
+    from app.services.admin.knowledge_base_pipeline import is_trustworthy_title_heading
+
+    assert not is_trustworthy_title_heading("Represented by")
+
+
+def test_heading_containing_a_role_word_remains_valid_outside_roster_context():
+    """"President"/"Member"/"Chairperson" etc. are never globally banned
+    -- only suppressed when structural roster-context evidence (a
+    cluster of honorific name lines) is actually present."""
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "Office of the President\n\n"
+            "All official communications intended for the University "
+            "President shall be coursed through this office for proper "
+            "recording, scheduling, and timely disposition of concerns.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="president_office_test.pdf"
+        )
+    assert chunks
+    assert chunks[0].metadata.get("section_heading") == "Office of the President"
+
+
+def test_dense_letterhead_run_still_suppressed_with_roster_and_numbered_fixes_active():
+    """Regression guard: the earlier letterhead/address-block dense-run
+    fix must still work unchanged after today's roster-anchor and
+    strong-numbered-heading protections were added."""
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "Example State Polytechnic University (ESPU)\n"
+            "Province of Example\n"
+            "Regular Campuses\n"
+            "ESPU Main Campus\n"
+            "Extension Campuses\n"
+            "ESPU North Campus\n"
+            "ESPU South Campus\n"
+            "ESPU West Pilot Classes\n\n"
+            "Grievance Machinery\n\n"
+            "Any faculty member who believes a decision was unfair may file a "
+            "written grievance with the designated committee within fifteen "
+            "working days of the event giving rise to the complaint itself.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=300, chunk_overlap=30, title="T", source_filename="letterhead_regress_test.pdf"
+        )
+    assert chunks
+    for chunk in chunks:
+        heading = chunk.metadata.get("section_heading")
+        assert heading not in {
+            "Example State Polytechnic University (ESPU)",
+            "Province of Example",
+            "Regular Campuses",
+            "ESPU Main Campus",
+            "Extension Campuses",
+            "ESPU North Campus",
+            "ESPU South Campus",
+            "ESPU West Pilot Classes",
+        }
+
+
+def test_numbered_headings_remain_valid_inside_and_outside_roster_adjacency():
+    for heading in [
+        "I. General Information",
+        "II. Historical Development of LSPU",
+        "Chapter 4. Graduate Studies and Applied Research",
+        "Article 6. Procedure for Major Disciplinary Actions",
+        "XI. Grievance Machinery",
+        "3.2 Change of Grades",
+    ]:
+        assert is_trustworthy_title_heading(heading), f"should remain valid: {heading!r}"
+
+
+def test_office_metadata_output_unchanged_by_title_only_fix():
+    """The title-selection changes in this round must never alter
+    office/responsible_office outcomes -- only section_heading/title."""
+    chunks = [
+        DocumentChunk(
+            text=(
+                "Admission examinations and career guidance interviews shall be "
+                "administered by the Guidance Office, which shall also provide "
+                "counseling referrals for students in need of further assistance."
+            ),
+            chunk_index=0,
+            char_start=0,
+            metadata={"document_type": "information", "section_heading": "Admission Requirements"},
+        )
+    ]
+    enriched = enrich_chunks_with_category_metadata(
+        chunks, title="Handbook", source_document="handbook_test.pdf", allow_llm=False
+    )
+    assert enriched[0].metadata["office"] == "Guidance Office"
+    assert enriched[0].metadata["responsible_office"] == "Guidance Office"
+
+
+# --- 2026-10-06 second follow-up: real v31 "Province of Laguna" letterhead -
+#
+# Real production Extract-only validation on the Faculty Manual showed
+# "Province of Laguna" (an institution-name + geographic-location
+# letterhead pair) still promoted to a title/section-heading. Both real
+# documents share the identical template: institution name + province,
+# immediately followed by a "Regular Campuses:" listing with real
+# addresses ("Brgy. Bubukal, Sta. Cruz, Laguna, 4009"), phone numbers
+# ("(049) 562-8130"), and a website. Fixtures below mirror that exact
+# structure -- synthetic institution/place names only.
+
+
+def test_institution_and_location_letterhead_block_does_not_produce_a_title():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "Example State Polytechnic University (ESPU)\n"
+            "Province of Example\n\n"
+            "Regular Campuses:\n\n"
+            "ESPU-Example Main Campus\n"
+            "Brgy. Riverside, Example City, Example, 4009\n"
+            "(049) 562-8130\n\n"
+            "FOREWORD\n\n"
+            "This manual is a written document appertaining to the "
+            "commitment, policies, rights, privileges, and benefits for "
+            "every member of this university community at all times.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="letterhead_location_test.pdf"
+        )
+    assert chunks
+    headings = {c.metadata.get("section_heading") for c in chunks}
+    assert "Example State Polytechnic University (ESPU)" not in headings
+    assert "Province of Example" not in headings
+    assert "FOREWORD" in headings
+
+
+def test_contact_and_address_block_does_not_produce_structural_titles():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "Example University\n"
+            "Province of Riverside\n\n"
+            "Satellite Campuses\n"
+            "Example North Campus\n"
+            "Example South Campus\n\n"
+            "website: w.example.edu.ph\n\n"
+            "FOREWORD\n\n"
+            "Every educational institution has its own special mission and "
+            "a unique way to bring about the full development of the "
+            "persons who are entrusted to its care and supervision.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="contact_block_test.pdf"
+        )
+    assert chunks
+    headings = {c.metadata.get("section_heading") for c in chunks}
+    for bad in ["Example University", "Province of Riverside", "Satellite Campuses", "Example North Campus"]:
+        assert bad not in headings, f"contact-block fragment survived as a heading: {bad!r}"
+    assert "FOREWORD" in headings
+
+
+def test_phone_and_website_adjacent_location_text_is_not_promoted():
+    from app.services.admin.digital_ingestion import _is_letterhead_heading
+
+    lines = [
+        "Example University",
+        "Province of Riverside",
+        "",
+        "Main Campus",
+        "(049) 562-8130",
+        "",
+        "FOREWORD",
+    ]
+    assert _is_letterhead_heading(0, lines)
+    assert _is_letterhead_heading(1, lines)
+    assert not _is_letterhead_heading(6, lines)
+
+
+def test_genuine_geographic_heading_outside_letterhead_remains_valid():
+    """A geographic phrase is never globally rejected -- only suppressed
+    when actual letterhead/contact-block evidence follows it closely."""
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "Province of Laguna\n\n"
+            "This chapter discusses the demographic and economic profile of "
+            "the province, including its major industries, population "
+            "trends, and the university's role in regional development.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="geographic_heading_test.pdf"
+        )
+    assert chunks
+    assert chunks[0].metadata.get("section_heading") == "Province of Laguna"
+
+
+def test_two_line_legitimate_heading_remains_valid_without_contact_evidence():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "Chapter 3\n"
+            "Undergraduate Academic Policies\n\n"
+            "Article 1. Classifications of Students\n\n"
+            "Every enrolled student is classified as regular or irregular "
+            "depending on the number and sequence of units taken each term "
+            "relative to the officially prescribed curriculum.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="two_line_heading_test.pdf"
+        )
+    assert chunks
+    assert chunks[0].metadata.get("section_heading") == "Article 1. Classifications of Students"
+
+
+def test_foreword_remains_valid_after_letterhead_fix():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "Example University\n"
+            "Province of Example\n\n"
+            "Regular Campuses:\n"
+            "Example Main Campus\n"
+            "Brgy. Riverside, Example, 4009\n"
+            "(049) 562-8130\n\n"
+            "website: w.example.edu.ph\n\n"
+            "FOREWORD\n\n"
+            "This manual sets forth the commitment, policies, rights, "
+            "privileges, and benefits afforded to every member of this "
+            "university community throughout their period of service.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="foreword_preservation_test.pdf"
+        )
+    assert chunks
+    assert any(c.metadata.get("section_heading") == "FOREWORD" for c in chunks)
+
+
+def test_board_of_regents_remains_valid_after_letterhead_fix():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "BOARD OF REGENTS\n\n"
+            "HON. JUAN DELA CRUZ\n"
+            "Chairperson\n\n"
+            "HON. MARIA SANTOS\n"
+            "Vice-Chairman\n\n"
+            "HON. PEDRO REYES\n"
+            "Member\n\n"
+            "HON. ANA LIM\n"
+            "Member\n\n"
+            "I. General Information\n\n"
+            "This university campus offers relevant curricular programs "
+            "with a large student population across several colleges and "
+            "serves as a key player in regional higher education policy.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=100, chunk_overlap=15, title="T", source_filename="bor_preservation_test.pdf"
+        )
+    assert chunks
+    headings = {c.metadata.get("section_heading") for c in chunks}
+    assert "BOARD OF REGENTS" in headings
+    assert "I. General Information" in headings
+
+
+def test_i_general_information_remains_valid_after_letterhead_fix():
+    store, _collection = make_fake_store()
+    with (
+        patch("app.services.admin.digital_ingestion.get_knowledge_base_store", return_value=store),
+        patch("app.services.admin.knowledge_base_pipeline.get_knowledge_base_store", return_value=store),
+    ):
+        page_texts = [
+            "I. General Information\n\n"
+            "This university campus offers relevant curricular programs "
+            "with a large student population across several colleges and "
+            "serves as a key player in regional higher education policy.\n"
+        ]
+        chunks = build_chunks_with_pages(
+            page_texts, [0], chunk_size=900, chunk_overlap=120, title="T", source_filename="geninfo_preservation_test.pdf"
+        )
+    assert chunks
+    assert chunks[0].metadata.get("section_heading") == "I. General Information"
+
+
+def test_chunk_text_unchanged_by_letterhead_fix():
+    original_text = "Representative policy text that must remain byte-identical."
+    chunks = [
+        DocumentChunk(
+            text=original_text,
+            chunk_index=0,
+            char_start=0,
+            metadata={"document_type": "information", "section_heading": "Some Heading"},
+        )
+    ]
+    enriched = enrich_chunks_with_category_metadata(
+        chunks, title="T", source_document="t.pdf", allow_llm=False
+    )
+    assert enriched[0].text == original_text
+
+
 # --- ticket-routing (classify_question) is completely untouched ------------
 
 

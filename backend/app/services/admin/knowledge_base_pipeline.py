@@ -404,6 +404,17 @@ def _title_from_chunk(chunk: DocumentChunk) -> str:
     metadata_title = _title_from_metadata(metadata)
     if metadata_title:
         return metadata_title
+    if metadata.get("title_fallback_suppressed"):
+        # _attach_section_headings (digital_ingestion.py) already
+        # determined, using FULL document context, that no trustworthy
+        # heading governs this chunk -- including checking whether the
+        # chunk's own leading lines are letterhead/roster/wrapped-prose
+        # fragments that merely LOOK heading-shaped in isolation (e.g.
+        # "LSPU Faculty Manual" immediately preceding a campus address
+        # block). Re-scanning the chunk's own text here with the same,
+        # context-blind is_trustworthy_title_heading check would just
+        # rediscover exactly what was already rejected, so skip it.
+        return "Untitled chunk"
     first_line = next(
         (
             line.strip()

@@ -35,6 +35,7 @@ import bisect
 import hashlib
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -47,6 +48,7 @@ from app.config import settings
 from app.models.db_models import IngestionJob
 from app.models.schemas import StructuredDocumentSchema
 from app.services.admin.knowledge_base_pipeline import (
+    _HONORIFIC_PREFIX_RE,
     chunk_preview,
     is_trustworthy_title_heading,
     knowledge_base_statistics,
@@ -58,7 +60,14 @@ from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk, chunk_document_text
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
-from app.services.text_cleaner import clean_extracted_text
+from app.services.text_cleaner import (
+    _ARTICLE_CHAPTER_HEADING_RE,
+    _DECIMAL_HEADING_RE,
+    _is_bare_section_marker,
+    _is_major_section_heading,
+    clean_extracted_text,
+    is_heading_candidate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +243,62 @@ def _page_for_offset(char_start: int, page_offsets: list[int]) -> int:
 
 _MIN_HEADING_BODY_GAP_CHARS = 40
 _DENSE_HEADING_RUN_MIN_SIZE = 4
+_BARE_YEAR_PREFIX_RE = re.compile(r"^(?:19|20)\d{2}\s")
+
+
+def _is_strong_numbered_heading(line: str) -> bool:
+    """True for a roman-numeral ("I. General Information"), decimal
+    ("3.2 Change of Grades"), or Article/Chapter ("Article 6. Procedure
+    for Major Disciplinary Actions") structural heading -- the
+    document's own explicit, unambiguous section markers.
+
+    These must never be swept away by either the dense-run or
+    roster-context heuristics below (both designed to suppress AMBIGUOUS
+    shape-only matches, like a roster's role/designation lines or a
+    title page's letterhead fragments), even when one happens to sit
+    immediately adjacent to a roster/letterhead block -- e.g. "I.
+    General Information" immediately follows a long Board of
+    Regents/Administrative Officials roster in the real Faculty Manual,
+    with only a small character gap separating them.
+
+    The decimal-heading path excludes a bare 19xx/20xx-prefixed line
+    (e.g. "2020 Edition") -- it coincidentally matches the same
+    "number + capitalized word" shape as a genuine subsection number
+    ("3.2 Change of Grades"), but a 4-digit year is a publication-year
+    label, not a section number.
+    """
+    if _is_major_section_heading(line) or _ARTICLE_CHAPTER_HEADING_RE.match(line):
+        return True
+    return bool(_DECIMAL_HEADING_RE.match(line) and not _BARE_YEAR_PREFIX_RE.match(line))
+
+
+def _is_protected_heading(line: str) -> bool:
+    """True for a heading-shaped line that must never be swept away by
+    the dense-run or roster-context heuristics, regardless of its
+    surrounding gap structure.
+
+    Covers _is_strong_numbered_heading PLUS a multi-word ALL-CAPS
+    heading that is NOT itself an honorific name line -- e.g. "BOARD OF
+    REGENTS" or "ADMINISTRATIVE OFFICIALS", the enclosing anchor heading
+    of a roster, versus "HON. FULL NAME" (a roster member, which IS
+    honorific-prefixed and so is correctly excluded here). Relying only
+    on incidental gap sizes to spare the roster's own anchor heading is
+    fragile -- some real documents happen to have a large gap between
+    the anchor and its first member (sparing it by luck), others do not
+    -- so the anchor is protected explicitly instead.
+    """
+    if _is_strong_numbered_heading(line):
+        return True
+    if not (line.isupper() and len(line.split()) >= 2 and not _HONORIFIC_PREFIX_RE.match(line)):
+        return False
+    # Exclude a serial/identifier-shaped line (e.g. "ISSN 978-971-94281-9-0")
+    # -- str.isupper() is true for it too (its only cased characters,
+    # "ISSN", are uppercase), but a genuine ALL-CAPS anchor heading
+    # ("BOARD OF REGENTS", "ADMINISTRATIVE OFFICIALS") is made entirely
+    # of real words, never a token that's mostly digits/hyphens/dots.
+    if any(re.fullmatch(r"[\d.\-/]+", word) for word in line.split()):
+        return False
+    return True
 
 
 def _heading_offsets(text: str) -> tuple[list[int], list[str]]:
@@ -241,16 +306,25 @@ def _heading_offsets(text: str) -> tuple[list[int], list[str]]:
     line in ``text``, in document order -- used to find the governing
     heading for a given chunk (see _attach_section_headings).
 
-    Filters through is_trustworthy_title_heading (stricter than plain
-    is_heading_candidate -- see its docstring) and additionally drops
-    any candidate belonging to a RUN of at least
-    _DENSE_HEADING_RUN_MIN_SIZE consecutive candidates each separated by
-    less than _MIN_HEADING_BODY_GAP_CHARS of body text: a letterhead/
-    roster block (e.g. "Laguna State Polytechnic University (LSPU)" /
-    "Province of Laguna" / "Regular Campuses:" / "LSPU-Los Baños
-    Campus" / ... -- 8 consecutive short candidates with virtually no
-    body prose between them) is a dense run like this, and none of its
-    members is a genuine section heading.
+    Two passes, deliberately in this order:
+
+    1. Density is measured over EVERY is_heading_candidate-shaped line
+       (the broad, shared shape test), not just the ones that will
+       later survive is_trustworthy_title_heading's stricter checks.
+       This matters for a person/role roster (e.g. a Board of Regents
+       listing): each "HON. FULL NAME" line is itself heading-shaped but
+       gets rejected later by the honorific-prefix check, and rejecting
+       it FIRST would make the roster's OWN role/designation lines
+       ("LSPU President", "Member", "Chairperson," / wrapped committee
+       descriptions) look like several small, independent 1-3-line
+       clusters instead of the one dense roster they actually are --
+       each individually too small to reach _DENSE_HEADING_RUN_MIN_SIZE,
+       so none of them would get suppressed. Measuring density on the
+       full candidate set (honorific lines included) correctly reveals
+       the roster as one long, dense run and suppresses the whole span.
+    2. Only a candidate that is BOTH outside any such dense run AND
+       passes is_trustworthy_title_heading (stricter than plain
+       is_heading_candidate -- see its docstring) is kept.
 
     Requiring a RUN of several, not just two adjacent candidates, matters
     because a legitimate compound heading is often itself 2-3 lines
@@ -259,32 +333,225 @@ def _heading_offsets(text: str) -> tuple[list[int], list[str]]:
     one newline apart, all naming the SAME section boundary) -- treating
     any tight pair as untrustworthy would wrongly suppress that, too.
     """
-    raw_offsets: list[int] = []
-    raw_headings: list[str] = []
+    raw_lines = text.split("\n")
+    all_offsets: list[int] = []
+    all_lines: list[str] = []
+    all_line_numbers: list[int] = []
     running = 0
-    for line in text.split("\n"):
+    for line_no, line in enumerate(raw_lines):
         stripped = line.strip()
-        if stripped and is_trustworthy_title_heading(stripped):
-            raw_offsets.append(running)
-            raw_headings.append(stripped)
+        if stripped and is_heading_candidate(stripped):
+            all_offsets.append(running)
+            all_lines.append(stripped)
+            all_line_numbers.append(line_no)
         running += len(line) + 1  # +1 for the removed "\n"
 
-    drop_indices: set[int] = set()
-    run: list[int] = [0] if raw_offsets else []
-    for i in range(1, len(raw_offsets)):
-        gap = raw_offsets[i] - (raw_offsets[i - 1] + len(raw_headings[i - 1]))
-        if gap < _MIN_HEADING_BODY_GAP_CHARS:
+    protected = [_is_protected_heading(line) for line in all_lines]
+
+    dense_indices: set[int] = set()
+    run: list[int] = [0] if all_offsets else []
+    for i in range(1, len(all_offsets)):
+        gap = all_offsets[i] - (all_offsets[i - 1] + len(all_lines[i - 1]))
+        between_lines = raw_lines[all_line_numbers[i - 1] + 1 : all_line_numbers[i]]
+        # A contact-block line (phone/address/domain) in the gap is a
+        # hard break, never bridged -- crossing one means whatever
+        # follows is a fresh region, not part of the SAME dense run as
+        # whatever came before it. Without this, a short single-word
+        # anchor heading (e.g. "FOREWORD") sitting just past a genuine
+        # letterhead's own address/phone/website line could otherwise
+        # be pulled into that same run purely by raw character
+        # proximity, even though the contact-block line between them is
+        # exactly the boundary marking where the letterhead ends.
+        crosses_contact_block = any(_looks_like_contact_block_line(l) for l in between_lines)
+        if gap < _MIN_HEADING_BODY_GAP_CHARS and not crosses_contact_block:
             run.append(i)
         else:
             if len(run) >= _DENSE_HEADING_RUN_MIN_SIZE:
-                drop_indices.update(run)
+                dense_indices.update(idx for idx in run if not protected[idx])
             run = [i]
     if len(run) >= _DENSE_HEADING_RUN_MIN_SIZE:
-        drop_indices.update(run)
+        dense_indices.update(idx for idx in run if not protected[idx])
 
-    offsets = [o for i, o in enumerate(raw_offsets) if i not in drop_indices]
-    headings = [h for i, h in enumerate(raw_headings) if i not in drop_indices]
+    roster_spans = _roster_context_spans(text)
+
+    offsets: list[int] = []
+    headings: list[str] = []
+    for i, (offset, line, line_no) in enumerate(zip(all_offsets, all_lines, all_line_numbers)):
+        if i in dense_indices or not is_trustworthy_title_heading(line):
+            continue
+        if _is_wrapped_prose_continuation(raw_lines, line_no):
+            continue
+        if not protected[i] and any(start <= offset < end for start, end in roster_spans):
+            continue
+        if not protected[i] and _is_letterhead_heading(line_no, raw_lines):
+            continue
+        offsets.append(offset)
+        headings.append(line)
     return offsets, headings
+
+
+_ROSTER_HONORIFIC_REACH_CHARS = 400
+
+
+def _roster_context_spans(text: str) -> list[tuple[int, int]]:
+    """Character spans (start, end) that are a dense person/role roster
+    (e.g. a Board of Regents / Administrative Officials listing),
+    detected via at least two honorific-prefixed name lines ("HON. ...",
+    "Dr. ...", "Atty. ...") within _ROSTER_HONORIFIC_REACH_CHARS of each
+    other.
+
+    A role/designation line SANDWICHED between two such name lines
+    (e.g. "CHED Commissioner" between "HON. LILIAN A. DE LAS LLAGAS" and
+    the next honorific name) is still clearly part of the roster even
+    when it escapes the generic dense-run check above -- an incidental
+    hyphen in a NEIGHBORING role-description line (e.g. "Chairperson-
+    Designate and Presiding Officer") breaks THAT line's own
+    is_heading_candidate shape test and artificially widens the
+    measured gap, fragmenting what is structurally one continuous
+    roster into several small runs each below the density threshold.
+    Anchoring directly on honorific name lines (immune to that
+    fragmentation, since each name line is checked independently of its
+    neighbors) is a more robust roster signal.
+    """
+    lines = text.split("\n")
+    honorific_offsets: list[int] = []
+    running = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped and _HONORIFIC_PREFIX_RE.match(stripped):
+            honorific_offsets.append(running)
+        running += len(line) + 1
+
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while i < len(honorific_offsets):
+        j = i
+        while (
+            j + 1 < len(honorific_offsets)
+            and honorific_offsets[j + 1] - honorific_offsets[j] <= _ROSTER_HONORIFIC_REACH_CHARS
+        ):
+            j += 1
+        if j > i:
+            spans.append((honorific_offsets[i], honorific_offsets[j] + _ROSTER_HONORIFIC_REACH_CHARS))
+        i = j + 1
+    return spans
+
+
+# An institution-name + geographic/location line pair (e.g. "Laguna State
+# Polytechnic University (LSPU)" / "Province of Laguna") is itself
+# shape-indistinguishable from a real two-line heading -- the only
+# reliable generic signal is what immediately FOLLOWS it: a genuine
+# letterhead/contact block (campus addresses, phone numbers, postal
+# codes), never found following a real structural heading like FOREWORD
+# or BOARD OF REGENTS. Matching structural shape only, never a specific
+# place name/institution/filename.
+_PHONE_NUMBER_RE = re.compile(r"\(\d{2,4}\)\s*\d{3,4}[-\s]?\d{3,4}|\b\d{3,4}[-\s]\d{3,4}[-\s]\d{3,4}\b")
+_EMAIL_OR_WEBSITE_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+|(?i:www\.\S+|https?://\S+)")
+# A domain-TLD-shaped token (".edu.ph", ".com", ...) combined with at
+# least 2 dots overall -- broader than requiring a literal "www." (real
+# PDF text extraction can render "www.lspu.edu.ph" as "w.lspu.edu.ph",
+# dropping a character) while still specific enough to avoid matching
+# ordinary prose, which essentially never contains these TLD segments.
+_DOMAIN_TLD_RE = re.compile(r"(?i:\.(?:com|org|net|edu|gov|ph|co)\b)")
+_ADDRESS_ABBREVIATION_RE = re.compile(
+    r"(?i:\bbrgy\.?\b|\bbarangay\b|\bsitio\b|\bpurok\b|\bsto\.?\b|\bsta\.?\b|\bst\.?\s|\bave\.?\s|\bblvd\.?\b)"
+)
+_TRAILING_POSTAL_CODE_RE = re.compile(r",\s*\d{4}\s*$")
+_LETTERHEAD_CONTACT_REACH_LINES = 30
+
+
+def _looks_like_contact_block_line(line: str) -> bool:
+    """True for a line shaped like part of a letterhead's address/contact
+    block -- a phone number, an email/website/domain, a Philippine-style
+    barangay/street address abbreviation, or an address line ending in a
+    trailing 4-digit postal code (e.g. "Brgy. Bubukal, Sta. Cruz, Laguna,
+    4009"). Deliberately specific, narrow shapes -- essentially never
+    coincidentally present in ordinary policy-manual body prose -- rather
+    than a broad heuristic that could misfire on legitimate headings.
+    """
+    return bool(
+        _PHONE_NUMBER_RE.search(line)
+        or _EMAIL_OR_WEBSITE_RE.search(line)
+        or (_DOMAIN_TLD_RE.search(line) and line.count(".") >= 2)
+        or _ADDRESS_ABBREVIATION_RE.search(line)
+        or _TRAILING_POSTAL_CODE_RE.search(line)
+    )
+
+
+def _is_letterhead_heading(line_no: int, raw_lines: list[str]) -> bool:
+    """True when a contact-block line (see _looks_like_contact_block_line)
+    appears within _LETTERHEAD_CONTACT_REACH_LINES lines after this
+    candidate -- strong, generic evidence that the candidate itself is
+    part of an institutional letterhead (institution name + location),
+    not a real structural heading. A real heading like FOREWORD or BOARD
+    OF REGENTS is never followed by an address/phone number this closely.
+    """
+    end = min(line_no + 1 + _LETTERHEAD_CONTACT_REACH_LINES, len(raw_lines))
+    return any(_looks_like_contact_block_line(raw_lines[k]) for k in range(line_no + 1, end))
+
+
+_PROSE_CONNECTOR_WORDS = frozenset(
+    {"a", "an", "the", "of", "in", "on", "for", "to", "and", "or", "by", "as", "with"}
+)
+_MIN_PROSE_CONTENT_WORDS = 2
+
+
+def _looks_like_flowing_prose(line: str) -> bool:
+    """True when ``line`` reads as a real grammatical sentence fragment
+    (at least _MIN_PROSE_CONTENT_WORDS lowercase, non-connector words),
+    as opposed to a short Title-Case/letterhead-style label that merely
+    fails the heading-shape test for an incidental reason (e.g. a hyphen
+    in "ESPU-West Pilot Extension Classes" breaks is_heading_candidate's
+    Title-Case check, but that line is still not flowing prose -- it has
+    zero lowercase content words).
+
+    Never true for a contact-block-shaped line (see
+    _looks_like_contact_block_line) -- a bare website/email/phone/address
+    label like "website: w.lspu.edu.ph" can coincidentally have 2+
+    lowercase tokens (defeating the word-count check above) without
+    being a grammatical sentence at all.
+    """
+    if _looks_like_contact_block_line(line):
+        return False
+    content_words = 0
+    for word in line.split():
+        if not word[:1].islower():
+            continue
+        bare = word.strip(".,;:()[]\"'/").lower()
+        if bare and bare not in _PROSE_CONNECTOR_WORDS:
+            content_words += 1
+    return content_words >= _MIN_PROSE_CONTENT_WORDS
+
+
+def _is_wrapped_prose_continuation(lines: list[str], line_no: int) -> bool:
+    """True when the heading-shaped line at ``lines[line_no]`` is
+    actually a wrapped continuation of an ordinary prose sentence, not a
+    new heading -- e.g. "Statutes, Omnibus Rules Implementing Book V of
+    Executive" in "The information contained herein are based on the /
+    Statutes, Omnibus Rules Implementing Book V of Executive / Order No.
+    292 ..." happens to be short and Title Case (a formal legal citation
+    naturally capitalizes every word) but is really the middle of one
+    sentence split across three lines by the page layout.
+
+    Evidence: the immediately preceding non-blank line (a) trails off
+    without terminal sentence punctuation (a real sentence in progress,
+    not a completed thought), (b) is not itself heading-shaped (a
+    legitimate compound heading, e.g. "Chapter 3" immediately followed
+    by its own title line, is exempted here), and (c) genuinely reads as
+    flowing prose (see _looks_like_flowing_prose) rather than merely
+    being some OTHER short label that happens to fail the heading-shape
+    test for an unrelated, incidental reason.
+    """
+    for k in range(line_no - 1, -1, -1):
+        prev = lines[k].strip()
+        if not prev:
+            continue
+        if prev[-1:] in ".!?:;":
+            return False
+        if is_heading_candidate(prev) or _is_bare_section_marker(prev):
+            return False
+        return _looks_like_flowing_prose(prev)
+    return False
 
 
 def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> list[DocumentChunk]:
@@ -318,6 +585,18 @@ def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> 
         metadata = dict(chunk.metadata or {})
         if idx >= 0:
             metadata["section_heading"] = headings[idx]
+        else:
+            # No trustworthy heading governs this chunk, by FULL
+            # document-level analysis -- any heading-shaped line in this
+            # chunk's own text that passes is_trustworthy_title_heading
+            # was therefore already rejected by the letterhead/roster/
+            # wrapped-prose checks above (every line that passes BOTH
+            # is_heading_candidate and is_trustworthy_title_heading and
+            # is NOT rejected by those checks is, by construction,
+            # already present in ``offsets``/``headings``). Tell
+            # _title_from_chunk's fallback not to re-discover it via its
+            # own, document-context-blind scan of the chunk's text.
+            metadata["title_fallback_suppressed"] = True
         updated.append(
             DocumentChunk(
                 text=chunk.text, chunk_index=chunk.chunk_index, char_start=chunk.char_start, metadata=metadata

@@ -990,6 +990,17 @@ def build_lightweight_publish(
         replaced_document_id=replaced_document_id,
     )
 
+    # Chunks are already live and verified in Chroma under new_document_id;
+    # link the source PDF under the SAME id so the citation can resolve.
+    # Not caught here: a failure must surface as a loud error to the caller
+    # rather than returning a success response for an unresolvable citation.
+    persist_source_pdf_for_published_version(
+        new_document_id=new_document_id,
+        pdf_bytes=file_bytes,
+        source_filename=source_document,
+        content_type=content_type,
+    )
+
     units = knowledge_units_for_extraction(None, chunks, kb_document_type=None)
     previews = chunk_preview(chunks)
     validation = validation_report(document_type="information", units=units, chunks=chunks)
@@ -1327,6 +1338,30 @@ def process_indexing_job(job_id: str, reviewed_text: str | None) -> None:
             session.commit()
             return
 
+        try:
+            persist_source_pdf_for_published_version(
+                new_document_id=new_document_id,
+                pdf_bytes=job.pdf_bytes,
+                source_filename=job.source_filename,
+                content_type=job.content_type,
+                page_count=job.page_count,
+            )
+        except Exception as exc:
+            # Chroma chunks are already live and verified -- never rolled
+            # back here. The failure must stay visible for manual
+            # correction rather than publishing a citation that can never
+            # resolve to its original PDF.
+            job.status = "needs_reconciliation"
+            job.document_id = new_document_id
+            job.chunks_indexed = indexed
+            job.error_message = (
+                f"Chroma publish succeeded (document_id={new_document_id}) but persisting "
+                f"the source PDF for citation viewing failed: {exc}. The citation will not "
+                "resolve until this is corrected manually."
+            )
+            session.commit()
+            return
+
         job.status = "published"
         job.document_id = new_document_id
         job.chunks_indexed = indexed
@@ -1378,6 +1413,44 @@ def _rollback_orphaned_new_version(
             f"in Chroma under document_id={new_document_id} after attempted rollback. "
             "Manual cleanup is required before retrying this document."
         )
+
+
+def persist_source_pdf_for_published_version(
+    *,
+    new_document_id: str,
+    pdf_bytes: bytes,
+    source_filename: str,
+    content_type: str | None,
+    page_count: int | None = None,
+) -> None:
+    """Link a just-published Chroma ``document_id`` to a durable source row.
+
+    Must be called only AFTER ``publish_new_version`` has confirmed the new
+    version is live, using that EXACT ``new_document_id`` -- so
+    ``SourceDocument.id`` always equals the Chroma ``document_id`` for any
+    document published through this module. Before this, nothing in this
+    module ever created a ``source_documents`` row at all, so a citation for
+    a document ingested here could never resolve to its original PDF (see
+    ``app/routes/documents.py``'s 404 "Source document not found").
+
+    Raises on failure rather than swallowing it: callers must pick the
+    right failure behavior for their context (``needs_reconciliation`` for
+    job-backed callers; propagate for the synchronous
+    ``build_lightweight_publish`` caller) instead of silently leaving a
+    citation that can never resolve.
+    """
+    from app.services.document_storage import persist_uploaded_document
+
+    title = (source_filename or "Untitled document").rsplit(".", 1)[0]
+    persist_uploaded_document(
+        pdf_bytes,
+        document_id=new_document_id,
+        filename=source_filename,
+        content_type=content_type,
+        document_type="information",
+        title=title,
+        page_count=page_count,
+    )
 
 
 def publish_new_version(
@@ -1594,6 +1667,30 @@ def process_ingestion_job(job_id: str) -> None:
             job.status = "needs_reconciliation"
             job.error_message = (
                 f"New version published but cleanup of the old version may be incomplete: {exc}"
+            )
+            session.commit()
+            return
+
+        try:
+            persist_source_pdf_for_published_version(
+                new_document_id=new_document_id,
+                pdf_bytes=job.pdf_bytes,
+                source_filename=job.source_filename,
+                content_type=job.content_type,
+                page_count=job.page_count,
+            )
+        except Exception as exc:
+            # Chroma chunks are already live and verified -- never rolled
+            # back here. The failure must stay visible for manual
+            # correction rather than publishing a citation that can never
+            # resolve to its original PDF.
+            job.status = "needs_reconciliation"
+            job.document_id = new_document_id
+            job.chunks_indexed = indexed
+            job.error_message = (
+                f"Chroma publish succeeded (document_id={new_document_id}) but persisting "
+                f"the source PDF for citation viewing failed: {exc}. The citation will not "
+                "resolve until this is corrected manually."
             )
             session.commit()
             return

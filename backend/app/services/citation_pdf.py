@@ -17,7 +17,7 @@ _LEADING_NUM_RE = re.compile(
 
 
 def extract_citation_pages_pdf(
-    path: Path,
+    path: Path | bytes,
     page_start: int,
     page_end: int | None = None,
     section_title: str | None = None,
@@ -28,6 +28,9 @@ def extract_citation_pages_pdf(
     - When ``section_title`` is set, the first page drops content above that
       heading (e.g. leftover ID Validation), and the last page drops the next
       numbered service section so the viewer shows the full cited source only.
+    - ``path`` may be a filesystem ``Path`` (existing behavior) or raw PDF
+      ``bytes`` -- the latter lets callers serve directly from durably
+      stored database bytes when no local file copy is available.
     """
     if page_start < 1:
         raise ValueError("page_start must be >= 1")
@@ -35,7 +38,7 @@ def extract_citation_pages_pdf(
     if end < page_start:
         end = page_start
 
-    source = fitz.open(path)
+    source = fitz.open(stream=path, filetype="pdf") if isinstance(path, bytes) else fitz.open(path)
     try:
         if page_start > source.page_count:
             raise ValueError(

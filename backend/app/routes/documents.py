@@ -14,7 +14,8 @@ from app.services.auth import get_current_user
 from app.services.citation_pdf import extract_citation_pages_pdf
 from app.services.document_storage import (
     get_source_document,
-    resolve_stored_path,
+    is_source_pdf_resolvable,
+    resolve_pdf_source,
     source_document_payload,
 )
 
@@ -38,21 +39,24 @@ def _assert_can_view_source(user: User, row: SourceDocument) -> None:
         )
 
 
-def _load_source_row(document_id: str, user: User) -> tuple[SourceDocument, Path]:
+def _load_source_row(document_id: str, user: User) -> SourceDocument:
+    """Resolve and authorize a citation's source row.
+
+    Serving priority is local-file-first, then durable ``pdf_data`` in
+    Postgres (see :func:`resolve_pdf_source`) -- callers get back only the
+    authorized row here; which bytes to stream is decided at the call site
+    via :func:`resolve_pdf_source`, never an arbitrary client-supplied path.
+    """
     row = get_source_document(document_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Source document not found")
     _assert_can_view_source(user, row)
-    try:
-        path = resolve_stored_path(row.stored_file_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="Source document not found") from exc
-    if not path.is_file():
+    if not is_source_pdf_resolvable(row):
         raise HTTPException(
             status_code=404,
             detail="Stored source file is missing on disk. Re-ingest the document.",
         )
-    return row, path
+    return row
 
 
 @router.get(
@@ -69,7 +73,7 @@ def get_document_source(
     ),
     current_user: User = Depends(get_current_user),
 ):
-    row, path = _load_source_row(document_id, current_user)
+    row = _load_source_row(document_id, current_user)
 
     payload = source_document_payload(row, page_number=page)
     if meta:
@@ -89,10 +93,19 @@ def get_document_source(
     if page is not None:
         headers["X-Source-Page"] = str(page)
 
-    return FileResponse(
-        path=str(path),
+    # Serving priority: (A) existing valid local file, (B) durable pdf_data
+    # in Postgres, (C) handled above as a 404 by _load_source_row.
+    source = resolve_pdf_source(row)
+    if isinstance(source, Path):
+        return FileResponse(
+            path=str(source),
+            media_type=row.content_type or "application/pdf",
+            filename=safe_filename,
+            headers=headers,
+        )
+    return Response(
+        content=source,
         media_type=row.content_type or "application/pdf",
-        filename=safe_filename,
         headers=headers,
     )
 
@@ -120,12 +133,13 @@ def get_document_source_page(
     if page_number < 1:
         raise HTTPException(status_code=400, detail="page_number must be >= 1")
 
-    row, path = _load_source_row(document_id, current_user)
+    row = _load_source_row(document_id, current_user)
     page_end = end if end is not None and end >= page_number else page_number
 
     try:
+        source = resolve_pdf_source(row)
         page_bytes = extract_citation_pages_pdf(
-            path,
+            source,
             page_start=page_number,
             page_end=page_end,
             section_title=(section or "").strip() or None,
@@ -170,5 +184,5 @@ def get_document_source_meta(
     page: int | None = Query(default=None, ge=1),
     current_user: User = Depends(get_current_user),
 ) -> DocumentSourceMetaSchema:
-    row, _path = _load_source_row(document_id, current_user)
+    row = _load_source_row(document_id, current_user)
     return DocumentSourceMetaSchema(**source_document_payload(row, page_number=page))

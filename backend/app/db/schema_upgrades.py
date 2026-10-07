@@ -109,6 +109,10 @@ ADDITIVE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE article_media DROP CONSTRAINT IF EXISTS ck_article_media_kind",
     "ALTER TABLE article_media ADD CONSTRAINT ck_article_media_kind "
     "CHECK (kind IN ('inline_image', 'attachment'))",
+    # 2026-10-07: durable PDF bytes for source_documents -- the web dyno's
+    # local disk is ephemeral and does not survive a restart/deploy; see
+    # alembic/versions/20261007_0012_source_documents_pdf_data.py.
+    "ALTER TABLE source_documents ADD COLUMN IF NOT EXISTS pdf_data BYTEA",
 )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -555,3 +556,241 @@ def test_source_page_preview_returns_only_requested_page(tmp_path, monkeypatch, 
         opened.close()
 
     assert source_page_url(doc_id, 2) == f"/documents/{doc_id}/source/page/2"
+
+
+# --- 2026-10-07 follow-up: durable pdf_data fallback for the ephemeral-------
+# dyno-filesystem citation-viewer fix. The local filesystem cache is never
+# the durable source of truth -- pdf_data (Postgres) is.
+
+
+def test_source_endpoint_prefers_local_file_when_both_available(tmp_path, monkeypatch, auth_student):
+    """A: local file exists -> source endpoint still works (and is
+    preferred over pdf_data when both happen to be present)."""
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+    doc_id = str(uuid.uuid4())
+    persist_uploaded_document(
+        b"%PDF-1.4 local-file-copy",
+        document_id=doc_id,
+        filename="Citizens_Charter_2026.pdf",
+        content_type="application/pdf",
+        document_type="citizen_charter",
+        title="Citizen’s Charter 2026",
+    )
+    session = get_session_factory()()
+    try:
+        row = session.get(SourceDocument, doc_id)
+        row.pdf_data = b"%PDF-1.4 durable-copy-should-not-be-served"
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/documents/{doc_id}/source")
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.4 local-file-copy"
+
+
+def test_source_endpoint_falls_back_to_pdf_data_when_local_file_missing(
+    tmp_path, monkeypatch, auth_student
+):
+    """B: local file missing (simulating an ephemeral Heroku dyno restart)
+    + pdf_data exists -> source endpoint returns the PDF successfully."""
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+    doc_id = str(uuid.uuid4())
+    row = persist_uploaded_document(
+        b"%PDF-1.4 durable-fallback-copy",
+        document_id=doc_id,
+        filename="Citizens_Charter_2026.pdf",
+        content_type="application/pdf",
+        document_type="citizen_charter",
+        title="Citizen’s Charter 2026",
+    )
+    local_path = resolve_stored_path(row.stored_file_path)
+    local_path.unlink()
+    local_path.parent.rmdir()
+
+    response = client.get(f"/documents/{doc_id}/source")
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.4 durable-fallback-copy"
+    assert "application/pdf" in (response.headers.get("content-type") or "")
+
+    meta = client.get(f"/documents/{doc_id}/source", params={"meta": "true"})
+    assert meta.status_code == 200
+
+
+def test_source_endpoint_safe_404_when_neither_local_file_nor_pdf_data(
+    tmp_path, monkeypatch, auth_student
+):
+    """C: local file missing + pdf_data null -> safe 404, never a crash."""
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+    doc_id = str(uuid.uuid4())
+    row = persist_uploaded_document(
+        b"%PDF-1.4 to-be-fully-lost",
+        document_id=doc_id,
+        filename="Citizens_Charter_2026.pdf",
+        content_type="application/pdf",
+        document_type="citizen_charter",
+        title="Citizen’s Charter 2026",
+    )
+    local_path = resolve_stored_path(row.stored_file_path)
+    local_path.unlink()
+    local_path.parent.rmdir()
+    session = get_session_factory()()
+    try:
+        stored = session.get(SourceDocument, doc_id)
+        stored.pdf_data = None
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/documents/{doc_id}/source")
+    assert response.status_code == 404
+    assert "missing" in response.json()["detail"].lower()
+
+
+def test_faculty_restricted_doc_cannot_be_viewed_by_student_via_db_fallback(
+    tmp_path, monkeypatch, auth_student
+):
+    """D: an unauthorized user cannot bypass authorization via the pdf_data
+    fallback -- the role check runs before the serving-priority decision."""
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+    doc_id = str(uuid.uuid4())
+    row = persist_uploaded_document(
+        b"%PDF-1.4 faculty-only-durable",
+        document_id=doc_id,
+        filename="LSPU Faculty Manual 2020.pdf",
+        content_type="application/pdf",
+        document_type="faculty_manual",
+        title="LSPU Faculty Manual 2020",
+    )
+    local_path = resolve_stored_path(row.stored_file_path)
+    local_path.unlink()
+    local_path.parent.rmdir()
+
+    response = client.get(f"/documents/{doc_id}/source")
+    assert response.status_code == 403
+
+
+def test_arbitrary_or_unknown_document_id_cannot_retrieve_bytes(auth_student):
+    """E: an invalid/arbitrary document_id can never retrieve arbitrary
+    bytes -- document_id is only ever used as a controlled DB lookup key,
+    never as a filesystem path, so path-traversal-shaped ids are just
+    ordinary not-found lookups."""
+    for bogus_id in ("does-not-exist", "../../etc/passwd", "' OR 1=1 --", str(uuid.uuid4())):
+        response = client.get(f"/documents/{bogus_id}/source")
+        assert response.status_code == 404
+        assert b"%PDF" not in response.content
+
+
+def test_source_page_endpoint_falls_back_to_pdf_data(tmp_path, monkeypatch, auth_student):
+    """F: the page-specific source viewer still works when only pdf_data
+    (no local file) is available."""
+    import fitz
+
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+    pdf = fitz.open()
+    for label in ("page-one", "page-two"):
+        page = pdf.new_page()
+        page.insert_text((72, 72), label)
+    pdf_bytes = pdf.tobytes()
+    pdf.close()
+
+    doc_id = str(uuid.uuid4())
+    row = persist_uploaded_document(
+        pdf_bytes,
+        document_id=doc_id,
+        filename="Citizens_Charter_2026.pdf",
+        content_type="application/pdf",
+        document_type="citizen_charter",
+        title="Citizen’s Charter 2026",
+        page_count=2,
+    )
+    local_path = resolve_stored_path(row.stored_file_path)
+    local_path.unlink()
+    local_path.parent.rmdir()
+
+    response = client.get(f"/documents/{doc_id}/source/page/2")
+    assert response.status_code == 200
+    opened = fitz.open(stream=response.content, filetype="pdf")
+    try:
+        assert opened.page_count == 1
+        assert "page-two" in opened[0].get_text()
+        assert "page-one" not in opened[0].get_text()
+    finally:
+        opened.close()
+
+
+def test_persist_uploaded_document_stores_durable_pdf_bytes(tmp_path, monkeypatch):
+    """G: persist_uploaded_document stores durable PDF bytes in Postgres,
+    independent of whatever happens to the local filesystem cache."""
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+    doc_id = str(uuid.uuid4())
+    pdf_bytes = b"%PDF-1.4 durable-bytes-check"
+    persist_uploaded_document(
+        pdf_bytes,
+        document_id=doc_id,
+        filename="Citizens_Charter_2026.pdf",
+        content_type="application/pdf",
+        document_type="citizen_charter",
+        title="Citizen’s Charter 2026",
+    )
+    session = get_session_factory()()
+    try:
+        row = session.get(SourceDocument, doc_id)
+        assert row is not None
+        assert row.pdf_data == pdf_bytes
+    finally:
+        session.close()
+
+
+def test_persist_uploaded_document_durable_write_survives_local_disk_failure(
+    tmp_path, monkeypatch
+):
+    """Local disk is NOT the source of truth: a local write failure (e.g.
+    the same ephemeral-dyno condition that caused the production bug) must
+    never prevent the durable pdf_data write."""
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("simulated ephemeral-disk write failure")
+
+    monkeypatch.setattr(Path, "write_bytes", _boom)
+
+    doc_id = str(uuid.uuid4())
+    pdf_bytes = b"%PDF-1.4 durable-despite-disk-failure"
+    row = persist_uploaded_document(
+        pdf_bytes,
+        document_id=doc_id,
+        filename="Citizens_Charter_2026.pdf",
+        content_type="application/pdf",
+        document_type="citizen_charter",
+        title="Citizen’s Charter 2026",
+    )
+    assert row.pdf_data == pdf_bytes

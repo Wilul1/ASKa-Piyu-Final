@@ -335,8 +335,13 @@ class ArticleMedia(Base):
 class SourceDocument(Base):
     """Original uploaded source file (PDF etc.) — durable citation grounding.
 
-    Chroma holds retrieval chunks only. This table + filesystem store remain
-    the source of truth for opening the original document at a cited page.
+    Chroma holds retrieval chunks only. ``pdf_data`` (Postgres, durable) is
+    the source of truth for opening the original document at a cited page;
+    the filesystem copy at ``stored_file_path`` is a best-effort cache only
+    -- the web dyno's local disk is ephemeral and does not survive a
+    restart/deploy (confirmed in production 2026-10-07: every row's file
+    was gone from disk while the row itself, and pdf_data once backfilled,
+    remain intact).
     """
 
     __tablename__ = "source_documents"
@@ -344,6 +349,7 @@ class SourceDocument(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     stored_file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    pdf_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     document_type: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     source_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     version: Mapped[str | None] = mapped_column(String(80), nullable=True)

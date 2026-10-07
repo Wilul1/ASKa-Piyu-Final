@@ -144,17 +144,31 @@ def persist_uploaded_document(
     page_count: int | None = None,
     session: Session | None = None,
 ) -> SourceDocument:
-    """Write file bytes to disk and upsert the SourceDocument PostgreSQL row."""
+    """Upsert the SourceDocument row with durable PDF bytes (Postgres).
+
+    ``pdf_data`` is the source of truth -- it survives dyno restarts/deploys.
+    The local filesystem copy is written best-effort only, as a cache: the
+    web dyno's local disk is ephemeral, so a failure to write it must never
+    block persisting the durable copy (confirmed root cause of production
+    citation-viewing failures on 2026-10-07 -- see migration 20261007_0012).
+    """
     doc_id = (document_id or str(uuid.uuid4())).strip()
     original = safe_filename(filename)
     relative_dir = Path(doc_id)
-    absolute_dir = documents_root() / relative_dir
-    absolute_dir.mkdir(parents=True, exist_ok=True)
-    absolute_path = absolute_dir / original
-    absolute_path.write_bytes(file_bytes)
-
-    # Store path relative to documents root for portability.
     stored_rel = str(relative_dir / original).replace("\\", "/")
+
+    try:
+        absolute_dir = documents_root() / relative_dir
+        absolute_dir.mkdir(parents=True, exist_ok=True)
+        (absolute_dir / original).write_bytes(file_bytes)
+    except Exception:
+        logger.warning(
+            "Local filesystem cache write failed for document_id=%s (non-fatal, "
+            "pdf_data in Postgres remains the source of truth)",
+            doc_id,
+            exc_info=True,
+        )
+
     label = (source_label or "").strip() or build_source_label(
         original_filename=original,
         title=title,
@@ -176,6 +190,7 @@ def persist_uploaded_document(
             session.add(row)
         row.original_filename = original
         row.stored_file_path = stored_rel
+        row.pdf_data = file_bytes
         row.document_type = (document_type or "").strip() or None
         row.source_label = label
         row.version = (version or "").strip() or None
@@ -210,6 +225,41 @@ def is_source_file_available(row: SourceDocument | None) -> bool:
     return path.is_file()
 
 
+def has_durable_pdf_bytes(row: SourceDocument | None) -> bool:
+    return row is not None and bool(row.pdf_data)
+
+
+def is_source_pdf_resolvable(row: SourceDocument | None) -> bool:
+    """True when the PDF can be served, from either the local cache or Postgres."""
+    return is_source_file_available(row) or has_durable_pdf_bytes(row)
+
+
+def resolve_pdf_source(row: SourceDocument) -> Path | bytes:
+    """The existing local file's ``Path`` if available, else durable ``pdf_data`` bytes.
+
+    Serving priority: (A) existing valid local file, (B) durable ``pdf_data``
+    in Postgres. Callers must have already confirmed
+    :func:`is_source_pdf_resolvable`; raises ``ValueError`` otherwise.
+    """
+    try:
+        path = resolve_stored_path(row.stored_file_path)
+        if path.is_file():
+            return path
+    except Exception:
+        pass
+    if row.pdf_data:
+        return bytes(row.pdf_data)
+    raise ValueError("No source PDF available (neither local file nor pdf_data).")
+
+
+def read_source_pdf_bytes(row: SourceDocument) -> bytes:
+    """Return the PDF bytes to serve. See :func:`resolve_pdf_source` for priority."""
+    source = resolve_pdf_source(row)
+    if isinstance(source, Path):
+        return source.read_bytes()
+    return source
+
+
 def get_source_document(document_id: str, session: Session | None = None) -> SourceDocument | None:
     owns_session = session is None
     if owns_session:
@@ -238,11 +288,11 @@ def resolve_citation_document(
     doc_id = (document_id or "").strip()
     if doc_id and not doc_id.startswith("faq:"):
         row = get_source_document(doc_id, session=session)
-        if is_source_file_available(row):
+        if is_source_pdf_resolvable(row):
             return row
     if source_filename:
         row = find_source_document_by_filename(source_filename, session=session)
-        if is_source_file_available(row):
+        if is_source_pdf_resolvable(row):
             return row
     return None
 
@@ -259,7 +309,7 @@ def citation_readiness_for_document_id(document_id: str | None) -> dict[str, Any
         }
     row = get_source_document(doc_id)
     has_row = row is not None
-    pdf_ok = is_source_file_available(row)
+    pdf_ok = is_source_pdf_resolvable(row)
     ready = has_row and pdf_ok
     return {
         "document_id": doc_id,

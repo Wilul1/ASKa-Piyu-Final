@@ -144,6 +144,20 @@ def _reset_qa_rate_limits() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_documents_persist_dir(tmp_path, monkeypatch) -> None:
+    """Every test's source-PDF persistence goes to an isolated tmp dir,
+    never the real backend/data/documents folder on the developer's
+    machine. Added 2026-10-07 when digital_ingestion.py started linking
+    published Chroma documents to durable SourceDocument rows (closing the
+    production citation-viewer gap) -- without this, every test exercising
+    that publish path (not just test_document_citations.py, which already
+    did this per-test) would write real PDF bytes outside the test sandbox.
+    A test that sets its own documents_persist_dir later in its body still
+    wins -- this only establishes the default."""
+    monkeypatch.setattr("app.config.settings.documents_persist_dir", str(tmp_path / "documents"))
+
+
+@pytest.fixture(autouse=True)
 def _abort_if_dev_database() -> None:
     """
     Per-test guard against the live SQLAlchemy engine binding.

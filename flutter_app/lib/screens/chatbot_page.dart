@@ -79,21 +79,9 @@ CitationPollDecision evaluateCitationPollTick({
 /// the poll response does not carry -- notably `document_id`/
 /// `source_view_url`/`source_page_url`/`pdf_available` -- and overwriting
 /// only the text fields the poll actually returns with a non-blank value.
-///
-/// The poll response (`GET /qa/citation-verifications/{id}`) deliberately
-/// carries only `citation_id`/`title`/`source_section`/`source_filename`
-/// (see citation_verification_jobs.py's `_SafeCitation`). Replacing
-/// `answer.sources` wholesale with that minimal payload used to silently
-/// zero out the source-viewing fields above, which made
-/// `_QaSource.canOpenSource` turn false and the PDF tap target disappear
-/// for every citation a few seconds after it first rendered.
-///
-/// Operates on plain JSON maps -- matching [evaluateCitationPollTick]'s
-/// precedent of keeping private types out of a public signature -- so a
-/// test can exercise it directly without a live Timer, widget tree, HTTP
-/// client, or access to `_QaSource` itself. [verifiedCitation] being null
-/// (no matching `citation_id`) returns [existingSourceJson] unchanged.
-Map<String, dynamic> mergeVerifiedCitationIntoSourceJson(
+/// [verifiedCitation] being null (no matching `citation_id`) returns
+/// [existingSourceJson] unchanged.
+Map<String, dynamic> _mergeOneVerifiedCitation(
   Map<String, dynamic> existingSourceJson,
   Map<String, dynamic>? verifiedCitation,
 ) {
@@ -112,6 +100,56 @@ Map<String, dynamic> mergeVerifiedCitationIntoSourceJson(
   final filename = nonEmpty(verifiedCitation['source_filename']);
   if (filename != null) merged['source_filename'] = filename;
   return merged;
+}
+
+/// Applies a verified citation-verification poll response onto the
+/// existing `/qa/ask` sources (both as plain JSON maps -- matching
+/// [evaluateCitationPollTick]'s precedent of keeping private types out of
+/// a public signature, so a test can exercise this directly without a
+/// live Timer, widget tree, HTTP client, or access to `_QaSource` itself).
+///
+/// The poll response (`GET /qa/citation-verifications/{id}`) deliberately
+/// carries only `citation_id`/`title`/`source_section`/`source_filename`
+/// (see citation_verification_jobs.py's `_SafeCitation`) -- never
+/// `document_id`/`source_view_url`/`source_page_url`/`pdf_available`.
+///
+/// - When [existingSourcesJson] is non-empty (the common case: the initial
+///   `/qa/ask` response already carried full, PDF-viewer-capable sources),
+///   each existing source is matched to a verified citation by
+///   `citation_id` and only its text fields (`title`/`source_section`/
+///   `source_filename`) are refined -- every source-viewing field is kept
+///   exactly as-is. Replacing them wholesale with the minimal poll payload
+///   used to silently zero those fields out, turning `_QaSource.
+///   canOpenSource` false and removing the PDF tap target a few seconds
+///   after every citation first rendered.
+/// - When [existingSourcesJson] is empty (some answer modes defer ALL
+///   citation data to this poll and return none inline), there is nothing
+///   to merge onto, so the verified citations themselves become the
+///   sources -- the same fallback behavior as before this fix, for the
+///   one case this fix does not otherwise affect.
+List<Map<String, dynamic>> mergeVerifiedCitationsIntoSources(
+  List<Map<String, dynamic>> existingSourcesJson,
+  List rawCitations,
+) {
+  final verifiedCitations =
+      rawCitations.whereType<Map>().map(Map<String, dynamic>.from).toList();
+  if (existingSourcesJson.isEmpty) {
+    return verifiedCitations;
+  }
+
+  final verifiedById = <String, Map<String, dynamic>>{};
+  for (final map in verifiedCitations) {
+    final id = map['citation_id']?.toString().trim();
+    if (id != null && id.isNotEmpty) {
+      verifiedById[id] = map;
+    }
+  }
+
+  return existingSourcesJson.map((json) {
+    final id = json['citation_id']?.toString();
+    final match = id == null ? null : verifiedById[id];
+    return _mergeOneVerifiedCitation(json, match);
+  }).toList();
 }
 
 class ChatbotPage extends StatefulWidget {
@@ -241,21 +279,12 @@ class _ChatbotPageState extends State<ChatbotPage> {
       setState(() {
         answer.citationStatus = decision.resolvedStatus;
         if (decision.resolvedStatus == 'verified') {
-          final verifiedById = <String, Map<String, dynamic>>{};
-          for (final item in rawCitations.whereType<Map>()) {
-            final map = Map<String, dynamic>.from(item);
-            final id = map['citation_id']?.toString().trim();
-            if (id != null && id.isNotEmpty) {
-              verifiedById[id] = map;
-            }
-          }
-          answer.sources = answer.sources.map((source) {
-            final match = verifiedById[source.citationId];
-            if (match == null) return source;
-            return _QaSource.fromJson(
-              mergeVerifiedCitationIntoSourceJson(source.toJson(), match),
-            );
-          }).toList();
+          final mergedJson = mergeVerifiedCitationsIntoSources(
+            answer.sources.map((source) => source.toJson()).toList(),
+            rawCitations,
+          );
+          answer.sources =
+              mergedJson.map((json) => _QaSource.fromJson(json)).toList();
         }
       });
       await _persistSessions();

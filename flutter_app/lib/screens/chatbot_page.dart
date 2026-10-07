@@ -74,6 +74,46 @@ CitationPollDecision evaluateCitationPollTick({
   return CitationPollDecision.stop(isTerminal ? status : 'failed');
 }
 
+/// Merges one verified citation-verification poll entry onto an existing
+/// source's JSON representation (`_QaSource.toJson()`), keeping every field
+/// the poll response does not carry -- notably `document_id`/
+/// `source_view_url`/`source_page_url`/`pdf_available` -- and overwriting
+/// only the text fields the poll actually returns with a non-blank value.
+///
+/// The poll response (`GET /qa/citation-verifications/{id}`) deliberately
+/// carries only `citation_id`/`title`/`source_section`/`source_filename`
+/// (see citation_verification_jobs.py's `_SafeCitation`). Replacing
+/// `answer.sources` wholesale with that minimal payload used to silently
+/// zero out the source-viewing fields above, which made
+/// `_QaSource.canOpenSource` turn false and the PDF tap target disappear
+/// for every citation a few seconds after it first rendered.
+///
+/// Operates on plain JSON maps -- matching [evaluateCitationPollTick]'s
+/// precedent of keeping private types out of a public signature -- so a
+/// test can exercise it directly without a live Timer, widget tree, HTTP
+/// client, or access to `_QaSource` itself. [verifiedCitation] being null
+/// (no matching `citation_id`) returns [existingSourceJson] unchanged.
+Map<String, dynamic> mergeVerifiedCitationIntoSourceJson(
+  Map<String, dynamic> existingSourceJson,
+  Map<String, dynamic>? verifiedCitation,
+) {
+  if (verifiedCitation == null) return existingSourceJson;
+
+  String? nonEmpty(dynamic value) {
+    final text = value?.toString().trim();
+    return (text == null || text.isEmpty) ? null : text;
+  }
+
+  final merged = Map<String, dynamic>.from(existingSourceJson);
+  final title = nonEmpty(verifiedCitation['title']);
+  if (title != null) merged['title'] = title;
+  final section = nonEmpty(verifiedCitation['source_section']);
+  if (section != null) merged['source_section'] = section;
+  final filename = nonEmpty(verifiedCitation['source_filename']);
+  if (filename != null) merged['source_filename'] = filename;
+  return merged;
+}
+
 class ChatbotPage extends StatefulWidget {
   const ChatbotPage({super.key});
 
@@ -201,10 +241,21 @@ class _ChatbotPageState extends State<ChatbotPage> {
       setState(() {
         answer.citationStatus = decision.resolvedStatus;
         if (decision.resolvedStatus == 'verified') {
-          answer.sources = rawCitations
-              .whereType<Map>()
-              .map((item) => _QaSource.fromJson(Map<String, dynamic>.from(item)))
-              .toList();
+          final verifiedById = <String, Map<String, dynamic>>{};
+          for (final item in rawCitations.whereType<Map>()) {
+            final map = Map<String, dynamic>.from(item);
+            final id = map['citation_id']?.toString().trim();
+            if (id != null && id.isNotEmpty) {
+              verifiedById[id] = map;
+            }
+          }
+          answer.sources = answer.sources.map((source) {
+            final match = verifiedById[source.citationId];
+            if (match == null) return source;
+            return _QaSource.fromJson(
+              mergeVerifiedCitationIntoSourceJson(source.toJson(), match),
+            );
+          }).toList();
         }
       });
       await _persistSessions();

@@ -874,6 +874,149 @@ def test_chunk_text_unchanged_by_letterhead_fix():
 # --- ticket-routing (classify_question) is completely untouched ------------
 
 
+# --- 2026-10-06 follow-up: Citizen's Charter-style administrative-table --
+#     fragments (column labels, cell values, roles, totals, durations,
+#     numbered client steps) must never be promoted to section_heading.
+#     Judged entirely by STRUCTURE -- document-wide exact-text repetition
+#     for non-numbered fragments, "does it introduce real explanatory
+#     prose" for numbered ones -- never by a fixed Citizen's Charter
+#     vocabulary list. Fixtures mirror the REAL runtime shape (a
+#     service's Office-or-Division/Classification/Checklist/Client-Steps/
+#     Agency-Actions/Fees/Processing-Time/Person-Responsible structure,
+#     repeated across several synthetic services so a recurring label
+#     actually recurs); synthetic names/text only.
+
+from app.services.admin.digital_ingestion import _heading_offsets
+from app.services.text_cleaner import clean_extracted_text
+
+
+def _charter_style_services(n: int = 3) -> str:
+    parts = []
+    for i in range(1, n + 1):
+        parts.append(
+            f"{i}. Processing of Request Type {i}\n"
+            "This process provides description and series of steps for assisting "
+            "the public in availing of this particular service without delay.\n"
+            "Checklist of Requirements\n"
+            "Where to Secure\n"
+            "Valid identification document\n"
+            "Client Office\n"
+            "Client Steps\n"
+            "Agency Actions\n"
+            "Fees to Be Paid\n"
+            "Processing Time\n"
+            "Person Responsible\n"
+            "1. Submits request\n"
+            "Received.\n"
+            "None\n"
+            "5 Minutes\n"
+            "Administrative Aide VI\n"
+            "2. Waits for release\n"
+            "Released.\n"
+            "None\n"
+            "10 Minutes\n"
+            "Administrative Aide VI\n"
+            "TOTAL: None\n"
+            "15 Minutes\n"
+        )
+    return "\n".join(parts)
+
+
+def test_recurring_table_column_label_does_not_become_title():
+    cleaned = clean_extracted_text(_charter_style_services())
+    _offsets, headings = _heading_offsets(cleaned)
+    assert "Fees to Be Paid" not in headings
+    assert "Where to Secure" not in headings
+    assert "Client Steps" not in headings
+    assert "Agency Actions" not in headings
+    assert "Processing Time" not in headings
+    assert "Person Responsible" not in headings
+
+
+def test_recurring_person_responsible_role_does_not_become_title():
+    cleaned = clean_extracted_text(_charter_style_services())
+    _offsets, headings = _heading_offsets(cleaned)
+    assert "Administrative Aide VI" not in headings
+
+
+def test_recurring_total_and_duration_values_do_not_become_titles():
+    cleaned = clean_extracted_text(_charter_style_services())
+    _offsets, headings = _heading_offsets(cleaned)
+    assert "TOTAL: None" not in headings
+    assert "15 Minutes" not in headings
+    assert "5 Minutes" not in headings
+
+
+def test_numbered_client_step_not_followed_by_prose_does_not_steal_title():
+    cleaned = clean_extracted_text(_charter_style_services())
+    _offsets, headings = _heading_offsets(cleaned)
+    assert "1. Submits request" not in headings
+    assert "2. Waits for release" not in headings
+
+
+def test_real_numbered_service_heading_survives_near_table():
+    cleaned = clean_extracted_text(_charter_style_services())
+    _offsets, headings = _heading_offsets(cleaned)
+    for i in range(1, 4):
+        assert f"{i}. Processing of Request Type {i}" in headings
+
+
+def test_real_office_heading_survives_near_table():
+    text = (
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES\n" + _charter_style_services(n=1)
+    )
+    cleaned = clean_extracted_text(text)
+    _offsets, headings = _heading_offsets(cleaned)
+    assert "OFFICE OF ALPHA SERVICES" in headings
+
+
+def test_subsequent_service_heading_replaces_previous_in_table_region():
+    chunks = build_chunks_with_pages(
+        [_charter_style_services(n=2)],
+        [0],
+        chunk_size=120,
+        chunk_overlap=15,
+        title="T",
+        source_filename="charter_table_test.pdf",
+    )
+    headings_seen = {c.metadata.get("section_heading") for c in chunks}
+    assert "1. Processing of Request Type 1" in headings_seen
+    assert "2. Processing of Request Type 2" in headings_seen
+    # the second service's own chunks must be governed by the SECOND
+    # heading, not stuck on the first one that preceded it.
+    second_service_chunk = next(
+        c for c in chunks if "Request Type 2" in c.text and "This process provides" in c.text
+    )
+    assert second_service_chunk.metadata.get("section_heading") == "2. Processing of Request Type 2"
+
+
+def test_table_fragment_suppression_preserves_requirements_and_steps_text():
+    original = _charter_style_services(n=1)
+    chunks = build_chunks_with_pages(
+        [original], [0], chunk_size=2000, chunk_overlap=0, title="T", source_filename="charter_preserve_test.pdf"
+    )
+    full_text = "\n".join(c.text for c in chunks)
+    # Pre-existing, frozen OCR-correction normalizes "Fees to Be Paid" to
+    # "FEES TO BE Paid" (unrelated to this fix) -- checked case-insensitively.
+    assert "fees to be paid" in full_text.lower()
+    for fragment in [
+        "Checklist of Requirements",
+        "Where to Secure",
+        "Valid identification document",
+        "Client Steps",
+        "Agency Actions",
+        "Processing Time",
+        "Person Responsible",
+        "1. Submits request",
+        "2. Waits for release",
+        "Administrative Aide VI",
+        "TOTAL: None",
+        "15 Minutes",
+    ]:
+        assert fragment in full_text, f"substantive table content was deleted, not just de-titled: {fragment!r}"
+
+
 def test_classify_question_still_uses_best_guess_behavior_unchanged():
     """classify_question (live student ticket routing) must NEVER go
     through the new ownership-evidence gate -- that gate only exists

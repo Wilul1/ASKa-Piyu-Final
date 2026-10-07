@@ -288,7 +288,10 @@ def looks_like_toc_entry_line(line: str) -> bool:
     return _toc_title_is_plausible(title)
 
 
-_TOC_HEADING_CORE_RE = re.compile(r"^(?:table\s+of\s+)?contents\b", re.I)
+_TOC_HEADING_CORE_RE = re.compile(
+    r"^(?:(?:table\s+of\s+)?contents|list\s+of\s+(?:services|tables|figures|appendices|annexes)|index)\b",
+    re.I,
+)
 _TOC_ANCHOR_SUFFIX_RE = re.compile(r"[\s.…]{2,}(?:[ivxlcdm]{1,6}|\d{1,4})?\s*$", re.I)
 _TOC_BODY_PROSE_MIN_CHARS = 80
 
@@ -362,31 +365,70 @@ def _is_bare_section_marker(line: str) -> bool:
     return bool(_BARE_SECTION_MARKER_RE.match((line or "").strip()))
 
 
+def _looks_like_combined_numbered_heading(line: str) -> bool:
+    """True for a heading that carries its OWN numbering AND title text
+    together on one line -- "I. General Information", "1. Enrollment",
+    "Article 6. Procedure..." -- as opposed to a bare marker alone
+    ("I.", "1.") or a title alone ("OFFICE OF THE REGISTRAR").
+    """
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    return bool(
+        _is_major_section_heading(stripped)
+        or _ARTICLE_CHAPTER_HEADING_RE.match(stripped)
+        or _DECIMAL_HEADING_RE.match(stripped)
+    )
+
+
 def _disqualify_real_heading_chains(
     lines: list[str], shape: list[bool], *, max_gap: int
 ) -> list[bool]:
-    """Returns ``shape`` with any line disqualified if it leads DIRECTLY
-    into a real prose paragraph.
+    """Returns ``shape`` with any line disqualified if it leads directly
+    into a real prose paragraph -- or, one level deeper, if it leads
+    into a NESTED real heading (one that carries its own number and
+    title combined, e.g. "1. Enrollment") that itself leads into prose.
 
-    Two passes, deliberately NOT a general transitive closure (an
-    unbounded walk would incorrectly cascade all the way back through
-    every earlier, separate, self-contained TOC entry too -- a real TOC
-    is itself a chain of mutually-adjacent rows that eventually leads
-    into body prose by construction, so "leads to something that leads
-    to prose" would disqualify the whole TOC):
+    Three passes, deliberately bounded (never a general transitive
+    closure -- an unbounded walk would incorrectly cascade all the way
+    back through every earlier, separate, self-contained TOC entry too
+    -- a real TOC is itself a chain of mutually-adjacent rows that
+    eventually leads into body prose by construction, so "leads to
+    something that leads to prose" would disqualify the whole TOC):
 
     1. Any shape-matching line whose own immediate next non-blank line
-       is real prose is disqualified. This is the base case for both a
-       plain single-line heading and the trailing (title) half of a
-       multi-line split.
-    2. A BARE section-marker line (just "I.", "3.2", "Article IV" --
-       no title text of its own) inherits disqualification from
-       whatever immediately follows it, ONE level deep: real PDF
-       extraction commonly splits a heading's numbering from its title
-       across two lines, and disqualifying the title alone would still
-       leave the bare marker free to be swept into a TOC cluster. A
-       line that already carries its own real title text never inherits
-       this way, so it can never cascade past one bare-marker hop.
+       is real prose is disqualified. Base case for a plain heading and
+       for the trailing (title) half of a multi-line split.
+    2. Any shape-matching, non-TOC-dotted line whose own immediate next
+       line is itself a COMBINED numbered heading (see
+       _looks_like_combined_numbered_heading) that is in turn directly
+       disqualified by pass 1 is ALSO disqualified. This is what
+       protects a split two-level real heading -- a service catalog's
+       "OFFICE OF THE REGISTRAR" immediately followed by "1. Enrollment"
+       immediately followed by real explanatory prose: "1. Enrollment"
+       combines its own number and title on one line, so pass 1 already
+       disqualifies it directly; this pass lets the OFFICE-level title
+       immediately before it inherit that same protection, exactly one
+       level, never further. Deliberately requires the INTERVENING line
+       to be a COMBINED numbered heading specifically (not just any
+       disqualified line) -- a TOC's own last entry (e.g. "I. General
+       Information", itself a combined heading) immediately followed by
+       the real body's first heading ("Grievance Machinery", which
+       carries no number of its own at all) never matches this shape,
+       so a genuine TOC entry is never granted this protection.
+    3. A BARE section-marker line (just "I.", "3.2", "Article IV" -- no
+       title text of its own) inherits disqualification from whatever
+       immediately follows it, one level deep: this is what lets the
+       office-level roman-numeral marker immediately before "OFFICE OF
+       THE REGISTRAR" (now disqualified by pass 2) inherit the same
+       protection in turn.
+
+    A line that is already confidently TOC-shaped on its own (a same-
+    line dotted leader or trailing page number -- looks_like_toc_entry_
+    line) is never granted NEW protection by passes 2 or 3 -- it keeps
+    its original, narrower pass-1-only exposure, so a genuine TOC row's
+    own trailing page-number marker can never let it inherit protection
+    from whatever random heading happens to come after the TOC ends.
     """
     disqualified = [False] * len(lines)
 
@@ -396,10 +438,12 @@ def _disqualify_real_heading_chains(
                 return k
         return None
 
+    next_nonblank = [_first_nonblank_after(i) for i in range(len(lines))]
+
     for i, is_row in enumerate(shape):
         if not is_row:
             continue
-        k = _first_nonblank_after(i)
+        k = next_nonblank[i]
         if k is None:
             continue
         candidate = lines[k].strip()
@@ -407,9 +451,38 @@ def _disqualify_real_heading_chains(
             disqualified[i] = True
 
     for i, is_row in enumerate(shape):
+        if (
+            not is_row
+            or disqualified[i]
+            or looks_like_toc_entry_line(lines[i])
+            # A line that ALREADY carries its own complete number and
+            # title (e.g. a TOC's own last entry, "V. Faculty
+            # Responsibilities") relies on pass 1 alone -- it must never
+            # borrow protection from an unrelated COMBINED heading that
+            # merely happens to sit right after it (e.g. the real body's
+            # own first heading, "VI. Grievance Machinery"). Only a line
+            # that is NOT itself a complete combined heading -- a bare
+            # title with no number of its own, like "OFFICE OF THE
+            # REGISTRAR" -- can borrow protection this way, since that is
+            # the shape of one half of a genuinely split two-level
+            # heading, never of a standalone TOC entry.
+            or _looks_like_combined_numbered_heading(lines[i])
+        ):
+            continue
+        k = next_nonblank[i]
+        if (
+            k is not None
+            and shape[k]
+            and disqualified[k]
+            and not looks_like_toc_entry_line(lines[k])
+            and _looks_like_combined_numbered_heading(lines[k])
+        ):
+            disqualified[i] = True
+
+    for i, is_row in enumerate(shape):
         if not is_row or disqualified[i] or not _is_bare_section_marker(lines[i]):
             continue
-        k = _first_nonblank_after(i)
+        k = next_nonblank[i]
         if k is not None and disqualified[k]:
             disqualified[i] = True
 
@@ -417,11 +490,17 @@ def _disqualify_real_heading_chains(
 
 
 def _toc_row_clusters(
-    lines: list[str], row_like: list[bool], *, max_gap: int, max_connector_chars: int
+    lines: list[str],
+    row_like: list[bool],
+    *,
+    max_gap: int,
+    max_connector_chars: int,
+    hard_break: list[bool] | None = None,
 ) -> list[list[int]]:
     """Groups row-like indices into clusters, bridging a gap of up to
     ``max_gap`` NON-BLANK filler lines (never bridging a line longer
-    than ``max_connector_chars``).
+    than ``max_connector_chars``, and never bridging across a line
+    flagged in ``hard_break``).
 
     Counting only non-blank lines against the gap budget -- rather than
     raw index distance -- matters because a real PDF's page boundary
@@ -431,6 +510,21 @@ def _toc_row_clusters(
     continuous TOC into several small, disconnected clusters purely
     because it happened to span a page break, regardless of how many
     real content lines actually separate two entries.
+
+    ``hard_break`` marks a line that is itself heading-shaped but was
+    explicitly EXCLUDED from row-like status by
+    _disqualify_real_heading_chains because it leads into real content
+    (directly or through a nested real-heading pair) -- e.g. a service
+    catalog's "OFFICE OF THE REGISTRAR" sitting between an earlier TOC
+    cluster and a later, unrelated row-like line. Without this, such a
+    line would correctly be excluded from CLUSTER MEMBERSHIP, but the
+    eventual drop range (every index from a cluster's first to its last
+    member, inclusive -- the only way to also remove the TOC's own
+    non-row-like filler, like blank lines and lone page numbers, sitting
+    between its real row-like members) would still silently swallow it
+    whole if a cluster happened to bridge across it from an earlier
+    point to a later one. A hard-break line always starts a fresh
+    cluster instead, exactly like a connector line that is too long.
     """
     indices = [i for i, is_row in enumerate(row_like) if is_row]
     if not indices:
@@ -440,8 +534,9 @@ def _toc_row_clusters(
         prev = clusters[-1][-1]
         between = lines[prev + 1 : idx]
         gap_has_long_line = any(len(l.strip()) > max_connector_chars for l in between)
+        gap_has_hard_break = bool(hard_break) and any(hard_break[prev + 1 : idx])
         non_blank_gap = sum(1 for l in between if l.strip())
-        if non_blank_gap <= max_gap and not gap_has_long_line:
+        if non_blank_gap <= max_gap and not gap_has_long_line and not gap_has_hard_break:
             clusters[-1].append(idx)
         else:
             clusters.append([idx])
@@ -505,7 +600,14 @@ def remove_toc_blocks(
 
     narrow_shape = [looks_like_toc_entry_line(line) for line in lines]
     narrow_row_like = _disqualify_real_heading_chains(lines, narrow_shape, max_gap=max_gap)
-    for cluster in _toc_row_clusters(lines, narrow_row_like, max_gap=max_gap, max_connector_chars=max_connector_chars):
+    narrow_hard_break = [s and not r for s, r in zip(narrow_shape, narrow_row_like)]
+    for cluster in _toc_row_clusters(
+        lines,
+        narrow_row_like,
+        max_gap=max_gap,
+        max_connector_chars=max_connector_chars,
+        hard_break=narrow_hard_break,
+    ):
         if len(cluster) >= min_run:
             for k in range(cluster[0], cluster[-1] + 1):
                 drop[k] = True
@@ -528,7 +630,14 @@ def remove_toc_blocks(
             looks_like_toc_region_row(line) or _is_bare_section_marker(line) for line in lines
         ]
         broad_row_like = _disqualify_real_heading_chains(lines, broad_shape, max_gap=max_gap)
-        for cluster in _toc_row_clusters(lines, broad_row_like, max_gap=max_gap, max_connector_chars=max_connector_chars):
+        broad_hard_break = [s and not r for s, r in zip(broad_shape, broad_row_like)]
+        for cluster in _toc_row_clusters(
+            lines,
+            broad_row_like,
+            max_gap=max_gap,
+            max_connector_chars=max_connector_chars,
+            hard_break=broad_hard_break,
+        ):
             if len(cluster) < anchored_min_run:
                 continue
             start, end = cluster[0], cluster[-1]

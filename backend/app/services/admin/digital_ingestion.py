@@ -374,6 +374,11 @@ def _heading_offsets(text: str) -> tuple[list[int], list[str]]:
 
     roster_spans = _roster_context_spans(text)
 
+    repeat_counts: dict[str, int] = {}
+    for line in all_lines:
+        key = line.casefold()
+        repeat_counts[key] = repeat_counts.get(key, 0) + 1
+
     offsets: list[int] = []
     headings: list[str] = []
     for i, (offset, line, line_no) in enumerate(zip(all_offsets, all_lines, all_line_numbers)):
@@ -384,6 +389,8 @@ def _heading_offsets(text: str) -> tuple[list[int], list[str]]:
         if not protected[i] and any(start <= offset < end for start, end in roster_spans):
             continue
         if not protected[i] and _is_letterhead_heading(line_no, raw_lines):
+            continue
+        if _is_table_fragment_heading(i, all_lines, all_line_numbers, raw_lines, repeat_counts):
             continue
         offsets.append(offset)
         headings.append(line)
@@ -552,6 +559,92 @@ def _is_wrapped_prose_continuation(lines: list[str], line_no: int) -> bool:
             return False
         return _looks_like_flowing_prose(prev)
     return False
+
+
+_TABLE_FRAGMENT_REPEAT_MIN = 3
+
+
+def _next_raw_line_is_flowing_prose(raw_lines: list[str], line_no: int) -> bool:
+    """True when the next NON-BLANK raw line after ``line_no`` reads as a
+    real grammatical sentence fragment (see _looks_like_flowing_prose).
+
+    A genuine heading -- a real office/service name, a roman-numeral
+    major section, a numbered subsection -- always introduces either
+    explanatory prose or (for a roster/letterhead-style anchor, already
+    handled separately above) a block this function is never consulted
+    for. A table/form fragment -- a column value, a role name, a
+    duration, a running total -- never does: whatever follows it is
+    just more of the same short, structured row content.
+    """
+    for k in range(line_no + 1, len(raw_lines)):
+        candidate = raw_lines[k].strip()
+        if not candidate:
+            continue
+        return _looks_like_flowing_prose(candidate)
+    return False
+
+
+def _is_table_fragment_heading(
+    i: int,
+    all_lines: list[str],
+    all_line_numbers: list[int],
+    raw_lines: list[str],
+    repeat_counts: dict[str, int],
+) -> bool:
+    """True for a heading-candidate that is really a fragment of a
+    repeating administrative table/form (Office or Division / Fees to
+    Be Paid / Processing Time / Person Responsible / Client Steps --
+    the standard structure of a Citizen's Charter-style service
+    catalog), not a genuine section/service title -- judged entirely by
+    STRUCTURE (does it introduce real explanatory content? does the
+    exact same fragment recur elsewhere?), never by matching specific
+    column-header words.
+
+    A roman-numeral/Article/Chapter major heading is never a table
+    fragment -- these are the document's own explicit, unambiguous
+    structural markers (same exemption _is_strong_numbered_heading
+    already grants elsewhere) and are exempted unconditionally.
+
+    Two shapes, judged differently because they fail in different ways:
+
+    1. A NUMBERED candidate ("1. Enrollment", "3. Accept the signed")
+       is structurally ambiguous: a genuine numbered service heading
+       and a numbered CLIENT STEP table row share the exact same "N.
+       Capitalized phrase" shape. The one reliable distinguishing
+       signal is what follows: a real numbered service heading always
+       introduces explanatory prose ("This process provides
+       description and series of steps..."); a numbered client-step
+       row never does (what follows is more table structure -- another
+       short step, a role name, a duration). So a numbered candidate is
+       a table fragment exactly when it is NOT followed by prose.
+    2. A NON-numbered candidate (an ALL-CAPS phrase like "FEES TO BE
+       PAID", or a short Title-Case fragment like "Transaction Type",
+       "Administrative Aide VI", "Where to Secure") is a table fragment
+       when the exact same text recurs _TABLE_FRAGMENT_REPEAT_MIN+ times
+       elsewhere as a heading candidate -- a genuine one-off anchor
+       heading like "BOARD OF REGENTS" is never, by construction, the
+       SAME exact text repeated verbatim three or more times across a
+       document; that repetition is the signature of a recurring
+       table/form column-header or cell-value label being reused by
+       every single service entry, regardless of whether it happens to
+       be ALL-CAPS or Title-Case. This path deliberately does NOT also
+       require "not followed by prose" the way the numbered path does:
+       a table's own requirement/location VALUE text is frequently
+       itself phrased as an ordinary lowercase multi-word description
+       (e.g. a Checklist/Where-to-Secure cell reading "units/colleges
+       and campuses of the university endorsed by..."), which would
+       pass the same flowing-prose heuristic used to recognize genuine
+       explanatory service prose -- repetition count alone is the more
+       reliable signal here, since a real heading's repeated use is
+       comparatively rare and a recurring table label's is not.
+    """
+    line = all_lines[i]
+    if _is_major_section_heading(line) or _ARTICLE_CHAPTER_HEADING_RE.match(line):
+        return False
+    if _DECIMAL_HEADING_RE.match(line) and not _BARE_YEAR_PREFIX_RE.match(line):
+        line_no = all_line_numbers[i]
+        return not _next_raw_line_is_flowing_prose(raw_lines, line_no)
+    return repeat_counts.get(line.casefold(), 0) >= _TABLE_FRAGMENT_REPEAT_MIN
 
 
 def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> list[DocumentChunk]:

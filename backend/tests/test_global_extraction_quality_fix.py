@@ -1126,6 +1126,170 @@ def test_toc_cluster_survives_a_blank_line_page_break_run():
     assert "complete registration through the official online portal" in cleaned
 
 
+# --- 2026-10-06 follow-up: Citizen's Charter-style service-catalog -------
+#     navigation detection. A service catalog's own navigation heading is
+#     "List of Services", not "Contents"/"Table of Contents", and its
+#     individual service-entry rows frequently lose their trailing page
+#     number onto a SEPARATE line entirely (real PDF column extraction),
+#     rather than keeping a same-line dotted leader. Generic shape/anchor
+#     evidence only -- no institution name, filename, or specific service
+#     name is hardcoded anywhere in the detection logic itself.
+
+
+def test_list_of_services_heading_is_recognized_as_navigation_anchor():
+    nav = (
+        "List of Services\n"
+        "University-Wide Offices\n"
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES ....................... 2\n"
+        "1.\n"
+        "Processing\n"
+        "2\n"
+        "2.\n"
+        "Renewal\n"
+        "4\n"
+        "II.\n"
+        "OFFICE OF BETA SERVICES ....................... 7\n"
+        "1.\n"
+        "Issuance\n"
+        "9\n"
+    )
+    body = (
+        "FRONTLINE SERVICES\n"
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES\n"
+        "1. Processing\n"
+        "This process provides description and series of steps for assisting the "
+        "public in availing of this particular service without unnecessary delay.\n"
+    )
+    cleaned = remove_toc_blocks(nav + "\n\n" + body)
+    assert "List of Services" not in cleaned
+    assert "University-Wide Offices" not in cleaned
+
+
+def test_detached_page_number_navigation_rows_removed():
+    """A navigation row whose title and page number land on two SEPARATE
+    lines (no dotted leader, no same-line number -- the common real-world
+    shape for a multi-column service catalog) is still recognized and
+    removed once anchored by the navigation heading."""
+    nav = (
+        "List of Services\n"
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES ....................... 2\n"
+        "1.\n"
+        "Processing\n"
+        "2\n"
+        "2.\n"
+        "Renewal\n"
+        "4\n"
+    )
+    cleaned = remove_toc_blocks(nav)
+    assert "Processing" not in cleaned
+    assert "Renewal" not in cleaned
+
+
+def test_wrapped_navigation_entry_is_removed():
+    """A navigation entry whose title wraps across several short lines
+    (a long service name broken word-by-word by column extraction) is
+    still removed as part of the same anchored cluster."""
+    nav = (
+        "List of Services\n"
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES ....................... 2\n"
+        "3.\n"
+        "Issuance\n"
+        "of\n"
+        "Renewed\n"
+        "Certification\n"
+        "of\n"
+        "Good\n"
+        "Standing\n"
+        "6\n"
+    )
+    cleaned = remove_toc_blocks(nav)
+    assert "Issuance" not in cleaned
+    assert "Certification" not in cleaned
+    assert "Good" not in cleaned
+
+
+def test_multipage_navigation_cluster_is_removed():
+    """A navigation region spanning a simulated page break (several
+    consecutive blank lines) is still treated as one continuous cluster,
+    not fragmented into pieces too small to qualify for removal."""
+    nav_page_1 = (
+        "List of Services\n"
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES ....................... 2\n"
+        "1.\n"
+        "Processing\n"
+        "2\n"
+    )
+    page_break = "\n\n\n\n\n"
+    nav_page_2 = (
+        "II.\n"
+        "OFFICE OF BETA SERVICES ....................... 7\n"
+        "1.\n"
+        "Issuance\n"
+        "9\n"
+    )
+    cleaned = remove_toc_blocks(nav_page_1 + page_break + nav_page_2)
+    assert "Processing" not in cleaned
+    assert "Issuance" not in cleaned
+    assert "OFFICE OF BETA SERVICES" not in cleaned
+
+
+def test_isolated_heading_and_number_pair_alone_is_not_removed():
+    """A single heading-shaped line followed by a bare number, with no
+    navigation anchor nearby and no run of other such pairs, must never
+    be removed on its own -- the same safety guarantee the original TOC
+    detector already provides, now also covering the new detached-pair
+    evidence path."""
+    text = (
+        "Annual Report Summary\n"
+        "7\n"
+        "\n"
+        "The committee reviewed the annual report summary and confirmed "
+        "that all figures were accurate and properly reconciled this year.\n"
+    )
+    cleaned = remove_toc_blocks(text)
+    assert "Annual Report Summary" in cleaned
+
+
+def test_navigation_ends_when_real_procedure_begins():
+    """The real body's own restatement of a nested office/service heading
+    survives untouched, because it leads directly into real explanatory
+    prose rather than more navigation rows -- while the navigation
+    region's own copy, immediately before it, is removed.
+
+    Mirrors the real-world PDF rendering difference actually observed:
+    the navigation listing splits a service's number and title onto two
+    separate lines ("1." / "Processing", no page number attached), while
+    the real body combines them on one line ("1. Processing") directly
+    introducing its own explanatory paragraph -- see
+    _looks_like_combined_numbered_heading / pass 2 of
+    _disqualify_real_heading_chains in text_cleaner.py.
+    """
+    nav = (
+        "List of Services\n"
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES ....................... 2\n"
+        "1.\n"
+        "Processing\n"
+        "2\n"
+    )
+    body = (
+        "FRONTLINE SERVICES\n"
+        "I.\n"
+        "OFFICE OF ALPHA SERVICES\n"
+        "1. Processing\n"
+        "This process provides description and series of steps for assisting the "
+        "public in availing of this particular service without unnecessary delay.\n"
+    )
+    cleaned = remove_toc_blocks(nav + "\n\n" + body)
+    assert cleaned.count("OFFICE OF ALPHA SERVICES") == 1
+    assert "This process provides description" in cleaned
+
+
 def test_index_still_uses_publish_new_version_only():
     from app.services.admin.digital_ingestion import (
         chunks_from_pages_or_reviewed_text,

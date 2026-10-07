@@ -306,8 +306,18 @@ void main() {
       expect(find.textContaining('Latin Honors'), findsWidgets);
       expect(find.textContaining('Graduation Requirements'), findsWidgets);
       // Both seeded sources have a source_view_url + document_id, so both
-      // rows must offer the PDF affordance.
-      expect(find.text('Tap to view source PDF'), findsNWidgets(2));
+      // rows must remain tappable (no instructional hint text is shown
+      // anymore -- see the 2026-10-07 cosmetic cleanup -- but the PDF icon
+      // and a real onTap handler must still be present on each row).
+      expect(find.byIcon(Icons.picture_as_pdf_outlined), findsNWidgets(2));
+      for (final label in ['Latin Honors', 'Graduation Requirements']) {
+        final rowInkWell = find.ancestor(
+          of: find.textContaining(label).first,
+          matching: find.byType(InkWell),
+        );
+        expect(rowInkWell, findsWidgets);
+        expect(tester.widget<InkWell>(rowInkWell.first).onTap, isNotNull);
+      }
     });
 
     testWidgets('layout order is header, answer, then Sources — no card in between',

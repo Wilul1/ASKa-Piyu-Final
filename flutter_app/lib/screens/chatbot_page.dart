@@ -1657,20 +1657,8 @@ class _CompactSourceRow extends StatelessWidget {
                   ),
                 ],
               ),
-              if (source.canOpenSource) ...[
-                const SizedBox(height: 6),
-                const Padding(
-                  padding: EdgeInsets.only(left: 24),
-                  child: Text(
-                    'Tap to view source PDF',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: DesignTokens.maroon,
-                    ),
-                  ),
-                ),
-              ] else if ((source.citationNote ?? '').trim().isNotEmpty) ...[
+              if (!source.canOpenSource &&
+                  (source.citationNote ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Padding(
                   padding: const EdgeInsets.only(left: 24),

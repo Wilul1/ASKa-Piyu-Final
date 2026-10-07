@@ -162,6 +162,74 @@ async def qa_ask(
     )
 
 
+def _citation_verification_poll_entry(citation) -> dict:
+    """One poll-response citation dict: the original four safe fields plus
+    source-view metadata recovered deterministically from ``citation_id``.
+
+    ``document_id`` is never stored by citation_verification_jobs.py -- it
+    is always recovered as ``citation_id.rsplit("::", 1)[0]`` (the same
+    "{document_id}::{chunk_index}" identity ``_raw_citation_id`` already
+    produces -- see question_answering.py). Mirrors the already-working
+    synchronous path's own fallback precedent (``_sources_from_chunks``'s
+    ``_citation_fields``): ``document_id`` is still returned even when the
+    source can't be resolved (useful for diagnostics, and matches existing
+    behavior), but ``pdf_available`` only ever becomes ``True``, and
+    ``source_view_url``/``source_page_url`` are only ever populated, when
+    ``resolve_citation_document`` actually finds a servable PDF -- never
+    guessed, never fabricated. Never raises: any failure to resolve a
+    source (malformed citation_id, DB lookup error, missing row) degrades
+    this one citation to its four original safe fields rather than
+    breaking the whole poll response.
+
+    Exposes nothing beyond the fields already in QACitationSchema -- no
+    verifier internals, no raw CandidateEvidence, no chunk text, no
+    arbitrary metadata.
+    """
+    entry: dict = {
+        "citation_id": citation.citation_id,
+        "title": citation.title,
+        "source_section": citation.source_section,
+        "source_filename": citation.source_filename,
+    }
+    raw_citation_id = (citation.citation_id or "").strip()
+    document_id = raw_citation_id.rsplit("::", 1)[0].strip() if raw_citation_id else ""
+    if not document_id:
+        return entry
+
+    try:
+        from app.services.document_storage import (
+            resolve_citation_document,
+            source_page_url,
+            source_view_url,
+        )
+
+        ready_row = resolve_citation_document(
+            document_id,
+            source_filename=citation.source_filename,
+        )
+    except Exception:  # noqa: BLE001 -- one unresolvable citation must never break the poll
+        logger.warning(
+            "qa_citation_verification_status: failed to resolve source for "
+            "citation_id=%s; returning it without source-view metadata",
+            raw_citation_id,
+            exc_info=True,
+        )
+        ready_row = None
+
+    pdf_ready = ready_row is not None
+    # Prefer the Postgres source_documents.id, matching _citation_fields --
+    # falls back to the raw Chroma-side id (still useful, e.g. for
+    # diagnostics) when unresolved.
+    resolved_document_id = ready_row.id if ready_row is not None else document_id
+    entry["document_id"] = resolved_document_id
+    entry["pdf_available"] = pdf_ready
+    if pdf_ready:
+        entry["source_view_url"] = source_view_url(resolved_document_id, citation.page_number)
+        if citation.page_number is not None:
+            entry["source_page_url"] = source_page_url(resolved_document_id, citation.page_number)
+    return entry
+
+
 @router.get(
     "/citation-verifications/{verification_id}",
     response_model=CitationVerificationStatusResponse,
@@ -181,13 +249,5 @@ async def qa_citation_verification_status(
     )
     return CitationVerificationStatusResponse(
         status=status,
-        citations=[
-            {
-                "citation_id": c.citation_id,
-                "title": c.title,
-                "source_section": c.source_section,
-                "source_filename": c.source_filename,
-            }
-            for c in safe_citations
-        ],
+        citations=[_citation_verification_poll_entry(c) for c in safe_citations],
     )

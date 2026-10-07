@@ -84,12 +84,23 @@ DEFAULT_TTL_SECONDS = 600
 
 @dataclass
 class _SafeCitation:
-    """The ONLY per-citation fields a poll response may ever return."""
+    """The ONLY per-citation fields a poll response may ever return.
+
+    ``page_number`` is the one addition beyond the original four fields --
+    carried through from ``CandidateEvidence`` so ``app.routes.qa``'s poll
+    endpoint can build a page-scoped ``source_page_url`` without ever
+    inferring/guessing a page. ``document_id`` is deliberately NOT a field
+    here: it is already encoded in ``citation_id`` (``"{document_id}::
+    {chunk_index}"`` -- see ``_raw_citation_id``), so a caller recovers it
+    with ``citation_id.rsplit("::", 1)[0]`` instead of this module storing
+    it a second time.
+    """
 
     citation_id: str
     title: str
     source_section: str | None
     source_filename: str | None
+    page_number: int | None = None
 
 
 @dataclass
@@ -348,6 +359,7 @@ def run_verification_job(verification_id: str) -> None:
                     title=by_id[cid].title,
                     source_section=by_id[cid].source_section,
                     source_filename=by_id[cid].source_filename,
+                    page_number=by_id[cid].page_number,
                 )
                 for cid in outcome.verified_citation_ids
                 if cid in by_id

@@ -447,14 +447,35 @@ def test_poll_endpoint_verified_status():
     outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=["tor::0"])
     vid = jobs.create_job(
         answer="X",
-        candidates=[CandidateEvidence(citation_id="tor::0", title="TOR", source_section="Sec 1", source_filename="f.pdf", text="t")],
+        candidates=[
+            CandidateEvidence(
+                citation_id="tor::0", title="TOR", source_section="Sec 1",
+                # A long, clearly-fake filename -- "f.pdf" has a single-
+                # character stem that find_source_document_by_filename's
+                # soft stem-substring fallback can accidentally match
+                # against ANY other test's "*.pdf" row sharing this test DB.
+                source_filename="no-such-document-fixture-987654.pdf", text="t",
+            )
+        ],
         mode="async_llm",
     )
     with patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
         jobs.run_verification_job(vid)
     data = client.get(f"/qa/citation-verifications/{vid}").json()
     assert data["status"] == "verified"
-    assert data["citations"] == [{"citation_id": "tor::0", "title": "TOR", "source_section": "Sec 1", "source_filename": "f.pdf"}]
+    # "tor::0"/this filename resolve to no real source_documents row in the
+    # test DB -- document_id is still recovered and returned (diagnostic
+    # value), but pdf_available correctly stays false and no URL is
+    # fabricated. See the Case A-D tests below for the fully-resolvable-
+    # source shape.
+    assert data["citations"] == [{
+        "citation_id": "tor::0",
+        "title": "TOR",
+        "source_section": "Sec 1",
+        "source_filename": "no-such-document-fixture-987654.pdf",
+        "document_id": "tor",
+        "pdf_available": False,
+    }]
 
 
 def test_poll_endpoint_no_verified_support_status():
@@ -482,6 +503,209 @@ def test_poll_endpoint_pending_before_run():
     data = client.get(f"/qa/citation-verifications/{vid}").json()
     assert data["status"] == "pending"
     assert data["citations"] == []
+
+
+# --- 2026-10-07 follow-up: page-accurate source-view metadata on the poll --
+# response (Tier 2 fix). document_id is recovered from citation_id
+# ("{document_id}::{chunk_index}") rather than stored a second time;
+# page_number is threaded through CandidateEvidence -> _SafeCitation so
+# source_page_url can be built without ever inferring/guessing a page.
+
+
+def _persist_resolvable_document(tmp_path, monkeypatch, *, filename: str) -> str:
+    """A real, resolvable source_documents row + durable pdf_data, so
+    resolve_citation_document() actually finds it -- mirrors the existing
+    convention in test_document_citations.py."""
+    import uuid
+
+    from app.db.session import initialize_database
+    from app.services.document_storage import persist_uploaded_document
+
+    monkeypatch.setattr(
+        "app.services.document_storage.settings.documents_persist_dir",
+        str(tmp_path / "docs"),
+    )
+    initialize_database()
+    doc_id = str(uuid.uuid4())
+    persist_uploaded_document(
+        b"%PDF-1.4 async-citation-source-view-test",
+        document_id=doc_id,
+        filename=filename,
+        content_type="application/pdf",
+        title="Async Citation Test Doc",
+    )
+    return doc_id
+
+
+def test_candidate_evidence_preserves_page_number_through_to_safe_citation():
+    """CandidateEvidence.page_number survives run_verification_job into
+    _SafeCitation.page_number unchanged (the only threading this fix adds
+    between the two dataclasses)."""
+    outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=["pg::0"])
+    vid = jobs.create_job(
+        answer="X",
+        candidates=[
+            CandidateEvidence(
+                citation_id="pg::0", title="T", source_section=None,
+                source_filename="f.pdf", text="t", page_number=12,
+            )
+        ],
+        mode="async_llm",
+    )
+    with patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        jobs.run_verification_job(vid)
+    _status, safe_citations = jobs.status_and_citations_for_poll(vid)
+    assert safe_citations[0].page_number == 12
+
+
+def test_case_a_normal_async_citation_full_source_view_metadata(tmp_path, monkeypatch):
+    """CASE A: a resolvable document_id + a real page_number -> the poll
+    response contains document_id, pdf_available=true, a source_view_url,
+    and a source_page_url with the correct page."""
+    doc_id = _persist_resolvable_document(tmp_path, monkeypatch, filename="case_a.pdf")
+    citation_id = f"{doc_id}::3"
+    outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=[citation_id])
+    vid = jobs.create_job(
+        answer="X",
+        candidates=[
+            CandidateEvidence(
+                citation_id=citation_id, title="Enrollment", source_section="Enrollment",
+                source_filename="case_a.pdf", text="t", page_number=7,
+            )
+        ],
+        mode="async_llm",
+    )
+    with patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        jobs.run_verification_job(vid)
+
+    data = client.get(f"/qa/citation-verifications/{vid}").json()
+    assert data["status"] == "verified"
+    citation = data["citations"][0]
+    assert citation["document_id"] == doc_id
+    assert citation["pdf_available"] is True
+    assert citation["source_view_url"] == f"/documents/{doc_id}/source?page=7#page=7"
+    assert citation["source_page_url"] == f"/documents/{doc_id}/source/page/7"
+
+
+def test_case_b_page_number_unavailable_still_resolves_view_url_no_page_url(tmp_path, monkeypatch):
+    """CASE B: document resolves but page_number is None -> source_view_url
+    is still produced (full-document view), source_page_url is absent, and
+    nothing crashes."""
+    doc_id = _persist_resolvable_document(tmp_path, monkeypatch, filename="case_b.pdf")
+    citation_id = f"{doc_id}::0"
+    outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=[citation_id])
+    vid = jobs.create_job(
+        answer="X",
+        candidates=[
+            CandidateEvidence(
+                citation_id=citation_id, title="T", source_section=None,
+                source_filename="case_b.pdf", text="t", page_number=None,
+            )
+        ],
+        mode="async_llm",
+    )
+    with patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        jobs.run_verification_job(vid)
+
+    data = client.get(f"/qa/citation-verifications/{vid}").json()
+    citation = data["citations"][0]
+    assert citation["document_id"] == doc_id
+    assert citation["pdf_available"] is True
+    assert citation["source_view_url"] == f"/documents/{doc_id}/source"
+    assert "source_page_url" not in citation
+
+
+def test_case_c_malformed_citation_id_never_crashes_and_fabricates_nothing():
+    """CASE C: a citation_id with no '::' separator at all (never produced
+    by _raw_citation_id in practice, but must still degrade safely) ->
+    no exception, no fabricated source-view metadata."""
+    outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=["not-a-valid-shape"])
+    vid = jobs.create_job(
+        answer="X",
+        candidates=[
+            CandidateEvidence(
+                citation_id="not-a-valid-shape", title="T", source_section=None,
+                source_filename=None, text="t", page_number=5,
+            )
+        ],
+        mode="async_llm",
+    )
+    with patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        jobs.run_verification_job(vid)
+
+    response = client.get(f"/qa/citation-verifications/{vid}")
+    assert response.status_code == 200
+    citation = response.json()["citations"][0]
+    assert citation.get("pdf_available") is not True
+    assert "source_view_url" not in citation
+    assert "source_page_url" not in citation
+
+
+def test_case_d_source_cannot_be_resolved_no_false_positive_no_fabricated_url():
+    """CASE D: a well-shaped citation_id/document_id that simply has no
+    matching source_documents row -> pdf_available stays false, no URL is
+    fabricated, and the poll still returns safely (not a 500)."""
+    import uuid
+
+    unresolvable_doc_id = str(uuid.uuid4())
+    citation_id = f"{unresolvable_doc_id}::0"
+    outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=[citation_id])
+    vid = jobs.create_job(
+        answer="X",
+        candidates=[
+            CandidateEvidence(
+                citation_id=citation_id, title="T", source_section=None,
+                source_filename="does_not_exist_anywhere.pdf", text="t", page_number=9,
+            )
+        ],
+        mode="async_llm",
+    )
+    with patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        jobs.run_verification_job(vid)
+
+    response = client.get(f"/qa/citation-verifications/{vid}")
+    assert response.status_code == 200
+    citation = response.json()["citations"][0]
+    assert citation["document_id"] == unresolvable_doc_id
+    assert citation["pdf_available"] is False
+    assert "source_view_url" not in citation
+    assert "source_page_url" not in citation
+
+
+def test_case_d_resolution_exception_degrades_to_safe_fields_never_a_500():
+    """CASE D (exception variant): if resolve_citation_document itself
+    raises, this one citation degrades the exact same way an unresolvable
+    source does (document_id recovered, pdf_available=false, no URL) --
+    never a 500, and never a status other than 200 for the whole response."""
+    outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=["x::0"])
+    vid = jobs.create_job(
+        answer="X",
+        candidates=[
+            CandidateEvidence(
+                citation_id="x::0", title="T", source_section="S",
+                source_filename="irrelevant.pdf", text="t", page_number=1,
+            )
+        ],
+        mode="async_llm",
+    )
+    with patch(VERIFY_AT_JOB_SEAM, return_value=outcome):
+        jobs.run_verification_job(vid)
+
+    with patch(
+        "app.services.document_storage.resolve_citation_document",
+        side_effect=RuntimeError("simulated DB error"),
+    ):
+        response = client.get(f"/qa/citation-verifications/{vid}")
+    assert response.status_code == 200
+    citation = response.json()["citations"][0]
+    assert citation == {
+        "citation_id": "x::0",
+        "title": "T",
+        "source_section": "S",
+        "source_filename": "irrelevant.pdf",
+        "document_id": "x",
+        "pdf_available": False,
+    }
 
 
 # --- Out-of-order / concurrency at the route+job level ----------------------

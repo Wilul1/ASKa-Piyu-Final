@@ -2638,6 +2638,22 @@ def _raw_citation_id(chunk: RetrievedChunk, index: int) -> str:
     return f"{document_id}::{chunk_index}"
 
 
+def _raw_page_number(metadata: dict[str, Any]) -> int | None:
+    """``metadata["page_number"]`` only -- never inferred.
+
+    Deliberately narrower than :func:`_page_number` (which also falls back
+    to ``page_start``/``page`` and a text scan): an async citation's
+    eventual ``source_page_url`` must be either the real cited page or
+    absent, never a guessed one from a looser heuristic.
+    """
+    page = metadata.get("page_number")
+    if isinstance(page, int):
+        return page
+    if isinstance(page, str) and page.isdigit():
+        return int(page)
+    return None
+
+
 def _retrieval_quality(
     question: str,
     retrieved: list[RetrievedChunk],
@@ -5458,6 +5474,12 @@ def _display_sources_for_answer(
             source_section=_source_section(chunk.metadata or {}) or None,
             source_filename=chunk.source_filename,
             text=chunk.text or "",
+            # Only chunk.metadata["page_number"] -- never inferred/guessed
+            # (e.g. never the _page_number() fallback's text-scan or
+            # page_start/page aliases) -- so an async citation's eventual
+            # source_page_url is either the real cited page or absent,
+            # never a fabricated one.
+            page_number=_raw_page_number(chunk.metadata or {}),
         )
         for index, chunk in enumerate(candidates, start=1)
     ]

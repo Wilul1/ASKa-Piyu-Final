@@ -467,6 +467,12 @@ class CandidateEvidence:
     source_section: str | None
     source_filename: str | None
     text: str
+    # Carried through ONLY so a later async poll response can reconstruct a
+    # page-scoped source-view URL (see citation_verification_jobs.py's
+    # _SafeCitation and app/routes/qa.py's qa_citation_verification_status).
+    # Never read by the verifier itself -- citation_id/title/source_section/
+    # source_filename/text remain the only fields verify_citations() uses.
+    page_number: int | None = None
 
 
 _MAX_EVIDENCE_CHARS = 700

@@ -776,6 +776,53 @@ def _extract_openrouter_error_fields(response: httpx.Response) -> tuple[str | No
         return None, None
 
 
+# Bounded retry for HTTP 429 only (OpenRouter rate-limiting observed in
+# production -- see citation_v2_production_429_investigation). At most two
+# retries after the initial attempt (three attempts total). Every other
+# failure (timeout, non-429 status, connection/transport error) is still
+# raised immediately with zero retries, exactly as before this change --
+# a transient rate limit is the one failure mode where waiting briefly and
+# trying again is actually likely to help; the others are not.
+_MAX_429_RETRIES = 2
+_RETRY_BASE_DELAY_SECONDS = 0.5
+# Strict ceiling for ANY retry delay, whether from our own backoff or from
+# a provider-supplied Retry-After -- keeps the total added latency small
+# and predictable regardless of what a provider asks for, and keeps this
+# comfortably inside the existing per-call groq_timeout_seconds budget
+# (that timeout bounds each individual HTTP call; this bounds the sleep
+# *between* calls, which is additive on top of it).
+_RETRY_MAX_DELAY_SECONDS = 2.0
+
+
+def _retry_after_delay_seconds(response: httpx.Response) -> float | None:
+    """A provider-supplied ``Retry-After`` value, honored only when it is a
+    valid non-negative number of seconds at or under
+    ``_RETRY_MAX_DELAY_SECONDS``. Returns None (never 0, never a clamped
+    value) for a missing header, a non-numeric value (the rarer HTTP-date
+    form is deliberately not parsed here -- out of scope for this narrow
+    fix), a negative value, or a value exceeding the strict maximum --
+    every such case falls back to the bounded backoff delay instead of
+    silently honoring an arbitrarily long provider-requested wait.
+    """
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0 or seconds > _RETRY_MAX_DELAY_SECONDS:
+        return None
+    return seconds
+
+
+def _backoff_delay_seconds(attempt: int) -> float:
+    """Bounded exponential backoff. ``attempt`` is 1 for the first retry,
+    2 for the second: 0.5s, then 1.0s, never exceeding
+    _RETRY_MAX_DELAY_SECONDS."""
+    return min(_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)), _RETRY_MAX_DELAY_SECONDS)
+
+
 def _call_verifier(
     messages: list[dict[str, str]], response_schema: dict[str, Any]
 ) -> tuple[str, dict[str, Any] | None]:
@@ -804,40 +851,55 @@ def _call_verifier(
     }
     headers.update(llm_extra_headers())
 
-    try:
-        with httpx.Client(timeout=settings.groq_timeout_seconds) as client:
-            response = client.post(
-                settings.llm_base_url,
-                headers=headers,
-                json={
-                    "model": verifier_model,
-                    "temperature": 0.0,
-                    "messages": messages,
-                    "response_format": response_schema,
-                },
-            )
-            response.raise_for_status()
-    except httpx.TimeoutException as exc:
-        raise CitationVerificationError(
-            f"provider_timeout: {exc}",
-            provider_diagnostics=_build_provider_diagnostics(kind="timeout"),
-        ) from exc
-    except httpx.HTTPStatusError as exc:
-        error_type, provider_code = _extract_openrouter_error_fields(exc.response)
-        raise CitationVerificationError(
-            f"provider_error: {exc}",
-            provider_diagnostics=_build_provider_diagnostics(
-                kind="http_status",
-                http_status=exc.response.status_code,
-                provider_error_code=provider_code,
-                provider_error_type=error_type,
-            ),
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise CitationVerificationError(
-            f"provider_error: {exc}",
-            provider_diagnostics=_build_provider_diagnostics(kind="transport"),
-        ) from exc
+    for attempt in range(_MAX_429_RETRIES + 1):  # 0, 1, 2 -> up to 3 total attempts
+        try:
+            with httpx.Client(timeout=settings.groq_timeout_seconds) as client:
+                response = client.post(
+                    settings.llm_base_url,
+                    headers=headers,
+                    json={
+                        "model": verifier_model,
+                        "temperature": 0.0,
+                        "messages": messages,
+                        "response_format": response_schema,
+                    },
+                )
+                response.raise_for_status()
+            break  # success -- fall through to response parsing below
+        except httpx.TimeoutException as exc:
+            # Never retried: a timeout already means the provider spent the
+            # whole configured budget on one attempt; retrying would only
+            # double-spend it with no new information to act on.
+            raise CitationVerificationError(
+                f"provider_timeout: {exc}",
+                provider_diagnostics=_build_provider_diagnostics(kind="timeout"),
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429 and attempt < _MAX_429_RETRIES:
+                delay = _retry_after_delay_seconds(exc.response)
+                if delay is None:
+                    delay = _backoff_delay_seconds(attempt + 1)
+                time.sleep(delay)
+                continue
+            # Non-429, or 429 with retries exhausted: identical terminal
+            # classification/diagnostics as before this change.
+            error_type, provider_code = _extract_openrouter_error_fields(exc.response)
+            raise CitationVerificationError(
+                f"provider_error: {exc}",
+                provider_diagnostics=_build_provider_diagnostics(
+                    kind="http_status",
+                    http_status=exc.response.status_code,
+                    provider_error_code=provider_code,
+                    provider_error_type=error_type,
+                ),
+            ) from exc
+        except httpx.HTTPError as exc:
+            # Never retried: connection/transport errors are not what this
+            # narrow fix targets (see task scope) -- unchanged behavior.
+            raise CitationVerificationError(
+                f"provider_error: {exc}",
+                provider_diagnostics=_build_provider_diagnostics(kind="transport"),
+            ) from exc
 
     try:
         payload = response.json()

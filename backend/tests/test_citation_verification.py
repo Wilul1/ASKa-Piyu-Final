@@ -896,6 +896,209 @@ def test_provider_4xx_fails_closed_and_does_not_raise():
     assert "provider_error" in outcome.failure_reason
 
 
+# --- bounded HTTP 429 retry ---------------------------------------------------
+
+
+def _mock_response_429(retry_after=None) -> MagicMock:
+    mock_response = MagicMock(status_code=429)
+    mock_response.headers = {} if retry_after is None else {"Retry-After": retry_after}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "rate limited", request=MagicMock(), response=mock_response
+    )
+    return mock_response
+
+
+def test_429_then_success_retries_once_and_succeeds():
+    candidates = [_ev("a", "T1", "...")]
+    success_response = MagicMock()
+    success_response.raise_for_status.return_value = None
+    success_response.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(
+            {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+        )}}]
+    }
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = [_mock_response_429(), success_response]
+
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is True
+    assert outcome.verified_citation_ids == ["a"]
+    assert mock_client.post.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+def test_repeated_429_exhausts_retries_and_fails_closed():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = [
+        _mock_response_429(), _mock_response_429(), _mock_response_429()
+    ]
+
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is False
+    assert "provider_error" in outcome.failure_reason
+    assert outcome.provider_diagnostics["http_status"] == 429
+    assert outcome.verified_citation_ids == []
+    # 1 initial attempt + 2 retries = 3 total calls; 2 sleeps in between.
+    assert mock_client.post.call_count == 3
+    assert mock_sleep.call_count == 2
+
+
+def test_non_429_http_error_is_never_retried():
+    candidates = [_ev("a", "T1", "...")]
+    mock_response = MagicMock(status_code=500)
+    mock_response.headers = {}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "server error", request=MagicMock(), response=mock_response
+    )
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is False
+    assert outcome.provider_diagnostics["http_status"] == 500
+    mock_client.post.assert_called_once()
+    mock_sleep.assert_not_called()
+
+
+def test_connection_error_is_never_retried():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = httpx.ConnectError("connection refused")
+
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is False
+    mock_client.post.assert_called_once()
+    mock_sleep.assert_not_called()
+
+
+def test_valid_retry_after_is_honored_over_default_backoff():
+    candidates = [_ev("a", "T1", "...")]
+    success_response = MagicMock()
+    success_response.raise_for_status.return_value = None
+    success_response.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(
+            {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+        )}}]
+    }
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = [_mock_response_429(retry_after="1"), success_response]
+
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is True
+    mock_sleep.assert_called_once_with(1.0)
+
+
+def test_excessive_retry_after_falls_back_to_bounded_backoff():
+    candidates = [_ev("a", "T1", "...")]
+    success_response = MagicMock()
+    success_response.raise_for_status.return_value = None
+    success_response.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(
+            {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+        )}}]
+    }
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    # 100s vastly exceeds the strict maximum -- must be ignored, not clamped.
+    mock_client.post.side_effect = [_mock_response_429(retry_after="100"), success_response]
+
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is True
+    mock_sleep.assert_called_once_with(0.5)  # first retry's bounded backoff delay
+
+
+def test_malformed_retry_after_falls_back_to_bounded_backoff():
+    candidates = [_ev("a", "T1", "...")]
+    success_response = MagicMock()
+    success_response.raise_for_status.return_value = None
+    success_response.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(
+            {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+        )}}]
+    }
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    mock_client.post.side_effect = [
+        _mock_response_429(retry_after="not-a-number"), success_response
+    ]
+
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is True
+    mock_sleep.assert_called_once_with(0.5)
+
+
+def test_successful_request_makes_only_one_attempt_and_never_sleeps():
+    candidates = [_ev("a", "T1", "...")]
+    mock_client = _mock_verifier_returning(
+        {"claims": [{"claim_id": "c1", "supporting_citation_ids": ["S1"]}]}
+    )
+    with (
+        patch("httpx.Client", return_value=mock_client),
+        patch(f"{MODULE}.time.sleep") as mock_sleep,
+        _configured_provider(),
+    ):
+        outcome = verify_citations(answer="Fee: None.", candidates=candidates, mode="llm")
+
+    assert outcome.verifier_succeeded is True
+    mock_client.post.assert_called_once()
+    mock_sleep.assert_not_called()
+
+
 def test_unconfigured_provider_fails_closed_without_network_call():
     candidates = [_ev("a", "T1", "...")]
     with (

@@ -670,6 +670,24 @@ def answer_qa_question(
             generation_succeeded=False,
             status="not_invoked:typed_answer_used_instead_of_generation",
         )
+        # Confidence is scored against the pre-caveat wording (same order
+        # as the main generation-success path), so appending the caveat
+        # below never skews this score.
+        typed_answer_confidence = _confidence_for(
+            retrieved,
+            selected_context,
+            typed_answer,
+            cleaned_question,
+            broad_query=broad_query,
+            collection_mode=collection_mode,
+            facet_coverage=facet_coverage,
+            active_topic=active_topic,
+        )
+        # Same deterministic backstop as the main generation-success path
+        # (see _append_unverified_facet_caveats): applied before citations
+        # are built, so the client-visible text and what Citation V2
+        # scores stay the same string.
+        typed_answer = _append_unverified_facet_caveats(typed_answer, facet_coverage)
         return QAResult(
             answer=typed_answer,
             sources=_display_sources_for_answer(
@@ -678,16 +696,7 @@ def answer_qa_question(
                 async_verification_sink=async_verification_sink,
             ),
             citation_status=_citation_status_after_sources(async_verification_sink),
-            confidence=_confidence_for(
-                retrieved,
-                selected_context,
-                typed_answer,
-                cleaned_question,
-                broad_query=broad_query,
-                collection_mode=collection_mode,
-                facet_coverage=facet_coverage,
-                active_topic=active_topic,
-            ),
+            confidence=typed_answer_confidence,
             retrieved_chunks=retrieved_debug,
             normalized_query=prepared_query.normalized_query,
             expanded_query=prepared_query.expanded_query,
@@ -784,6 +793,24 @@ def answer_qa_question(
                 status="invoked_but_failed:typed_answer_fallback_used_after_groq_error",
                 chunks=selected_context,
             )
+            # Confidence is scored against the pre-caveat wording (same
+            # order as the main generation-success path), so appending the
+            # caveat below never skews this score.
+            typed_answer_confidence = _confidence_for(
+                retrieved,
+                selected_context,
+                typed_answer,
+                extractor_question,
+                broad_query=broad_query,
+                collection_mode=collection_mode,
+                facet_coverage=facet_coverage,
+                active_topic=active_topic,
+            )
+            # Same deterministic backstop as the main generation-success
+            # path (see _append_unverified_facet_caveats): applied before
+            # citations are built, so the client-visible text and what
+            # Citation V2 scores stay the same string.
+            typed_answer = _append_unverified_facet_caveats(typed_answer, facet_coverage)
             return QAResult(
                 answer=typed_answer,
                 sources=_display_sources_for_answer(
@@ -792,16 +819,7 @@ def answer_qa_question(
                     async_verification_sink=async_verification_sink,
                 ),
                 citation_status=_citation_status_after_sources(async_verification_sink),
-                confidence=_confidence_for(
-                    retrieved,
-                    selected_context,
-                    typed_answer,
-                    extractor_question,
-                    broad_query=broad_query,
-                    collection_mode=collection_mode,
-                    facet_coverage=facet_coverage,
-                    active_topic=active_topic,
-                ),
+                confidence=typed_answer_confidence,
                 retrieved_chunks=retrieved_debug,
                 normalized_query=prepared_query.normalized_query,
                 expanded_query=prepared_query.expanded_query,
@@ -897,6 +915,13 @@ def answer_qa_question(
                 out_of_scope_detected=True,
                 active_service=active_service_for_response,
             )
+        # Same deterministic backstop as the main generation-success path
+        # (see _append_unverified_facet_caveats): applied after the
+        # stock-OOS check above and before citations are built, so the
+        # client-visible text and what Citation V2 scores stay the same
+        # string. fallback_confidence was already computed above and is
+        # untouched by this.
+        fallback_answer = _append_unverified_facet_caveats(fallback_answer, facet_coverage)
         return QAResult(
             answer=fallback_answer,
             sources=_display_sources_for_answer(
@@ -1037,6 +1062,11 @@ def answer_qa_question(
             out_of_scope_detected=True,
             active_service=active_service_for_response,
         )
+    # Deterministic backstop (see _append_unverified_facet_caveats): applied
+    # after the stock-OOS check above (an already-full refusal needs no
+    # additional per-facet caveat) and before citations are built, so the
+    # client-visible text and what Citation V2 scores stay the same string.
+    final_answer = _append_unverified_facet_caveats(final_answer, facet_coverage)
     return QAResult(
         answer=final_answer,
         sources=_display_sources_for_answer(
@@ -2840,6 +2870,60 @@ def _student_facing_answer(
     ):
         return _out_of_scope_answer_for_role(user_role)
     return cleaned
+
+
+def _append_unverified_facet_caveats(answer: str, facet_coverage: FacetCoverage) -> str:
+    """Deterministically flag question parts no retrieved/selected evidence
+    actually covers.
+
+    ``build_grounding_notes`` already asks the generator, as a prompt
+    instruction, to treat an uncovered part as unanswered rather than
+    borrowing another section's rules -- but that is only a request, and a
+    generation can (and in production did) still state an uncovered part
+    as settled fact anyway. This is the deterministic backstop: it never
+    removes or rewrites the generator's own wording for the parts that
+    *are* covered, it only appends one explicit, code-level caveat per
+    uncovered facet (named from the student's own wording via
+    ``facet.label``, never inventing a replacement fact), so a detail with
+    no official-source evidence is never left presented as established
+    fact merely because the model's own self-policing missed it.
+
+    A no-op whenever ``facet_coverage.has_gap`` is False -- which already
+    covers every single-part question and every multi-part question where
+    the final context covers every part (see ``FacetCoverage.has_gap`` /
+    ``analyze_facet_coverage``), so ordinary questions are completely
+    unaffected.
+
+    ``retrieval_question`` (what ``split_question_facets`` actually splits)
+    is not always purely the student's own wording -- ``resolve_followup_
+    question`` can append an internal disambiguation annotation shaped like
+    ``"(Service: Registration)"``, which a trailing ``?``/``.`` upstream of
+    it can leave isolated as its own "clause" and therefore its own facet.
+    Surfacing that verbatim to a student ("I could not confirm '(Service:
+    Registration)'...") would be a confusing, meaningless caveat about the
+    system's own internal bookkeeping, not about anything the student
+    asked -- so a facet label that is *entirely* wrapped in parentheses
+    (this annotation's exact, distinctive shape) is skipped rather than
+    surfaced. Never skips a facet with any real surrounding wording.
+    """
+    if not facet_coverage.has_gap:
+        return answer
+    cleaned = (answer or "").strip()
+    if not cleaned:
+        return answer
+    uncovered = [
+        facet
+        for facet in facet_coverage.uncovered
+        if not (facet.label.strip().startswith("(") and facet.label.strip().endswith(")"))
+    ]
+    if not uncovered:
+        return cleaned
+    notes = [
+        f'I could not confirm "{facet.label}" from the official LSPU sources '
+        "available to me -- please check directly with the relevant office for this detail."
+        for facet in uncovered
+    ]
+    return cleaned + "\n\n" + "\n".join(notes)
 
 
 def _is_mostly_missing_info_reply(answer: str) -> bool:

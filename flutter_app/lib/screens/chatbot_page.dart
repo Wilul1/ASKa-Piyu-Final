@@ -1484,11 +1484,77 @@ TextSpan _inlineMarkdownSpans(String text, TextStyle style) {
   return TextSpan(style: style, children: spans);
 }
 
-/// A small, restrained inline note for the async citation verification
-/// lifecycle -- shown only when there are no sources to display yet (or at
-/// all) for a turn whose citation_verification_mode is async_shadow/
-/// async_llm. Deliberately minimal: no new colors/animations, matches the
-/// existing muted caption style already used elsewhere in this file.
+/// Pure mapping from a citation-verification status (the same string
+/// [evaluateCitationPollTick] resolves to, or the initial `/qa/ask`
+/// response's own `citation_status`) to what the UI must show -- extracted
+/// (like [evaluateCitationPollTick] above) so this decision is unit-
+/// testable without a widget tree.
+///
+/// [isUnverifiedWarning] is true for every TERMINAL status that means
+/// verification did NOT establish support for the answer's claims
+/// (`no_verified_support`, `failed`, `unknown`) -- the one thing this type
+/// exists to guarantee is that none of those three cases can ever be
+/// confused, by a future edit, with a success/verified presentation. It is
+/// false for `verifying` (still in progress, not a failure) and for any
+/// status this widget does not otherwise recognize (hidden, unchanged from
+/// before this fix). `verified` itself never reaches this widget in
+/// practice -- see the call site -- because by the time the client has a
+/// `verified` resolvedStatus, [mergeVerifiedCitationsIntoSources] has
+/// already populated `answer.sources`, so the sources list (not this note)
+/// is what renders.
+class CitationStatusPresentation {
+  final String message;
+  final bool isUnverifiedWarning;
+
+  const CitationStatusPresentation({
+    required this.message,
+    required this.isUnverifiedWarning,
+  });
+}
+
+/// Every message for an unverified terminal status explicitly disclaims
+/// confidence as a proxy for grounding -- confidence is computed from
+/// retrieval signals alone (see question_answering.py's _confidence_for),
+/// entirely independently of citation verification, so a "medium"/"high"
+/// confidence score sitting next to a verification failure must never be
+/// read as "verified anyway".
+CitationStatusPresentation? citationStatusPresentationFor(String status) {
+  switch (status) {
+    case 'verifying':
+      return const CitationStatusPresentation(
+        message: 'Verifying sources…',
+        isUnverifiedWarning: false,
+      );
+    case 'no_verified_support':
+      return const CitationStatusPresentation(
+        message: 'No official source was found to support this answer\'s '
+            'specific claims. The confidence score above does not mean '
+            'this was verified -- please confirm details with the '
+            'relevant office.',
+        isUnverifiedWarning: true,
+      );
+    case 'failed':
+    case 'unknown':
+      return const CitationStatusPresentation(
+        message: 'Source verification could not be completed. The '
+            'confidence score above does not mean this answer was '
+            'verified.',
+        isUnverifiedWarning: true,
+      );
+    default:
+      return null;
+  }
+}
+
+/// Inline note for the async citation verification lifecycle -- shown only
+/// when there are no sources to display yet (or at all) for a turn whose
+/// citation_verification_mode is async_shadow/async_llm. `verifying` keeps
+/// the original minimal muted-caption treatment; the three terminal
+/// unverified statuses (see [citationStatusPresentationFor]) use a visibly
+/// distinct warning treatment -- reusing this file's own existing "low
+/// confidence" color (see _ConfidenceChip) rather than introducing a new
+/// color or any new dependency -- so an unverified answer can never look
+/// like a quiet, successful aside.
 class _CitationStatusNote extends StatelessWidget {
   final String status;
 
@@ -1496,28 +1562,37 @@ class _CitationStatusNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String message;
-    switch (status) {
-      case 'verifying':
-        message = 'Verifying sources…';
-        break;
-      case 'no_verified_support':
-        message = 'No verified sources for this answer.';
-        break;
-      case 'failed':
-      case 'unknown':
-        message = 'Source verification unavailable.';
-        break;
-      default:
-        return const SizedBox.shrink();
+    final presentation = citationStatusPresentationFor(status);
+    if (presentation == null) {
+      return const SizedBox.shrink();
     }
-    return Text(
-      message,
-      style: const TextStyle(
-        fontSize: 12.5,
-        color: DesignTokens.muted,
-        fontStyle: FontStyle.italic,
-      ),
+    if (!presentation.isUnverifiedWarning) {
+      return Text(
+        presentation.message,
+        style: const TextStyle(
+          fontSize: 12.5,
+          color: DesignTokens.muted,
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
+    const warningColor = Color(0xFFB91C1C); // same red as the low-confidence chip
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.error_outline, size: 15, color: warningColor),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            presentation.message,
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: warningColor,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -218,6 +218,109 @@ void main() {
     });
   });
 
+  // --- citation status presentation (fail-closed UI mapping) -----------
+  //
+  // citationStatusPresentationFor is the pure decision behind
+  // _CitationStatusNote -- extracted the same way evaluateCitationPollTick
+  // was, so the "must never look like a verified/success state" guarantee
+  // for no_verified_support/failed/unknown can be tested without a widget
+  // tree. See the fix accompanying this test group: a production answer
+  // stated a specific policy figure ("six units or two subjects") that no
+  // retrieved chunk supported, and verification correctly resolved to
+  // no_verified_support -- but the prior presentation was an easy-to-miss
+  // muted italic caption, with no link to the (unrelated) confidence chip
+  // shown above the answer.
+  group('citationStatusPresentationFor', () {
+    test('verifying is non-terminal and uses the quiet, unchanged '
+        'presentation (not a warning)', () {
+      final presentation = citationStatusPresentationFor('verifying');
+      expect(presentation, isNotNull);
+      expect(presentation!.isUnverifiedWarning, isFalse);
+      expect(presentation.message, 'Verifying sources…');
+    });
+
+    test('verified is not handled here -- sources render instead, so this '
+        'returns null (hidden), unchanged from before this fix', () {
+      expect(citationStatusPresentationFor('verified'), isNull);
+    });
+
+    for (final status in ['no_verified_support', 'failed', 'unknown']) {
+      test(
+          'terminal unverified status "$status" is flagged as a warning, '
+          'never a success presentation', () {
+        final presentation = citationStatusPresentationFor(status);
+        expect(presentation, isNotNull,
+            reason: '$status must produce a visible presentation, not be '
+                'silently hidden');
+        expect(presentation!.isUnverifiedWarning, isTrue,
+            reason: '$status must never be presented as verified/successful');
+      });
+
+      test(
+          'terminal unverified status "$status" explicitly disclaims '
+          'confidence as a proxy for grounding', () {
+        final presentation = citationStatusPresentationFor(status)!;
+        final lower = presentation.message.toLowerCase();
+        expect(lower.contains('confidence'), isTrue,
+            reason: 'the message must reference the confidence score to '
+                'prevent it being read as proof of verification');
+        expect(lower.contains('does not mean'), isTrue,
+            reason: 'the message must explicitly say confidence does not '
+                'mean the answer was verified');
+      });
+    }
+
+    test(
+        'no_verified_support and failed/unknown use distinct wording -- '
+        'a caller can still tell "no support found" apart from "could not '
+        'complete verification"', () {
+      final noSupport = citationStatusPresentationFor('no_verified_support')!;
+      final failed = citationStatusPresentationFor('failed')!;
+      final unknown = citationStatusPresentationFor('unknown')!;
+      expect(noSupport.message, isNot(equals(failed.message)));
+      expect(failed.message, unknown.message,
+          reason: 'failed and unknown are the same client-facing concept '
+              '(verification could not be completed), unchanged from '
+              'before this fix');
+    });
+
+    test('an unrecognized status returns null (hidden), matching the '
+        'pre-existing default case', () {
+      expect(citationStatusPresentationFor('some_future_status'), isNull);
+    });
+
+    test(
+        'REGRESSION: full lifecycle -- an answer rendered while still '
+        '"verifying" transitions to a clear, non-quiet failure state once '
+        'polling resolves to a terminal unverified status, without ever '
+        'passing through a verified-looking state', () {
+      // Step 1: initial /qa/ask response, still verifying.
+      var presentation = citationStatusPresentationFor('verifying')!;
+      expect(presentation.isUnverifiedWarning, isFalse);
+
+      // Step 2: a poll tick while still in progress -- still verifying.
+      final midPoll = evaluateCitationPollTick(
+        attempts: 10,
+        maxAttempts: 150,
+        status: 'running',
+      );
+      expect(midPoll.shouldStop, isFalse);
+
+      // Step 3: polling resolves to a terminal unverified status.
+      final finalPoll = evaluateCitationPollTick(
+        attempts: 11,
+        maxAttempts: 150,
+        status: 'no_verified_support',
+      );
+      expect(finalPoll.shouldStop, isTrue);
+      presentation = citationStatusPresentationFor(finalPoll.resolvedStatus!)!;
+      expect(presentation.isUnverifiedWarning, isTrue,
+          reason: 'the final displayed state must be the clear warning, '
+              'never silently left on the quiet "verifying" treatment or '
+              'a verified-looking state');
+    });
+  });
+
   // --- timer map lifecycle (pattern verification) -----------------------
   //
   // ChatbotPage._pollCitationVerification/dispose() are both UNCHANGED by

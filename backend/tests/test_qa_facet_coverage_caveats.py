@@ -34,6 +34,7 @@ from app.config import settings
 from app.services.chroma_store import RetrievedChunk
 from app.services.qa.multi_facet import FacetCoverage, QuestionFacet
 from app.services.qa.question_answering import (
+    INSUFFICIENT_GROUNDING_ANSWER,
     OUT_OF_SCOPE_ANSWER,
     _append_unverified_facet_caveats,
     answer_qa_question,
@@ -150,7 +151,19 @@ def test_caveat_is_noop_for_empty_answer():
 # --- End-to-end regression: mixed supported/unsupported question ---
 
 
-def test_mixed_question_preserves_supported_part_and_caveats_unsupported_part():
+def test_mixed_question_with_a_genuinely_unsupported_claim_is_gated_entirely():
+    """Superseded by the stronger synchronous grounding gate
+    (_answer_has_ungrounded_claim, question_answering.py): a mixed answer
+    where the Landbank claim has NO lexical/numeric overlap with anything
+    retrieved is now replaced in full, rather than merely caveated --
+    exactly the "one supported claim must not clear the whole answer"
+    requirement. The facet-coverage caveat this file otherwise tests
+    (_append_unverified_facet_caveats) never gets a chance to run for this
+    specific input, because the stronger gate intercepts first -- see
+    test_qa_facet_coverage_unguarded_branches.py for the three other
+    branches where the same supersession applies, and
+    test_question_answering_grounding_gate.py for the gate's own focused
+    tests."""
     tor_chunk = chunk(
         "TOR Fees",
         "The Transcript of Records (TOR) fee is PHP 20.00 per page for undergraduate students.",
@@ -172,14 +185,14 @@ def test_mixed_question_preserves_supported_part_and_caveats_unsupported_part():
     ):
         result = answer_qa_question(TOR_FEE_QUESTION)
 
-    # Supported wording is preserved verbatim -- never suppressed or rewritten.
-    assert "PHP 20.00 per page" in result.answer
-    # The unsupported part now carries an explicit, specific caveat.
-    assert "could not confirm" in result.answer.lower()
-    assert "landbank" in result.answer.lower() or "linkbiz" in result.answer.lower()
-    # Citations still cover the genuinely supported part.
-    cited_titles = {s.get("title") for s in (result.sources or [])}
-    assert any("TOR" in (t or "") for t in cited_titles)
+    assert result.answer == INSUFFICIENT_GROUNDING_ANSWER
+    assert result.confidence == "low"
+    assert result.sources == []
+    assert result.fallback_used is True
+    assert result.fallback_reason == "insufficient_grounding"
+    # The supported TOR wording is not silently preserved either -- the
+    # whole answer is the fixed fallback, never a mix of real + templated text.
+    assert "PHP 20.00" not in result.answer
 
 
 def test_question_with_no_official_source_evidence_at_all_is_not_fabricated():

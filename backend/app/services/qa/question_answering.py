@@ -683,19 +683,37 @@ def answer_qa_question(
             facet_coverage=facet_coverage,
             active_topic=active_topic,
         )
-        # Same deterministic backstop as the main generation-success path
-        # (see _append_unverified_facet_caveats): applied before citations
-        # are built, so the client-visible text and what Citation V2
-        # scores stay the same string.
-        typed_answer = _append_unverified_facet_caveats(typed_answer, facet_coverage)
-        return QAResult(
-            answer=typed_answer,
-            sources=_display_sources_for_answer(
+        # Synchronous fail-closed grounding gate, BEFORE the response is
+        # built or returned -- unlike Citation V2 (which only ever runs
+        # after this response has already been sent for async_llm/
+        # async_shadow), this decides whether the answer may be shown at
+        # all. See _answer_has_ungrounded_claim's own docstring for why
+        # this is per-claim, not an aggregate score.
+        if _answer_has_ungrounded_claim(typed_answer, selected_context):
+            typed_answer = INSUFFICIENT_GROUNDING_ANSWER
+            typed_answer_confidence = "low"
+            typed_answer_sources: list[dict[str, Any]] = []
+            typed_answer_citation_status = None
+            typed_answer_fallback_used = True
+            typed_answer_fallback_reason = "insufficient_grounding"
+        else:
+            # Same deterministic backstop as the main generation-success
+            # path (see _append_unverified_facet_caveats): applied before
+            # citations are built, so the client-visible text and what
+            # Citation V2 scores stay the same string.
+            typed_answer = _append_unverified_facet_caveats(typed_answer, facet_coverage)
+            typed_answer_sources = _display_sources_for_answer(
                 selected_context, typed_answer, merge_articles=collection_mode,
                 debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
                 async_verification_sink=async_verification_sink,
-            ),
-            citation_status=_citation_status_after_sources(async_verification_sink),
+            )
+            typed_answer_citation_status = _citation_status_after_sources(async_verification_sink)
+            typed_answer_fallback_used = False
+            typed_answer_fallback_reason = None
+        return QAResult(
+            answer=typed_answer,
+            sources=typed_answer_sources,
+            citation_status=typed_answer_citation_status,
             confidence=typed_answer_confidence,
             retrieved_chunks=retrieved_debug,
             normalized_query=prepared_query.normalized_query,
@@ -714,8 +732,8 @@ def answer_qa_question(
             ticket_routing=ticket_routing,
             query_expansions_used=prepared_query.matched_expansion_rules,
             rerank_reasons=_rerank_reasons_summary(retrieved),
-            fallback_used=False,
-            fallback_reason=None,
+            fallback_used=typed_answer_fallback_used,
+            fallback_reason=typed_answer_fallback_reason,
             out_of_scope_detected=False,
             active_service=active_service_for_response,
         )
@@ -806,19 +824,31 @@ def answer_qa_question(
                 facet_coverage=facet_coverage,
                 active_topic=active_topic,
             )
-            # Same deterministic backstop as the main generation-success
-            # path (see _append_unverified_facet_caveats): applied before
-            # citations are built, so the client-visible text and what
-            # Citation V2 scores stay the same string.
-            typed_answer = _append_unverified_facet_caveats(typed_answer, facet_coverage)
-            return QAResult(
-                answer=typed_answer,
-                sources=_display_sources_for_answer(
+            # Synchronous fail-closed grounding gate -- see the identical
+            # gate on the typed_answer path above for the full rationale.
+            if _answer_has_ungrounded_claim(typed_answer, selected_context):
+                typed_answer = INSUFFICIENT_GROUNDING_ANSWER
+                typed_answer_confidence = "low"
+                typed_answer_sources: list[dict[str, Any]] = []
+                typed_answer_citation_status = None
+                typed_answer_fallback_reason = "insufficient_grounding"
+            else:
+                # Same deterministic backstop as the main generation-success
+                # path (see _append_unverified_facet_caveats): applied before
+                # citations are built, so the client-visible text and what
+                # Citation V2 scores stay the same string.
+                typed_answer = _append_unverified_facet_caveats(typed_answer, facet_coverage)
+                typed_answer_sources = _display_sources_for_answer(
                     selected_context, typed_answer, merge_articles=collection_mode,
                     debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
                     async_verification_sink=async_verification_sink,
-                ),
-                citation_status=_citation_status_after_sources(async_verification_sink),
+                )
+                typed_answer_citation_status = _citation_status_after_sources(async_verification_sink)
+                typed_answer_fallback_reason = _safe_fallback_reason(str(exc))
+            return QAResult(
+                answer=typed_answer,
+                sources=typed_answer_sources,
+                citation_status=typed_answer_citation_status,
                 confidence=typed_answer_confidence,
                 retrieved_chunks=retrieved_debug,
                 normalized_query=prepared_query.normalized_query,
@@ -838,7 +868,7 @@ def answer_qa_question(
                 query_expansions_used=prepared_query.matched_expansion_rules,
                 rerank_reasons=_rerank_reasons_summary(retrieved),
                 fallback_used=True,
-                fallback_reason=_safe_fallback_reason(str(exc)),
+                fallback_reason=typed_answer_fallback_reason,
                 out_of_scope_detected=False,
                 active_service=active_service_for_response,
             )
@@ -915,21 +945,35 @@ def answer_qa_question(
                 out_of_scope_detected=True,
                 active_service=active_service_for_response,
             )
-        # Same deterministic backstop as the main generation-success path
-        # (see _append_unverified_facet_caveats): applied after the
-        # stock-OOS check above and before citations are built, so the
-        # client-visible text and what Citation V2 scores stay the same
-        # string. fallback_confidence was already computed above and is
-        # untouched by this.
-        fallback_answer = _append_unverified_facet_caveats(fallback_answer, facet_coverage)
-        return QAResult(
-            answer=fallback_answer,
-            sources=_display_sources_for_answer(
+        # Synchronous fail-closed grounding gate -- see the identical gate
+        # on the typed_answer path above for the full rationale. Checked
+        # against fallback_citation_context (the same pool that already
+        # determines citations for this branch, varying with used_recovered).
+        if _answer_has_ungrounded_claim(fallback_answer, fallback_citation_context):
+            fallback_answer = INSUFFICIENT_GROUNDING_ANSWER
+            fallback_confidence = "low"
+            fallback_sources: list[dict[str, Any]] = []
+            fallback_citation_status = None
+            fallback_reason_value = "insufficient_grounding"
+        else:
+            # Same deterministic backstop as the main generation-success path
+            # (see _append_unverified_facet_caveats): applied after the
+            # stock-OOS check above and before citations are built, so the
+            # client-visible text and what Citation V2 scores stay the same
+            # string. fallback_confidence was already computed above and is
+            # untouched by this.
+            fallback_answer = _append_unverified_facet_caveats(fallback_answer, facet_coverage)
+            fallback_sources = _display_sources_for_answer(
                 fallback_citation_context, fallback_answer, merge_articles=collection_mode,
                 debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
                 async_verification_sink=async_verification_sink,
-            ),
-            citation_status=_citation_status_after_sources(async_verification_sink),
+            )
+            fallback_citation_status = _citation_status_after_sources(async_verification_sink)
+            fallback_reason_value = _safe_fallback_reason(str(exc))
+        return QAResult(
+            answer=fallback_answer,
+            sources=fallback_sources,
+            citation_status=fallback_citation_status,
             confidence=fallback_confidence,
             retrieved_chunks=retrieved_debug,
             normalized_query=prepared_query.normalized_query,
@@ -949,7 +993,7 @@ def answer_qa_question(
             query_expansions_used=prepared_query.matched_expansion_rules,
             rerank_reasons=_rerank_reasons_summary(retrieved),
             fallback_used=True,
-            fallback_reason=_safe_fallback_reason(str(exc)),
+            fallback_reason=fallback_reason_value,
             out_of_scope_detected=False,
             active_service=active_service_for_response,
         )
@@ -1062,14 +1106,34 @@ def answer_qa_question(
             out_of_scope_detected=True,
             active_service=active_service_for_response,
         )
-    # Deterministic backstop (see _append_unverified_facet_caveats): applied
-    # after the stock-OOS check above (an already-full refusal needs no
-    # additional per-facet caveat) and before citations are built, so the
-    # client-visible text and what Citation V2 scores stay the same string.
-    final_answer = _append_unverified_facet_caveats(final_answer, facet_coverage)
-    return QAResult(
-        answer=final_answer,
-        sources=_display_sources_for_answer(
+    # Synchronous fail-closed grounding gate, BEFORE the response is built
+    # or returned -- the main generation-success path's own version of the
+    # same gate used on every other eligible branch above. See
+    # _answer_has_ungrounded_claim's docstring for the full rationale,
+    # especially why this is per-claim rather than a single aggregate score.
+    # Skipped when `table_inversion_corrected`: that flag means the LLM's own
+    # prose was already discarded and replaced with either a literal
+    # restatement of the retrieved table's rows (_table_records_evidence_answer)
+    # or a numeric/comparative-claim-stripped refusal
+    # (_apply_conservative_classification_reply) -- both built by code
+    # directly from the retrieved evidence, so they cannot themselves state a
+    # fact the evidence doesn't contain, and their own framing/caveat
+    # sentences ("the source does not state...") are not claims to re-verify.
+    if not table_inversion_corrected and _answer_has_ungrounded_claim(final_answer, citation_context):
+        final_answer = INSUFFICIENT_GROUNDING_ANSWER
+        confidence = "low"
+        final_sources: list[dict[str, Any]] = []
+        final_citation_status = None
+        final_fallback_used = True
+        final_fallback_reason = "insufficient_grounding"
+    else:
+        # Deterministic backstop (see _append_unverified_facet_caveats):
+        # applied after the stock-OOS check above (an already-full refusal
+        # needs no additional per-facet caveat) and before citations are
+        # built, so the client-visible text and what Citation V2 scores
+        # stay the same string.
+        final_answer = _append_unverified_facet_caveats(final_answer, facet_coverage)
+        final_sources = _display_sources_for_answer(
             citation_context,
             final_answer,
             evidence_text=citation_evidence,
@@ -1077,8 +1141,14 @@ def answer_qa_question(
             debug_sink=citation_debug_sink,
             citation_v2_sink=citation_v2_sink,
             async_verification_sink=async_verification_sink,
-        ),
-        citation_status=_citation_status_after_sources(async_verification_sink),
+        )
+        final_citation_status = _citation_status_after_sources(async_verification_sink)
+        final_fallback_used = False
+        final_fallback_reason = None
+    return QAResult(
+        answer=final_answer,
+        sources=final_sources,
+        citation_status=final_citation_status,
         confidence=confidence,
         retrieved_chunks=retrieved_debug,
         normalized_query=prepared_query.normalized_query,
@@ -1097,8 +1167,8 @@ def answer_qa_question(
         ticket_routing=ticket_routing,
         query_expansions_used=prepared_query.matched_expansion_rules,
         rerank_reasons=_rerank_reasons_summary(retrieved),
-        fallback_used=False,
-        fallback_reason=None,
+        fallback_used=final_fallback_used,
+        fallback_reason=final_fallback_reason,
         out_of_scope_detected=False,
         active_service=active_service_for_response,
     )
@@ -5333,7 +5403,37 @@ def _citation_support_score(
     return word_score + number_score
 
 
-_CLAIM_SPLIT_RE = re.compile(r"[.!;?\n]+")
+# A bare "." does not split when it sits inside a decimal amount (e.g. the
+# "." in "P100.00" or "PHP 20.00") -- otherwise a single currency figure is
+# torn into two claim fragments, one of which (the digits after the point)
+# carries no real words and can never independently clear a support check.
+_CLAIM_SPLIT_RE = re.compile(r"(?:(?<!\d)\.(?!\d)|[!;?\n])+")
+
+# These are the exact structural label lines this module itself prepends to
+# evidence inside format_retrieved_context/format_collection_context (the
+# generation prompt) and appends inside format_conversational_fallback (the
+# "Source: <file>, page <n>" attribution footer). They describe *where* the
+# evidence came from, not a fact drawn from it, so a page number or filename
+# named there is never expected to also appear in the chunk's own body text.
+# Treating them as claims only ever produces a spurious zero-overlap "claim"
+# -- never a real citation-scoring signal -- for both the gate below and the
+# existing supporting-context scoring that also calls this function.
+_STRUCTURAL_LABEL_LINE_RE = re.compile(
+    r"^(?:Title|Path|Pages?|Group|Content|Source):\s*\S", re.IGNORECASE
+)
+
+
+def _is_checkable_claim_text(claim: str) -> bool:
+    """True when ``claim`` carries enough of its own signal to be worth
+    measuring against retrieved evidence at all -- shared by ``_answer_claims``
+    (per-fragment) and ``_answer_has_ungrounded_claim``'s own single-claim
+    fallback (see there) so both apply the identical bar."""
+    if not claim:
+        return False
+    if _STRUCTURAL_LABEL_LINE_RE.match(claim):
+        return False
+    words, numbers = _grounding_tokens(claim)
+    return (len(words) + len(numbers)) >= _SUPPORT_MIN_SIGNALS
 
 
 def _answer_claims(answer: str) -> list[str]:
@@ -5352,10 +5452,8 @@ def _answer_claims(answer: str) -> list[str]:
         claim = part.strip()
         if not claim or claim == (answer or "").strip():
             continue
-        words, numbers = _grounding_tokens(claim)
-        if len(words) + len(numbers) < _SUPPORT_MIN_SIGNALS:
-            continue
-        claims.append(claim)
+        if _is_checkable_claim_text(claim):
+            claims.append(claim)
     return claims
 
 
@@ -5467,6 +5565,245 @@ def _select_supporting_context(
         return []
     ordered = sorted(best.values(), key=lambda pair: pair[0], reverse=True)
     return [chunk for _, chunk in ordered]
+
+
+# Fixed phrasings this module itself already uses (conversational_fallback.py
+# / _fee_unclear_or_zero_answer) to admit uncertainty or ask for a narrower
+# question, rather than to assert a fact. A claim matching one of these is
+# the opposite of the thing this gate exists to catch -- it is already the
+# honest "we don't have this" the gate would otherwise force anyway -- so it
+# is skipped rather than measured for lexical overlap it was never going to
+# have. Deliberately a superset of MISSING_INFO_PHRASES (which exists for a
+# different purpose -- choosing recovered/typed text over generated text --
+# not reused directly here to avoid also changing that unrelated decision).
+_NON_FACTUAL_CLAIM_PHRASES = MISSING_INFO_PHRASES + (
+    "does not clearly specify",
+    "does not clearly state",
+    "need a more specific question",
+    "which part do you need",
+)
+
+
+# A coordinating conjunction preceded by a comma (or a bare semicolon) is the
+# standard written-English marker for joining two INDEPENDENT clauses -- unlike
+# a bare "and"/"or" with no comma, which usually just joins two items within
+# one clause (e.g. "clearance and OSAS Student ID") and must NOT be split.
+# Requiring the comma/semicolon keeps this split narrowly scoped to the
+# "hedge clause, but a separate asserted clause" shape, rather than fragmenting
+# ordinary lists inside a single statement. ``\b`` after the conjunction (not
+# just "requires a space") is what keeps a semicolon immediately followed by
+# an unrelated word starting with the same letters -- ";android ..." -- from
+# having "and" matched out of "android": there is no word boundary between
+# the "d" the pattern would stop on and the "r" that follows inside the word,
+# so the conjunction alternative simply fails to match there at all.
+_HEDGE_CLAUSE_SPLIT_RE = re.compile(
+    r",\s*(?:but|and|yet|however)\b\s*|;\s*(?:(?:but|and|yet|however)\b)?\s*",
+    re.IGNORECASE,
+)
+
+# A BARE conjunction, with no comma/semicolon required at all. Deliberately
+# never applied to ordinary text (see _resolve_hedge_segment below: this is
+# only tried on a segment that has already matched a hedge/admission phrase,
+# a narrow precondition) -- applying it unconditionally would fragment
+# ordinary same-clause lists like "the Accounting Office and OSAS Student
+# ID". Within an already-ambiguous, hedge-bearing segment, the trade is
+# accepted deliberately: see _resolve_hedge_segment's docstring for the
+# false-positive risk this introduces.
+_BARE_CONJUNCTION_SPLIT_RE = re.compile(r"\b(?:but|and|yet|however)\b\s*", re.IGNORECASE)
+
+
+def _resolve_hedge_segment(segment: str, *, try_comma_split: bool) -> list[str]:
+    """Return the part(s) of ``segment`` that still need an independent
+    grounding check, recursively separating hedge/admission wording from
+    any attached factual assertion.
+
+    - A segment with no hedge phrase at all is returned unchanged -- this
+      only ever does something different once ``_NON_FACTUAL_CLAIM_PHRASES``
+      already matched ``segment``.
+    - Otherwise, try to split on a clause boundary: the comma/semicolon-
+      anchored ``_HEDGE_CLAUSE_SPLIT_RE`` first (only at the top call, via
+      ``try_comma_split`` -- a confident, written-English clause marker),
+      and if that finds nothing, the looser, comma-free
+      ``_BARE_CONJUNCTION_SPLIT_RE`` (safe here specifically because
+      ``segment`` already matched a hedge phrase, so this is never applied
+      to an ordinary factual sentence).
+    - If a boundary is found, each resulting piece is resolved
+      RECURSIVELY (not just filtered once) -- this is what correctly
+      isolates "must pay P500" or "must submit a certificate of
+      eligibility" from "students could not find the office ... and
+      must ...": the hedge phrase ("could not find") is used in its
+      ordinary, literal sense there, sharing one clause with a wholly
+      separate, unrelated assertion joined by a bare "and" with no comma.
+      A single, non-recursive pass that just drops any piece *containing*
+      the phrase would silently discard that assertion along with the
+      hedge wording it happens to sit next to.
+    - Only when NO boundary can be found at all (a single, truly undivided
+      clause) does this fall back to the coarsest available signal: every
+      real admission-of-uncertainty phrasing this module itself generates
+      (``_fee_unclear_or_zero_answer``, ``conversational_fallback.py``'s
+      clarification text) never also states a number -- so a numberless,
+      unsplit hedge segment is treated as fully exempt, and one with a
+      number is kept whole.
+
+    FALSE-POSITIVE RISK (accepted deliberately, documented not hidden): the
+    bare conjunction split has no way to distinguish "a second, separate
+    clause" from "and" merely joining two items inside one still-honest
+    hedge statement (e.g. "The deadline and the office hours are not
+    mentioned elsewhere" splits into "The deadline" and "the office hours
+    are not mentioned elsewhere"; the first piece has no hedge phrase so it
+    is kept and independently checked, and could occasionally be flagged
+    as unsupported even though it was only ever naming what the honest
+    admission refers to, not asserting anything new). This can make the
+    gate replace an answer that was, in fact, adequately grounded. That
+    false-positive (over-cautious refusal) is the deliberately accepted
+    trade here, per the same principle used throughout this gate: an
+    ambiguous segment must not be silently treated as grounded merely
+    because it shares a clause with honest uncertainty wording -- when the
+    code cannot tell the two apart, checking it (and occasionally
+    over-blocking) is preferred over silently exempting it (and
+    occasionally letting an unsupported claim through unchecked, the
+    direction the real incident this gate responds to took).
+    """
+    normalized_segment = segment.lower()
+    if not any(phrase in normalized_segment for phrase in _NON_FACTUAL_CLAIM_PHRASES):
+        return [segment]
+
+    pieces = (
+        [part.strip() for part in _HEDGE_CLAUSE_SPLIT_RE.split(segment) if part.strip()]
+        if try_comma_split
+        else [segment]
+    )
+    if len(pieces) == 1:
+        pieces = [part.strip() for part in _BARE_CONJUNCTION_SPLIT_RE.split(segment) if part.strip()]
+
+    if len(pieces) > 1:
+        resolved: list[str] = []
+        for piece in pieces:
+            resolved.extend(_resolve_hedge_segment(piece, try_comma_split=False))
+        return resolved
+
+    _words, numbers = _grounding_tokens(segment)
+    return [segment] if numbers else []
+
+
+def _non_hedge_claim_parts(claim: str) -> list[str]:
+    """Entry point for ``_answer_has_ungrounded_claim``: see
+    ``_resolve_hedge_segment`` for the full rationale and documented
+    false-positive risk. The comma/semicolon-anchored split is tried first,
+    at this top level only (``try_comma_split=True``); nested pieces fall
+    back to the looser, comma-free conjunction split on recursion.
+
+    LIMITATION (documented, not solved here): this still only recognizes
+    coordinating-conjunction boundaries (comma/semicolon-anchored, or bare
+    "but"/"and"/"yet"/"however"). A hedge and a smuggled fact joined any
+    other way -- an embedded relative clause, a dash, or literally no
+    conjunction of any kind -- cannot be separated, and (lacking a number)
+    would still be exempted whole. General-purpose clause parsing is not
+    attempted here; only these conjunction-anchored shapes are.
+    """
+    return _resolve_hedge_segment(claim, try_comma_split=True)
+
+
+# Fixed, non-generative fallback for the synchronous grounding gate below.
+# Never reworded per-question -- a templated refusal cannot itself invent a
+# policy fact, unlike a second generation call would risk.
+INSUFFICIENT_GROUNDING_ANSWER = (
+    "I couldn't find sufficient verified information in the university "
+    "knowledge base to confirm this.\n\n"
+    "Please consult the Office of the Registrar or the appropriate "
+    "academic office for the official policy."
+)
+
+
+def _answer_has_ungrounded_claim(answer: str, candidates: list[RetrievedChunk]) -> bool:
+    """Conservative, synchronous, PER-CLAIM grounding check -- the gate that
+    decides whether ``answer`` may be returned at all, run before any
+    response leaves this process (unlike Citation V2, which only ever runs
+    after the response is already sent for async_llm/async_shadow).
+
+    Deliberately NOT a single aggregate score against the whole answer:
+    ``_select_supporting_context`` above already shows why that is unsafe
+    for citation *display* (a single strong claim can mask a separate weak
+    one), and the same risk is worse here because this result decides
+    whether the answer is shown at all. This walks ``_answer_claims(answer)``
+    (the same claim-sized split ``_select_supporting_context`` already
+    uses) and requires EVERY claim to clear ``_SUPPORT_ABS_FLOOR`` against
+    at least one candidate's own grounding tokens -- reusing the exact same
+    ``_grounding_tokens`` / ``_citation_support_score`` formula and the
+    exact same, already-established thresholds (``_SUPPORT_MIN_SIGNALS``,
+    ``_SUPPORT_ABS_FLOOR``). No new threshold is introduced. The relative
+    floor (``_SUPPORT_REL_FLOOR``) and the whole-answer pass that
+    ``_select_supporting_context`` also does are both deliberately NOT used
+    here: those exist to decide which *additional* weaker sources are still
+    worth *displaying* once something has already cleared the bar, not
+    whether the bar was cleared at all.
+
+    Returns False (nothing flagged -- conservative in the "don't block"
+    direction) when the answer has no checkable content at all (e.g. a
+    trivially short one-line reply) or when there are no candidates to
+    check against -- the caller's own empty-retrieval/out-of-scope gates
+    already handle those cases before this function is ever reached.
+
+    ``_answer_claims`` returns no fragments both when the answer is
+    genuinely too short to carry a claim AND when it is one single,
+    undivided clause with no delimiter at all (splitting then yields one
+    fragment identical to the whole answer, which ``_answer_claims``
+    discards as redundant with the whole-answer pass -- a pass that exists
+    in ``_select_supporting_context``, not here). Collapsing those two
+    cases would let a single, confidently-stated, unsupported sentence
+    through untested merely for lacking a trailing period -- exactly the
+    shape of the real incident this gate exists for -- so when splitting
+    finds nothing, the raw answer text itself is evaluated as the one claim
+    (still subject to the same minimum-signal bar, via
+    ``_is_checkable_claim_text``, so a genuinely trivial answer is still let
+    through unflagged).
+
+    LIMITATION (documented, not solved here): this is lexical/numeric
+    overlap, exactly like ``_select_supporting_context``'s own scoring --
+    it is NOT semantic entailment and is not proof against hallucination.
+    It can false-negative (flag a correctly-paraphrased claim that happens
+    to share little literal vocabulary with the source wording) and it can
+    false-positive (let through a claim that merely shares vocabulary with
+    a chunk without that chunk actually entailing it). It specifically
+    targets the shape of the real incident this gate responds to -- a
+    claim with NO lexical/numeric connection at all to anything retrieved
+    -- and nothing broader than that should be assumed.
+    """
+    claims = _answer_claims(answer)
+    if not claims:
+        # See the docstring note above: an empty split is not proof there is
+        # nothing to check -- it can also mean one undivided claim that
+        # _answer_claims() itself discarded. Fall back to the raw answer.
+        fallback_claim = (answer or "").strip()
+        if fallback_claim and _is_checkable_claim_text(fallback_claim):
+            claims = [fallback_claim]
+    if not claims or not candidates:
+        return False
+
+    chunk_tokens = [_grounding_tokens(_chunk_search_text(chunk)) for chunk in candidates]
+    doc_freq: dict[str, int] = {}
+    for words, _numbers in chunk_tokens:
+        for token in words:
+            doc_freq[token] = doc_freq.get(token, 0) + 1
+    total = len(candidates)
+    idf = {
+        token: math.log((total + 1) / (freq + 1)) + 1.0
+        for token, freq in doc_freq.items()
+    }
+
+    for claim in claims:
+        for part in _non_hedge_claim_parts(claim):
+            if not _is_checkable_claim_text(part):
+                continue
+            claim_words, claim_numbers = _grounding_tokens(part)
+            claim_has_support = any(
+                _citation_support_score(claim_words, claim_numbers, chunk_words, chunk_numbers, idf)
+                >= _SUPPORT_ABS_FLOOR
+                for chunk_words, chunk_numbers in chunk_tokens
+            )
+            if not claim_has_support:
+                return True
+    return False
 
 
 def _citation_status_after_sources(async_verification_sink: dict[str, Any] | None) -> str | None:

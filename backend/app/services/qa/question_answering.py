@@ -1174,6 +1174,23 @@ def answer_qa_question(
     )
 
 
+def _normalize_for_repeat_comparison(text: str) -> str:
+    collapsed = re.sub(r"\s+", " ", (text or "").strip().casefold())
+    return collapsed.rstrip(" ?.!,;:")
+
+
+def _is_near_exact_repeat(question: str, prior_user_turn: str) -> bool:
+    """True when ``question`` is the same text as ``prior_user_turn``,
+    ignoring case, whitespace, and trailing punctuation only -- deliberately
+    narrow (no fuzzy/paraphrase matching) to avoid false positives on a
+    genuinely different question that merely shares most of its wording."""
+    if not prior_user_turn:
+        return False
+    return _normalize_for_repeat_comparison(question) == _normalize_for_repeat_comparison(
+        prior_user_turn
+    )
+
+
 def resolve_followup_question(
     question: str,
     history: list[Any] | None,
@@ -1208,6 +1225,19 @@ def resolve_followup_question(
     if not last_user and not last_assistant:
         return cleaned
 
+    # A near-exact repeat of the user's own immediately preceding message
+    # (e.g. resending the same complete question after an unsatisfactory
+    # answer) must never be "resolved" against itself: resolve_active_topic
+    # would otherwise happily return that same prior turn's own text,
+    # truncated, as the "active topic" -- a redundant self-quote, not real
+    # context. This is independent of (and a necessary complement to) the
+    # pronoun-position check below: a short repeated question with an early
+    # pronoun (e.g. "How much does it cost to file a leave of absence
+    # request?" asked twice in a row) still has an early "it" and would
+    # otherwise still trigger self-context injection on the retry.
+    if _is_near_exact_repeat(cleaned, last_user):
+        return cleaned
+
     normalized = cleaned.casefold()
     followup_prefix = bool(
         re.match(
@@ -1217,21 +1247,26 @@ def resolve_followup_question(
             normalized,
         )
     )
-    # "it"/"this"/"those"/"them"/"there"/"same" are almost always anaphoric
-    # (referring back to the prior turn). "that" is ambiguous in English: it can
-    # be the same kind of backward reference ("what about that?"), or a
-    # grammatical relative pronoun inside an otherwise self-contained sentence
-    # ("show me the section THAT explains scholarship requirements") — the
-    # latter must not be treated as a follow-up cue, or any standalone question
-    # that happens to contain "that" gets its retrieval corrupted with an
-    # unrelated prior topic. Relative-clause "that" almost always appears after
-    # the sentence's subject has already been introduced, so only treat "that"
-    # as a follow-up cue when it shows up very early (demonstrative use, e.g.
-    # "That one", "Is that required?").
-    unanchored_pronoun = bool(re.search(r"\b(?:this|it|those|them|there|same)\b", normalized))
-    that_match = re.search(r"\bthat\b", normalized)
-    demonstrative_that = bool(that_match) and len(normalized[: that_match.start()].split()) <= 3
-    has_pronoun = unanchored_pronoun or demonstrative_that
+    # Every one of these pronouns is ambiguous in English, not just "that":
+    # each can be a genuine backward reference to the prior turn ("What about
+    # it?", "Is that required?"), or a grammatical reference to something the
+    # CURRENT sentence has already introduced itself ("...the Grievance
+    # Committee... what happens if IT cannot settle...", "show me the section
+    # THAT explains scholarship requirements"). The latter must never be
+    # treated as a follow-up cue, or a long, fully self-contained question
+    # that merely happens to use one of these words gets its retrieval
+    # corrupted with an unrelated (or redundantly self-quoting) prior topic.
+    # A backward reference to prior conversation almost always appears very
+    # early in the question (the question IS the reference: "What about
+    # that?", "Where do I submit it?"); a pronoun introduced after the
+    # sentence has already built up its own subject is overwhelmingly a
+    # same-sentence grammatical reference instead. So only the EARLIEST
+    # matching pronoun is checked, and only counts as a follow-up cue when it
+    # appears within the first few words -- the same position rule this
+    # function already applied to "that" alone, now applied uniformly so
+    # "that" is not a special case among otherwise-unchecked pronouns.
+    pronoun_match = re.search(r"\b(?:this|it|those|them|there|same|that)\b", normalized)
+    has_pronoun = bool(pronoun_match) and len(normalized[: pronoun_match.start()].split()) <= 3
     content_tokens = _content_tokens(normalized)
     # Standalone if the question already names a concrete topic (2+ content words)
     # and has no follow-up cues — this is an explicit topic switch / new topic.

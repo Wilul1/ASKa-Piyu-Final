@@ -227,6 +227,227 @@ def test_first_turn_short_service_labels_canonicalize_without_history(question):
         assert question.casefold() in resolved.casefold()
 
 
+# --- Self-contained-vs-follow-up pronoun fix (QA Test #2 incident investigation) ---
+#
+# Read-only investigation finding: resending a long, self-contained question
+# in the same chat session (e.g. after an unsatisfactory first answer) used
+# to change what `resolve_followup_question` returned, because the word "it"
+# (here, in "...if it cannot settle a grievance..." -- a same-sentence
+# grammatical reference to "the Grievance Committee", not a backward
+# reference to prior conversation) matched a blanket pronoun regex once ANY
+# prior history existed. FIX: the position-based check this function already
+# applied only to "that" (relative-clause "that" vs. demonstrative "that") is
+# now applied uniformly to all six pronoun words -- a pronoun only counts as
+# a follow-up cue when it appears within the first few words of the
+# question; introduced later, it is treated as the question's own
+# grammatical reference to something the sentence already established
+# itself. These tests exercise the pure, offline string behavior only -- no
+# Chroma, embedding, HTTP, database, or LLM call -- and do not reproduce or
+# depend on any real production user question/answer; this question text is
+# a synthetic test shape, not logged production content.
+
+GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION = (
+    "Under the LSPU Student Handbook's Student Internship Program grievance "
+    "procedure, who makes up the university-level Grievance Committee, what "
+    "is its initial responsibility, and what happens if it cannot settle a "
+    "grievance or render a decision?"
+)
+
+
+def test_grievance_question_with_empty_history_is_not_treated_as_a_followup():
+    for empty_history in (None, []):
+        resolved = resolve_followup_question(GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION, empty_history)
+        assert "Prior question context:" not in resolved
+        assert resolved.startswith(GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION)
+
+
+def test_same_grievance_question_resent_with_one_prior_turn_is_left_unchanged():
+    # Scenario 3 (fixed): the SAME question was already asked once in this
+    # session (and produced some prior answer), and is now being sent again.
+    # Before the fix, this appended a truncated copy of the question's own
+    # prior occurrence as "prior context." The late, same-sentence "it" is
+    # no longer treated as a follow-up cue, so nothing is appended.
+    history = _history(
+        (
+            GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION,
+            "The indexed LSPU documents do not contain enough information about this topic.",
+        ),
+    )
+    resolved = resolve_followup_question(GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION, history)
+    assert resolved == GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION
+    assert "Prior question context:" not in resolved
+
+
+def test_grievance_question_after_unrelated_prior_turn_is_left_unchanged():
+    # Scenario 2 (fixed): the self-contained grievance question is asked
+    # right after a completely unrelated prior exchange (same session,
+    # different topic). Before the fix, the unrelated TOR-fee topic was
+    # grafted on. Now the question is self-contained enough (long, no
+    # followup_prefix, no early pronoun) to stand on its own.
+    history = _history(
+        (
+            "What is the TOR fee per page for undergraduate students?",
+            "The TOR fee is PHP 20.00 per page for undergraduate students.",
+        ),
+    )
+    resolved = resolve_followup_question(GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION, history)
+    assert resolved == GRIEVANCE_FOLLOWUP_PRONOUN_QUESTION
+    assert "Prior question context:" not in resolved
+
+
+def test_genuine_pronoun_followup_after_grievance_topic_retains_identifiable_context():
+    # Scenario 4: a short, genuinely context-dependent follow-up -- "it" is
+    # the SECOND word, well within the early-position window, and has no
+    # referent at all without the prior turn. Must still resolve correctly
+    # after the fix: the fix narrows which pronouns count, it does not
+    # disable follow-up resolution for genuine cases.
+    history = _history(
+        (
+            "Under the LSPU Student Handbook, what is the Student Internship "
+            "Program grievance procedure?",
+            "A university-level Grievance Committee reviews unresolved complaints.",
+        ),
+    )
+    followup = "What happens if it cannot be settled?"
+    resolved = resolve_followup_question(followup, history)
+    assert "Prior question context:" in resolved
+    prior = resolved.split("Prior question context:")[-1]
+    assert "grievance" in prior.casefold()
+
+
+@pytest.mark.parametrize(
+    "followup",
+    [
+        "What about this?",
+        "Are those required too?",
+        "Do them need to sign?",
+        "Is there a deadline?",
+        "Is it the same for faculty?",
+    ],
+)
+def test_genuine_short_followups_with_each_pronoun_still_resolve(followup):
+    # Scenario 5: every other pronoun the resolver recognizes ("this",
+    # "those", "them", "there", "same", and "it" again in combination),
+    # used exactly as a short genuine follow-up (pronoun in the first few
+    # words, no referent of its own) -- confirms the fix's position check
+    # does not accidentally disable these just for introducing the same
+    # positional rule "that" already had.
+    history = _history(
+        ("How do I get a Good Moral Certificate?", "Submit a request form to the Registrar."),
+    )
+    resolved = resolve_followup_question(followup, history)
+    assert "Prior question context:" in resolved
+    prior = resolved.split("Prior question context:")[-1]
+    assert "good moral" in prior.casefold()
+
+
+def test_pronoun_free_short_followup_still_depends_on_earlier_topic():
+    # Scenario 6: the existing `short_followup` mechanism (length <= 8 words,
+    # not standalone, does not name its own service/subject) already
+    # supports a follow-up with NO pronoun at all -- this fix only changes
+    # pronoun handling and must not regress this independent, pre-existing
+    # path.
+    history = _history(
+        ("How do I get a Good Moral Certificate?", "Submit a request form to the Registrar."),
+    )
+    resolved = resolve_followup_question("What are the requirements?", history)
+    assert "Prior question context:" in resolved
+    prior = resolved.split("Prior question context:")[-1]
+    assert "good moral" in prior.casefold()
+
+
+# --- Independent near-exact-repeat guard (deeper, more robust investigation) ---
+#
+# The pronoun-position fix above only accidentally avoided the self-quote bug
+# for the specific grievance question, because its "it" happens to sit deep
+# in that one long sentence. It does NOT generalize: a SHORT or MEDIUM
+# repeated question whose pronoun happens to fall within the first few words
+# still triggered `resolve_active_topic` to return that same prior turn's
+# own text, truncated, as "prior context" -- a self-quote. FIX: an explicit,
+# independent check -- is the current question a near-exact repeat (case/
+# whitespace/trailing-punctuation-insensitive only, no fuzzy matching) of the
+# user's own immediately preceding message? -- runs before any pronoun/
+# follow-up-cue evaluation at all, so it protects every repeat regardless of
+# length or where a pronoun happens to sit.
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How much does it cost to file a leave of absence request?",
+        "Is it possible to appeal if it is rejected by the committee?",
+    ],
+)
+def test_short_or_medium_question_repeated_verbatim_is_left_unchanged(question):
+    # Confirmed gap in the pronoun-position-only fix: both of these have an
+    # early pronoun (position <= 3), so the position check alone still
+    # treated a verbatim repeat of either as needing "resolution" against
+    # itself. The repeat guard fixes this independently of pronoun position.
+    history = _history(
+        (question, "The indexed LSPU documents do not contain enough information about this topic."),
+    )
+    resolved = resolve_followup_question(question, history)
+    assert resolved == question
+    assert "Prior question context:" not in resolved
+
+
+def test_repeat_guard_does_not_fire_for_a_genuinely_different_short_question():
+    # The repeat guard is exact-match only (ignoring case/whitespace/trailing
+    # punctuation) -- it must never suppress a genuine follow-up merely
+    # because it shares wording with the prior turn. (The prior turn here
+    # must itself set a real, resolvable topic -- a slot question like "How
+    # much does it cost?" has none of its own, which would make this test
+    # fail for an unrelated reason.)
+    history = _history(
+        ("How do I get a Good Moral Certificate?", "Submit a request form to the Registrar."),
+    )
+    resolved = resolve_followup_question("How long does it take?", history)
+    assert "Prior question context:" in resolved
+    prior = resolved.split("Prior question context:")[-1]
+    assert "good moral" in prior.casefold()
+
+
+def test_followup_after_intervening_unrelated_exchange_still_uses_the_newer_topic():
+    # Pre-existing, intentional behavior (documented in resolve_active_topic's
+    # own docstring: "Topic A -> Topic B -> follow-up resolves against B
+    # only") -- confirmed still intact after both fixes. This is not a
+    # "clarify instead of guess" case: the user explicitly switched topics,
+    # so assuming the follow-up is about the newest topic is the documented,
+    # correct behavior, not an ambiguous one.
+    history = _history(
+        (
+            "Under the LSPU Student Handbook, what is the Student Internship "
+            "Program grievance procedure?",
+            "A university-level Grievance Committee reviews unresolved complaints.",
+        ),
+        ("What is the TOR fee per page?", "PHP 20.00 per page."),
+    )
+    resolved = resolve_followup_question("How much does it cost?", history)
+    assert "Prior question context:" in resolved
+    prior = resolved.split("Prior question context:")[-1].casefold()
+    assert "tor" in prior or "fee" in prior
+    assert "grievance" not in prior
+
+
+def test_ambiguous_prior_turn_with_no_real_topic_is_not_reliably_avoided():
+    """Documents a REMAINING, UNRESOLVED gap found during this investigation,
+    not a guarantee: when the only prior user turn is a bare greeting with no
+    real topic ("hello"), `resolve_active_topic` currently has no dedicated
+    signal distinguishing "no usable topic exists" from "the topic IS the
+    literal text of that turn" -- it is not recognized as a vague/slot
+    question by `_is_underspecified_question`, so it is returned and
+    attached as if it were a real topic. An attempted fix (reject a resolved
+    topic with fewer than 2 content words) was tried and reverted after it
+    broke legitimate single-word topic labels like "Clearance" -- see the
+    production-code comment history / investigation report. This test
+    pins down CURRENT behavior so a future, better-scoped fix has a
+    regression baseline, and documents that "avoid confidently attaching
+    unrelated history" is not yet achieved for this specific shape."""
+    history = _history(("hello", "Hi! How can I help?"))
+    resolved = resolve_followup_question("What about it?", history)
+    assert "Prior question context: hello" in resolved
+
+
 def test_tor_short_label_canonicalizes_to_transcript_of_records():
     from app.services.qa.question_answering import _canonical_service_retrieval_phrase
 

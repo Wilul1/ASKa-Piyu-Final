@@ -76,6 +76,11 @@ backend/.EasyOCR/
 # Local draft docs / previews (not part of the product)
 docs/
 
+# Local ad hoc Claude-generated audit/report output -- never hand-authored
+# source, may contain pasted-in sensitive excerpts from manual production
+# investigations, never meant to be committed.
+/Claude outputs/
+
 # Local ad hoc audit/probe/certification/regression scratch artifacts from
 # manual production-verification sessions (never hand-authored source, never
 # meant to be committed; several carry "secret"/"qa_state" in the name).

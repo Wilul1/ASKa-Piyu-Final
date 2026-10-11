@@ -17,7 +17,9 @@ from app.services.embeddings import (
     EXPECTED_EMBEDDING_DIMENSION,
     E5EmbeddingFunction,
     HFRemoteEmbeddingFunction,
+    LocalEC2EmbeddingFunction,
     RemoteEmbeddingError,
+    _validate_local_embedding_url,
     current_embedding_model_label,
     get_embedding_function,
 )
@@ -126,6 +128,39 @@ def test_get_embedding_function_backend_name_is_case_insensitive():
         with patch("app.services.embeddings.settings.embedding_backend", "HuggingFace"):
             ef = get_embedding_function()
         assert isinstance(ef, HFRemoteEmbeddingFunction)
+    finally:
+        get_embedding_function.cache_clear()
+
+
+def test_get_embedding_function_returns_local_ec2_when_configured():
+    get_embedding_function.cache_clear()
+    try:
+        with patch("app.services.embeddings.settings.embedding_backend", "local_ec2"):
+            ef = get_embedding_function()
+        assert isinstance(ef, LocalEC2EmbeddingFunction)
+    finally:
+        get_embedding_function.cache_clear()
+
+
+def test_get_embedding_function_local_ec2_is_case_insensitive():
+    get_embedding_function.cache_clear()
+    try:
+        with patch("app.services.embeddings.settings.embedding_backend", "Local_EC2"):
+            ef = get_embedding_function()
+        assert isinstance(ef, LocalEC2EmbeddingFunction)
+    finally:
+        get_embedding_function.cache_clear()
+
+
+def test_existing_local_and_huggingface_backends_still_selected_correctly():
+    """Adding the local_ec2 branch must not disturb either existing branch."""
+    get_embedding_function.cache_clear()
+    try:
+        with patch("app.services.embeddings.settings.embedding_backend", "local"):
+            assert isinstance(get_embedding_function(), E5EmbeddingFunction)
+        get_embedding_function.cache_clear()
+        with patch("app.services.embeddings.settings.embedding_backend", "huggingface"):
+            assert isinstance(get_embedding_function(), HFRemoteEmbeddingFunction)
     finally:
         get_embedding_function.cache_clear()
 
@@ -332,3 +367,331 @@ def test_hf_backend_empty_input_short_circuits_without_network_call():
         assert ef([]) == []
         assert ef.embed_query([]) == []
     mock_post.assert_not_called()
+
+
+# --- Local EC2 (self-hosted) backend -----------------------------------------
+#
+# 2026-10-09: mirrors the HFRemoteEmbeddingFunction tests above exactly,
+# adapted for LocalEC2EmbeddingFunction's response shape
+# ({"vectors": [...], "dimension": N} instead of a bare list) and its
+# distinct settings fields (ASKA_LOCAL_EMBEDDING_URL/_TOKEN, never
+# ASKA_HF_TOKEN). No real network call and no real EC2 service -- httpx.post
+# is mocked throughout, same as the HF backend tests.
+
+
+FAKE_LOCAL_TOKEN = "local-fakeTokenForTestingOnlyDoNotUseThis654321"
+FAKE_LOCAL_URL = "http://127.0.0.1:8001"
+
+
+def _fake_local_response(vectors):
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"vectors": vectors, "dimension": EXPECTED_EMBEDDING_DIMENSION}
+    return response
+
+
+def test_local_ec2_passage_prefix_and_no_double_prefix():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    fake_vector = [0.1] * EXPECTED_EMBEDDING_DIMENSION
+    with patch("httpx.post", return_value=_fake_local_response([fake_vector])) as mock_post:
+        result = ef(["Enrollment requires a signed form."])
+
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["texts"] == ["Enrollment requires a signed form."]
+    assert len(result) == 1
+    assert len(result[0]) == EXPECTED_EMBEDDING_DIMENSION
+
+
+def test_local_ec2_hits_passages_path_not_query():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    fake_vector = [0.1] * EXPECTED_EMBEDDING_DIMENSION
+    with patch("httpx.post", return_value=_fake_local_response([fake_vector])) as mock_post:
+        ef(["doc text"])
+
+    call = mock_post.call_args
+    url = call.args[0] if call.args else call.kwargs.get("url")
+    assert url == f"{FAKE_LOCAL_URL}/embed/passages"
+
+
+def test_local_ec2_query_hits_query_path_not_passages():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    fake_vector = [0.2] * EXPECTED_EMBEDDING_DIMENSION
+    with patch("httpx.post", return_value=_fake_local_response([fake_vector])) as mock_post:
+        ef.embed_query(["How do I enroll?"])
+
+    call = mock_post.call_args
+    url = call.args[0] if call.args else call.kwargs.get("url")
+    assert url == f"{FAKE_LOCAL_URL}/embed/query"
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["texts"] == ["How do I enroll?"]
+
+
+def test_local_ec2_uses_bearer_auth_header():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    fake_vector = [0.0] * EXPECTED_EMBEDDING_DIMENSION
+    with patch("httpx.post", return_value=_fake_local_response([fake_vector])) as mock_post:
+        ef.embed_query(["warmup"])
+
+    assert mock_post.call_args.kwargs["headers"]["Authorization"] == f"Bearer {FAKE_LOCAL_TOKEN}"
+
+
+def test_local_ec2_enforces_configured_timeout():
+    ef = LocalEC2EmbeddingFunction(
+        base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN, timeout_seconds=7.5
+    )
+    fake_vector = [0.0] * EXPECTED_EMBEDDING_DIMENSION
+    with patch("httpx.post", return_value=_fake_local_response([fake_vector])) as mock_post:
+        ef.embed_query(["warmup"])
+
+    assert mock_post.call_args.kwargs["timeout"] == 7.5
+
+
+def test_local_ec2_rejects_wrong_dimension():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    wrong_dim_vector = [0.1] * (EXPECTED_EMBEDDING_DIMENSION - 1)
+    with patch("httpx.post", return_value=_fake_local_response([wrong_dim_vector])):
+        with pytest.raises(RemoteEmbeddingError, match="dimension"):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_rejects_non_finite_values():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    bad_vector = [float("inf")] + [0.1] * (EXPECTED_EMBEDDING_DIMENSION - 1)
+    with patch("httpx.post", return_value=_fake_local_response([bad_vector])):
+        with pytest.raises(RemoteEmbeddingError, match="non-finite"):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_rejects_malformed_response_missing_vectors_key():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"dimension": EXPECTED_EMBEDDING_DIMENSION}  # no "vectors" key
+    with patch("httpx.post", return_value=response):
+        with pytest.raises(RemoteEmbeddingError, match="vectors"):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_rejects_non_dict_response():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = [[0.1] * EXPECTED_EMBEDDING_DIMENSION]  # bare list, not wrapped
+    with patch("httpx.post", return_value=response):
+        with pytest.raises(RemoteEmbeddingError, match="vectors"):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_rejects_wrong_vector_count():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    one_vector = [[0.1] * EXPECTED_EMBEDDING_DIMENSION]
+    with patch("httpx.post", return_value=_fake_local_response(one_vector)):
+        with pytest.raises(RemoteEmbeddingError, match="unexpected"):
+            ef(["doc one", "doc two"])  # two inputs, one vector returned
+
+
+def test_local_ec2_rejects_invalid_json():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    response = MagicMock()
+    response.status_code = 200
+    response.json.side_effect = ValueError("not json")
+    with patch("httpx.post", return_value=response):
+        with pytest.raises(RemoteEmbeddingError, match="JSON"):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_raises_on_non_200_status():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    response = MagicMock()
+    response.status_code = 401
+    with patch("httpx.post", return_value=response):
+        with pytest.raises(RemoteEmbeddingError, match="401"):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_raises_on_timeout():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN, timeout_seconds=5.0)
+    with patch("httpx.post", side_effect=httpx.TimeoutException("timed out")):
+        with pytest.raises(RemoteEmbeddingError, match="timed out"):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_raises_on_transport_error():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    with patch("httpx.post", side_effect=httpx.ConnectError("connection refused")):
+        with pytest.raises(RemoteEmbeddingError):
+            ef.embed_query(["test"])
+
+
+def test_local_ec2_without_url_raises_before_any_network_call():
+    # Settings must be patched BEFORE construction: __init__ resolves the
+    # settings fallback immediately, so patching after construction would
+    # have no effect on the already-resolved self._base_url.
+    with patch("app.services.embeddings.settings.local_embedding_url", None):
+        ef = LocalEC2EmbeddingFunction(base_url=None, token=FAKE_LOCAL_TOKEN)
+        with patch("httpx.post") as mock_post:
+            with pytest.raises(RemoteEmbeddingError, match="ASKA_LOCAL_EMBEDDING_URL"):
+                ef.embed_query(["test"])
+    mock_post.assert_not_called()
+
+
+def test_local_ec2_without_token_raises_before_any_network_call():
+    # Same construction-order note as above, for the token fallback.
+    with patch("app.services.embeddings.settings.local_embedding_token", None):
+        ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=None)
+        with patch("httpx.post") as mock_post:
+            with pytest.raises(RemoteEmbeddingError, match="ASKA_LOCAL_EMBEDDING_TOKEN"):
+                ef.embed_query(["test"])
+    mock_post.assert_not_called()
+
+
+def test_local_ec2_token_never_appears_in_exception_message(caplog):
+    """Covers every failure path we can trigger without a live network call:
+    the fake token string must never surface in the raised exception's
+    message or in any log record."""
+    ef = LocalEC2EmbeddingFunction(
+        base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN, timeout_seconds=1.0
+    )
+
+    caught: list[Exception] = []
+    with caplog.at_level(logging.DEBUG):
+        with patch(
+            "httpx.post",
+            side_effect=httpx.TimeoutException("timed out, request=<...Authorization...>"),
+        ):
+            try:
+                ef.embed_query(["test"])
+            except RemoteEmbeddingError as exc:
+                caught.append(exc)
+                logger = logging.getLogger("app.services.embeddings")
+                logger.exception("local embedding warm-up failed")
+
+    assert len(caught) == 1
+    assert FAKE_LOCAL_TOKEN not in str(caught[0])
+    for record in caplog.records:
+        assert FAKE_LOCAL_TOKEN not in record.getMessage()
+        if record.exc_text:
+            assert FAKE_LOCAL_TOKEN not in record.exc_text
+
+
+def test_local_ec2_token_never_in_get_config():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    config = ef.get_config()
+    assert FAKE_LOCAL_TOKEN not in str(config)
+    assert "token" not in config
+
+
+def test_local_ec2_build_from_config_round_trip_without_token():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    rebuilt = LocalEC2EmbeddingFunction.build_from_config(ef.get_config())
+    assert rebuilt.get_config() == ef.get_config()
+    # Token is not part of config and is not carried over by build_from_config;
+    # the rebuilt instance falls back to settings.local_embedding_token.
+    with patch("app.services.embeddings.settings.local_embedding_token", None):
+        rebuilt_fallback = LocalEC2EmbeddingFunction.build_from_config(ef.get_config())
+        assert rebuilt_fallback._token is None
+
+
+def test_local_ec2_does_not_instantiate_sentence_transformer():
+    """The whole point of the remote-service backend: it must never touch
+    sentence-transformers/torch, not even transitively."""
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    fake_vector = [0.0] * EXPECTED_EMBEDDING_DIMENSION
+    fake_st_constructor = MagicMock()
+    with patch("sentence_transformers.SentenceTransformer", fake_st_constructor):
+        with patch("httpx.post", return_value=_fake_local_response([fake_vector])):
+            ef(["doc"])
+            ef.embed_query(["query"])
+    fake_st_constructor.assert_not_called()
+
+
+def test_local_ec2_empty_input_short_circuits_without_network_call():
+    ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+    with patch("httpx.post") as mock_post:
+        assert ef([]) == []
+        assert ef.embed_query([]) == []
+    mock_post.assert_not_called()
+
+
+# --- 2026-10-09 follow-up: URL scheme/host validation (Step 5B Part A) -----
+#
+# Plaintext http:// is allowed ONLY for a loopback host (127.0.0.1/
+# localhost/::1) AND only outside settings.env == "production" -- a
+# narrowly scoped allowance for local development and the mocked tests
+# above (which all use http://127.0.0.1:8001 under env="test"), never a
+# production bypass: a production URL always requires https://, regardless
+# of host.
+
+
+def test_validate_local_embedding_url_accepts_https_anywhere():
+    _validate_local_embedding_url("https://embed.example.com")  # must not raise
+    with patch("app.services.embeddings.settings.env", "production"):
+        _validate_local_embedding_url("https://embed.example.com")  # must not raise
+
+
+def test_validate_local_embedding_url_allows_http_loopback_outside_production():
+    _validate_local_embedding_url("http://127.0.0.1:8001")  # must not raise
+    _validate_local_embedding_url("http://localhost:8001")  # must not raise
+
+
+def test_validate_local_embedding_url_rejects_http_in_production_even_loopback():
+    with patch("app.services.embeddings.settings.env", "production"):
+        with pytest.raises(RemoteEmbeddingError, match="https"):
+            _validate_local_embedding_url("http://127.0.0.1:8001")
+
+
+def test_validate_local_embedding_url_rejects_http_non_loopback_outside_production():
+    with pytest.raises(RemoteEmbeddingError, match="loopback"):
+        _validate_local_embedding_url("http://embed.example.com")
+
+
+def test_validate_local_embedding_url_rejects_unsupported_scheme():
+    with pytest.raises(RemoteEmbeddingError, match="scheme"):
+        _validate_local_embedding_url("ftp://embed.example.com")
+    with pytest.raises(RemoteEmbeddingError, match="scheme"):
+        _validate_local_embedding_url("ws://embed.example.com")
+
+
+def test_validate_local_embedding_url_rejects_malformed_url():
+    with pytest.raises(RemoteEmbeddingError, match="scheme"):
+        _validate_local_embedding_url("not a url")
+    with pytest.raises(RemoteEmbeddingError, match="scheme"):
+        _validate_local_embedding_url("")
+
+
+def test_validate_local_embedding_url_rejects_missing_host():
+    with pytest.raises(RemoteEmbeddingError, match="host"):
+        _validate_local_embedding_url("https://")
+    with pytest.raises(RemoteEmbeddingError, match="host"):
+        _validate_local_embedding_url("https:///some/path")
+
+
+def test_local_ec2_rejects_http_url_in_production_before_any_network_call():
+    with patch("app.services.embeddings.settings.env", "production"):
+        ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+        with patch("httpx.post") as mock_post:
+            with pytest.raises(RemoteEmbeddingError, match="https"):
+                ef.embed_query(["test"])
+    mock_post.assert_not_called()
+
+
+def test_local_ec2_accepts_https_url_in_production():
+    with patch("app.services.embeddings.settings.env", "production"):
+        ef = LocalEC2EmbeddingFunction(
+            base_url="https://embed.example.com", token=FAKE_LOCAL_TOKEN
+        )
+        fake_vector = [0.0] * EXPECTED_EMBEDDING_DIMENSION
+        with patch("httpx.post", return_value=_fake_local_response([fake_vector])):
+            result = ef.embed_query(["test"])
+    assert len(result) == 1
+
+
+def test_local_ec2_url_validation_error_never_contains_token():
+    with patch("app.services.embeddings.settings.env", "production"):
+        ef = LocalEC2EmbeddingFunction(base_url=FAKE_LOCAL_URL, token=FAKE_LOCAL_TOKEN)
+        with patch("httpx.post"):
+            try:
+                ef.embed_query(["test"])
+                raise AssertionError("expected RemoteEmbeddingError")
+            except RemoteEmbeddingError as exc:
+                assert FAKE_LOCAL_TOKEN not in str(exc)

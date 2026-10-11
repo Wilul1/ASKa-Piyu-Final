@@ -134,6 +134,17 @@ class Settings(BaseSettings):
     hf_token: str | None = None
     hf_embedding_model: str = "intfloat/multilingual-e5-small"
     hf_embedding_timeout_seconds: float = 15.0
+    # "local_ec2": calls a self-hosted CPU embedding service (e.g. the
+    # AWS EC2 OCR-worker box, running the same intfloat/multilingual-e5-
+    # small model) instead of Hugging Face's hosted inference router --
+    # see app.services.embeddings.LocalEC2EmbeddingFunction. Model-revision
+    # equivalence with whatever produced the current Chroma vectors is NOT
+    # verified (same caveat as the "huggingface" backend above -- neither
+    # backend has ever pinned an exact revision); this is an explicit
+    # opt-in, never a silent default change.
+    local_embedding_url: str | None = None
+    local_embedding_token: str | None = None
+    local_embedding_timeout_seconds: float = 15.0
 
     # --- Student Q&A (retrieval only; no OCR) ---
     rag_top_k: int = 5

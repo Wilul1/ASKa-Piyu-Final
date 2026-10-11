@@ -32,6 +32,7 @@ import logging
 import math
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.config import settings
 
@@ -245,6 +246,169 @@ class HFRemoteEmbeddingFunction:
         return HFRemoteEmbeddingFunction(model_name=config.get("model_name"))
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _validate_local_embedding_url(url: str) -> None:
+    """Rejects a malformed or unsafe ``ASKA_LOCAL_EMBEDDING_URL`` before any
+    request is sent.
+
+    Plaintext ``http://`` is allowed ONLY for a loopback host (127.0.0.1 /
+    localhost / ::1) AND only outside ``settings.env == "production"`` --
+    a narrowly scoped allowance for local development and mocked tests
+    (the existing test suite's ``http://127.0.0.1:8001`` fixtures keep
+    working unchanged), never a production bypass: a production URL is
+    always required to be ``https://``, regardless of host. Never includes
+    the token (this function never sees it) in any raised message.
+    """
+    parsed = urlsplit(url)
+    if parsed.scheme not in ("http", "https"):
+        raise RemoteEmbeddingError(
+            "ASKA_LOCAL_EMBEDDING_URL has an unsupported or missing scheme "
+            f"({parsed.scheme or 'none'!r}); only http/https are allowed."
+        )
+    if not parsed.hostname:
+        raise RemoteEmbeddingError("ASKA_LOCAL_EMBEDDING_URL is missing a host.")
+    if parsed.scheme == "http":
+        if settings.env == "production":
+            raise RemoteEmbeddingError(
+                "ASKA_LOCAL_EMBEDDING_URL must use https:// in production; "
+                "plaintext http is never allowed in production."
+            )
+        if parsed.hostname.lower() not in _LOOPBACK_HOSTS:
+            raise RemoteEmbeddingError(
+                "ASKA_LOCAL_EMBEDDING_URL uses plaintext http for a "
+                "non-loopback host; only https:// is allowed except for "
+                "local loopback testing (127.0.0.1/localhost)."
+            )
+
+
+class LocalEC2EmbeddingFunction:
+    """Chroma-compatible embedding function calling a self-hosted, CPU-based
+    embedding service (e.g. the AWS EC2 box already running the OCR worker)
+    instead of Hugging Face's hosted inference router.
+
+    Same asymmetric-retrieval prefix contract as ``HFRemoteEmbeddingFunction``
+    (see that class's docstring) and the same response-validation helper
+    (``_validate_and_extract_vectors``) -- the service wraps its vectors as
+    ``{"vectors": [...], "dimension": N}``, unwrapped here to the same bare
+    list-of-vectors shape the HF router itself returns.
+
+    Model-revision equivalence with whatever produced the CURRENT Chroma
+    vectors is NOT verified by this class (or by the existing "huggingface"
+    backend) -- neither Hugging Face's hosted router nor this self-hosted
+    service pins an exact model revision anywhere in this codebase. This is
+    an explicit opt-in, never a silent default change.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        token: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        raw_base_url = base_url if base_url is not None else settings.local_embedding_url
+        self._base_url = (raw_base_url or "").strip().rstrip("/")
+        # Explicit None (not falsy-empty-string) check: an empty string is a
+        # deliberate "no token configured" signal, not "use the default".
+        self._token = token if token is not None else settings.local_embedding_token
+        self._timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else settings.local_embedding_timeout_seconds
+        )
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        """Embed documents/passages for indexing (``collection.add``)."""
+        return self._encode("/embed/passages", input)
+
+    def embed_query(self, input: list[str]) -> list[list[float]]:
+        """Embed a search query (``collection.query``). Same prefix semantics as the other backends."""
+        return self._encode("/embed/query", input)
+
+    def _encode(self, path: str, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        if not self._base_url:
+            raise RemoteEmbeddingError(
+                "ASKA_LOCAL_EMBEDDING_URL is not configured; the local EC2 "
+                "embedding backend cannot be used."
+            )
+        _validate_local_embedding_url(self._base_url)
+        if not self._token:
+            raise RemoteEmbeddingError(
+                "ASKA_LOCAL_EMBEDDING_TOKEN is not configured; the local EC2 "
+                "embedding backend cannot be used."
+            )
+
+        import httpx
+
+        url = f"{self._base_url}{path}"
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            response = httpx.post(
+                url,
+                headers=headers,
+                json={"texts": texts},
+                timeout=self._timeout_seconds,
+            )
+        except httpx.TimeoutException:
+            # Deliberately not `from exc` / not interpolating str(exc): a
+            # timeout exception's repr can include the request (and its
+            # Authorization header) depending on the underlying transport.
+            raise RemoteEmbeddingError(
+                f"Local embedding request timed out after {self._timeout_seconds}s."
+            ) from None
+        except httpx.HTTPError:
+            raise RemoteEmbeddingError(
+                "Local embedding request failed (network/transport error)."
+            ) from None
+
+        if response.status_code != 200:
+            # Status code only -- never the response body/request, same
+            # rationale as HFRemoteEmbeddingFunction._encode above.
+            raise RemoteEmbeddingError(
+                f"Local embedding request failed with HTTP {response.status_code}."
+            )
+
+        try:
+            payload = response.json()
+        except ValueError:
+            raise RemoteEmbeddingError(
+                "Local embedding response was not valid JSON."
+            ) from None
+
+        if not isinstance(payload, dict) or "vectors" not in payload:
+            raise RemoteEmbeddingError(
+                "Local embedding response shape was unexpected (missing 'vectors')."
+            )
+
+        vectors = _validate_and_extract_vectors(payload["vectors"], expected_count=len(texts))
+
+        import numpy as np
+
+        return [np.asarray(vector, dtype=np.float32) for vector in vectors]
+
+    @staticmethod
+    def name() -> str:
+        return "aska_piyu_e5_local_ec2"
+
+    def get_config(self) -> dict[str, Any]:
+        # Never include the token: Chroma persists this config to disk
+        # alongside the collection.
+        return {"base_url": self._base_url}
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "LocalEC2EmbeddingFunction":
+        # No token in config by design (see get_config) -- __init__ falls
+        # back to settings.local_embedding_token from the environment.
+        return LocalEC2EmbeddingFunction(base_url=config.get("base_url"))
+
+
 @lru_cache(maxsize=1)
 def get_embedding_function() -> Any:
     """The single chokepoint Chroma calls through (see chroma_store.py).
@@ -255,6 +419,8 @@ def get_embedding_function() -> Any:
     backend = (settings.embedding_backend or "local").strip().lower()
     if backend == "huggingface":
         return HFRemoteEmbeddingFunction()
+    if backend == "local_ec2":
+        return LocalEC2EmbeddingFunction()
     return E5EmbeddingFunction()
 
 
@@ -265,4 +431,6 @@ def current_embedding_model_label() -> str:
     backend = (settings.embedding_backend or "local").strip().lower()
     if backend == "huggingface":
         return f"Hugging Face remote: {settings.hf_embedding_model or DEFAULT_EMBEDDING_MODEL}"
+    if backend == "local_ec2":
+        return f"Local EC2 remote: {DEFAULT_EMBEDDING_MODEL}"
     return f"sentence-transformers: {settings.embedding_model_name or DEFAULT_EMBEDDING_MODEL}"

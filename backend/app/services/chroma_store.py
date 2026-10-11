@@ -39,6 +39,39 @@ _SOURCE_FOOTER_RE = re.compile(
     r"\n{0,2}S?ource Information\n(?=(?:Document|Service|Office|Page)\s*:)[\s\S]*\Z"
 )
 
+# Matches the self-hosted EC2 embedding service's own input-length limit
+# (see aska-embedding-service/service.py's MAX_TEXT_LENGTH). A bundled,
+# multi-topic question can get expanded twice — once when the top-level
+# question is first prepared, again here in Store.search() when that
+# already-expanded text is re-run through prepare_retrieval_query() as one
+# of several retrieval variants (see question_answering._multi_query_retrieve)
+# — compounding past this limit and causing the embedding call to fail with
+# HTTP 422 (see RemoteEmbeddingError). Clamping here is the narrow fix: it
+# does not touch the expansion rules themselves or the EC2 service's limit.
+EMBEDDING_QUERY_MAX_CHARS = 2000
+
+
+def _clamp_embedding_query_text(text: str, *, max_chars: int = EMBEDDING_QUERY_MAX_CHARS) -> str:
+    """Keep an already-expanded retrieval query within the embedding
+    service's input-length limit.
+
+    ``prepare_retrieval_query``'s own ``expanded_query`` is built as
+    ``original_query`` followed by the normalized query and matched
+    expansion terms (highest-priority text first), so a prefix-preserving
+    clamp keeps the user's original question intact and drops only the
+    lowest-priority trailing expansion terms. The cut lands on a word
+    boundary so no term is left half-written, and this never returns an
+    empty/whitespace-only string for non-empty input. A no-op for any text
+    already at or under the limit.
+    """
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0].strip()
+    return truncated or text[:max_chars].strip()
+
 # Chroma Cloud enforces a per-request "Get" action quota (documented max:
 # 300 results per collection.get() call). Omitting `limit` does NOT raise
 # an error -- it silently returns at most this many matches with no
@@ -712,8 +745,9 @@ class KnowledgeBaseStore:
         candidate_k = raw_k or max(k, 10)
         candidate_k = max(k, candidate_k)
         prepared_query = prepare_retrieval_query(query.strip(), ablation=ablation)
+        embedding_query_text = _clamp_embedding_query_text(prepared_query.expanded_query)
         query_kwargs: dict[str, Any] = {
-            "query_texts": [prepared_query.expanded_query],
+            "query_texts": [embedding_query_text],
             "n_results": min(candidate_k, self._collection.count()),
             "include": ["documents", "metadatas", "distances"],
         }

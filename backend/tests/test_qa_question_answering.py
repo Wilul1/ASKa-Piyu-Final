@@ -3925,6 +3925,93 @@ def test_select_context_chunks_drops_sibling_when_strong_penalty_present_and_not
     assert kept is False
 
 
+# --- Phase 3 context-selection fix: disciplinary penalty excluded regardless
+# of rank (confirmed production regression -- survey "incoherent uniform
+# policy fragments" incident). Unlike the other four strong-penalty markers,
+# a chunk the reranker already flagged as disciplinary-sanctions content
+# (offense lists, suspension/community-service escalation tables) must
+# never be force-kept merely by landing at rank 1 -- its own raw extracted
+# text (e.g. "...40 hours..." from a penalty-escalation table) can read as
+# confident prose while being unrelated to, or incoherently mixed with, the
+# genuine policy answer. See _has_disciplinary_penalty in
+# question_answering.py.
+
+
+def test_select_context_chunks_excludes_disciplinary_penalty_chunk_even_at_rank_1():
+    """A rank-1 chunk marked disciplinary must be excluded -- the exact
+    bypass this fix closes. Modeled on the real Student Handbook
+    'Administrative Sanctions' section (page 89) that produced the reported
+    '40 hours' fragment."""
+    disciplinary_rank1 = chunk(
+        "X. Administrative Sanctions",
+        "A. The following shall be grounds for disciplinary actions: 1. Dishonesty "
+        "2. Improper uniform... Suspension for one (1) week and 40 hours community service.",
+        score=3.0,
+        reasons=["keep_rank_1", "keep_close_to_rank_1", "penalty_disciplinary_offense_out_of_domain"],
+    )
+    selected, decisions = select_context_chunks(
+        "pwede ba hindi naka uniform pag pasok sa school?",
+        [disciplinary_rank1],
+    )
+    assert selected == []
+    kept, reasons = decisions[id(disciplinary_rank1)]
+    assert kept is False
+
+
+def test_select_context_chunks_keeps_genuine_lower_ranked_uniform_policy_chunk():
+    """A genuine, lower-ranked, on-topic School Uniforms chunk (page 87 in
+    the real handbook) with its own matching evidence must still be kept --
+    this fix narrows the disciplinary rank-1 exemption, it does not make
+    context selection stricter for ordinary, legitimately relevant chunks."""
+    disciplinary_rank1 = chunk(
+        "X. Administrative Sanctions",
+        "A. The following shall be grounds for disciplinary actions: 1. Dishonesty "
+        "2. Improper uniform... Suspension for one (1) week and 40 hours community service.",
+        score=3.0,
+        reasons=["keep_rank_1", "keep_close_to_rank_1", "penalty_disciplinary_offense_out_of_domain"],
+    )
+    uniform_policy = chunk(
+        "School Uniforms",
+        "1.1. The prescribed uniform shall be worn in all classroom sessions. "
+        "1.2. P.E. uniforms shall be worn only during P.E. classes.",
+        score=2.8,
+        reasons=["keep_close_to_rank_1", "boost_valid_source_metadata"],
+    )
+    selected, decisions = select_context_chunks(
+        "pwede ba hindi naka uniform pag pasok sa school?",
+        [disciplinary_rank1, uniform_policy],
+    )
+    selected_titles = {c.metadata["section"] for c in selected}
+    # Requirement 4: the disciplinary chunk must not reach the final context
+    # when a valid uniform-policy chunk is available.
+    assert "X. Administrative Sanctions" not in selected_titles
+    assert "School Uniforms" in selected_titles
+    assert decisions[id(disciplinary_rank1)][0] is False
+    assert decisions[id(uniform_policy)][0] is True
+
+
+def test_select_context_chunks_rank_1_exemption_unchanged_for_other_penalty_markers():
+    """Negative control: a DIFFERENT strong-penalty marker
+    (penalty_unrequested_college) at rank 1 must retain its previous,
+    unchanged behavior -- force-kept despite the penalty. This fix is
+    scoped to penalty_disciplinary only."""
+    other_penalty_rank1 = chunk(
+        "Program X Admission",
+        "Program X admits only students from the College of Engineering.",
+        score=3.0,
+        reasons=["keep_rank_1", "keep_close_to_rank_1", "penalty_unrequested_college"],
+    )
+    selected, decisions = select_context_chunks(
+        "what are the admission requirements",
+        [other_penalty_rank1],
+    )
+    selected_titles = {c.metadata["section"] for c in selected}
+    assert "Program X Admission" in selected_titles
+    kept, reasons = decisions[id(other_penalty_rank1)]
+    assert kept is True
+    assert "drop_strong_penalty" in reasons
+
+
 # --- Phase 2 context-selection fix: a low-confidence classify_question()
 # guess must not become an authoritative query_domain for context-selection
 # boosting. Gated in _query_taxonomy_labels (question_answering.py), the

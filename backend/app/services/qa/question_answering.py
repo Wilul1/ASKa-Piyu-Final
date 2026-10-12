@@ -2244,6 +2244,13 @@ def select_context_chunks(
                 reasons.append("drop_duplicate_context_group")
         if rank != 1 and _has_strong_penalty(chunk):
             keep = False
+        # Disciplinary-sanctions content is excluded regardless of rank --
+        # unlike the other strong-penalty markers, a rank-1 disciplinary
+        # chunk must not be force-kept (_context_filter_reasons already
+        # recorded "drop_strong_penalty" for it above; this just makes that
+        # recorded reason binding at every rank, not only rank > 1).
+        if _has_disciplinary_penalty(chunk):
+            keep = False
         if is_service_howto_query(normalized_query) and is_artifact_or_requirement_form_chunk(chunk):
             keep = False
             reasons.append("drop_requirement_form_artifact_for_service_query")
@@ -6856,6 +6863,20 @@ def _positive_reasons(chunk: RetrievedChunk) -> list[str]:
         if (reason.startswith("boost_") or reason.endswith("_match") or reason.endswith("_policy"))
         and reason not in NON_TOPICAL_RERANK_REASONS
     ]
+
+
+def _has_disciplinary_penalty(chunk: RetrievedChunk) -> bool:
+    """True specifically when the reranker flagged this chunk as disciplinary
+    content (e.g. ``penalty_disciplinary_offense_out_of_domain``) -- unlike
+    the other strong-penalty markers, disciplinary-sanctions text (offense
+    lists, suspension/community-service schedules) must never reach an
+    unrelated answer merely by landing at rank 1: a rank-1 disciplinary
+    chunk's own extracted text (e.g. a penalty-escalation table) can read as
+    confident, on-topic prose while actually being unrelated or incoherent
+    once stitched into a generated answer. See ``select_context_chunks``,
+    which checks this unconditionally, separately from ``_has_strong_penalty``'s
+    rank-1 exemption (left unchanged for the other four markers)."""
+    return any(reason.startswith("penalty_disciplinary") for reason in (chunk.rerank_reasons or []))
 
 
 def _has_strong_penalty(chunk: RetrievedChunk) -> bool:

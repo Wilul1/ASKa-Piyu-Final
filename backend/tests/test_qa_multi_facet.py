@@ -135,7 +135,324 @@ def test_subqueries_skip_variants_the_pipeline_already_retrieves():
     assert facets[0].retrieval_query not in queries
 
 
+# --- Filipino multi-facet splitting (comma-anchored "at") --------------------
+#
+# Confirmed gap (v46 retrieval/context-assembly audit): split_question_facets
+# only recognized English coordinating conjunctions, so an equivalent
+# Filipino multi-part question never activated facet_retrieval_queries/
+# build_facet_evidence/partition_off_topic/analyze_facet_coverage at all --
+# it silently fell back to plain top-k retrieval for the whole bundled
+# question. Fixed by adding Filipino "at" ("and") to the SAME comma-anchored
+# _COORDINATION_SPLIT_RE boundary English's own comma+conjunction forms
+# already use -- not to the bare, no-comma conjunction splitter, since bare
+# "at" is also an ordinary English preposition ("meet at the registrar").
+
+
+TOR_FEE_QUESTION_FILIPINO = (
+    "Ano ang requirements para sa TOR sa bawat pahina, at magkano ang bayad?"
+)
+
+FILIPINO_CONDITIONAL_QUESTION = (
+    "Kung transferee ako, ano ang requirements para sa clearance, "
+    "at ilang araw ang processing time?"
+)
+
+
+def test_filipino_multi_part_question_splits_into_two_facets():
+    """Task example A: TOR requirements and the fee are independently
+    answerable parts, exactly like the existing English TOR-plus-fee case."""
+    facets = split_question_facets(TOR_FEE_QUESTION_FILIPINO)
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    assert any("requirements" in label and "TOR" in label for label in labels)
+    assert any("magkano ang bayad" in label for label in labels)
+
+
+def test_filipino_conditional_question_separates_condition_from_second_ask():
+    """Task example B: a kung-clause attached to the first ask must not be
+    stripped or lost, and the second, independently-answerable item (the
+    processing time) must still be recognized as its own facet."""
+    facets = split_question_facets(FILIPINO_CONDITIONAL_QUESTION)
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    # The conditional relationship is preserved verbatim, not stripped.
+    assert any(label.startswith("Kung transferee ako") for label in labels)
+    assert any("clearance" in label for label in labels)
+    assert any("processing time" in label for label in labels)
+
+
+def test_english_multi_part_question_splitting_is_unchanged():
+    """Task example C: the existing English TOR-plus-fee fixture must split
+    exactly as before -- no regression from the Filipino addition."""
+    from tests.test_qa_facet_coverage_caveats import TOR_FEE_QUESTION
+
+    facets = split_question_facets(TOR_FEE_QUESTION)
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    assert any("TOR fee per page" in label for label in labels)
+    assert any("Landbank LinkBiz processing fee" in label for label in labels)
+
+
+def test_filipino_question_with_at_and_kung_but_one_real_ask_is_not_split():
+    """Task example D: 'at' and 'kung' both appear, but there is only one
+    thing being asked (how to validate/replace a lost ID) -- no comma
+    precedes 'at', so this must stay a single facet, not fragment into
+    meaningless pieces."""
+    facets = split_question_facets(
+        "Kung nawala ang aking ID, paano ko ito ma-validate at ma-replace agad?"
+    )
+
+    assert len(facets) == 1
+
+
+def test_filipino_conditional_without_comma_before_at_is_not_split():
+    """A second ordinary single-part case: 'kung ... at ...' with no comma
+    before 'at' is an accepted, documented limitation -- left intact rather
+    than guessed at, per the task's explicit preference."""
+    facets = split_question_facets("Pwede ba mag-enroll kung may balance at walang clearance?")
+
+    assert len(facets) == 1
+
+
+def test_english_question_with_bare_at_preposition_is_not_split():
+    """Regression guard: bare (comma-less) 'at' must never trigger a split,
+    even though it is now a recognized Filipino conjunction at the
+    comma-anchored boundary -- 'at' is also an ordinary English preposition."""
+    facets = split_question_facets("What are the office hours at the registrar and library?")
+
+    assert len(facets) == 1
+
+
+# --- comma-less Filipino "at", gated on a following WH-question word -------
+#
+# Confirmed limitation from the read-only follow-up review: the
+# comma-anchored fix above does not help a comma-less Filipino "at"
+# ("...TOR at magkano ang bayad?" with no comma). This narrow extension
+# splits ONLY when the word immediately after "at" is a fixed Filipino
+# WH-question word, so the second piece is self-evidently its own question
+# -- not a blanket "split every bare at" rule (ruled out by the review's
+# own example 5: "Pwede ba pumasok ... at mag-submit ...?" would have lost
+# its "Pwede ba" interrogative framing on the second piece).
+
+
+def test_comma_less_filipino_at_splits_when_followed_by_a_question_word():
+    """Positive case 1: 'magkano' immediately follows bare 'at'."""
+    facets = split_question_facets("Ano ang requirements para sa TOR at magkano ang bayad?")
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    assert any(label == "Ano ang requirements para sa TOR" for label in labels)
+    assert any(label == "magkano ang bayad" for label in labels)
+
+
+def test_comma_less_filipino_at_preserves_kung_clause_on_first_facet():
+    """Positive case 2: 'ilang' immediately follows bare 'at'; the leading
+    'kung transferee ako' condition must stay attached to the first facet,
+    not be stripped or relocated."""
+    facets = split_question_facets(
+        "Ano ang requirements kung transferee ako at ilang araw ang processing?"
+    )
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    assert any(label == "Ano ang requirements kung transferee ako" for label in labels)
+    assert any(label.startswith("ilang araw ang processing") for label in labels)
+
+
+def test_comma_less_filipino_at_splits_before_saan():
+    """Positive case 3: two meaningful facets, the second beginning 'saan'."""
+    facets = split_question_facets("Ano ang kailangan kong dalhin at saan ko ito isusumite?")
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    assert any(label.startswith("saan") for label in labels)
+
+
+def test_comma_anchored_filipino_at_example_is_unchanged_by_the_extension():
+    """Preserve case 4: the existing comma-anchored example must still
+    produce exactly the same two facets as before this extension."""
+    facets = split_question_facets(TOR_FEE_QUESTION_FILIPINO)
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    assert "Ano ang requirements para sa TOR sa bawat pahina" in labels
+    assert "magkano ang bayad" in labels
+
+
+def test_comma_less_filipino_at_before_non_question_word_is_not_split():
+    """Negative case 5: 'mag-submit' is a verb, not a supported question
+    word -- splitting here would strip the 'Pwede ba' interrogative framing
+    from the second piece, so this must stay one facet."""
+    facets = split_question_facets(
+        "Pwede ba pumasok sa school at mag-submit ng requirements sa registrar?"
+    )
+
+    assert len(facets) == 1
+
+
+def test_comma_less_filipino_at_before_walang_is_still_not_split():
+    """Negative case 6 (already covered by
+    test_filipino_conditional_without_comma_before_at_is_not_split above,
+    re-asserted here under this extension's own section for clarity):
+    'walang' is not a supported question word, and 'kung' is never a split
+    trigger -- this must remain one facet."""
+    facets = split_question_facets("Pwede ba mag-enroll kung may balance at walang clearance?")
+
+    assert len(facets) == 1
+
+
+def test_english_and_conjunction_still_splits_unaffected_by_filipino_at_rule():
+    """Negative/regression case 7: this sentence's only split boundary is
+    the pre-existing bare English 'and' -- confirms the new Filipino rule
+    does not interfere with, replace, or duplicate existing English
+    splitting, and that 'at' here (an English preposition) plays no part
+    in it."""
+    facets = split_question_facets("Meet at the registrar and ask about the TOR fee.")
+    labels = [facet.label for facet in facets]
+
+    assert len(facets) == 2
+    assert "Meet at the registrar" in labels
+    assert "ask about the TOR fee" in labels
+
+
+def test_filipino_question_word_as_a_substring_does_not_falsely_trigger():
+    """'sinuman' ('whoever/anyone') starts with 'sino' but is not the word
+    'sino' -- the word-boundary requirement must reject it."""
+    facets = split_question_facets(
+        "Pwede ba pumunta sa opisina at sinuman doon ang pwede kong lapitan?"
+    )
+
+    assert len(facets) == 1
+
+
+def test_question_word_not_immediately_after_at_does_not_trigger():
+    """'ano' appears later in the sentence, but the word right after 'at'
+    is 'kumustahin' (a verb) -- the rule must only look at what immediately
+    follows 'at', not scan the rest of the clause for a question word."""
+    facets = split_question_facets("Pwede ba pumunta at kumustahin kung ano ang kalagayan?")
+
+    assert len(facets) == 1
+
+
+# --- edge cases: punctuation, repetition, empty/trivial fragments -----------
+
+
+def test_empty_and_whitespace_only_questions_do_not_crash():
+    assert split_question_facets("") == []
+    assert split_question_facets("   ") == []
+
+
+def test_leading_comma_conjunction_with_only_trivial_content_yields_no_facets():
+    """',  at ano pa?' ('and what else?') has no real content on either
+    side -- must not produce an empty-label or whitespace-only facet."""
+    facets = split_question_facets(", at ano pa?")
+
+    assert facets == []
+
+
+def test_repeated_conjunctions_never_crash_or_produce_empty_or_duplicate_facets():
+    for question in (
+        "Ano ang requirements, at, at magkano ang bayad?",
+        "at magkano ang bayad, at ano ang requirements?",
+        "Magkano ang bayad, at, at, at magkano pa?",
+    ):
+        facets = split_question_facets(question)
+        labels = [facet.label for facet in facets]
+
+        assert all(label.strip() for label in labels)  # no empty/whitespace-only labels
+        assert len(labels) == len(set(labels))  # no duplicates
+
+
 # --- coverage judged by what each part retrieved -----------------------------
+
+
+def test_filipino_multi_part_question_activates_the_facet_pipeline_downstream():
+    """Downstream integration (task F): a genuinely multi-part Filipino
+    question must not just split into two facet objects -- the existing
+    evidence-combination machinery (build_facet_evidence/partition_off_topic/
+    analyze_facet_coverage) must actually ENGAGE for it, exactly as it
+    already does for the equivalent English question, and each part's own
+    retrieved evidence (including its source metadata) must be what
+    determines coverage -- not merely that the splitter returned two
+    strings."""
+    tor_requirements = kb_chunk(
+        "TOR Requirements", "Submit a request form to the Registrar's Office for a TOR.",
+    )
+    tor_fee = kb_chunk(
+        "TOR Fees", "The TOR fee is PHP 20.00 per page for undergraduate students.",
+    )
+    facets = split_question_facets(TOR_FEE_QUESTION_FILIPINO)
+    assert len(facets) == 2  # the pipeline precondition this test actually exercises
+
+    facets, evidence, coverage = coverage_for(
+        TOR_FEE_QUESTION_FILIPINO,
+        {0: [tor_requirements], 1: [tor_fee]},
+        selected=[tor_requirements, tor_fee],
+    )
+
+    # build_facet_evidence actually recorded per-facet evidence (not EMPTY_EVIDENCE).
+    assert evidence.ranked_for(facets[0].key)
+    assert evidence.ranked_for(facets[1].key)
+
+    # analyze_facet_coverage actually judged both parts as covered, using
+    # each part's own evidence -- the real activation this fix restores.
+    assert coverage.is_multi_facet
+    assert not coverage.has_gap
+    assert {facet.label for facet in coverage.covered} == {
+        facets[0].label, facets[1].label,
+    }
+
+    # partition_off_topic engages too: an unrelated chunk that neither part
+    # retrieved, and that is not a strong hit for the whole question, is
+    # demoted rather than leading -- source metadata (the section/office
+    # used as the merge key) is what partition_off_topic and
+    # analyze_facet_coverage both key off of throughout.
+    unrelated = kb_chunk("Scholastic Delinquency", "Academic probation thresholds.")
+    on_topic, off_topic = partition_off_topic(
+        facets, [unrelated, tor_requirements, tor_fee], evidence, key_of=_chunk_merge_key,
+    )
+    assert unrelated in off_topic
+    assert tor_requirements in on_topic and tor_fee in on_topic
+
+
+def test_comma_less_filipino_split_activates_the_facet_pipeline_downstream():
+    """Downstream integration for THIS extension specifically: the
+    comma-less 'at magkano' split must not just produce two facet labels --
+    it must drive real per-facet evidence, per-facet coverage, and
+    off-topic demotion using chunk source metadata, the same as the
+    comma-anchored case already proven above. Does not infer success from
+    the split output alone."""
+    comma_less_question = "Ano ang requirements para sa TOR at magkano ang bayad?"
+    tor_requirements = kb_chunk(
+        "TOR Requirements", "Submit a request form to the Registrar's Office for a TOR.",
+    )
+    tor_fee = kb_chunk(
+        "TOR Fees", "The TOR fee is PHP 20.00 per page for undergraduate students.",
+    )
+    facets = split_question_facets(comma_less_question)
+    assert len(facets) == 2  # precondition this test exercises, not assumes
+
+    facets, evidence, coverage = coverage_for(
+        comma_less_question,
+        {0: [tor_requirements], 1: [tor_fee]},
+        selected=[tor_requirements, tor_fee],
+    )
+
+    assert evidence.ranked_for(facets[0].key)
+    assert evidence.ranked_for(facets[1].key)
+    assert coverage.is_multi_facet
+    assert not coverage.has_gap
+    assert {facet.label for facet in coverage.covered} == {facets[0].label, facets[1].label}
+
+    unrelated = kb_chunk("Scholastic Delinquency", "Academic probation thresholds.")
+    on_topic, off_topic = partition_off_topic(
+        facets, [unrelated, tor_requirements, tor_fee], evidence, key_of=_chunk_merge_key,
+    )
+    assert unrelated in off_topic
+    assert tor_requirements in on_topic and tor_fee in on_topic
 
 
 def test_a_part_is_answered_only_when_its_own_result_survives_into_context():

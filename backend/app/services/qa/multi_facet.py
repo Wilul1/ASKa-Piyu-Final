@@ -34,15 +34,58 @@ MAX_QUESTION_FACETS = 4
 MIN_FACET_CONTENT_TOKENS = 2
 MIN_CONTENT_TOKEN_LENGTH = 3
 
-# Sentence ends and the conjunctions English uses to bolt separate asks together.
-# Language-level, like the stopword set below; neither encodes campus policy.
+# Sentence ends and the conjunctions English/Filipino use to bolt separate
+# asks together. Language-level, like the stopword set below; neither
+# encodes campus policy.
+#
+# Filipino "at" ("and") is added at the comma-anchored boundary -- the same
+# high-confidence written-question marker English's own comma+conjunction
+# forms already require (see the task's own example: "...sa bawat pahina,
+# at magkano ang bayad?"). It is deliberately NOT added to the bare,
+# no-comma _CONJUNCTION_SPLIT_RE below: "at" is also an ordinary English
+# preposition ("meet at the registrar"), so splitting on it without the
+# comma anchor would break existing English questions that happen to
+# contain the word "at".
+#
+# A comma-less Filipino "at" gets exactly one additional, narrow exception
+# instead (see _FILIPINO_QUESTION_WORD_AT_SPLIT_RE and _split_on_conjunction
+# below): when the clause immediately following "at" begins with one of a
+# small, fixed set of Filipino WH-question words ("ano", "paano", "saan",
+# ...), the second piece is textually, self-evidently its own question, the
+# same confidence the comma gives English/Filipino "and" above -- without
+# that marker, a comma-less "at" is still left unsplit, an accepted
+# limitation: this module prefers leaving an ambiguous construction intact
+# over an unreliable split.
+#
+# Filipino "kung" ("if"/"whether") is deliberately NOT a split trigger at
+# all, mirroring how English "if" already isn't one either (it is a plain
+# entry in _CONTENT_STOPWORDS/_FILIPINO_STOPWORDS below, not a conjunction
+# this module splits on): a kung-clause is ordinarily one qualifying
+# condition attached to a single ask, not a second independently
+# retrievable question component. Where a question genuinely has two
+# retrievable parts alongside a kung-clause, the comma+"at" split above
+# already separates them correctly, and the kung-clause stays attached,
+# verbatim, to whichever resulting piece it grammatically belongs to.
 _SENTENCE_SPLIT_RE = re.compile(r"[.;?!]+")
 _COORDINATION_SPLIT_RE = re.compile(
-    r",\s*(?:but|and|also|plus|then|while|however|though|although)\s+"
+    r",\s*(?:but|and|also|plus|then|while|however|though|although|at)\s+"
     r"|\s+(?:but|however|whereas|while)\s+",
     re.IGNORECASE,
 )
 _CONJUNCTION_SPLIT_RE = re.compile(r"\s+and\s+|\s*&\s*", re.IGNORECASE)
+# Comma-less Filipino "at", narrowly gated: only when the very next word is
+# one of these fixed WH-question words, so the piece after "at" is
+# self-evidently its own question rather than a continuation of the first
+# clause's action/intent (see "Pwede ba pumasok ... at mag-submit ...?" --
+# "mag-submit" is not on this list, so that stays one facet; splitting it
+# would have silently dropped the "Pwede ba" interrogative framing from the
+# second piece). Deliberately a short, fixed vocabulary -- the Filipino
+# counterpart to this module's own English conjunction list, not a general
+# "any question word" rule, and not a trigger for "kung" (see above).
+_FILIPINO_QUESTION_WORD_AT_SPLIT_RE = re.compile(
+    r"\s+at\s+(?=(?:ano|ilang?|magkano|paano|saan|kailan|sino|bakit|alin)\b)",
+    re.IGNORECASE,
+)
 
 _CONTENT_STOPWORDS = frozenset(
     {
@@ -58,6 +101,24 @@ _CONTENT_STOPWORDS = frozenset(
         "while", "after", "before", "during", "than", "too", "now", "next",
         "last", "first", "one", "two", "other", "another", "same", "such",
         "like", "want", "wanted", "going", "goes", "still", "yet", "already",
+    }
+)
+
+# Filipino function words/particles that carry no retrievable content of
+# their own -- the Filipino-language counterpart to _CONTENT_STOPWORDS
+# above (same purpose: keep MIN_FACET_CONTENT_TOKENS judging actual
+# content, not grammatical scaffolding). "kung" ("if"/"whether") is
+# included here, not as a split trigger -- see _COORDINATION_SPLIT_RE's
+# own comment for why. Many short Filipino particles ("ng", "sa", "ba",
+# "ay", "mga", "na", "pa", "po") are already excluded by
+# MIN_CONTENT_TOKEN_LENGTH and need no entry here; only those >= 3 chars
+# are listed.
+_FILIPINO_STOPWORDS = frozenset(
+    {
+        "ang", "ano", "ako", "ikaw", "siya", "kami", "tayo", "kayo", "sila",
+        "ito", "iyan", "iyon", "yung", "iyong", "kung", "kapag", "para",
+        "may", "wala", "hindi", "oo", "opo", "din", "rin", "lang", "mga",
+        "niya", "namin", "natin", "nila", "akin", "iyo", "kanila", "mo", "ko",
     }
 )
 
@@ -155,10 +216,13 @@ _PRECEDENCE_PATTERNS: tuple[str, ...] = (
 def split_question_facets(question: str) -> list[QuestionFacet]:
     """Break the question into the separate asks it contains.
 
-    Only sentence boundaries and coordinating conjunctions are used, so the
-    parts are the student's own wording. A split is kept only when every piece
-    still carries enough words to retrieve on; "academic, clearance, or
-    deployment" therefore stays whole instead of shattering into single words.
+    Only sentence boundaries and coordinating conjunctions (English and,
+    comma-anchored only, Filipino "at") are used, so the parts are the
+    student's own wording. A split is kept only when every piece still
+    carries enough words to retrieve on; "academic, clearance, or
+    deployment" therefore stays whole instead of shattering into single
+    words -- and a Filipino "kung" (if/whether) clause is never itself a
+    split point, so it stays attached to whichever piece it qualifies.
     """
     clauses: list[str] = []
     for sentence in _SENTENCE_SPLIT_RE.split(question or ""):
@@ -436,8 +500,18 @@ def combine_grounding_notes(*parts: str) -> str:
 
 
 def _split_on_conjunction(clause: str) -> list[str]:
-    """Split "an incomplete subject and unpaid fees", keep "academic or fees" whole."""
+    """Split "an incomplete subject and unpaid fees", keep "academic or fees" whole.
+
+    Tries English/Filipino "and"/"&" first; only when that finds nothing
+    does it try the narrower, question-word-gated comma-less Filipino "at"
+    (see _FILIPINO_QUESTION_WORD_AT_SPLIT_RE) -- both candidates go through
+    the SAME all-pieces content-token sufficiency guard below, so the new
+    path inherits exactly the existing safety net rather than a separate,
+    looser one.
+    """
     pieces = [piece for piece in _CONJUNCTION_SPLIT_RE.split(clause) if piece.strip()]
+    if len(pieces) < 2:
+        pieces = [piece for piece in _FILIPINO_QUESTION_WORD_AT_SPLIT_RE.split(clause) if piece.strip()]
     if len(pieces) < 2:
         return [clause]
     if all(len(_content_tokens(piece)) >= MIN_FACET_CONTENT_TOKENS for piece in pieces):
@@ -449,7 +523,9 @@ def _content_tokens(text: str) -> set[str]:
     return {
         token
         for token in re.findall(r"[a-z0-9][a-z0-9.]*", (text or "").casefold())
-        if len(token) >= MIN_CONTENT_TOKEN_LENGTH and token not in _CONTENT_STOPWORDS
+        if len(token) >= MIN_CONTENT_TOKEN_LENGTH
+        and token not in _CONTENT_STOPWORDS
+        and token not in _FILIPINO_STOPWORDS
     }
 
 

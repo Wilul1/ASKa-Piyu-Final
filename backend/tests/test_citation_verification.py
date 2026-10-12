@@ -48,6 +48,84 @@ def test_extract_claims_protects_decimal_numbers_from_being_split():
     assert "P75.00" in claims[0].text
 
 
+# --- abbreviation-splitting regression (P.E., and dotted abbreviations
+# generally): "P.E." was treated as two sentence-ending periods, and the
+# resulting garbage fragment was misclassified as a heading and leaked into
+# every later claim as a stale qualifier.
+
+
+def test_extract_claims_preserves_two_coherent_sentences_around_pe_abbreviation():
+    """The exact reproduction from the local investigation: two real
+    sentences, both mentioning 'P.E.', must come back as exactly two intact
+    claims -- not shredded at the abbreviation's internal periods."""
+    answer = (
+        "P.E. uniforms shall be worn only during P.E. classes. "
+        "Students wearing P.E. uniform will not be allowed to enter academic classes."
+    )
+    claims = extract_claims(answer)
+    assert len(claims) == 2
+    assert claims[0].text == "P.E. uniforms shall be worn only during P.E. classes"
+    assert claims[1].text == (
+        "Students wearing P.E. uniform will not be allowed to enter academic classes"
+    )
+
+
+def test_extract_claims_abbreviation_never_produces_standalone_letter_fragments():
+    """The bug's own signature artifacts -- a lone letter stranded by the
+    abbreviation's other half being swallowed as a split point (e.g. a claim
+    truncated at a bare trailing 'P', or a stray 'P:'/'E:' fragment merged
+    into the next clause) -- must never appear anywhere in the extracted
+    claims. Checks both the originally-reported shape (E class/E uniform)
+    and the exact artifacts this repo's own pre-fix run actually produced."""
+    answer = (
+        "P.E. uniforms shall be worn only during P.E. classes. "
+        "Students wearing P.E. uniform will not be allowed to enter academic classes."
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    all_text = " | ".join(texts)
+    assert "E class" not in all_text
+    assert "E uniform" not in all_text
+    assert "P: uniform" not in all_text
+    assert not any(re.search(r"(?:^|\s)[A-Z]$", t) for t in texts), (
+        "a claim must never end in a lone stranded letter from a split abbreviation"
+    )
+
+
+def test_extract_claims_abbreviation_fragment_does_not_contaminate_later_claims():
+    """Synthetic multi-bullet answer (not the real handbook/production
+    wording) reproducing the qualifier-leak shape of the bug: an abbreviation
+    inside one bullet must not turn into a stale heading/qualifier that gets
+    prepended to unrelated LATER bullets."""
+    answer = (
+        "- The P.E. uniform must be worn only during P.E. classes.\n"
+        "- The library closes at 5 PM on weekdays.\n"
+        "- Lost I.D. cards cost twenty pesos to replace.\n"
+    )
+    claims = extract_claims(answer)
+    texts = [c.text for c in claims]
+    library_claim = next(t for t in texts if "library closes" in t)
+    id_card_claim = next(t for t in texts if "Lost I.D. cards" in t)
+    # Neither later bullet may carry forward any fragment of the P.E. bullet.
+    assert "P.E." not in library_claim
+    assert "class" not in library_claim
+    assert "P.E." not in id_card_claim
+    assert "class" not in id_card_claim
+
+
+def test_extract_claims_protects_another_ordinary_dotted_abbreviation():
+    """The fix must generalize to dotted abbreviations beyond the one
+    reported example (P.E.) -- exercised here with I.D., a different real
+    abbreviation already present in the handbook domain, without hard-coding
+    any specific handbook sentence."""
+    answer = "The I.D. card must be shown at the gate. Replacement costs fifty pesos."
+    claims = extract_claims(answer)
+    assert len(claims) == 2
+    assert claims[0].text == "The I.D. card must be shown at the gate"
+    assert "fifty pesos" in claims[1].text
+    assert "D card" not in claims[0].text
+
+
 def test_extract_claims_drops_greetings_and_transition_phrases():
     answer = "Sure. Here's how it works. The fee is None. In short, no fee applies."
     claims = extract_claims(answer)

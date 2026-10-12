@@ -90,6 +90,61 @@ class CitationVerificationError(RuntimeError):
 # both sides; '\n' always splits.
 _CLAIM_SPLIT_RE = re.compile(r"(?<!\d)[.!?;](?!\d)|\n+")
 _MIN_CLAIM_CHARS = 4
+
+# Dotted letter-initial abbreviations (e.g. "P.E.", "I.D.", "U.S.") are not
+# protected by the digit-flanked guard above, so each internal period was
+# treated as its own sentence boundary -- shredding "P.E. classes" into
+# "P"/"E classes" fragments. The short, non-clause-shaped tail fragment
+# ("E classes...") then satisfied ``_is_bare_section_title``/
+# ``_is_heading_like`` (no clause-marking verb, no sentence-opener word, no
+# remaining '.'/'!'/'?') and was misclassified as a heading, turning it into
+# a stale ``active_qualifier`` that then contaminated every later claim in
+# the answer until the next real heading reset it (see the local
+# investigation this responds to -- reproduced against a real captured
+# answer, not just this synthetic case).
+#
+# Fix: replace each whole abbreviation (2+ repeats of "<CAPITAL LETTER>.",
+# directly adjacent, no space -- so "P.E." / "U.S." / "I.D." match but a
+# genuine enumerated list like "A. Introduction" does not, since that is
+# only one repeat) with an opaque placeholder *before* splitting, so none of
+# its internal periods can ever become a split point or change any
+# length/word-count-based classification decision, then restore the exact
+# original text once a claim's final string is assembled. This only ever
+# changes behavior for text containing such an abbreviation -- an answer
+# with none (every existing test prior to this fix) round-trips unchanged.
+_ABBREVIATION_RE = re.compile(r"\b(?:[A-Z]\.){2,}")
+# Private-use-area markers: never legitimately present in real answer text,
+# so they cannot collide with genuine content, and contain none of
+# '.'/'!'/'?'/';'/'\n'/whitespace -- safe to pass through every downstream
+# split/length/word-count check untouched.
+_ABBR_PLACEHOLDER_RE = re.compile("(\\d+)")
+
+
+def _protect_abbreviations(text: str) -> tuple[str, list[str]]:
+    """Returns (text with each dotted abbreviation swapped for a placeholder,
+    the list of original abbreviation strings, indexed by placeholder)."""
+    originals: list[str] = []
+
+    def _replace(match: re.Match[str]) -> str:
+        originals.append(match.group(0))
+        return f"{len(originals) - 1}"
+
+    protected = _ABBREVIATION_RE.sub(_replace, text or "")
+    return protected, originals
+
+
+def _restore_abbreviations(text: str, originals: list[str]) -> str:
+    """Inverse of ``_protect_abbreviations`` -- restores exact original
+    text. A placeholder with no matching index (should not happen; defensive
+    only) is left as-is rather than raising."""
+    if not originals:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        index = int(match.group(1))
+        return originals[index] if 0 <= index < len(originals) else match.group(0)
+
+    return _ABBR_PLACEHOLDER_RE.sub(_replace, text)
 # Soft ceiling so qualifier propagation cannot inflate a claim into a
 # paragraph-sized blob. Prefers dropping the prepend over truncating facts.
 _MAX_CLAIM_CHARS = 600
@@ -417,10 +472,12 @@ def extract_claims(answer: str) -> list[Claim]:
     (Additional Information, Summary, …) clear it. Propagation never merges
     unrelated procedures into one claim and never copies the whole answer.
     """
+    protected_answer, abbreviations = _protect_abbreviations(answer or "")
+
     claims: list[Claim] = []
     index = 0
     active_qualifier: str | None = None
-    for part in _CLAIM_SPLIT_RE.split(answer or ""):
+    for part in _CLAIM_SPLIT_RE.split(protected_answer):
         text = part.strip()
         if len(text) < _MIN_CLAIM_CHARS:
             continue
@@ -441,7 +498,9 @@ def extract_claims(answer: str) -> list[Claim]:
             continue
 
         claim_body = _claim_surface_text(text, classify_as)
-        claim_text = _prepend_qualifier(claim_body, active_qualifier)
+        claim_text = _restore_abbreviations(
+            _prepend_qualifier(claim_body, active_qualifier), abbreviations
+        )
         if len(claim_text) < _MIN_CLAIM_CHARS:
             continue
         index += 1

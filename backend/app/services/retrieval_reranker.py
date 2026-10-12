@@ -119,6 +119,24 @@ DRESS_CODE_TERMS = (
     "approved hair-cut",
     "fixie crop",
 )
+# Filipino/Taglish wording for the same dress-code/grooming topic
+# DRESS_CODE_TERMS covers in English -- grounded only in the two real
+# student questions the v46 Chroma audit authorized and ran ("Pwede ba
+# hindi naka-uniform pagpasok sa school?" / "Pwede ba may ibang kulay ang
+# buhok pagpasok sa school?"), not a guess at full dialect coverage.
+# "kulay ng buhok" is included for auditability/documentation of the topic
+# even though the real production query says "kulay ang buhok" -- "buhok"
+# alone is what actually fires for that phrasing.
+FILIPINO_DRESS_CODE_TERMS = (
+    "buhok",
+    "kulay ng buhok",
+    "naka-uniform",
+    "naka uniform",
+    "hindi naka-uniform",
+    "hindi naka uniform",
+    "gupit",
+    "pagupit",
+)
 PROCEDURAL_TERMS = ("ojt", "on-the-job", "on the job", "procedure", "procedures", "process flow")
 APPENDIX_TERMS = ("appendix", "appendices", "form template")
 AWARD_TERMS = ("award", "awards", "honor", "honors", "medal", "recognition")
@@ -133,6 +151,15 @@ _NON_RECORDS_DISCIPLINARY_TERMS = tuple(
     term for term in DISCIPLINARY_TERMS if term not in ("disciplinary", "discipline")
 )
 _DISCIPLINARY_RECORDS_CHECK_RE = re.compile(r"\b(?:disciplinary|discipline)\s+records?\b")
+# _NON_RECORDS_DISCIPLINARY_TERMS minus "uniform" -- for a dress-code/
+# grooming query, "uniform" alone is the topic itself, not evidence of
+# disciplinary-sanctions content (see _domain_noise_penalty's
+# is_benign_uniform_mention). Any OTHER disciplinary term (offense,
+# sanction, non-wearing, identification card) still signals genuine
+# sanctions-table content and is penalized normally.
+_NON_UNIFORM_DISCIPLINARY_TERMS = tuple(
+    term for term in _NON_RECORDS_DISCIPLINARY_TERMS if term != "uniform"
+)
 FACULTY_AUDIENCE_TERMS = (
     "faculty",
     "faculty member",
@@ -1048,6 +1075,9 @@ def rerank_chunks(
         if profile["counseling"] and _contains_any(normalized_content, COUNSELING_TERMS):
             score += 0.26
             reasons.append("office_service_match")
+        if profile["dress_code_grooming"] and _contains_any(normalized_content, DRESS_CODE_TERMS):
+            score += 0.28
+            reasons.append("boost_dress_code_grooming_match")
         if profile["requirements"] and _contains_any(normalized_content, REQUIREMENT_TERMS):
             score += 0.24
             reasons.append("requirements_match")
@@ -1252,6 +1282,7 @@ def _query_profile(normalized_query: str) -> dict[str, bool]:
         "academic_freedom": _is_academic_freedom_query(normalized_query),
         "residence": _is_maximum_residence_query(normalized_query),
         "refund": _is_tuition_refund_query(normalized_query),
+        "dress_code_grooming": _is_dress_code_grooming_query(normalized_query),
     }
 
 
@@ -2231,6 +2262,7 @@ def _domain_noise_penalty(
         or profile["records"]
         or profile["enrollment"]
         or profile["counseling"]
+        or profile["dress_code_grooming"]
     ):
         return 0.0
 
@@ -2250,7 +2282,21 @@ def _domain_noise_penalty(
             and not _contains_any(normalized_content, _NON_RECORDS_DISCIPLINARY_TERMS)
             and bool(_DISCIPLINARY_RECORDS_CHECK_RE.search(normalized_content))
         )
-        if not is_benign_disciplinary_records_check and not (
+        # A dress-code/grooming query's own on-topic chunks (e.g. "School
+        # Uniforms") legitimately contain "uniform" -- that alone must not
+        # read as disciplinary-sanctions noise the way it correctly does for
+        # the other gated domains (attendance, enrollment, ...), where no
+        # chunk is ever supposed to be about uniforms. Only skip the penalty
+        # when "uniform" is the SOLE disciplinary signal; a chunk that also
+        # carries a stronger one (offense, sanction, non-wearing, an
+        # identification-card reference) -- such as the real "Non-wearing of
+        # I.D" sanctions-table chunk -- still penalizes normally.
+        is_benign_uniform_mention = (
+            profile.get("dress_code_grooming")
+            and content_type not in {"disciplinary_rule", "offense"}
+            and not _contains_any(normalized_content, _NON_UNIFORM_DISCIPLINARY_TERMS)
+        )
+        if not is_benign_disciplinary_records_check and not is_benign_uniform_mention and not (
             profile.get("identity_document")
             and _contains_any(normalized_content, ("identification card", "id validation", "student id"))
         ):
@@ -2402,6 +2448,12 @@ def _is_teaching_load_query(normalized_query: str) -> bool:
         r"\bdesignated as dean\b",
         r"\bdean\b.*\binstruction\b",
         r"\bregular faculty\b.*\b(?:hour|load|instruction)\b",
+    )
+
+
+def _is_dress_code_grooming_query(normalized_query: str) -> bool:
+    return _contains_any(normalized_query, DRESS_CODE_TERMS) or _contains_any(
+        normalized_query, FILIPINO_DRESS_CODE_TERMS
     )
 
 

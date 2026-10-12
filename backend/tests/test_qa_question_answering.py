@@ -4012,6 +4012,230 @@ def test_select_context_chunks_rank_1_exemption_unchanged_for_other_penalty_mark
     assert "drop_strong_penalty" in reasons
 
 
+# --- v46 dress-code/grooming fix: a dedicated profile/boost/penalty-gate
+# entry (retrieval_reranker.py: _query_profile, rerank_chunks,
+# _domain_noise_penalty) so uniform/hair/grooming topics get a real
+# keep_* path instead of surviving or being dropped purely by accidental
+# English-loanword overlap ("school"). These tests deliberately do NOT
+# pre-set rerank_reasons -- they drive the REAL rerank_chunks() (seeing
+# the query the way KnowledgeBaseStore.search() actually prepares it: the
+# expanded query) and then the REAL select_context_chunks() (seeing the
+# original question, matching answer_qa_question's actual call), on
+# RetrievedChunk fixtures built from REAL text/metadata captured during
+# the v46 Chroma audit against the live production collection, unless a
+# fixture is explicitly labeled SYNTHETIC below.
+
+
+def _real_candidate(chunk_id: str, title: str, page: int, text: str) -> RetrievedChunk:
+    """A bare, not-yet-reranked RetrievedChunk -- rerank_reasons is left
+    unset so the real rerank_chunks() must derive it, the same way
+    production does. chunk_id is the real Chroma id suffix (e.g. '::249')
+    captured during the v46 audit; only chunk_index is taken from it here."""
+    return RetrievedChunk(
+        document_id="8dff347a-1f00-4454-b0da-f6d09e795308",
+        title=title,
+        source_filename="LSPU Student Handbook.pdf",
+        chunk_index=int(chunk_id.split("::")[1]),
+        text=text,
+        relevance_score=0.85,
+        original_score=0.85,
+        reranked_score=0.85,
+        rerank_reasons=None,
+        metadata={
+            "title": title,
+            "section": title,
+            "page_number": page,
+            "source_filename": "LSPU Student Handbook.pdf",
+        },
+    )
+
+
+def _rerank_and_select_real(question: str, chunks: list[RetrievedChunk]):
+    """Mirrors the real production call shape: KnowledgeBaseStore.search()
+    reranks against the EXPANDED query (chroma_store.py:814), while
+    answer_qa_question later calls select_context_chunks with the
+    ORIGINAL, non-expanded question (question_answering.py:520-524)."""
+    from app.services.retrieval_reranker import prepare_retrieval_query, rerank_chunks
+
+    prepared = prepare_retrieval_query(question)
+    reranked = rerank_chunks(prepared.expanded_query, chunks)
+    reranked_sorted = sorted(reranked, key=lambda c: -(c.reranked_score or 0.0))
+    return select_context_chunks(question, reranked_sorted)
+
+
+def test_hair_color_filipino_query_retains_relevant_chunk_real_pipeline():
+    """The exact confirmed v46 failure: live Chroma semantic retrieval
+    ranked ::249 'Hair Style/Hair-cut' #1 for this question, but
+    select_context_chunks dropped it (drop_weak_context_match) because
+    rerank_chunks had no dress-code/grooming boost path at all. Real text,
+    real rerank/select pipeline -- no injected rerank_reasons."""
+    hair = _real_candidate(
+        "::249", "Hair Style/Hair-cut", 88,
+        "Hair Style/Hair-cut\n\nThe following are prohibited in the university:\n2.1. Color...",
+    )
+    grooming = _real_candidate(
+        "::254", "Grooming rules and restrictions, including rules regarding hair,", 90,
+        "Grooming rules and restrictions, including rules regarding hair,\n\n6.2...",
+    )
+    departure = _real_candidate(
+        "::250", "Departure from approved hair-cut below", 89,
+        "Departure from approved hair-cut below\n\n2.3.1. 2x3 - for male F...",
+    )
+    uniforms = _real_candidate(
+        "::246", "School Uniforms", 87,
+        "School Uniforms\n\n1.1. The prescribed uniform shall be worn in all classroom sessions...",
+    )
+    selected, _decisions = _rerank_and_select_real(
+        "Pwede ba may ibang kulay ang buhok pagpasok sa school?",
+        [hair, grooming, departure, uniforms],
+    )
+    assert "Hair Style/Hair-cut" in {c.metadata["title"] for c in selected}
+
+
+def test_hair_color_query_relevant_chunk_not_displaced_by_distractors():
+    """SYNTHETIC fixtures: the exact production body text of the real
+    admissions (page 139) and comorbidity (page 163) chunks that survived
+    context selection in the live full-pipeline run was never captured in
+    this session -- only their real titles/pages are real. This test
+    checks the achievable, in-scope property only: the relevant hair chunk
+    is not displaced/dropped by their presence. It deliberately does NOT
+    assert the distractors are excluded -- confirmed NOT achieved by this
+    fix (see the final report's noted limitation): they still pass
+    through the same pre-existing, topic-agnostic _distinctive_term_boost/
+    _keyword_overlap_boost on the shared generic token "school", which is
+    unrelated to the dress-code/grooming profile added here and is exactly
+    Option C/B territory this task was scoped to NOT implement."""
+    admissions = _real_candidate(
+        "::999", "Requirements for admission among college students may include", 139,
+        "Requirements for admission among college students may include a certificate from "
+        "the applicant's previous school and other enrollment documents.",  # SYNTHETIC body text
+    )
+    comorbidity = _real_candidate(
+        "::998", "Identified to have comorbidity thus increasing their risk", 163,
+        "Students identified to have comorbidity thus increasing their risk shall coordinate "
+        "with the school clinic before returning to campus.",  # SYNTHETIC body text
+    )
+    hair = _real_candidate(
+        "::249", "Hair Style/Hair-cut", 88,
+        "Hair Style/Hair-cut\n\nThe following are prohibited in the university:\n2.1. Color...",
+    )
+    selected, _decisions = _rerank_and_select_real(
+        "Pwede ba may ibang kulay ang buhok pagpasok sa school?",
+        [admissions, comorbidity, hair],
+    )
+    assert "Hair Style/Hair-cut" in {c.metadata["title"] for c in selected}
+
+
+def test_uniform_filipino_query_retains_clean_policy_excludes_garbled_chunk():
+    """The other confirmed v46 failure: the garbled 'Non-wearing of I.D'
+    chunk (real text, including its own real column-scrambled fragment)
+    survived context selection alongside the clean 'School Uniforms'
+    chunk. After this fix, _domain_noise_penalty's existing disciplinary
+    penalty (previously never gated for this topic) now applies -- this
+    chunk's own title/content carries 'non-wearing'/'minor offense',
+    which (unlike bare 'uniform') is NOT exempted by the new
+    is_benign_uniform_mention carve-out."""
+    uniforms = _real_candidate(
+        "::246", "School Uniforms", 87,
+        "School Uniforms\n\n1.1. The prescribed uniform shall be worn in all classroom sessions...",
+    )
+    non_wearing = _real_candidate(
+        "::240", "Non-wearing of I.D", 84,
+        "Non-wearing of I.D\n\nGraduate Studies > Article 3 > Minor Offense > Sec. 4 > "
+        "Non-wearing of I.D\n\nand 1st action\nSchool Uniform. Wearing of the Shall not\nUniversi",
+    )
+    selected, _decisions = _rerank_and_select_real(
+        "Pwede ba hindi naka-uniform pagpasok sa school?",
+        [uniforms, non_wearing],
+    )
+    selected_titles = {c.metadata["title"] for c in selected}
+    assert "School Uniforms" in selected_titles
+    assert "Non-wearing of I.D" not in selected_titles
+
+
+def test_genuine_disciplinary_query_still_retrieves_offense_chunk():
+    """The dress-code/grooming fix must not make disciplinary content
+    globally ineligible: a question genuinely about an offense/sanction
+    (not about uniforms/hair) must still surface real disciplinary
+    content. Real text (LSPU Student Handbook, Major Offense Sec. 15,
+    page 81, captured during the v46 audit)."""
+    vandalism = _real_candidate(
+        "::233", "Vandalism or Destruc", 81,
+        "Vandalism or Destruc\n\nGraduate Studies > Article 2 > Major Offense > Sec. 15 > "
+        "Vandalism or Destruc\n\ntion of Public Properties. De-\nstroying property which incl",
+    )
+    selected, _decisions = _rerank_and_select_real(
+        "What is the penalty for vandalism or destruction of property?",
+        [vandalism],
+    )
+    assert "Vandalism or Destruc" in {c.metadata["title"] for c in selected}
+
+
+def test_academic_awards_query_unaffected_by_dress_code_fix():
+    """Regression guard: the new dress_code_grooming profile/boost/penalty
+    additions must not touch the unrelated, already-working academic-
+    awards boost path (boost_exact_service_title:academic awards). Real
+    text (::274, page 98, captured during the v46 audit)."""
+    awards = _real_candidate(
+        "::274", "Academic Awards Criteria", 98,
+        "Academic Awards Criteria\n\nGraduate Studies > Article 1 > Academic Awards > Sec. 3 > "
+        "Academic Awards Criteria\n\n3.1. for degree course\nAward | Final Grade\nSumma c",
+    )
+    selected, _decisions = _rerank_and_select_real(
+        "anong criteria para sa academic awards?",
+        [awards],
+    )
+    assert "Academic Awards Criteria" in {c.metadata["title"] for c in selected}
+
+
+def test_complementary_grooming_chunks_coexist_within_context_budget():
+    """All three genuinely relevant hair/grooming chunks must be able to
+    coexist in the final context (DEFAULT_CONTEXT_CHUNKS budget is 7 --
+    well above the 4 candidates here), not have one or more silently
+    dropped by drop_context_limit or any other mechanism now that all
+    three can clear the keep bar."""
+    hair = _real_candidate(
+        "::249", "Hair Style/Hair-cut", 88,
+        "Hair Style/Hair-cut\n\nThe following are prohibited in the university:\n2.1. Color...",
+    )
+    grooming = _real_candidate(
+        "::254", "Grooming rules and restrictions, including rules regarding hair,", 90,
+        "Grooming rules and restrictions, including rules regarding hair,\n\n6.2...",
+    )
+    departure = _real_candidate(
+        "::250", "Departure from approved hair-cut below", 89,
+        "Departure from approved hair-cut below\n\n2.3.1. 2x3 - for male F...",
+    )
+    selected, decisions = _rerank_and_select_real(
+        "Pwede ba may ibang kulay ang buhok pagpasok sa school?",
+        [hair, grooming, departure],
+    )
+    selected_titles = {c.metadata["title"] for c in selected}
+    assert {"Hair Style/Hair-cut", "Grooming rules and restrictions, including rules regarding hair,",
+            "Departure from approved hair-cut below"} <= selected_titles
+    for chunk_obj in [hair, grooming, departure]:
+        kept, reasons = decisions[id(chunk_obj)]
+        assert "drop_context_limit" not in reasons
+
+
+def test_english_hair_color_query_retains_relevant_chunk():
+    """Verified, not assumed: DRESS_CODE_TERMS has no bare 'hair' entry
+    (only 'hair cut'/'hair style'/'hairstyle'/'hair-cut'), so this English
+    phrasing passes through the PRE-EXISTING generic title-token overlap
+    (_keyword_overlap_boost / _distinctive_term_boost matching the literal
+    word 'hair'), not through the new dress_code_grooming profile --
+    confirmed already working before this fix and unchanged by it."""
+    hair = _real_candidate(
+        "::249", "Hair Style/Hair-cut", 88,
+        "Hair Style/Hair-cut\n\nThe following are prohibited in the university:\n2.1. Color...",
+    )
+    selected, _decisions = _rerank_and_select_real(
+        "Can students have colored hair?",
+        [hair],
+    )
+    assert "Hair Style/Hair-cut" in {c.metadata["title"] for c in selected}
+
+
 # --- Phase 2 context-selection fix: a low-confidence classify_question()
 # guess must not become an authoritative query_domain for context-selection
 # boosting. Gated in _query_taxonomy_labels (question_answering.py), the

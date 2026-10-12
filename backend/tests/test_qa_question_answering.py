@@ -4236,6 +4236,96 @@ def test_english_hair_color_query_retains_relevant_chunk():
     assert "Hair Style/Hair-cut" in {c.metadata["title"] for c in selected}
 
 
+# --- v47 citation fix: dress-code/grooming Filipino-vs-English citation
+# compatibility bridge (_grounding_tokens, question_answering.py). Confirmed
+# production gap: the dress-code/grooming retrieval fix above already puts
+# the correct English chunk in context, but _select_supporting_context's
+# citation-support scoring is purely lexical (_citation_support_score
+# requires >=2 shared tokens) and a correctly-grounded Filipino claim shares
+# none with an English chunk, so it was cited as []. The fix folds the
+# existing English DRESS_CODE_TERMS vocabulary into a text's own tokens
+# whenever that text already contains a recognized FILIPINO_DRESS_CODE_TERMS
+# phrase (both from retrieval_reranker.py, already curated/deployed) --
+# no new dictionary, no per-word translation pairing, _SUPPORT_MIN_SIGNALS
+# unchanged.
+
+
+def test_filipino_hair_color_answer_cites_the_real_hair_style_source():
+    hair = _real_candidate(
+        "::249", "Hair Style/Hair-cut", 88,
+        "Hair Style/Hair-cut\n\nThe following are prohibited in the university:\n2.1. Color...",
+    )
+    answer = "Hindi pwede. Bawal ang kulayan ang buhok ayon sa patakaran ng paaralan."
+    sources = _select_supporting_context([hair], answer)
+    assert "Hair Style/Hair-cut" in {c.metadata["title"] for c in sources}
+
+
+def test_filipino_uniform_answer_cites_the_real_school_uniforms_source():
+    """Uses a Filipino phrasing that echoes the question's own 'naka-uniform'
+    wording -- a natural, idiomatic way to answer a yes/no question in
+    Filipino, and the exact FILIPINO_DRESS_CODE_TERMS entry already curated
+    for this topic."""
+    uniforms = _real_candidate(
+        "::246", "School Uniforms", 87,
+        "School Uniforms\n\n1.1. The prescribed uniform shall be worn in all classroom sessions...",
+    )
+    answer = "Hindi, dapat naka-uniform ka kapag pumapasok sa school."
+    sources = _select_supporting_context([uniforms], answer)
+    assert "School Uniforms" in {c.metadata["title"] for c in sources}
+
+
+def test_filipino_uniform_answer_using_suot_cites_the_real_school_uniforms_source():
+    """"suot" ("to wear") is justified directly by the real "School
+    Uniforms" chunk's own captured wording ("...shall be WORN..."), not a
+    speculative synonym -- see _CITATION_FILIPINO_DRESS_CODE_TERMS's
+    comment in question_answering.py. "isusuot" (future tense) is
+    deliberately NOT added: no observed answer uses that exact form."""
+    uniforms = _real_candidate(
+        "::246", "School Uniforms", 87,
+        "School Uniforms\n\n1.1. The prescribed uniform shall be worn in all classroom sessions...",
+    )
+    answer = "Dapat suot mo ang uniform ng paaralan sa lahat ng oras."
+    sources = _select_supporting_context([uniforms], answer)
+    assert "School Uniforms" in {c.metadata["title"] for c in sources}
+
+
+def test_english_hair_and_uniform_answers_retain_existing_citations():
+    """Regression guard: the bridge only activates on FILIPINO_DRESS_CODE_
+    TERMS matches, so English answers must be completely unaffected."""
+    hair = _real_candidate(
+        "::249", "Hair Style/Hair-cut", 88,
+        "Hair Style/Hair-cut\n\nThe following are prohibited in the university:\n2.1. Color...",
+    )
+    uniforms = _real_candidate(
+        "::246", "School Uniforms", 87,
+        "School Uniforms\n\n1.1. The prescribed uniform shall be worn in all classroom sessions...",
+    )
+    hair_sources = _select_supporting_context(
+        [hair], "No, coloring your hair is prohibited under the Hair Style/Hair-cut policy.",
+    )
+    uniform_sources = _select_supporting_context(
+        [uniforms], "No, students must wear the prescribed school uniform at all times.",
+    )
+    assert "Hair Style/Hair-cut" in {c.metadata["title"] for c in hair_sources}
+    assert "School Uniforms" in {c.metadata["title"] for c in uniform_sources}
+
+
+def test_unsupported_filipino_answer_with_no_genuine_claim_gets_no_citation():
+    """An answer about something the retrieved chunk does not address at
+    all (no dress-code vocabulary, no overlap of any kind) must not
+    receive a citation just because the bridge exists."""
+    hair = _real_candidate(
+        "::249", "Hair Style/Hair-cut", 88,
+        "Hair Style/Hair-cut\n\nThe following are prohibited in the university:\n2.1. Color...",
+    )
+    answer = (
+        "Hindi ko alam kung kailangan ng espesyal na pahintulot mula sa "
+        "punong-guro para sa kahilingang iyon."
+    )
+    sources = _select_supporting_context([hair], answer)
+    assert sources == []
+
+
 # --- Phase 2 context-selection fix: a low-confidence classify_question()
 # guess must not become an authoritative query_domain for context-selection
 # boosting. Gated in _query_taxonomy_labels (question_answering.py), the

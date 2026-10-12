@@ -509,11 +509,18 @@ class KnowledgeBaseStore:
         return stats
 
     def list_chunks(self) -> list[dict[str, Any]]:
-        """Return stored chunks and metadata without mutating the collection."""
+        """Return stored chunks and metadata without mutating the collection.
+
+        Exhaustive (paginated) via ``_get_all_matching`` -- a bare
+        ``collection.get()`` with no ``limit`` silently caps at
+        ``CHROMA_GET_PAGE_SIZE`` on Chroma Cloud (see that constant's
+        docstring), which would otherwise return only ~300 of this
+        collection's 729 chunks to every collection-mode query.
+        """
         if self._collection.count() == 0:
             return []
 
-        data = self._collection.get(include=["documents", "metadatas"])
+        data = self._get_all_matching(where=None, include=["documents", "metadatas"])
         ids = data.get("ids") or []
         documents = data.get("documents") or []
         metadatas = data.get("metadatas") or []
@@ -618,10 +625,14 @@ class KnowledgeBaseStore:
     def _get_all_matching(
         self,
         *,
-        where: dict[str, Any],
+        where: dict[str, Any] | None = None,
         include: list[str] | None = None,
     ) -> dict[str, list]:
         """Exhaustively page through ``collection.get(where=...)``.
+
+        ``where=None`` scans the whole collection -- confirmed equivalent to
+        omitting the argument entirely: the installed chromadb client's
+        ``Collection.get`` itself defaults ``where`` to ``None``.
 
         A bare ``collection.get(where=...)`` with no ``limit`` is NOT
         exhaustive on Chroma Cloud -- see ``CHROMA_GET_PAGE_SIZE``'s

@@ -360,6 +360,114 @@ def test_unrelated_records_are_never_touched_by_a_large_replacement():
 
 # --- The exact incident, proven fixed ---------------------------------------
 
+# --- list_chunks(): v46 fix routing it through _get_all_matching ----------
+#
+# list_chunks() previously called self._collection.get(include=[...]) with
+# no limit/offset at all -- the exact same unpaginated pattern this whole
+# file guards against, just for the include=["documents","metadatas"]
+# (no `where`) whole-collection case instead of a `where`-filtered one.
+# FakeCappedChromaCollection above only models metadatas (no documents),
+# so a separate, minimal fake is used here rather than changing that
+# already-covered fixture's behavior for its existing tests.
+
+
+class FakeWholeCollectionGet:
+    """Models collection.get(include=[...]) pagination for a `where=None`
+    whole-collection scan, including documents (which
+    FakeCappedChromaCollection does not store)."""
+
+    def __init__(self, n: int):
+        self._ids = [f"chunk-{i}" for i in range(n)]
+        self._documents = [f"text {i}" for i in range(n)]
+        self._metadatas = [{"chunk_index": i} for i in range(n)]
+        self.get_calls: list[dict] = []
+
+    def count(self) -> int:
+        return len(self._ids)
+
+    def get(self, where=None, include=None, limit=None, offset=0, ids=None):
+        self.get_calls.append({"where": where, "limit": limit, "offset": offset})
+        if limit is not None and limit > CHROMA_GET_PAGE_SIZE:
+            raise ChromaQuotaError(
+                f"Quota exceeded: 'Limit value' exceeded quota limit for action 'Get': "
+                f"current usage of {limit} exceeds limit of {CHROMA_GET_PAGE_SIZE}."
+            )
+        page_size = limit if limit is not None else CHROMA_GET_PAGE_SIZE
+        page_ids = self._ids[offset : offset + page_size]
+        page_docs = self._documents[offset : offset + page_size]
+        page_metas = self._metadatas[offset : offset + page_size]
+        result: dict = {"ids": page_ids}
+        include = include or []
+        if "documents" in include:
+            result["documents"] = page_docs
+        if "metadatas" in include:
+            result["metadatas"] = page_metas
+        return result
+
+
+@pytest.mark.parametrize("n", [0, 1, 129, 300, 301, 600, 729])
+def test_list_chunks_covers_every_record_no_duplicates_no_omissions(n):
+    collection = FakeWholeCollectionGet(n)
+    store = make_store(collection)
+
+    chunks = store.list_chunks()
+
+    assert len(chunks) == n
+    ids = [c["id"] for c in chunks]
+    assert len(set(ids)) == n  # no duplicates
+    assert set(ids) == {f"chunk-{i}" for i in range(n)}  # no omissions
+    # Existing document/metadata field structure and content preserved.
+    for chunk_obj in chunks:
+        index = int(chunk_obj["id"].split("-")[1])
+        assert chunk_obj["text"] == f"text {index}"
+        assert chunk_obj["metadata"] == {"chunk_index": index}
+
+
+def test_list_chunks_729_records_pages_in_300_300_129():
+    """The exact scenario specified for this fix: 729 unique ids across
+    pages of 300, 300, then 129. 129 < CHROMA_GET_PAGE_SIZE is itself the
+    short page that terminates the loop -- 729 is not an exact multiple of
+    300, so (unlike test_600_exact_multiple_pages_..._above, which IS an
+    exact multiple and needs a 4th confirming empty call) no 4th call is
+    issued."""
+    collection = FakeWholeCollectionGet(729)
+    store = make_store(collection)
+
+    chunks = store.list_chunks()
+
+    assert len(chunks) == 729
+    assert len({c["id"] for c in chunks}) == 729
+    offsets = [c["offset"] for c in collection.get_calls]
+    assert offsets == [0, 300, 600]
+    limits = [c["limit"] for c in collection.get_calls]
+    assert all(limit == CHROMA_GET_PAGE_SIZE for limit in limits)
+    assert all(c["where"] is None for c in collection.get_calls)
+
+
+def test_list_chunks_short_page_terminates_without_an_extra_call():
+    """301 records: page 1 (300, full) must be followed by exactly one
+    more call (page 2, 1 record, short) -- no third call, since a SHORT
+    page (not an exact multiple) already signals the end."""
+    collection = FakeWholeCollectionGet(301)
+    store = make_store(collection)
+
+    chunks = store.list_chunks()
+
+    assert len(chunks) == 301
+    offsets = [c["offset"] for c in collection.get_calls]
+    assert offsets == [0, 300]
+
+
+def test_list_chunks_empty_collection_short_circuits_without_calling_get():
+    collection = FakeWholeCollectionGet(0)
+    store = make_store(collection)
+
+    chunks = store.list_chunks()
+
+    assert chunks == []
+    assert collection.get_calls == []  # count()==0 short-circuit, never calls get()
+
+
 def test_this_fix_would_have_prevented_the_371_to_71_incident():
     """Direct replay: old Handbook=300, attempted new version=371, full
     success path (no injected failure, matching what SHOULD have happened

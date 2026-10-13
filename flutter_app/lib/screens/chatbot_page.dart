@@ -1354,12 +1354,22 @@ class _AnswerBubble extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            _ChatMarkdown(
-              text: answer.text,
-              style: const TextStyle(
-                fontSize: 15,
-                height: 1.55,
-                color: Color(0xFF1F2937),
+            // Scoped to just the generated answer text (not the whole
+            // bubble) so drag-to-select/right-click-copy/Ctrl+C work across
+            // the complete multi-paragraph/bullet response in one
+            // continuous selection, like a normal chat answer -- while
+            // leaving the Sources links, confidence chip, and Submit
+            // ticket button (all outside this wrapper) exactly as tappable
+            // as before, and without this small selection region competing
+            // with the enclosing ListView's own vertical drag-to-scroll.
+            SelectionArea(
+              child: _ChatMarkdown(
+                text: answer.text,
+                style: const TextStyle(
+                  fontSize: 15,
+                  height: 1.55,
+                  color: Color(0xFF1F2937),
+                ),
               ),
             ),
             if (answer.sources.isNotEmpty) ...[

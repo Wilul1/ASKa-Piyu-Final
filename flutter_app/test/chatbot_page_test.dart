@@ -371,6 +371,149 @@ void main() {
       expect(find.text('low'), findsOneWidget);
     });
   });
+
+  group('Chatbot answer text is selectable (SelectionArea)', () {
+    testWidgets('generated answer text is wrapped in a SelectionArea',
+        (tester) async {
+      const answerText = 'Present your Certificate of Registration at the '
+          'OSAS window to have your student ID validated.';
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'How do I validate my ID?',
+        answerText: answerText,
+        confidence: 'high',
+        sources: const [],
+      );
+
+      final answerTextFinder =
+          find.textContaining('Present your Certificate of Registration');
+      expect(answerTextFinder, findsOneWidget);
+      expect(
+        find.ancestor(
+          of: answerTextFinder,
+          matching: find.byType(SelectionArea),
+        ),
+        findsOneWidget,
+        reason: 'the generated answer must be wrapped in a SelectionArea so '
+            'it can be drag-selected and copied',
+      );
+    });
+
+    testWidgets(
+        'bullet and multi-paragraph formatting is preserved inside the '
+        'selectable area',
+        (tester) async {
+      const answerText = 'Here is how enrollment works:\n\n'
+          '- Submit the enrolment slip from the Admission Office.\n'
+          '- Present your Certificate of Good Moral Character.\n\n'
+          'Processing normally takes a few minutes.';
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'How do I enroll?',
+        answerText: answerText,
+        confidence: 'high',
+        sources: const [],
+      );
+
+      // Bullet markers render as literal "•" text (see _ChatMarkdown) --
+      // both bullets must still be present, and the whole block must still
+      // sit inside the same SelectionArea as the rest of the answer.
+      expect(find.text('•  '), findsNWidgets(2));
+      expect(
+        find.textContaining('Submit the enrolment slip'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Processing normally takes a few minutes'),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+          of: find.text('•  ').first,
+          matching: find.byType(SelectionArea),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+        'source link remains tappable after the answer becomes selectable',
+        (tester) async {
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'What are the grade ranges for latin honors?',
+        answerText: 'Summa cum laude requires 1.20-1.45; magna cum laude '
+            '1.46-1.75; cum laude 1.76-2.00.',
+        confidence: 'high',
+        sources: [
+          _sourceJson(
+            title: 'Latin Honors',
+            path: 'Student Handbook > Graduation > Latin Honors',
+            page: 88,
+            sourceViewUrl: '/documents/doc-2/source',
+          ),
+        ],
+      );
+
+      await tester.tap(find.text('Sources (1)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final rowInkWell = find.ancestor(
+        of: find.textContaining('Latin Honors').first,
+        matching: find.byType(InkWell),
+      );
+      expect(rowInkWell, findsWidgets);
+      expect(tester.widget<InkWell>(rowInkWell.first).onTap, isNotNull);
+
+      // The source row must stay OUTSIDE the answer's SelectionArea --
+      // its own tap-to-open behavior must not be affected by selection.
+      expect(
+        find.ancestor(
+          of: find.textContaining('Latin Honors').first,
+          matching: find.byType(SelectionArea),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('the chat transcript still scrolls with the answer selectable',
+        (tester) async {
+      // A deliberately long, repeated-bullet answer so the transcript
+      // overflows the default viewport and genuinely needs to scroll --
+      // the default harness size (1200x900, used by every other test in
+      // this file) may also render a desktop history sidebar with its own
+      // ListView, so the transcript's ListView is located by ancestry from
+      // the answer text itself rather than by widget-type order.
+      final longAnswer = List.generate(
+        40,
+        (i) => '- Requirement $i: submit the corresponding document.',
+      ).join('\n');
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'What documents are required?',
+        answerText: longAnswer,
+        confidence: 'high',
+        sources: const [],
+      );
+
+      final listViewFinder = find.ancestor(
+        of: find.textContaining('Requirement 0').first,
+        matching: find.byType(ListView),
+      );
+      expect(listViewFinder, findsOneWidget);
+      final controllerBefore =
+          tester.widget<ListView>(listViewFinder).controller!;
+      expect(controllerBefore.offset, 0);
+
+      await tester.drag(listViewFinder, const Offset(0, -300));
+      await tester.pump();
+
+      final controllerAfter =
+          tester.widget<ListView>(listViewFinder).controller!;
+      expect(controllerAfter.offset, greaterThan(0));
+    });
+  });
 }
 
 class _FakeAuthService extends AuthService {

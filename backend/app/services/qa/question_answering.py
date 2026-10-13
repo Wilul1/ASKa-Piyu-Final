@@ -6,6 +6,7 @@ import logging
 import math
 import re
 import json
+import time
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -298,6 +299,17 @@ def answer_qa_question(
     generation_context_sink: dict[str, Any] | None = None,
     citation_v2_sink: dict[str, Any] | None = None,
     async_verification_sink: dict[str, Any] | None = None,
+    # Populated IN PLACE, incrementally, as each stage finishes -- never
+    # read by this function itself. Exists so a caller whose outer deadline
+    # fires while this call is still running (see app.routes.qa's
+    # asyncio.wait_for) can see which stages already completed, without
+    # waiting for this (possibly abandoned) call to return. Numeric
+    # durations only ("retrieval_s"/"rerank_s"/"generation_s") -- never
+    # populated with question/answer/chunk text. A stage this request never
+    # reaches (e.g. generation, on the typed-answer fast path) simply never
+    # gets a key -- callers must treat a missing key as "not reached", not
+    # as zero or an error.
+    timing_sink: dict[str, float] | None = None,
 ) -> QAResult:
     cleaned_question = question.strip()
     chat_history = list(history or [])
@@ -495,6 +507,7 @@ def answer_qa_question(
             topic_query = _canonical_service_name(active_topic)
             if topic_query and topic_query not in retrieval_variants:
                 retrieval_variants.append(topic_query)
+        _retrieval_stage_start = time.monotonic()
         retrieved, retrieved_by_query = _multi_query_retrieve(
             store,
             retrieval_variants,
@@ -502,6 +515,9 @@ def answer_qa_question(
             raw_k=BROAD_RETRIEVAL_CANDIDATES if broad_query else RAW_RETRIEVAL_CANDIDATES,
             user_role=role,
         )
+        if timing_sink is not None:
+            timing_sink["retrieval_s"] = round(time.monotonic() - _retrieval_stage_start, 3)
+        _rerank_stage_start = time.monotonic()
         facet_evidence = build_facet_evidence(
             retrieved_by_query,
             question_facets,
@@ -531,6 +547,8 @@ def answer_qa_question(
             retrieved,
             facet_evidence,
         )
+        if timing_sink is not None:
+            timing_sink["rerank_s"] = round(time.monotonic() - _rerank_stage_start, 3)
     # Slot follow-ups must not keep prior-topic chunks that confuse answer wording.
     if (
         not collection_mode
@@ -742,6 +760,7 @@ def answer_qa_question(
         _generation_kwargs: dict[str, Any] = {}
         if generation_usage_sink is not None:
             _generation_kwargs["usage_sink"] = generation_usage_sink
+        _generation_stage_start = time.monotonic()
         answer = generate_groq_answer(
             question=extractor_question,
             context=context,
@@ -751,6 +770,8 @@ def answer_qa_question(
             active_topic=active_topic,
             **_generation_kwargs,
         )
+        if timing_sink is not None:
+            timing_sink["generation_s"] = round(time.monotonic() - _generation_stage_start, 3)
         # Capture the evidence-bearing generated wording before any
         # presentation rewrite. A later classification notice replaces that
         # wording with a generic template that no longer shares the source's

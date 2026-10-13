@@ -1,3 +1,4 @@
+import math
 from unittest.mock import patch
 
 import pytest
@@ -3323,6 +3324,80 @@ def test_answer_qa_question_signature_declares_sinks_keyword_only_default_none()
         param = sig.parameters[name]
         assert param.kind == inspect.Parameter.KEYWORD_ONLY
         assert param.default is None
+
+
+def test_answer_qa_question_populates_timing_sink_for_retrieval_rerank_generation():
+    """End-to-end proof, through the real retrieval/rerank/generation code
+    (only the store and the Groq call itself faked, same convention as
+    test_answer_qa_question_accepts_citation_debug_sink_and_generation_usage_sink
+    above), that a supplied timing_sink is populated with finite,
+    non-negative durations for all three stages, and nothing else."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+
+    def generate_from_context(*, question: str, context: str, **kwargs) -> str:
+        return "The Transcript of Records fee is PHP 100.00 per page."
+
+    store = FakeStore([fee_chunk])
+    question = "How much is the fee for a Transcript of Records?"
+    timing_sink: dict = {}
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=generate_from_context,
+        ),
+    ):
+        result = answer_qa_question(question, timing_sink=timing_sink)
+
+    assert result.answer  # the real path ran to completion, not a short-circuit
+    assert set(timing_sink.keys()) == {"retrieval_s", "rerank_s", "generation_s"}
+    for key in ("retrieval_s", "rerank_s", "generation_s"):
+        value = timing_sink[key]
+        assert isinstance(value, float)
+        assert math.isfinite(value)
+        assert value >= 0
+
+
+def test_answer_qa_question_timing_sink_keeps_completed_stages_when_generation_raises():
+    """When generation fails (the existing GroqAnswerError fallback path --
+    see the many existing tests using this exact side_effect convention),
+    the stages that DID complete (retrieval, rerank) must still be visible
+    in the sink, and generation_s -- which is only ever set after a
+    SUCCESSFUL generate_groq_answer call -- must be absent, not zero or
+    fabricated. The call itself must still return a valid QAResult (the
+    existing fallback behavior), never raise."""
+    fee_chunk = chunk(
+        "Transcript of Records",
+        "Transcript of Records. Fees: PHP 100.00 per page, paid at the Cashier.",
+        score=0.9,
+        path=("Citizen's Charter", "Registrar", "Transcript of Records"),
+    )
+    store = FakeStore([fee_chunk])
+    question = "How much is the fee for a Transcript of Records?"
+    timing_sink: dict = {}
+    with (
+        patch("app.services.qa.question_answering.get_knowledge_base_store", return_value=store),
+        patch(
+            "app.services.qa.question_answering.generate_groq_answer",
+            side_effect=GroqAnswerError("Groq answer generation timed out."),
+        ),
+    ):
+        result = answer_qa_question(question, timing_sink=timing_sink)
+
+    assert result.answer  # fallback path still returns a real answer, never raises
+    assert "retrieval_s" in timing_sink
+    assert "rerank_s" in timing_sink
+    assert "generation_s" not in timing_sink
+    for key in ("retrieval_s", "rerank_s"):
+        value = timing_sink[key]
+        assert isinstance(value, float)
+        assert math.isfinite(value)
+        assert value >= 0
 
 
 # ---------------------------------------------------------------------------

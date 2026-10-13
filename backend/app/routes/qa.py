@@ -1,7 +1,9 @@
 """Production ASKa-Piyu QA chatbot endpoint."""
 
 import asyncio
+import json
 import logging
+import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 
@@ -83,6 +85,15 @@ async def qa_ask(
         # call returns, never during, since answer_qa_question runs
         # synchronously on a worker thread below.
         async_verification_sink: dict = {}
+        # Populated in-place, incrementally, by answer_qa_question as each
+        # pipeline stage finishes -- read ONLY in the timeout branch below.
+        # Never read on the success path: a successful call already
+        # returned its own result, and reading this sink there would add no
+        # information while slightly growing every normal request's work
+        # for no reason. Numeric durations only -- see
+        # answer_qa_question's own timing_sink docstring note.
+        timing_sink: dict = {}
+        _route_timing_start = time.monotonic()
         # answer_qa_question is sync (embeddings + HTTP). Run off the event
         # loop so health checks and KB routes stay responsive during slow LLM calls.
         try:
@@ -94,6 +105,7 @@ async def qa_ask(
                     history=history,
                     client_active_service=payload.active_service,
                     async_verification_sink=async_verification_sink,
+                    timing_sink=timing_sink,
                 ),
                 timeout=settings.qa_ask_timeout_seconds,
             )
@@ -107,6 +119,29 @@ async def qa_ask(
             logger.warning(
                 "qa_ask exceeded the %.0fs internal timeout; returning degraded fallback",
                 settings.qa_ask_timeout_seconds,
+            )
+            # Diagnostic only, emitted exactly once per timed-out request.
+            # Fixed numeric schema -- retrieval_s/rerank_s/generation_s are
+            # each either a number (that stage finished) or null (it never
+            # finished, or was never reached -- e.g. generation on the
+            # typed-answer fast path), never inferred or guessed. total_s is
+            # elapsed time through THIS handler (from just before the
+            # worker thread was scheduled to the moment this except block
+            # runs) -- it is NOT the abandoned worker thread's eventual
+            # real runtime, which this handler never waits for or reads.
+            # Never includes question/answer/chunk text, citation text, or
+            # any identifier -- numbers only.
+            logger.warning(
+                "qa_ask_timeout_stage_durations %s",
+                json.dumps(
+                    {
+                        "retrieval_s": timing_sink.get("retrieval_s"),
+                        "rerank_s": timing_sink.get("rerank_s"),
+                        "generation_s": timing_sink.get("generation_s"),
+                        "total_s": round(time.monotonic() - _route_timing_start, 3),
+                    },
+                    sort_keys=True,
+                ),
             )
             return _qa_ask_timeout_response()
     except EmptyKnowledgeBaseError as exc:

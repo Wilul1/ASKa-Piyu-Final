@@ -10,6 +10,8 @@ milliseconds, never real seconds.
 
 from __future__ import annotations
 
+import json
+import logging
 import time
 from unittest.mock import patch
 
@@ -36,6 +38,23 @@ def _fast_answer_qa_question(*args, **kwargs):
 def _slow_answer_qa_question(*args, **kwargs):
     # Well above the shrunk test timeout, far below any real test runner's
     # own timeout -- just needs to reliably lose the race.
+    time.sleep(0.3)
+    return QAResult(
+        answer="Here is the slow answer that arrived too late.",
+        sources=[],
+        confidence="high",
+        retrieved_chunks=[],
+    )
+
+
+def _slow_after_retrieval_answer_qa_question(*args, **kwargs):
+    """Simulates retrieval finishing (populates timing_sink["retrieval_s"]
+    exactly as the real answer_qa_question would) and then getting stuck
+    before rerank/generation ever complete -- the shape a timed-out request
+    whose retrieval succeeded but whose LLM call never returned would have."""
+    sink = kwargs.get("timing_sink")
+    if sink is not None:
+        sink["retrieval_s"] = 0.01
     time.sleep(0.3)
     return QAResult(
         answer="Here is the slow answer that arrived too late.",
@@ -171,3 +190,75 @@ def test_qa_ask_unrelated_exceptions_still_return_500_not_swallowed_by_the_timeo
         response = client.post("/qa/ask", json={"question": "What are the library hours?"})
     assert response.status_code == 500
     assert "synthetic failure" not in response.text
+
+
+# --- stage-level timing diagnostic log (timeout-only) ------------------------
+
+
+def _timeout_stage_log_payloads(caplog):
+    return [
+        json.loads(r.getMessage()[len("qa_ask_timeout_stage_durations ") :])
+        for r in caplog.records
+        if r.getMessage().startswith("qa_ask_timeout_stage_durations ")
+    ]
+
+
+def test_qa_ask_timeout_logs_retrieval_only_when_stuck_after_retrieval(monkeypatch, caplog):
+    """A timeout where retrieval finished but generation never did must
+    expose exactly that: retrieval_s present, rerank_s/generation_s null --
+    without waiting for the abandoned worker thread to ever finish."""
+    monkeypatch.setattr("app.routes.qa.settings.qa_ask_timeout_seconds", 0.05)
+    with caplog.at_level(logging.WARNING, logger="app.routes.qa"), patch(
+        "app.routes.qa.answer_qa_question", side_effect=_slow_after_retrieval_answer_qa_question
+    ):
+        response = client.post("/qa/ask", json={"question": "What are the library hours?"})
+    assert response.status_code == 200
+
+    payloads = _timeout_stage_log_payloads(caplog)
+    assert len(payloads) == 1
+    payload = payloads[0]
+    assert payload["retrieval_s"] == 0.01
+    assert payload["rerank_s"] is None
+    assert payload["generation_s"] is None
+    assert isinstance(payload["total_s"], float)
+    assert payload["total_s"] >= 0
+
+
+def test_qa_ask_timeout_stage_log_has_only_fixed_numeric_fields_and_no_text(monkeypatch, caplog):
+    """The log line's fields must be exactly the documented fixed schema,
+    and the raw log message must never contain the question text or the
+    (abandoned, late-arriving) answer text -- numbers only, ever."""
+    monkeypatch.setattr("app.routes.qa.settings.qa_ask_timeout_seconds", 0.05)
+    distinctive_question = "UNIQUE_MARKER_QUESTION_9f3a_do_not_leak"
+    with caplog.at_level(logging.WARNING, logger="app.routes.qa"), patch(
+        "app.routes.qa.answer_qa_question", side_effect=_slow_answer_qa_question
+    ):
+        response = client.post("/qa/ask", json={"question": distinctive_question})
+    assert response.status_code == 200
+
+    raw_lines = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("qa_ask_timeout_stage_durations ")
+    ]
+    assert len(raw_lines) == 1
+    raw_line = raw_lines[0]
+    payload = json.loads(raw_line[len("qa_ask_timeout_stage_durations ") :])
+
+    assert set(payload.keys()) == {"retrieval_s", "rerank_s", "generation_s", "total_s"}
+    for key in ("retrieval_s", "rerank_s", "generation_s", "total_s"):
+        assert payload[key] is None or isinstance(payload[key], (int, float))
+
+    assert distinctive_question not in raw_line
+    assert "Here is the slow answer" not in raw_line
+
+
+def test_qa_ask_fast_completion_emits_no_timing_stage_log(caplog):
+    """The diagnostic log is timeout-triggered only -- a normal, fast
+    request must never add this (or any) extra log volume."""
+    with caplog.at_level(logging.WARNING, logger="app.routes.qa"), patch(
+        "app.routes.qa.answer_qa_question", side_effect=_fast_answer_qa_question
+    ):
+        response = client.post("/qa/ask", json={"question": "What are the library hours?"})
+    assert response.status_code == 200
+    assert _timeout_stage_log_payloads(caplog) == []

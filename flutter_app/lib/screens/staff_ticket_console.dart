@@ -25,6 +25,10 @@ class _StaffTicketConsole extends StatefulWidget {
     String message, {
     bool isInternal,
   }) onReply;
+  final Future<_AdminTicketEntry> Function(_AdminTicketEntry ticket) onResolve;
+  // Null for callers without Close capability (e.g. the office-role
+  // Assigned Tickets console) -- Close is admin-only.
+  final Future<_AdminTicketEntry> Function(_AdminTicketEntry ticket)? onClose;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
   final String? initialSelectedId;
 
@@ -45,6 +49,8 @@ class _StaffTicketConsole extends StatefulWidget {
     required this.replyHint,
     required this.onUpdate,
     required this.onReply,
+    required this.onResolve,
+    this.onClose,
     required this.onTicketChanged,
     this.initialSelectedId,
   });
@@ -208,6 +214,10 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
               message,
               isInternal: isInternal,
             ),
+            onResolve: () => widget.onResolve(ticket),
+            onClose: widget.onClose == null
+                ? null
+                : () => widget.onClose!(ticket),
             onTicketChanged: widget.onTicketChanged,
             onClearSelection: () => setState(() => _selectedId = null),
             showBackButton: showBack,
@@ -287,6 +297,10 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
                               allowReassignment: widget.allowReassignment,
                               onUpdate: (payload) =>
                                   widget.onUpdate(selected, payload),
+                              onResolve: () => widget.onResolve(selected),
+                              onClose: widget.onClose == null
+                                  ? null
+                                  : () => widget.onClose!(selected),
                               onTicketChanged: widget.onTicketChanged,
                             ),
                     ),
@@ -734,6 +748,8 @@ class _StaffTicketThreadPane extends StatefulWidget {
     String message, {
     bool isInternal,
   }) onReply;
+  final Future<_AdminTicketEntry> Function() onResolve;
+  final Future<_AdminTicketEntry> Function()? onClose;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
   final VoidCallback onClearSelection;
   final bool showBackButton;
@@ -747,6 +763,8 @@ class _StaffTicketThreadPane extends StatefulWidget {
     required this.allowReassignment,
     required this.onUpdate,
     required this.onReply,
+    required this.onResolve,
+    this.onClose,
     required this.onTicketChanged,
     required this.onClearSelection,
     this.showBackButton = false,
@@ -1058,10 +1076,7 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
   }
 
   Future<void> _openTransferDialog() async {
-    var status = _ticket.status;
     var office = _ticket.assignedOffice;
-    final statuses =
-        _mergeOption(const ['Open', 'In Progress', 'Resolved', 'Closed'], status);
     final offices = _mergeOption(widget.officeOptions, office);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1075,24 +1090,10 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    DropdownButtonFormField<String>(
-                      value: statuses.contains(status) ? status : statuses.first,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Status',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: statuses
-                          .map((item) =>
-                              DropdownMenuItem(value: item, child: Text(item)))
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() => status = value);
-                      },
-                    ),
+                    // Status is no longer changed from here -- it is now a
+                    // read-only badge (see _StaffTicketDetailsPane) plus
+                    // the dedicated Resolve/Close actions there.
                     if (widget.allowReassignment) ...[
-                      const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: offices.contains(office) ? office : offices.first,
                         isExpanded: true,
@@ -1139,10 +1140,10 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
       _saving = true;
       _error = null;
     });
+    if (!widget.allowReassignment) return;
     try {
       final updated = await widget.onUpdate({
-        'status': status,
-        if (widget.allowReassignment) 'assigned_office': office,
+        'assigned_office': office,
       });
       setState(() => _ticket = updated);
       widget.onTicketChanged(updated);
@@ -1230,6 +1231,8 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
                     officeOptions: widget.officeOptions,
                     allowReassignment: widget.allowReassignment,
                     onUpdate: widget.onUpdate,
+                    onResolve: widget.onResolve,
+                    onClose: widget.onClose,
                     onTicketChanged: widget.onTicketChanged,
                     embedded: true,
                   )
@@ -1850,6 +1853,10 @@ class _StaffTicketDetailsPane extends StatefulWidget {
   final bool allowReassignment;
   final Future<_AdminTicketEntry> Function(Map<String, dynamic> payload)
       onUpdate;
+  final Future<_AdminTicketEntry> Function() onResolve;
+  // Null for callers without Close capability (e.g. the office-role
+  // Assigned Tickets console) -- Close is admin-only.
+  final Future<_AdminTicketEntry> Function()? onClose;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
 
   final bool embedded;
@@ -1860,6 +1867,8 @@ class _StaffTicketDetailsPane extends StatefulWidget {
     required this.officeOptions,
     required this.allowReassignment,
     required this.onUpdate,
+    required this.onResolve,
+    this.onClose,
     required this.onTicketChanged,
     this.embedded = false,
   });
@@ -1910,16 +1919,14 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
     super.dispose();
   }
 
-  Future<void> _save({String? status, String? priority}) async {
+  Future<void> _save({String? priority}) async {
     setState(() {
       _saving = true;
       _error = null;
-      if (status != null) _status = status;
       if (priority != null) _priority = priority;
     });
     try {
       final updated = await widget.onUpdate({
-        'status': status ?? _status,
         'priority': priority ?? _priority,
         if (widget.allowReassignment) 'assigned_office': _office,
         if (widget.allowReassignment) 'category': _categoryCtrl.text.trim(),
@@ -1933,13 +1940,47 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
     }
   }
 
+  Future<void> _resolve() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onResolve();
+      setState(() => _syncFrom(updated));
+      widget.onTicketChanged(updated);
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _close() async {
+    final onClose = widget.onClose;
+    if (onClose == null) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await onClose();
+      setState(() => _syncFrom(updated));
+      widget.onTicketChanged(updated);
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final statuses =
-        _mergeOption(const ['Open', 'In Progress', 'Resolved', 'Closed'], _status);
     final priorities =
         _mergeOption(const ['Low', 'Medium', 'High', 'Urgent'], _priority);
     final offices = _mergeOption(widget.officeOptions, _office);
+    final canResolve = _status == 'Open' || _status == 'In Progress';
+    final canClose = widget.onClose != null && _status != 'Closed';
 
     final profile = _ticket.requesterProfile;
     return ListView(
@@ -1958,12 +1999,45 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
           ),
         ),
         const SizedBox(height: 14),
-        _AdminFilterDropdown(
-          label: 'Status',
-          value: _status,
-          values: statuses,
-          onChanged: (value) => _save(status: value),
+        // Status is read-only here -- changed only through the dedicated
+        // Resolve/Close actions below, never a dropdown.
+        Row(
+          children: [
+            const Text(
+              'Status',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                color: DesignTokens.muted,
+              ),
+            ),
+            const SizedBox(width: 10),
+            _AdminStatusChip(status: _status),
+          ],
         ),
+        if (canResolve || canClose) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (canResolve)
+                OutlinedButton(
+                  onPressed: _saving ? null : _resolve,
+                  child: const Text('Resolve'),
+                ),
+              if (canClose)
+                OutlinedButton(
+                  onPressed: _saving ? null : _close,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFB91C1C),
+                    side: const BorderSide(color: Color(0xFFB91C1C)),
+                  ),
+                  child: const Text('Close'),
+                ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
         _AdminFilterDropdown(
           label: 'Priority',

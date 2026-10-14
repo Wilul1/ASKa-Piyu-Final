@@ -13,10 +13,12 @@ from app.models.schemas import (
     ConvertTicketToArticleRequest,
     CreateOfficeRequest,
     CreateTicketRequest,
+    CreateTicketTransferRequest,
     NotificationListResponse,
     NotificationSchema,
     OfficeListResponse,
     OfficeSummarySchema,
+    RejectTicketTransferRequest,
     TicketAttachmentSchema,
     TicketAuditEventSchema,
     TicketKbArticleSchema,
@@ -25,7 +27,10 @@ from app.models.schemas import (
     TicketListResponse,
     TicketSchema,
     TicketStatisticsResponse,
+    TicketTransferRequestListResponse,
+    TicketTransferRequestSchema,
     TicketTriageSchema,
+    TransferNotificationUnreadCountResponse,
     UpdateTicketRequest,
 )
 from app.services.auth import get_current_user, require_verified_email_for_tickets
@@ -44,20 +49,30 @@ from app.services.ticket_notifications import (
     list_notifications,
     mark_all_notifications_read,
     mark_notification_read,
+    mark_transfer_notifications_read,
     notification_schema,
     unread_notification_count,
+    unread_transfer_notification_count,
 )
 from app.services.ticketing import (
     TicketAccessError,
     TicketNotFoundError,
     TicketValidationError,
+    accept_ticket_transfer,
     add_ticket_reply,
+    close_ticket,
     delete_office,
     create_office,
     create_ticket,
     get_ticket,
+    list_incoming_ticket_transfers,
     list_offices,
+    list_outgoing_ticket_transfers,
+    list_ticket_transfer_requests,
     list_tickets,
+    reject_ticket_transfer,
+    request_ticket_transfer,
+    resolve_ticket,
     ticket_statistics,
     triage_ticket,
     update_ticket,
@@ -192,6 +207,42 @@ async def mark_all_notifications_read_endpoint(
 ) -> dict:
     count = mark_all_notifications_read(session, actor)
     return {"marked_read": count}
+
+
+@router.post("/notifications/transfers/read-all")
+async def mark_transfer_notifications_read_endpoint(
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> dict:
+    # Transfer notifications only ever reach office/admin recipients (see
+    # notify_office_id_staff), so this is already a harmless no-op for any
+    # other role via the user-scoped query below -- this check just makes
+    # that explicit at the boundary, matching this router's existing
+    # inline-role-check convention (see create_office_endpoint above),
+    # rather than leaving it to be inferred from the query's scoping.
+    if actor.role not in {"office", "admin"}:
+        raise HTTPException(
+            status_code=403, detail="Only office staff or admins can use this endpoint."
+        )
+    count = mark_transfer_notifications_read(session, actor)
+    return {"marked_read": count}
+
+
+@router.get(
+    "/notifications/transfers/unread-count",
+    response_model=TransferNotificationUnreadCountResponse,
+)
+async def unread_transfer_notification_count_endpoint(
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TransferNotificationUnreadCountResponse:
+    if actor.role not in {"office", "admin"}:
+        raise HTTPException(
+            status_code=403, detail="Only office staff or admins can use this endpoint."
+        )
+    return TransferNotificationUnreadCountResponse(
+        unread_count=unread_transfer_notification_count(session, actor)
+    )
 
 
 @router.patch("/notifications/{notification_id}/read", response_model=NotificationSchema)
@@ -368,7 +419,135 @@ async def add_ticket_reply_endpoint(
     session: Session = Depends(get_db_session),
 ) -> TicketSchema:
     try:
-        return add_ticket_reply(session, ticket_id, payload.message, actor)
+        return add_ticket_reply(
+            session, ticket_id, payload.message, actor, is_internal=payload.is_internal
+        )
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TicketAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/{ticket_id}/resolve", response_model=TicketSchema)
+async def resolve_ticket_endpoint(
+    ticket_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketSchema:
+    try:
+        return resolve_ticket(session, ticket_id, actor)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TicketAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/{ticket_id}/close", response_model=TicketSchema)
+async def close_ticket_endpoint(
+    ticket_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketSchema:
+    try:
+        return close_ticket(session, ticket_id, actor)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TicketAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/{ticket_id}/transfers", response_model=TicketTransferRequestSchema)
+async def request_ticket_transfer_endpoint(
+    ticket_id: str,
+    payload: CreateTicketTransferRequest,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketTransferRequestSchema:
+    try:
+        return request_ticket_transfer(
+            session,
+            ticket_id,
+            destination_office_id=payload.destination_office_id,
+            reason=payload.reason,
+            actor=actor,
+        )
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TicketAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/{ticket_id}/transfers", response_model=TicketTransferRequestListResponse)
+async def list_ticket_transfer_requests_endpoint(
+    ticket_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketTransferRequestListResponse:
+    try:
+        items = list_ticket_transfer_requests(session, ticket_id, actor)
+        return TicketTransferRequestListResponse(items=items, total=len(items))
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/transfers/incoming", response_model=TicketTransferRequestListResponse)
+async def list_incoming_ticket_transfers_endpoint(
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketTransferRequestListResponse:
+    items = list_incoming_ticket_transfers(session, actor)
+    return TicketTransferRequestListResponse(items=items, total=len(items))
+
+
+@router.get("/transfers/outgoing", response_model=TicketTransferRequestListResponse)
+async def list_outgoing_ticket_transfers_endpoint(
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketTransferRequestListResponse:
+    items = list_outgoing_ticket_transfers(session, actor)
+    return TicketTransferRequestListResponse(items=items, total=len(items))
+
+
+@router.post("/transfers/{transfer_id}/accept", response_model=TicketSchema)
+async def accept_ticket_transfer_endpoint(
+    transfer_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketSchema:
+    try:
+        return accept_ticket_transfer(session, transfer_id, actor)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TicketAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/transfers/{transfer_id}/reject", response_model=TicketTransferRequestSchema)
+async def reject_ticket_transfer_endpoint(
+    transfer_id: str,
+    payload: RejectTicketTransferRequest | None = None,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketTransferRequestSchema:
+    try:
+        return reject_ticket_transfer(
+            session,
+            transfer_id,
+            actor,
+            rejection_reason=payload.rejection_reason if payload else None,
+        )
     except TicketNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TicketValidationError as exc:

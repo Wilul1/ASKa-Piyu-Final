@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import '../app_config.dart';
+import '../app_route_observer.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../screens/admin_management_pages.dart';
 import '../screens/admin_panel_page.dart';
 import '../screens/chatbot_page.dart';
+import '../screens/incoming_transfers_page.dart';
 import '../screens/knowledge_articles_page.dart';
 import '../screens/knowledge_base_page.dart';
 import '../screens/login_page.dart';
 import '../screens/settings_page.dart';
 import '../screens/student_home.dart';
 import '../screens/my_tickets_page.dart';
+import '../services/api_client.dart';
 
 enum StudentNavItem {
   home,
@@ -20,12 +24,14 @@ enum StudentNavItem {
   submitTicket,
   officeDashboard,
   officeAssignedTickets,
+  officeIncomingTransfers,
   officeFaculty,
   officeKnowledgeBase,
   officeKnowledgeArticles,
   officeGenerateArticles,
   adminDashboard,
   adminAllTickets,
+  adminIncomingTransfers,
   adminKnowledgeBase,
   adminKnowledgeArticles,
   adminGenerateArticles,
@@ -262,6 +268,14 @@ class AppSidebar extends StatelessWidget {
       return;
     }
 
+    if (item == StudentNavItem.officeIncomingTransfers) {
+      openOfficePage(
+        context,
+        builder: (_) => const IncomingTransfersPage(),
+      );
+      return;
+    }
+
     if (item == StudentNavItem.officeFaculty) {
       openOfficePage(
         context,
@@ -293,6 +307,14 @@ class AppSidebar extends StatelessWidget {
       openAdminPage(
         context,
         builder: (_) => const AdminDashboardPage(),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.adminIncomingTransfers) {
+      openAdminPage(
+        context,
+        builder: (_) => const IncomingTransfersPage(),
       );
       return;
     }
@@ -537,6 +559,8 @@ class _AdminDarkSidebar extends StatelessWidget {
           'Dashboard', Icons.dashboard_rounded, StudentNavItem.adminDashboard),
       _SidebarData(
           'All Tickets', Icons.fact_check_rounded, StudentNavItem.adminAllTickets),
+      _SidebarData('Incoming Transfers', Icons.swap_horiz_rounded,
+          StudentNavItem.adminIncomingTransfers),
       _SidebarData('Knowledge Base', Icons.library_books_rounded,
           StudentNavItem.adminKnowledgeBase),
       _SidebarData('Knowledge Article', Icons.article_outlined,
@@ -620,6 +644,9 @@ class _AdminDarkSidebar extends StatelessWidget {
                         icon: item.icon,
                         selected: current == item.item,
                         onTap: () => onNavigate(item.item, item.label),
+                        trailing: item.item == StudentNavItem.adminIncomingTransfers
+                            ? const _TransferBadge()
+                            : null,
                       ),
                   ],
                 ],
@@ -696,6 +723,7 @@ class _AdminSidebarItem extends StatelessWidget {
   final bool selected;
   final VoidCallback? onTap;
   final bool showIcon;
+  final Widget? trailing;
 
   const _AdminSidebarItem({
     required this.label,
@@ -703,6 +731,7 @@ class _AdminSidebarItem extends StatelessWidget {
     required this.selected,
     this.onTap,
     this.showIcon = false,
+    this.trailing,
   });
 
   @override
@@ -742,9 +771,146 @@ class _AdminSidebarItem extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (trailing != null) trailing!,
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bumped by actions elsewhere in the app (a successful Accept/Reject, the
+/// explicit "mark transfer notifications read" action on the mailbox
+/// screen) that change the authenticated user's unread-transfer count.
+/// _TransferBadge listens to this in addition to its own
+/// didChangeDependencies, since it's a sibling widget to those actions
+/// with no other connection to them -- returning to the mailbox via a
+/// fresh page push already gets a fresh fetch for free (a new widget
+/// instance), but an action taken while the SAME sidebar instance stays
+/// mounted would otherwise never be reflected. _TransferBadge itself
+/// ignores this tick while its own page is covered by another route (see
+/// RouteAware below), so a bump never causes a fetch for a hidden page's
+/// badge -- only the one the user can actually see.
+final ValueNotifier<int> transferBadgeRefreshTick = ValueNotifier<int>(0);
+
+/// Test-only: incremented every time any _TransferBadge actually attempts
+/// a fetch (regardless of whether the network call itself succeeds).
+/// There is no HTTP-mocking seam in this codebase's widget tests, so this
+/// is the only way to deterministically observe "did a fetch happen" vs.
+/// "was it correctly skipped because the page is hidden" without a real
+/// backend. Never read by production code.
+@visibleForTesting
+int debugTransferBadgeLoadAttempts = 0;
+
+/// Small unread-count badge for the "Incoming Transfers" nav item. Counts
+/// only unread notifications whose type is exclusive to the transfer
+/// workflow, via a dedicated, un-paginated count endpoint -- never the
+/// global unread_count, and never a substitute like the pending-request
+/// count.
+class _TransferBadge extends StatefulWidget {
+  const _TransferBadge();
+
+  @override
+  State<_TransferBadge> createState() => _TransferBadgeState();
+}
+
+class _TransferBadgeState extends State<_TransferBadge> with RouteAware {
+  int? _count;
+  ModalRoute<dynamic>? _route;
+  // A badge is visible as soon as it's built, by construction (a page is
+  // always the top of the stack at the moment it's first pushed); this
+  // only ever turns false once didPushNext() reports another route
+  // covering it.
+  bool _visible = true;
+
+  @override
+  void initState() {
+    super.initState();
+    transferBadgeRefreshTick.addListener(_onRefreshTick);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != _route) {
+      appRouteObserver.unsubscribe(this);
+      _route = route;
+      if (route is PageRoute) {
+        appRouteObserver.subscribe(this, route);
+      }
+    }
+    _load();
+  }
+
+  @override
+  void dispose() {
+    transferBadgeRefreshTick.removeListener(_onRefreshTick);
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPushNext() {
+    // Another route was pushed on top of this badge's own page -- it's
+    // hidden now, so stop treating refresh-tick bumps as a reason to
+    // fetch until it's visible again.
+    _visible = false;
+  }
+
+  @override
+  void didPopNext() {
+    // The route that was covering this page is gone and it's visible
+    // again. Refresh unconditionally rather than relying on having seen
+    // a refresh-tick bump while hidden -- there may not have been one,
+    // and the count could still be stale from whatever changed while
+    // this page was covered.
+    _visible = true;
+    _load();
+  }
+
+  void _onRefreshTick() {
+    if (!_visible) return;
+    _load();
+  }
+
+  Future<void> _load() async {
+    debugTransferBadgeLoadAttempts++;
+    final auth = AuthScope.of(context);
+    if (auth.role != 'office' && auth.role != 'admin') return;
+    try {
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/notifications/transfers/unread-count',
+        headers: auth.ticketHeaders(),
+      );
+      if (!result.ok) return;
+      final count = result.jsonObject['unread_count'];
+      if (mounted && count is int) setState(() => _count = count);
+    } catch (_) {
+      // Non-blocking: navigation still works without the badge.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final count = _count;
+    if (count == null || count <= 0) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: DesignTokens.maroon,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        count > 9 ? '9+' : '$count',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -792,6 +958,8 @@ class _OfficeDarkSidebar extends StatelessWidget {
         StudentNavItem.officeDashboard),
     _SidebarData('Assigned Tickets', Icons.assignment_turned_in_rounded,
         StudentNavItem.officeAssignedTickets),
+    _SidebarData('Incoming Transfers', Icons.swap_horiz_rounded,
+        StudentNavItem.officeIncomingTransfers),
     _SidebarData(
         'Account', Icons.manage_accounts_outlined, StudentNavItem.officeFaculty),
     _SidebarData('Knowledge Base', Icons.library_books_rounded,
@@ -879,6 +1047,9 @@ class _OfficeDarkSidebar extends StatelessWidget {
                       icon: item.icon,
                       selected: current == item.item,
                       onTap: () => onNavigate(item.item, item.label),
+                      trailing: item.item == StudentNavItem.officeIncomingTransfers
+                          ? const _TransferBadge()
+                          : null,
                     ),
                 ],
               ),

@@ -338,6 +338,22 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
     return updated;
   }
 
+  Future<_AdminTicketEntry> _resolveTicket(_AdminTicketEntry ticket) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/resolve',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not resolve ticket.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
   void _replaceTicket(_AdminTicketEntry updated) {
     setState(() {
       final index = _tickets.indexWhere((ticket) => ticket.id == updated.id);
@@ -384,6 +400,7 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
         replyHint: 'Write a reply…',
         onUpdate: _patchTicket,
         onReply: _replyToTicket,
+        onResolve: _resolveTicket,
         onTicketChanged: _replaceTicket,
         initialSelectedId: widget.initialSelectedTicketId,
       ),
@@ -2071,6 +2088,8 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
   final Future<_AdminTicketEntry> Function(Map<String, dynamic> payload)
       onUpdate;
   final Future<_AdminTicketEntry> Function(String message) onReply;
+  final Future<_AdminTicketEntry> Function() onResolve;
+  final Future<_AdminTicketEntry> Function() onClose;
 
   const _AdminTicketDetailsDialog({
     required this.ticket,
@@ -2080,6 +2099,8 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
     this.allowReassignment = true,
     required this.onUpdate,
     required this.onReply,
+    required this.onResolve,
+    required this.onClose,
   });
 
   @override
@@ -2208,8 +2229,8 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
       for (final office in widget.officeEntries) office.id: office.name,
     };
     final priorities = _mergeOption(const ['Low', 'Medium', 'High', 'Urgent'], _priority);
-    final statuses =
-        _mergeOption(const ['Open', 'In Progress', 'Resolved', 'Closed'], _status);
+    final canResolve = _status == 'Open' || _status == 'In Progress';
+    final canClose = _status != 'Closed';
 
     return Dialog(
       insetPadding: const EdgeInsets.all(18),
@@ -2292,6 +2313,29 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                           ),
                       ],
                     ),
+                    if (canResolve || canClose) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (canResolve)
+                            OutlinedButton(
+                              onPressed: _saving ? null : _resolveFromDialog,
+                              child: const Text('Resolve'),
+                            ),
+                          if (canClose)
+                            OutlinedButton(
+                              onPressed: _saving ? null : _closeFromDialog,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFB91C1C),
+                                side: const BorderSide(color: Color(0xFFB91C1C)),
+                              ),
+                              child: const Text('Close'),
+                            ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     if (_ticket.needsManualRouting)
                       _AdminNotice(
@@ -2397,14 +2441,10 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                             builder: (context, constraints) {
                               final compact = constraints.maxWidth < 680;
                               final fields = [
-                                _AdminFilterDropdown(
-                                  label: 'Status',
-                                  value: _status,
-                                  values: statuses,
-                                  icon: Icons.tune_rounded,
-                                  onChanged: (value) =>
-                                      setState(() => _status = value),
-                                ),
+                                // Status is read-only here -- see the
+                                // _AdminStatusChip above plus the
+                                // Resolve/Close buttons, which replace this
+                                // dropdown entirely.
                                 _AdminFilterDropdown(
                                   label: 'Priority',
                                   value: _priority,
@@ -2530,6 +2570,42 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
     );
   }
 
+  Future<void> _resolveFromDialog() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onResolve();
+      setState(() {
+        _ticket = updated;
+        _status = updated.status;
+      });
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _closeFromDialog() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onClose();
+      setState(() {
+        _ticket = updated;
+        _status = updated.status;
+      });
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _saveChanges() async {
     setState(() {
       _saving = true;
@@ -2539,13 +2615,13 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
       // Only ever send a REAL office id, and only when one has actually
       // been chosen. If the ticket is unresolved and the admin hasn't
       // picked a real office yet, the office key is omitted entirely so
-      // "Save changes" (e.g. just a status update) can never resend the
-      // raw taxonomy label and can never silently re-launder an
-      // unresolved ticket back into a default office.
+      // "Save changes" can never resend the raw taxonomy label and can
+      // never silently re-launder an unresolved ticket back into a
+      // default office. Status is no longer part of this payload at all
+      // -- see _resolveFromDialog/_closeFromDialog.
       final resolvedOfficeId =
           _officeId == _unresolvedOfficeSentinel ? null : _officeId;
       final updated = await widget.onUpdate({
-        'status': _status,
         'priority': _priority,
         if (widget.allowReassignment && resolvedOfficeId != null)
           'assigned_office_id': resolvedOfficeId,

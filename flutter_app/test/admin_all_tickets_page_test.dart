@@ -431,6 +431,47 @@ void main() {
     );
   });
 
+  testWidgets(
+      'admin ticket dialog shows status as a read-only badge with Resolve '
+      'and Close actions, never a status dropdown',
+      (tester) async {
+    await pumpPage(tester);
+    await tester.tap(find.byKey(const Key('admin-all-tickets-view-TK-20260913-001')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // TK-20260913-001 is Open -- both actions apply.
+    expect(find.text('Resolve'), findsOneWidget);
+    expect(find.text('Close'), findsOneWidget);
+    // No DropdownButtonFormField anywhere in the dialog is currently
+    // showing a status word as its value -- status is never editable via
+    // a dropdown, admin included.
+    const statusWords = {'Open', 'In Progress', 'Resolved', 'Closed'};
+    expect(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byWidgetPredicate((widget) =>
+            widget is DropdownButtonFormField<String> &&
+            statusWords.contains(widget.initialValue)),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+      'admin ticket dialog shows neither Resolve nor Close for an already '
+      'Closed ticket',
+      (tester) async {
+    await pumpPage(tester);
+    await tester.tap(find.byKey(const Key('admin-all-tickets-view-TK-20260912-028')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // TK-20260912-028 is Closed -- neither action applies.
+    expect(find.text('Resolve'), findsNothing);
+    expect(find.text('Close'), findsNothing);
+  });
+
   testWidgets('status and priority badges and created timestamp render',
       (tester) async {
     await pumpPage(tester);

@@ -196,6 +196,38 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
     return updated;
   }
 
+  Future<_AdminTicketEntry> _resolveTicket(_AdminTicketEntry ticket) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/resolve',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not resolve ticket.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
+  Future<_AdminTicketEntry> _closeTicket(_AdminTicketEntry ticket) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/close',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not close ticket.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
   void _replaceTicket(_AdminTicketEntry updated) {
     setState(() {
       final index = _tickets.indexWhere((ticket) => ticket.id == updated.id);
@@ -216,6 +248,8 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
         officeEntries: _offices,
         onUpdate: (payload) => _patchTicket(ticket, payload),
         onReply: (message) => _replyToTicket(ticket, message),
+        onResolve: () => _resolveTicket(ticket),
+        onClose: () => _closeTicket(ticket),
       ),
     );
   }

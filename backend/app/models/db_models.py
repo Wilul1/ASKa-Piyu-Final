@@ -221,6 +221,62 @@ class Notification(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True, nullable=False)
+    # Precise link back to the exact transfer request this notification was
+    # raised for -- nullable (every pre-existing notification type, and the
+    # ambiguous shared types "ticket_assigned"/"office_reassigned", leave
+    # this NULL) so a decision can mark read exactly the rows it caused,
+    # never inferring identity from ticket_id alone (which multiple distinct
+    # transfer requests, and multiple recipients, can share).
+    transfer_request_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("ticket_transfer_requests.id"), index=True, nullable=True
+    )
+
+
+class TicketTransferRequest(Base):
+    """Office-to-office ticket transfer request/history.
+
+    A request starts Pending and never immediately reassigns the ticket --
+    only accept_ticket_transfer() does that, and only while the request is
+    still Pending at that moment. source_office_id/destination_office_id
+    are always real Office ids (never raw office-name strings, unlike the
+    legacy Ticket.assigned_office column) so a request can never be
+    ambiguous about which offices it concerns. A completed (Accepted/
+    Rejected) row is never overwritten -- this table doubles as the
+    append-only transfer history.
+
+    The partial unique index below enforces "at most one Pending request
+    per ticket" at the database level (not just in application code), so
+    two concurrent create-attempts can't both succeed even under a race.
+    """
+
+    __tablename__ = "ticket_transfer_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('Pending', 'Accepted', 'Rejected')",
+            name="ck_ticket_transfer_requests_status",
+        ),
+        Index(
+            "ux_ticket_transfer_requests_one_pending_per_ticket",
+            "ticket_id",
+            unique=True,
+            postgresql_where=text("status = 'Pending'"),
+            sqlite_where=text("status = 'Pending'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ticket_id: Mapped[str] = mapped_column(String(32), ForeignKey("tickets.id"), index=True, nullable=False)
+    source_office_id: Mapped[str] = mapped_column(String(36), ForeignKey("offices.id"), index=True, nullable=False)
+    destination_office_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("offices.id"), index=True, nullable=False
+    )
+    initiated_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="Pending", index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AuthEvent(Base):

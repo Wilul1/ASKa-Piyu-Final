@@ -492,6 +492,10 @@ class NotificationListResponse(BaseModel):
     unread_count: int
 
 
+class TransferNotificationUnreadCountResponse(BaseModel):
+    unread_count: int
+
+
 class TicketMessageSchema(BaseModel):
     id: str
     ticket_id: str
@@ -642,6 +646,41 @@ class AddTicketReplyRequest(BaseModel):
 
 class TicketListResponse(BaseModel):
     items: list[TicketSchema]
+    total: int
+
+
+TicketTransferStatus = Literal["Pending", "Accepted", "Rejected"]
+
+
+class CreateTicketTransferRequest(BaseModel):
+    destination_office_id: str = Field(..., min_length=1, max_length=36)
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
+class RejectTicketTransferRequest(BaseModel):
+    # Optional: a request can be rejected with no reason given, but if one
+    # is provided it is recorded (never silently dropped).
+    rejection_reason: str | None = Field(default=None, max_length=1000)
+
+
+class TicketTransferRequestSchema(BaseModel):
+    id: str
+    ticket_id: str
+    source_office_id: str
+    source_office_name: str
+    destination_office_id: str
+    destination_office_name: str
+    initiated_by_user_id: str
+    reason: str
+    status: TicketTransferStatus
+    created_at: str
+    decided_at: str | None = None
+    decided_by_user_id: str | None = None
+    rejection_reason: str | None = None
+
+
+class TicketTransferRequestListResponse(BaseModel):
+    items: list[TicketTransferRequestSchema]
     total: int
 
 

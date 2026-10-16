@@ -214,6 +214,10 @@ class OfficeAssignedTicketsPage extends StatefulWidget {
   /// Seeded tickets skip network load. Widget tests only.
   @visibleForTesting
   final List<Map<String, dynamic>>? debugTickets;
+  /// Seeded destination-office choices for the Transfer dialog, skipping
+  /// its own `GET /tickets/offices` load. Widget tests only.
+  @visibleForTesting
+  final List<Map<String, dynamic>>? debugOffices;
 
   const OfficeAssignedTicketsPage({
     super.key,
@@ -221,6 +225,7 @@ class OfficeAssignedTicketsPage extends StatefulWidget {
     this.initialSearch = '',
     this.initialSelectedTicketId,
     this.debugTickets,
+    this.debugOffices,
   });
 
   @override
@@ -396,6 +401,7 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
         onRefresh: widget.debugTickets == null ? _loadTickets : () async {},
         officeOptions: const [],
         allowReassignment: false,
+        debugTransferOffices: widget.debugOffices,
         listTitle: 'Assigned Tickets',
         replyHint: 'Write a reply…',
         onUpdate: _patchTicket,

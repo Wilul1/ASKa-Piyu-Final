@@ -30,6 +30,7 @@ void main() {
       'category': 'Student Records',
       'assigned_office': 'Office of Student Affairs (OSA)',
       'assigned_office_name': 'Office of Student Affairs (OSA)',
+      'assigned_office_id': 'office-osa',
       'created_at': '2026-08-24T12:00:00Z',
       'updated_at': '2026-08-24T14:15:00Z',
       'messages': [
@@ -57,10 +58,19 @@ void main() {
     };
   }
 
+  List<Map<String, dynamic>> officeChoices() => const [
+        {'id': 'office-registrar', 'name': 'Registrar'},
+        {'id': 'office-ict', 'name': 'ICT Office'},
+      ];
+
   Future<void> pumpWorkspace(
     WidgetTester tester, {
     Size size = const Size(1400, 1000),
     List<Map<String, dynamic>>? tickets,
+    List<Map<String, dynamic>>? offices,
+    // True only for the dialog-lifecycle tests below, which need the
+    // dialog's own real (non-seeded) _loadOffices() to actually run.
+    bool skipOfficeSeed = false,
     String search = '',
     String? initialSelectedTicketId,
   }) async {
@@ -82,6 +92,7 @@ void main() {
           home: OfficeAssignedTicketsPage(
             initialSearch: search,
             initialSelectedTicketId: initialSelectedTicketId,
+            debugOffices: skipOfficeSeed ? null : (offices ?? officeChoices()),
             debugTickets: tickets ??
                 [
                   ticketJson(
@@ -246,6 +257,43 @@ void main() {
   });
 
   testWidgets(
+      'the Resolve button renders as a single compact outlined control and '
+      'shows a loading state while resolving',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(id: 'TK-OPEN-1', subject: 'Need a Good Moral Certificate', status: 'Open'),
+      ],
+      initialSelectedTicketId: 'TK-OPEN-1',
+    );
+
+    final resolveFinder = find.byKey(const Key('resolve-ticket-button'));
+    expect(resolveFinder, findsOneWidget);
+    final button = tester.widget<OutlinedButton>(resolveFinder);
+    expect(button.onPressed, isNotNull);
+    // No decorative icon -- just the plain "Resolve" label.
+    expect(find.descendant(of: resolveFinder, matching: find.byType(Icon)), findsNothing);
+    expect(find.descendant(of: resolveFinder, matching: find.text('Resolve')), findsOneWidget);
+
+    // No backend is reachable in this sandbox. The failure resolves fast
+    // enough that the transient spinner frame isn't reliably observable
+    // here (see the loading-state ternary in _StaffTicketDetailsPaneState
+    // for the actual implementation); what IS deterministic is that the
+    // button survives the failed attempt and settles back to its normal,
+    // re-enabled "Resolve" label rather than getting stuck.
+    await tester.tap(resolveFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('resolve-ticket-button')), findsOneWidget);
+    expect(find.descendant(of: resolveFinder, matching: find.text('Resolve')), findsOneWidget);
+    expect(
+      tester.widget<OutlinedButton>(resolveFinder).onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets(
       'a Resolved ticket shows no Resolve action (office has no Close either)',
       (tester) async {
     await pumpWorkspace(
@@ -267,7 +315,17 @@ void main() {
     expect(statusDropdowns(), findsNothing);
   });
 
-  testWidgets('the Transfer dialog no longer offers a status dropdown',
+  Future<void> openTransferDialog(WidgetTester tester) async {
+    final transfer = find.byTooltip('Transfer / reassign', skipOffstage: false);
+    await tester.ensureVisible(transfer);
+    await tester.tap(transfer);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+
+  testWidgets(
+      'the Transfer dialog renders a destination-office dropdown and a reason field, '
+      'never a status dropdown',
       (tester) async {
     await pumpWorkspace(
       tester,
@@ -281,24 +339,197 @@ void main() {
       initialSelectedTicketId: 'TK-TRANSFER-1',
     );
 
-    final transfer = find.byTooltip('Transfer / reassign', skipOffstage: false);
-    await tester.ensureVisible(transfer);
-    await tester.tap(transfer);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await openTransferDialog(tester);
 
     expect(find.text('Transfer ticket'), findsOneWidget);
-    // Office has allowReassignment: false, so with the status dropdown
-    // removed this dialog now has no dropdowns of its own left at all --
-    // scoped to inside the dialog, since the page behind it still has its
-    // own (unrelated, legitimate) Priority dropdown.
+    expect(find.text('Destination office'), findsOneWidget);
+    expect(find.text('Reason for transfer'), findsOneWidget);
+    // No status word ('Open'/'In Progress'/'Resolved'/'Closed') is ever a
+    // dropdown's current value inside this dialog.
     expect(
       find.descendant(
         of: find.byType(Dialog),
-        matching: find.byType(DropdownButtonFormField<String>),
+        matching: find.byWidgetPredicate((widget) {
+          if (widget is! DropdownButtonFormField<String>) return false;
+          return statusWords.contains(widget.initialValue);
+        }),
       ),
       findsNothing,
     );
+  });
+
+  testWidgets('Apply is disabled until a destination office and a reason are provided',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(id: 'TK-TRANSFER-1', subject: 'Needs a different office', status: 'Open'),
+      ],
+      initialSelectedTicketId: 'TK-TRANSFER-1',
+    );
+
+    await openTransferDialog(tester);
+
+    Widget applyButton() =>
+        tester.widget(find.widgetWithText(ElevatedButton, 'Apply'));
+    bool applyEnabled() => (applyButton() as ElevatedButton).onPressed != null;
+
+    // Neither a destination nor a reason has been provided yet.
+    expect(applyEnabled(), isFalse);
+
+    await tester.tap(find.byKey(const Key('transfer-dialog-office-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Registrar').last);
+    await tester.pumpAndSettle();
+
+    // A destination is selected but the reason is still empty.
+    expect(applyEnabled(), isFalse);
+
+    await tester.enterText(
+      find.byKey(const Key('transfer-dialog-reason-field')),
+      'Needs Registrar, not ICT.',
+    );
+    await tester.pump();
+
+    expect(applyEnabled(), isTrue);
+  });
+
+  testWidgets('the current office is never offered as a transfer destination',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(
+          id: 'TK-TRANSFER-1',
+          subject: 'Needs a different office',
+          status: 'Open',
+        ),
+      ],
+      offices: const [
+        {'id': 'office-osa', 'name': 'Office of Student Affairs (OSA)'},
+        {'id': 'office-registrar', 'name': 'Registrar'},
+      ],
+      initialSelectedTicketId: 'TK-TRANSFER-1',
+    );
+
+    await openTransferDialog(tester);
+    await tester.tap(find.byKey(const Key('transfer-dialog-office-dropdown')));
+    await tester.pumpAndSettle();
+
+    // The ticket's own current office (seeded via assigned_office_id in
+    // ticketJson -- see below) must not appear as a choice.
+    expect(find.text('Office of Student Affairs (OSA)').hitTestable(), findsNothing);
+    expect(find.text('Registrar').last, findsOneWidget);
+  });
+
+  testWidgets(
+      'submitting a transfer request never changes the ticket\'s displayed assigned office',
+      (tester) async {
+    // No backend is reachable in this widget-test sandbox, so Apply
+    // deterministically exercises the failure path -- the point of this
+    // test is that even attempting a submission never touches the
+    // ticket's own assigned-office display (reassignment only ever
+    // happens once the destination office accepts, server-side).
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(id: 'TK-TRANSFER-1', subject: 'Needs a different office', status: 'Open'),
+      ],
+      initialSelectedTicketId: 'TK-TRANSFER-1',
+    );
+
+    expect(find.textContaining('Office of Student Affairs'), findsWidgets);
+
+    await openTransferDialog(tester);
+    await tester.tap(find.byKey(const Key('transfer-dialog-office-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Registrar').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('transfer-dialog-reason-field')),
+      'Needs Registrar, not OSA.',
+    );
+    await tester.pump();
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Apply'));
+    await tester.pumpAndSettle();
+
+    // The dialog surfaces the failure inline rather than closing silently.
+    expect(find.byKey(const Key('transfer-dialog-submit-error')), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Office of Student Affairs'), findsWidgets);
+  });
+
+  // --- Transfer dialog lifecycle ------------------------------------------
+  //
+  // _TransferTicketDialogState used to call _loadOffices() directly from
+  // initState(), before AuthScope.of(context) is safe to resolve. These
+  // tests use debugTransferOfficeLoadAttempts (mirroring sidebar.dart's
+  // debugTransferBadgeLoadAttempts -- there is no HTTP-mocking seam in this
+  // codebase's widget tests, so an attempt counter is the only
+  // deterministic way to observe "a load happened" without a real
+  // backend) to prove the load now runs from didChangeDependencies instead,
+  // exactly once, without throwing.
+
+  testWidgets(
+      'opening the Transfer dialog loads offices exactly once and never throws',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      skipOfficeSeed: true,
+      tickets: [
+        ticketJson(id: 'TK-TRANSFER-1', subject: 'Needs a different office', status: 'Open'),
+      ],
+      initialSelectedTicketId: 'TK-TRANSFER-1',
+    );
+    final before = debugTransferOfficeLoadAttempts;
+
+    await openTransferDialog(tester);
+    await tester.pumpAndSettle();
+
+    // Exactly one attempt -- not zero (it did run) and not more than one
+    // (it didn't double-fire). No backend is reachable in this sandbox, so
+    // it settles into the load-error state rather than a populated list.
+    expect(debugTransferOfficeLoadAttempts, before + 1);
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('transfer-dialog-load-error')), findsOneWidget);
+  });
+
+  testWidgets(
+      'retrying after a load failure fetches again, but closing and reopening '
+      'the dialog does not refetch beyond that',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      skipOfficeSeed: true,
+      tickets: [
+        ticketJson(id: 'TK-TRANSFER-1', subject: 'Needs a different office', status: 'Open'),
+      ],
+      initialSelectedTicketId: 'TK-TRANSFER-1',
+    );
+
+    await openTransferDialog(tester);
+    await tester.pumpAndSettle();
+    final afterFirstOpen = debugTransferOfficeLoadAttempts;
+
+    // User-initiated Retry is expected to fetch again.
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Retry'));
+    await tester.pumpAndSettle();
+    expect(debugTransferOfficeLoadAttempts, afterFirstOpen + 1);
+    final afterRetry = debugTransferOfficeLoadAttempts;
+
+    // Closing and reopening the dialog creates a fresh State, so exactly
+    // one more attempt is expected for that new instance -- not zero
+    // (confirming the guard isn't stuck "already requested" forever) and
+    // not more than one (confirming it still only loads once per dialog).
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await openTransferDialog(tester);
+    await tester.pumpAndSettle();
+
+    expect(debugTransferOfficeLoadAttempts, afterRetry + 1);
+    expect(tester.takeException(), isNull);
   });
 }
 

@@ -31,6 +31,10 @@ class _StaffTicketConsole extends StatefulWidget {
   final Future<_AdminTicketEntry> Function(_AdminTicketEntry ticket)? onClose;
   final ValueChanged<_AdminTicketEntry> onTicketChanged;
   final String? initialSelectedId;
+  /// Seeded destination-office choices for the Transfer dialog, skipping
+  /// its own `GET /tickets/offices` load. Widget tests only.
+  @visibleForTesting
+  final List<Map<String, dynamic>>? debugTransferOffices;
 
   const _StaffTicketConsole({
     required this.tickets,
@@ -53,6 +57,7 @@ class _StaffTicketConsole extends StatefulWidget {
     this.onClose,
     required this.onTicketChanged,
     this.initialSelectedId,
+    this.debugTransferOffices,
   });
 
   @override
@@ -208,6 +213,7 @@ class _StaffTicketConsoleState extends State<_StaffTicketConsole> {
             replyHint: widget.replyHint,
             officeOptions: widget.officeOptions,
             allowReassignment: widget.allowReassignment,
+            debugTransferOffices: widget.debugTransferOffices,
             onUpdate: (payload) => widget.onUpdate(ticket, payload),
             onReply: (message, {bool isInternal = false}) => widget.onReply(
               ticket,
@@ -754,6 +760,8 @@ class _StaffTicketThreadPane extends StatefulWidget {
   final VoidCallback onClearSelection;
   final bool showBackButton;
   final bool embedDetails;
+  @visibleForTesting
+  final List<Map<String, dynamic>>? debugTransferOffices;
 
   const _StaffTicketThreadPane({
     super.key,
@@ -769,6 +777,7 @@ class _StaffTicketThreadPane extends StatefulWidget {
     required this.onClearSelection,
     this.showBackButton = false,
     this.embedDetails = false,
+    this.debugTransferOffices,
   });
 
   @override
@@ -1075,87 +1084,24 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
     }
   }
 
+  /// Requests an office-to-office transfer of this ticket (never a direct
+  /// reassignment -- that only happens once the destination office accepts;
+  /// see _TransferTicketDialog). Deliberately does not touch `_ticket` or
+  /// call `widget.onUpdate`/`widget.onTicketChanged` on success, since
+  /// nothing about the ticket itself changes yet.
   Future<void> _openTransferDialog() async {
-    var office = _ticket.assignedOffice;
-    final offices = _mergeOption(widget.officeOptions, office);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Transfer ticket'),
-              content: ResponsiveDialogBody(
-                maxWidth: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Status is no longer changed from here -- it is now a
-                    // read-only badge (see _StaffTicketDetailsPane) plus
-                    // the dedicated Resolve/Close actions there.
-                    if (widget.allowReassignment) ...[
-                      DropdownButtonFormField<String>(
-                        value: offices.contains(office) ? office : offices.first,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Assigned office',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: offices
-                            .map((item) => DropdownMenuItem(
-                                  value: item,
-                                  child: Text(item),
-                                ))
-                            .toList(),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setDialogState(() => office = value);
-                        },
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: DesignTokens.maroon,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('Apply'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _TransferTicketDialog(
+        ticketId: _ticket.id,
+        currentOfficeId: _ticket.assignedOfficeId,
+        debugOffices: widget.debugTransferOffices,
+      ),
     );
-    if (confirmed != true) return;
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
-    if (!widget.allowReassignment) return;
-    try {
-      final updated = await widget.onUpdate({
-        'assigned_office': office,
-      });
-      setState(() => _ticket = updated);
-      widget.onTicketChanged(updated);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ticket transfer saved.')),
-      );
-    } catch (error) {
-      setState(() => _error = _friendlyError(error));
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
+    if (confirmed != true || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Transfer request sent.')),
+    );
   }
 
   @override
@@ -1505,6 +1451,273 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
           ),
         ),
     ];
+  }
+}
+
+/// Test-only: incremented every time _TransferTicketDialogState actually
+/// attempts to load offices (regardless of whether the network call
+/// itself succeeds). There is no HTTP-mocking seam in this codebase's
+/// widget tests, so this is the only way to deterministically observe
+/// "the initial load ran exactly once" vs. "an unrelated dependency
+/// change re-triggered it" without a real backend. Mirrors
+/// debugTransferBadgeLoadAttempts in sidebar.dart. Never read by
+/// production code.
+@visibleForTesting
+int debugTransferOfficeLoadAttempts = 0;
+
+/// Self-contained "request an office-to-office transfer" dialog. Loads real
+/// offices from the existing `GET /tickets/offices` endpoint (via the
+/// already-shared `_loadAdminOffices` helper -- same library, see
+/// admin_management_pages.dart), never the caller's own `officeOptions`
+/// (which is empty/name-only for the office console -- see the bug this
+/// replaces). Submitting only ever calls `POST /tickets/{id}/transfers`
+/// (create a transfer *request*) -- it never touches the ticket's own
+/// `assigned_office`; that only changes once the destination office accepts
+/// (see request_ticket_transfer/accept_ticket_transfer in ticketing.py).
+class _TransferTicketDialog extends StatefulWidget {
+  const _TransferTicketDialog({
+    required this.ticketId,
+    required this.currentOfficeId,
+    this.debugOffices,
+  });
+
+  final String ticketId;
+  final String? currentOfficeId;
+  /// Seeded office list, skipping `GET /tickets/offices`. Widget tests only.
+  @visibleForTesting
+  final List<Map<String, dynamic>>? debugOffices;
+
+  @override
+  State<_TransferTicketDialog> createState() => _TransferTicketDialogState();
+}
+
+class _TransferTicketDialogState extends State<_TransferTicketDialog> {
+  bool _loadingOffices = true;
+  String? _loadError;
+  List<_AdminOfficeEntry> _offices = const [];
+  String? _selectedOfficeId;
+  final TextEditingController _reasonCtrl = TextEditingController();
+  bool _submitting = false;
+  String? _submitError;
+  bool _requestedInitialLoad = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final seed = widget.debugOffices;
+    if (seed != null) {
+      _requestedInitialLoad = true;
+      _loadingOffices = false;
+      _offices = seed
+          .map((item) => _AdminOfficeEntry.fromJson(Map<String, dynamic>.from(item)))
+          .where((office) => office.id != widget.currentOfficeId)
+          .toList();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Mirrors IncomingTransfersPage/_OutgoingTransfersPage's own lifecycle
+    // (incoming_transfers_page.dart): the first context-dependent load runs
+    // from here, never from initState(), since _loadAdminOffices needs
+    // AuthScope.of(context) and this widget's inherited-widget dependencies
+    // aren't safely resolved yet during initState(). _requestedInitialLoad
+    // guards against didChangeDependencies firing again later (e.g. an
+    // ancestor theme/locale change) and re-fetching unnecessarily -- this
+    // runs the initial load exactly once.
+    if (!_requestedInitialLoad) {
+      _requestedInitialLoad = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _loadOffices();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadOffices() async {
+    debugTransferOfficeLoadAttempts++;
+    setState(() {
+      _loadingOffices = true;
+      _loadError = null;
+    });
+    try {
+      final offices = await _loadAdminOffices(context);
+      if (!mounted) return;
+      setState(() {
+        // Never offer the ticket's own current office as a destination.
+        _offices = offices
+            .where((office) => office.id != widget.currentOfficeId)
+            .toList();
+      });
+    } catch (error) {
+      if (mounted) setState(() => _loadError = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loadingOffices = false);
+    }
+  }
+
+  bool get _canSubmit =>
+      !_submitting &&
+      !_loadingOffices &&
+      _loadError == null &&
+      _offices.isNotEmpty &&
+      _selectedOfficeId != null &&
+      _reasonCtrl.text.trim().isNotEmpty;
+
+  Future<void> _submit() async {
+    if (!_canSubmit) return;
+    setState(() {
+      _submitting = true;
+      _submitError = null;
+    });
+    try {
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/tickets/${widget.ticketId}/transfers',
+        headers: AuthScope.of(context).ticketHeaders(),
+        jsonBody: {
+          'destination_office_id': _selectedOfficeId,
+          'reason': _reasonCtrl.text.trim(),
+        },
+      );
+      if (!result.ok) {
+        throw StateError(
+          _extractError(_decodeObject(result.body), 'Could not submit transfer request.'),
+        );
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (mounted) setState(() => _submitError = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Transfer ticket'),
+      content: ResponsiveDialogBody(
+        maxWidth: 420,
+        child: _buildBody(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting
+              ? null
+              : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _canSubmit ? _submit : null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: DesignTokens.maroon,
+            foregroundColor: Colors.white,
+          ),
+          child: _submitting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Apply'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loadingOffices) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          key: Key('transfer-dialog-loading'),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+    if (_loadError != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _loadError!,
+            key: const Key('transfer-dialog-load-error'),
+            style: const TextStyle(color: Color(0xFFB91C1C)),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton(onPressed: _loadOffices, child: const Text('Retry')),
+        ],
+      );
+    }
+    if (_offices.isEmpty) {
+      return const Text(
+        'No other offices are available to transfer this ticket to.',
+        key: Key('transfer-dialog-empty'),
+        style: TextStyle(color: DesignTokens.muted),
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          key: const Key('transfer-dialog-office-dropdown'),
+          value: _selectedOfficeId,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Destination office',
+            border: OutlineInputBorder(),
+          ),
+          hint: const Text('Select an office…'),
+          items: _offices
+              .map(
+                (office) => DropdownMenuItem(
+                  value: office.id,
+                  child: Text(office.name),
+                ),
+              )
+              .toList(),
+          onChanged: _submitting
+              ? null
+              : (value) => setState(() => _selectedOfficeId = value),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          key: const Key('transfer-dialog-reason-field'),
+          controller: _reasonCtrl,
+          minLines: 3,
+          maxLines: 5,
+          enabled: !_submitting,
+          decoration: const InputDecoration(
+            labelText: 'Reason for transfer',
+            border: OutlineInputBorder(),
+            alignLabelWithHint: true,
+          ),
+          onChanged: (_) => setState(() {}),
+        ),
+        if (_submitError != null) ...[
+          const SizedBox(height: 10),
+          Text(
+            _submitError!,
+            key: const Key('transfer-dialog-submit-error'),
+            style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 12),
+          ),
+        ],
+      ],
+    );
   }
 }
 
@@ -2016,15 +2229,39 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
           ],
         ),
         if (canResolve || canClose) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
               if (canResolve)
                 OutlinedButton(
+                  key: const Key('resolve-ticket-button'),
                   onPressed: _saving ? null : _resolve,
-                  child: const Text('Resolve'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: DesignTokens.maroon,
+                    side: const BorderSide(color: DesignTokens.maroon),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
+                    minimumSize: const Size(0, 32),
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: DesignTokens.maroon,
+                          ),
+                        )
+                      : const Text('Resolve'),
                 ),
               if (canClose)
                 OutlinedButton(

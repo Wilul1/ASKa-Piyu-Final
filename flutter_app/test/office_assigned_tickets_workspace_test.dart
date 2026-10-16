@@ -223,10 +223,11 @@ void main() {
   //
   // No DropdownButtonFormField's current value is ever a status word
   // ('Open'/'In Progress'/'Resolved'/'Closed') -- that is the real
-  // regression this guards, independent of the (legitimate, unrelated)
-  // Priority dropdown and the status badge rendering twice (once in the
-  // thread header, once in the always-visible details sidebar, at this
-  // wide viewport).
+  // regression this guards, independent of the status badge rendering
+  // twice (once in the thread header, once in the always-visible details
+  // sidebar, at this wide viewport). Priority is also read-only in this
+  // office-only pane now (see the dedicated test below) -- no dropdown of
+  // any kind remains in this pane.
   const statusWords = {'Open', 'In Progress', 'Resolved', 'Closed'};
   Finder statusDropdowns() => find.byWidgetPredicate((widget) {
         if (widget is! DropdownButtonFormField<String>) return false;
@@ -254,6 +255,34 @@ void main() {
     // ...and the dedicated Resolve action replaces the old dropdown.
     expect(find.text('Resolve'), findsOneWidget);
     expect(statusDropdowns(), findsNothing);
+  });
+
+  testWidgets(
+      'priority is shown as a read-only badge in the office details '
+      'panel, never a dropdown',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(id: 'TK-OPEN-1', subject: 'Need a Good Moral Certificate', status: 'Open'),
+      ],
+      initialSelectedTicketId: 'TK-OPEN-1',
+    );
+
+    // The fixture's priority ('Medium', set in ticketJson) is still
+    // visible -- rendered twice at this wide viewport (thread header +
+    // the always-visible details sidebar), same as the status badge
+    // above.
+    expect(find.text('Medium'), findsWidgets);
+    // ...as a read-only badge (the same chip type used for the status
+    // row just above it), never an editable priority dropdown.
+    expect(
+      find.byWidgetPredicate((widget) {
+        if (widget is! DropdownButtonFormField<String>) return false;
+        return const {'Low', 'Medium', 'High', 'Urgent'}.contains(widget.initialValue);
+      }),
+      findsNothing,
+    );
   });
 
   testWidgets(

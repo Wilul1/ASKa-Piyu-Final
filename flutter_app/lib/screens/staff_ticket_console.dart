@@ -2132,17 +2132,18 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
     super.dispose();
   }
 
-  Future<void> _save({String? priority}) async {
+  /// Saves office/category edits (the `widget.allowReassignment` branch
+  /// below) -- priority is read-only in this office-only pane now, so it
+  /// is never part of this payload.
+  Future<void> _save() async {
     setState(() {
       _saving = true;
       _error = null;
-      if (priority != null) _priority = priority;
     });
     try {
       final updated = await widget.onUpdate({
-        'priority': priority ?? _priority,
-        if (widget.allowReassignment) 'assigned_office': _office,
-        if (widget.allowReassignment) 'category': _categoryCtrl.text.trim(),
+        'assigned_office': _office,
+        'category': _categoryCtrl.text.trim(),
       });
       setState(() => _syncFrom(updated));
       widget.onTicketChanged(updated);
@@ -2189,8 +2190,6 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
 
   @override
   Widget build(BuildContext context) {
-    final priorities =
-        _mergeOption(const ['Low', 'Medium', 'High', 'Urgent'], _priority);
     final offices = _mergeOption(widget.officeOptions, _office);
     final canResolve = _status == 'Open' || _status == 'In Progress';
     final canClose = widget.onClose != null && _status != 'Closed';
@@ -2276,11 +2275,22 @@ class _StaffTicketDetailsPaneState extends State<_StaffTicketDetailsPane> {
           ),
         ],
         const SizedBox(height: 12),
-        _AdminFilterDropdown(
-          label: 'Priority',
-          value: _priority,
-          values: priorities,
-          onChanged: (value) => _save(priority: value),
+        // Read-only for this office-only pane -- priority is set/changed
+        // elsewhere (admin); never editable from here, so there is no
+        // dropdown and no save call to accidentally touch status or office.
+        Row(
+          children: [
+            const Text(
+              'Priority',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                color: DesignTokens.muted,
+              ),
+            ),
+            const SizedBox(width: 10),
+            _AdminPriorityChip(priority: _priority),
+          ],
         ),
         if (widget.allowReassignment) ...[
           const SizedBox(height: 12),

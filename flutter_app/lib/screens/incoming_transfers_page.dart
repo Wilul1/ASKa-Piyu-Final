@@ -376,6 +376,7 @@ class _OutgoingTransfersPageState extends State<_OutgoingTransfersPage> {
   bool _loading = false;
   String? _error;
   bool _requestedInitialLoad = false;
+  bool _markingNotificationsRead = false;
 
   @override
   void initState() {
@@ -439,16 +440,72 @@ class _OutgoingTransfersPageState extends State<_OutgoingTransfersPage> {
     }
   }
 
+  /// This is where a source office actually learns a transfer it sent was
+  /// accepted/rejected -- the unread notification for that outcome
+  /// (type "transfer_accepted"/"transfer_rejected", see accept_ticket_
+  /// transfer/reject_ticket_transfer in ticketing.py) is addressed to the
+  /// SOURCE office, never to the destination. Previously this action only
+  /// existed on the Incoming page, which a pure source office may never
+  /// visit (they have nothing pending to decide there) -- leaving that
+  /// notification permanently unread and the sidebar badge stuck non-zero
+  /// even after returning to the office workspace. Same explicit,
+  /// user-initiated bulk action as Incoming's, hitting the same endpoint;
+  /// never auto-triggered just by viewing this list.
+  Future<void> _markTransferNotificationsRead() async {
+    if (_markingNotificationsRead) return;
+    setState(() => _markingNotificationsRead = true);
+    try {
+      final result = await ApiClient.send(
+        method: 'POST',
+        url:
+            '${AppConfig.resolvedApiBase}/tickets/notifications/transfers/read-all',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      if (!result.ok) {
+        throw StateError(
+          _extractError(
+            result.jsonObject,
+            'Could not mark notifications read.',
+          ),
+        );
+      }
+      transferBadgeRefreshTick.value++;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Transfer notifications marked read.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _markingNotificationsRead = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = AuthScope.of(context);
     final isOffice = auth.role == 'office';
     final body = _buildBody();
+    final actions = [
+      TextButton(
+        onPressed:
+            _markingNotificationsRead ? null : _markTransferNotificationsRead,
+        child: Text(
+          _markingNotificationsRead ? 'Marking…' : 'Mark notifications read',
+        ),
+      ),
+    ];
     if (isOffice) {
       return OfficeScaffold(
         current: StudentNavItem.officeIncomingTransfers,
         title: 'Outgoing Transfers',
         description: 'Transfer requests your office has sent to other offices.',
+        actions: actions,
         child: body,
       );
     }
@@ -456,6 +513,7 @@ class _OutgoingTransfersPageState extends State<_OutgoingTransfersPage> {
       current: StudentNavItem.adminIncomingTransfers,
       title: 'Outgoing Transfers',
       description: 'Transfer requests sent to other offices.',
+      actions: actions,
       child: body,
     );
   }
@@ -505,6 +563,11 @@ class _MailboxRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Inbox ordering: sender (source office) + timestamp on the first
+    // line, the reason as a subject-style preview on the second, then a
+    // small metadata line (ticket reference + status) -- the same fields
+    // as before, just ordered the way a mail list reads rather than a
+    // ticket-management card.
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(12),
@@ -521,6 +584,7 @@ class _MailboxRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
                   child: Column(
@@ -530,7 +594,7 @@ class _MailboxRow extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              'Ticket #${request.ticketId}',
+                              request.sourceOfficeName,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w800,
@@ -540,53 +604,65 @@ class _MailboxRow extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          _StatusLabel(status: request.status),
+                          // Flexible, not a bare Text: without a width
+                          // budget of its own this non-expanding sibling
+                          // forces a RenderFlex overflow on narrow screens
+                          // regardless of how short the string is.
+                          Flexible(
+                            child: Text(
+                              _formatRequestDateCompact(request.createdAt),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: DesignTokens.muted,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'From ${request.sourceOfficeName}',
+                        request.reason.isEmpty
+                            ? 'No reason given.'
+                            : request.reason,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: DesignTokens.muted,
+                          fontSize: 13,
+                          color: DesignTokens.ink,
                         ),
                       ),
-                      if (request.reason.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          request.reason,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: DesignTokens.ink,
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Ticket #${request.ticketId}',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: DesignTokens.muted,
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        request.createdAt,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: DesignTokens.muted,
-                        ),
+                          const SizedBox(width: 8),
+                          _StatusLabel(status: request.status),
+                        ],
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                busy
-                    ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                    : const Icon(
-                      Icons.chevron_right_rounded,
-                      color: DesignTokens.muted,
-                      size: 20,
-                    ),
+                if (busy) ...[
+                  const SizedBox(width: 8),
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
               ],
             ),
           ),
@@ -607,12 +683,37 @@ class _TransferDetailsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Reading-pane layout: the sender (source office) and status read like
+    // an opened message's header, a divider separates header from body,
+    // the reason is the message body, and the rest is footer metadata --
+    // same fields as the row (ticket reference, destination, requested
+    // time, rejection reason), just ordered like a message, not a form.
     return AlertDialog(
-      title: Row(
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: Text('Ticket #${request.ticketId}')),
-          const SizedBox(width: 8),
-          _StatusLabel(status: request.status),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  request.sourceOfficeName,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _StatusLabel(status: request.status),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Ticket #${request.ticketId} → ${request.destinationOfficeName}',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: DesignTokens.muted,
+            ),
+          ),
         ],
       ),
       content: ResponsiveDialogBody(
@@ -621,16 +722,17 @@ class _TransferDetailsDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _DetailLine(label: 'From', value: request.sourceOfficeName),
-            const SizedBox(height: 10),
-            _DetailLine(label: 'To', value: request.destinationOfficeName),
-            const SizedBox(height: 10),
-            _DetailLine(
-              label: 'Reason',
-              value: request.reason.isEmpty ? '—' : request.reason,
+            const Divider(height: 1, color: DesignTokens.border),
+            const SizedBox(height: 14),
+            Text(
+              request.reason.isEmpty ? 'No reason given.' : request.reason,
+              style: const TextStyle(fontSize: 14, color: DesignTokens.ink),
             ),
-            const SizedBox(height: 10),
-            _DetailLine(label: 'Requested', value: request.createdAt),
+            const SizedBox(height: 14),
+            Text(
+              'Requested ${_formatRequestTimestamp(request.createdAt)}',
+              style: const TextStyle(fontSize: 12, color: DesignTokens.muted),
+            ),
             if (request.rejectionReason != null &&
                 request.rejectionReason!.isNotEmpty) ...[
               const SizedBox(height: 10),
@@ -755,7 +857,7 @@ class _TransferCard extends StatelessWidget {
           ],
           const SizedBox(height: 8),
           Text(
-            request.createdAt,
+            _formatRequestTimestamp(request.createdAt),
             style: const TextStyle(fontSize: 11, color: DesignTokens.muted),
           ),
         ],
@@ -826,6 +928,45 @@ class _ErrorBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Readable "Oct 13, 2026, 2:05 PM" form of the request's raw ISO-8601
+/// `createdAt` string. Falls back to the raw string if it doesn't parse,
+/// rather than showing nothing. No `intl` dependency -- mirrors the same
+/// manual month-name convention this app's other screens already use
+/// (see _adminFormatDate/_officeDashboardTimeLine in
+/// admin_management_pages.dart), duplicated locally since that's a
+/// separate library from this standalone page.
+String _formatRequestTimestamp(String iso) {
+  final parsed = DateTime.tryParse(iso);
+  if (parsed == null) return iso;
+  final local = parsed.toLocal();
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final hour24 = local.hour;
+  final hour = hour24 == 0 ? 12 : (hour24 > 12 ? hour24 - 12 : hour24);
+  final minute = local.minute.toString().padLeft(2, '0');
+  final meridiem = hour24 >= 12 ? 'PM' : 'AM';
+  return '${months[local.month - 1]} ${local.day}, ${local.year}, $hour:$minute $meridiem';
+}
+
+/// Short "Oct 13" form for the mailbox row, which shares its line with the
+/// sender name -- the full date+time form (_formatRequestTimestamp) is too
+/// wide there on narrow screens. The full form is still shown once the
+/// message is open (see _TransferDetailsDialog), matching how a mail
+/// client's list view uses a compact date and the opened message shows
+/// the full one.
+String _formatRequestDateCompact(String iso) {
+  final parsed = DateTime.tryParse(iso);
+  if (parsed == null) return iso;
+  final local = parsed.toLocal();
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${months[local.month - 1]} ${local.day}';
 }
 
 List<TicketTransferRequest> _parseTransferItems(Object? rawItems) {

@@ -110,8 +110,11 @@ void main() {
       ],
     );
 
+    // Inbox ordering: the source office is the "sender" line (no "From "
+    // prefix -- that reads more like a form field than an inbox), ticket
+    // reference moved to the row's metadata line.
+    expect(find.text('ICT Office'), findsOneWidget);
     expect(find.text('Ticket #TK-20260824-07BA4C'), findsOneWidget);
-    expect(find.text('From ICT Office'), findsOneWidget);
     expect(
       find.text('Portal login issue is actually a records-correction request.'),
       findsOneWidget,
@@ -132,13 +135,23 @@ void main() {
 
     final dialog = find.byType(AlertDialog);
     expect(dialog, findsOneWidget);
-    expect(find.descendant(of: dialog, matching: find.text('From')), findsOneWidget);
+    // Reading-pane header: sender office + "Ticket #X -> destination"
+    // subtitle, never a bare "From"/"To" form-field label.
     expect(find.descendant(of: dialog, matching: find.text('ICT Office')), findsOneWidget);
-    expect(find.descendant(of: dialog, matching: find.text('To')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.textContaining('Ticket #TK-20260824-07BA4C'),
+      ),
+      findsOneWidget,
+    );
     // The signed-in office user's own office is also named "Registrar" (see
     // officeUser() above) and may render elsewhere in the sidebar chrome
     // behind this dialog, so this is scoped to the dialog specifically.
-    expect(find.descendant(of: dialog, matching: find.text('Registrar')), findsOneWidget);
+    expect(
+      find.descendant(of: dialog, matching: find.textContaining('Registrar')),
+      findsOneWidget,
+    );
     expect(find.widgetWithText(FilledButton, 'Accept'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Reject'), findsOneWidget);
   });
@@ -158,6 +171,83 @@ void main() {
     expect(find.widgetWithText(TextButton, 'Reject'), findsNothing);
     expect(find.text('Close'), findsOneWidget);
   });
+
+  testWidgets(
+      'the mailbox shows a readable timestamp, never the raw ISO-8601 string',
+      (tester) async {
+    await pumpPage(
+      tester,
+      incoming: [transferJson(id: 'tr-1', createdAt: '2026-10-13T12:00:00Z')],
+    );
+
+    expect(find.textContaining('2026-10-13T12:00:00Z'), findsNothing);
+    // The row uses the compact "Oct 13" form (see _formatRequestDateCompact
+    // -- the full date+time form is too wide sharing a line with the
+    // sender name); the full "Oct 13, 2026, ..." form only appears once
+    // the message is actually opened.
+    expect(find.textContaining('Oct 13'), findsOneWidget);
+
+    await tester.tap(find.text('Ticket #TK-20260824-07BA4C'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('2026-10-13T12:00:00Z'), findsNothing);
+    expect(find.textContaining('Oct 13, 2026'), findsOneWidget);
+  });
+
+  // OfficeScaffold/AdminScaffold's shared header Row (title/description +
+  // the "Outgoing requests" and "Mark notifications read" actions, spread
+  // in unwrapped with no Expanded/Wrap around the action buttons) used to
+  // RenderFlex-overflow at narrower widths -- now fixed in
+  // office_scaffold.dart / admin_scaffold.dart via a responsive header that
+  // wraps actions onto their own line below the title once they no longer
+  // fit on one line. This page -- with two real header actions on both its
+  // Incoming and Outgoing views -- is exactly the case that used to
+  // overflow, so it covers the fix across the narrow/Drawer width (360),
+  // just-below-desktop widths (600, 900), and a comfortably wide desktop
+  // width, asserting no overflow anywhere AND that both actions stay
+  // genuinely available (findable), never clipped or hidden, at every one.
+  for (final width in <double>[360, 600, 900, 1400]) {
+    testWidgets(
+        'the header and mailbox never overflow at width ${width.toInt()}px, '
+        'and both header actions stay available',
+        (tester) async {
+      final unexpectedErrors = <String>[];
+      final previousOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        unexpectedErrors.add(details.toString());
+        previousOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = previousOnError);
+
+      await pumpPage(
+        tester,
+        size: Size(width, 900),
+        incoming: [transferJson(id: 'tr-1')],
+      );
+      expect(unexpectedErrors, isEmpty);
+      expect(find.text('Outgoing requests'), findsOneWidget);
+      expect(find.text('Mark notifications read'), findsOneWidget);
+      expect(find.text('Ticket #TK-20260824-07BA4C'), findsOneWidget);
+
+      await tester.tap(find.text('Ticket #TK-20260824-07BA4C'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(unexpectedErrors, isEmpty);
+
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Outgoing requests'));
+      await tester.pumpAndSettle();
+
+      // At narrow widths the page also has an AppBar with the same title
+      // text, so this may legitimately match twice (AppBar + body header).
+      expect(find.text('Outgoing Transfers'), findsWidgets);
+      expect(find.text('Mark notifications read'), findsOneWidget);
+      expect(unexpectedErrors, isEmpty);
+    });
+  }
 
   testWidgets('empty incoming mailbox shows an empty state', (tester) async {
     await pumpPage(tester, incoming: const []);
@@ -197,6 +287,58 @@ void main() {
     expect(find.text('Accept'), findsNothing);
   });
 
+  // --- stale badge root cause: "Mark notifications read" must also exist
+  // on the Outgoing page ------------------------------------------------
+  //
+  // Root cause of the reported production bug: accept_ticket_transfer /
+  // reject_ticket_transfer (backend/app/services/ticketing.py) create a
+  // new, unread "transfer_accepted"/"transfer_rejected" notification for
+  // the SOURCE office -- the office that sent the request, not the one
+  // that decided it. The only thing that ever auto-marks-read server-side
+  // is the DESTINATION office's own "transfer_requested" notification (the
+  // scoped UPDATE in both functions, keyed by transfer_request_id). A pure
+  // source office -- one with nothing pending to decide -- has no reason
+  // to ever open the Incoming mailbox, so the explicit "Mark notifications
+  // read" action living only there was never reachable for the exact
+  // notification type keeping their badge non-zero. The fix adds the same
+  // explicit action to the Outgoing page, which is where a source office
+  // actually goes to see that its request was decided.
+
+  testWidgets(
+      'the Outgoing page also offers the explicit mark-notifications-read action',
+      (tester) async {
+    await pumpPage(
+      tester,
+      outgoing: [transferJson(id: 'tr-1', status: 'Accepted', decidedByUserId: 'staff-2')],
+    );
+
+    await tester.tap(find.text('Outgoing requests'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Outgoing Transfers'), findsOneWidget);
+    // It exists as a deliberate action the viewer must tap, exactly
+    // mirroring the Incoming page's own action -- never triggered just by
+    // viewing the resolved outgoing request.
+    expect(find.text('Mark notifications read'), findsOneWidget);
+  });
+
+  testWidgets(
+      'mark-notifications-read on the Outgoing page surfaces an error and resets the button',
+      (tester) async {
+    // Same reasoning as the Incoming page's own failure-path tests: no
+    // backend is reachable in this sandbox, so tapping this action
+    // deterministically exercises its failure path.
+    await pumpPage(tester, outgoing: const []);
+
+    await tester.tap(find.text('Outgoing requests'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark notifications read'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mark notifications read'), findsOneWidget);
+    expect(find.byType(SnackBar), findsOneWidget);
+  });
+
   testWidgets('admin sees the incoming mailbox without an office account',
       (tester) async {
     await pumpPage(
@@ -212,6 +354,43 @@ void main() {
 
     expect(find.widgetWithText(FilledButton, 'Accept'), findsOneWidget);
   });
+
+  // Admin routes through AdminScaffold rather than OfficeScaffold (see
+  // IncomingTransfersPage's isOffice branch) -- a separate, independently
+  // duplicated _ResponsiveHeader in admin_scaffold.dart, so this covers
+  // that copy directly rather than relying on OfficeScaffold's coverage
+  // above to stand in for it.
+  for (final width in <double>[360, 600, 900, 1400]) {
+    testWidgets(
+        'admin: the header and mailbox never overflow at width '
+        '${width.toInt()}px, and both header actions stay available',
+        (tester) async {
+      final unexpectedErrors = <String>[];
+      final previousOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        unexpectedErrors.add(details.toString());
+        previousOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = previousOnError);
+
+      await pumpPage(
+        tester,
+        user: adminUser(),
+        size: Size(width, 900),
+        incoming: [transferJson(id: 'tr-1')],
+      );
+      expect(unexpectedErrors, isEmpty);
+      expect(find.text('Outgoing requests'), findsOneWidget);
+      expect(find.text('Mark notifications read'), findsOneWidget);
+
+      await tester.tap(find.text('Outgoing requests'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Outgoing Transfers'), findsWidgets);
+      expect(find.text('Mark notifications read'), findsOneWidget);
+      expect(unexpectedErrors, isEmpty);
+    });
+  }
 
   testWidgets('accept failure keeps the request visible and shows one error',
       (tester) async {

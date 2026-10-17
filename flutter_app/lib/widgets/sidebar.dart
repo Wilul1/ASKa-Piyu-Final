@@ -645,7 +645,7 @@ class _AdminDarkSidebar extends StatelessWidget {
                         selected: current == item.item,
                         onTap: () => onNavigate(item.item, item.label),
                         trailing: item.item == StudentNavItem.adminIncomingTransfers
-                            ? const _TransferBadge()
+                            ? const TransferBadge()
                             : null,
                       ),
                   ],
@@ -784,18 +784,18 @@ class _AdminSidebarItem extends StatelessWidget {
 /// Bumped by actions elsewhere in the app (a successful Accept/Reject, the
 /// explicit "mark transfer notifications read" action on the mailbox
 /// screen) that change the authenticated user's unread-transfer count.
-/// _TransferBadge listens to this in addition to its own
+/// TransferBadge listens to this in addition to its own
 /// didChangeDependencies, since it's a sibling widget to those actions
 /// with no other connection to them -- returning to the mailbox via a
 /// fresh page push already gets a fresh fetch for free (a new widget
 /// instance), but an action taken while the SAME sidebar instance stays
-/// mounted would otherwise never be reflected. _TransferBadge itself
+/// mounted would otherwise never be reflected. Each TransferBadge instance
 /// ignores this tick while its own page is covered by another route (see
 /// RouteAware below), so a bump never causes a fetch for a hidden page's
-/// badge -- only the one the user can actually see.
+/// badge -- only the one(s) the user can actually see.
 final ValueNotifier<int> transferBadgeRefreshTick = ValueNotifier<int>(0);
 
-/// Test-only: incremented every time any _TransferBadge actually attempts
+/// Test-only: incremented every time any TransferBadge actually attempts
 /// a fetch (regardless of whether the network call itself succeeds).
 /// There is no HTTP-mocking seam in this codebase's widget tests, so this
 /// is the only way to deterministically observe "did a fetch happen" vs.
@@ -804,19 +804,25 @@ final ValueNotifier<int> transferBadgeRefreshTick = ValueNotifier<int>(0);
 @visibleForTesting
 int debugTransferBadgeLoadAttempts = 0;
 
-/// Small unread-count badge for the "Incoming Transfers" nav item. Counts
-/// only unread notifications whose type is exclusive to the transfer
-/// workflow, via a dedicated, un-paginated count endpoint -- never the
-/// global unread_count, and never a substitute like the pending-request
-/// count.
-class _TransferBadge extends StatefulWidget {
-  const _TransferBadge();
+/// Unread-count badge for the transfer workflow. Counts only unread
+/// notifications whose type is exclusive to the transfer workflow, via a
+/// dedicated, un-paginated count endpoint -- never the global unread_count,
+/// and never a substitute like the pending-request count. Public (not
+/// private to this file) since it's also used as the Office Dashboard's
+/// mailbox-button badge (see _OfficeDashboardMailboxButton in
+/// admin_management_pages.dart) in addition to the "Incoming Transfers"
+/// nav item here -- both read the same count and the same refresh
+/// mechanism, so this is reused rather than duplicated. Multiple
+/// simultaneous instances are expected and already accounted for (see
+/// debugTransferBadgeLoadAttempts below).
+class TransferBadge extends StatefulWidget {
+  const TransferBadge({super.key});
 
   @override
-  State<_TransferBadge> createState() => _TransferBadgeState();
+  State<TransferBadge> createState() => _TransferBadgeState();
 }
 
-class _TransferBadgeState extends State<_TransferBadge> with RouteAware {
+class _TransferBadgeState extends State<TransferBadge> with RouteAware {
   int? _count;
   ModalRoute<dynamic>? _route;
   // A badge is visible as soon as it's built, by construction (a page is
@@ -1048,7 +1054,7 @@ class _OfficeDarkSidebar extends StatelessWidget {
                       selected: current == item.item,
                       onTap: () => onNavigate(item.item, item.label),
                       trailing: item.item == StudentNavItem.officeIncomingTransfers
-                          ? const _TransferBadge()
+                          ? const TransferBadge()
                           : null,
                     ),
                 ],

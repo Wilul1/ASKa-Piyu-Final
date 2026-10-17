@@ -17,6 +17,7 @@ import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
 import '../widgets/responsive_dialog_body.dart';
 import 'admin_scaffold.dart';
+import 'incoming_transfers_page.dart';
 import 'knowledge_articles_page.dart';
 import 'login_page.dart';
 
@@ -135,6 +136,18 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
     );
   }
 
+  // Same existing mailbox page the sidebar's "Incoming Transfers" nav item
+  // and the Outgoing page's "Outgoing requests" action already open --
+  // never a second mailbox page or a tab. Plain Navigator.push, matching
+  // _openAssignedTickets above: this page is only ever reached already
+  // behind the office-role gate (OfficeScaffold's own role check), so
+  // there is nothing for openOfficePage's auth re-check to add here.
+  void _openIncomingTransfers() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const IncomingTransfersPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final officeName =
@@ -178,6 +191,7 @@ class _OfficeDashboardPageState extends State<OfficeDashboardPage> {
                         _OfficeDashboardHeader(
                           officeName: officeName,
                           now: now,
+                          onOpenMailbox: _openIncomingTransfers,
                         ),
                         const SizedBox(height: 18),
                         _OfficeDashboardStatsRow(
@@ -1436,55 +1450,140 @@ class _AdminMetricCard extends StatelessWidget {
 class _OfficeDashboardHeader extends StatelessWidget {
   final String officeName;
   final DateTime now;
+  final VoidCallback onOpenMailbox;
 
   const _OfficeDashboardHeader({
     required this.officeName,
     required this.now,
+    required this.onOpenMailbox,
   });
+
+  /// Below this, the title column + mailbox button + clock card no longer
+  /// comfortably fit on one line -- same LayoutBuilder-measured-width
+  /// approach as OfficeScaffold/AdminScaffold's own responsive header (see
+  /// _ResponsiveHeader in office_scaffold.dart): Row gives its inflexible
+  /// children (the mailbox button, the clock card) unbounded space to
+  /// report their own size, so without this check they would simply
+  /// overflow at narrow widths rather than ever actually wrapping.
+  static const double _wrapBreakpoint = 640;
+
+  Widget _titleColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'WELCOME BACK',
+          style: TextStyle(
+            color: DesignTokens.muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Office Dashboard',
+          style: TextStyle(
+            color: DesignTokens.ink,
+            fontSize: 28,
+            fontWeight: FontWeight.w900,
+            height: 1.1,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Overview of workload for $officeName.',
+          style: const TextStyle(
+            color: DesignTokens.muted,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
+    final mailboxButton = _OfficeDashboardMailboxButton(onTap: onOpenMailbox);
+    final clock = _OfficeDashboardClock(now: now);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= _wrapBreakpoint) {
+          return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'WELCOME BACK',
-                style: TextStyle(
-                  color: DesignTokens.muted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.1,
-                ),
+              Expanded(child: _titleColumn()),
+              const SizedBox(width: 12),
+              mailboxButton,
+              const SizedBox(width: 12),
+              clock,
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _titleColumn(),
+            const SizedBox(height: 12),
+            Wrap(spacing: 12, runSpacing: 12, children: [mailboxButton, clock]),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Clearly recognizable mailbox entry point for Incoming Transfers, placed
+/// beside the date/time card rather than as a sidebar-only nav item or a
+/// second tab (see IncomingTransfersPage's own doc comment on why outgoing
+/// is a separate page, not a tab -- this is the same discipline: one
+/// mailbox, reached more than one way, never duplicated). The unread count
+/// is the same TransferBadge used for the sidebar's "Incoming Transfers"
+/// nav item -- same count, same refresh mechanism (transferBadgeRefreshTick
+/// / didPopNext), never hardcoded or independently fetched here.
+class _OfficeDashboardMailboxButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _OfficeDashboardMailboxButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: DesignTokens.border),
+            boxShadow: DesignTokens.softShadow(0.04),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(
+                Icons.mail_outline_rounded,
+                size: 18,
+                color: DesignTokens.maroon,
               ),
-              const SizedBox(height: 6),
-              const Text(
-                'Office Dashboard',
+              SizedBox(width: 8),
+              Text(
+                'Mailbox',
                 style: TextStyle(
                   color: DesignTokens.ink,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  height: 1.1,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Overview of workload for $officeName.',
-                style: const TextStyle(
-                  color: DesignTokens.muted,
                   fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
+              TransferBadge(),
             ],
           ),
         ),
-        const SizedBox(width: 12),
-        _OfficeDashboardClock(now: now),
-      ],
+      ),
     );
   }
 }

@@ -15,10 +15,12 @@ import 'office_scaffold.dart';
 /// decision metadata) -- never ticket conversation, attachments, or
 /// internal notes, since the backend endpoints it calls never return those.
 ///
-/// Presented as a mailbox, not a tab-based workspace: this page IS the
-/// incoming list. Selecting a row opens its details (with Accept/Reject for
-/// a Pending request); outgoing requests live in a separate, secondary page
-/// reached via the "Outgoing requests" action, never as a sibling tab.
+/// A single page, reads like an email inbox: an Incoming/Outgoing segmented
+/// switch inside the page itself picks which list is shown (never a sibling
+/// page or a separate sidebar nav item -- the Office Dashboard's own
+/// Mailbox button is the one external entry point). Selecting a card opens
+/// its details; Accept/Reject live only there, and only for an incoming,
+/// still-Pending request.
 class IncomingTransfersPage extends StatefulWidget {
   const IncomingTransfersPage({
     super.key,
@@ -30,9 +32,7 @@ class IncomingTransfersPage extends StatefulWidget {
   @visibleForTesting
   final List<Map<String, dynamic>>? debugIncoming;
 
-  /// Forwarded to the secondary Outgoing page when it's opened. Widget
-  /// tests only -- lets a test seed outgoing data without that page ever
-  /// being directly importable (it's private to this file).
+  /// Seeded outgoing requests skip the network load. Widget tests only.
   @visibleForTesting
   final List<Map<String, dynamic>>? debugOutgoing;
 
@@ -40,15 +40,26 @@ class IncomingTransfersPage extends StatefulWidget {
   State<IncomingTransfersPage> createState() => _IncomingTransfersPageState();
 }
 
+enum _MailboxTab { incoming, outgoing }
+
 class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
+  _MailboxTab _tab = _MailboxTab.incoming;
+
   final List<TicketTransferRequest> _incoming = [];
   bool _loadingIncoming = false;
   String? _incomingError;
-  bool _requestedInitialLoad = false;
+  bool _requestedIncomingLoad = false;
+
+  final List<TicketTransferRequest> _outgoing = [];
+  bool _loadingOutgoing = false;
+  String? _outgoingError;
+  bool _requestedOutgoingLoad = false;
+
   bool _markingNotificationsRead = false;
   // Per-request-id busy set, not a single id: a decision on one request
   // must never block deciding a *different* one -- only a second decision
-  // on the SAME id while its own call is still in flight.
+  // on the SAME id while its own call is still in flight. Only ever
+  // populated for incoming requests -- outgoing ones are never decidable.
   final Set<String> _actingOnIds = {};
 
   @override
@@ -56,9 +67,19 @@ class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
     super.initState();
     final incomingSeed = widget.debugIncoming;
     if (incomingSeed != null) {
-      _requestedInitialLoad = true;
+      _requestedIncomingLoad = true;
       _incoming.addAll(
         incomingSeed.map(
+          (item) =>
+              TicketTransferRequest.fromJson(Map<String, dynamic>.from(item)),
+        ),
+      );
+    }
+    final outgoingSeed = widget.debugOutgoing;
+    if (outgoingSeed != null) {
+      _requestedOutgoingLoad = true;
+      _outgoing.addAll(
+        outgoingSeed.map(
           (item) =>
               TicketTransferRequest.fromJson(Map<String, dynamic>.from(item)),
         ),
@@ -71,8 +92,8 @@ class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
     super.didChangeDependencies();
     final auth = AuthScope.of(context);
     final canLoad = auth.role == 'office' || auth.role == 'admin';
-    if (!_requestedInitialLoad && canLoad) {
-      _requestedInitialLoad = true;
+    if (!_requestedIncomingLoad && canLoad) {
+      _requestedIncomingLoad = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _loadIncoming();
@@ -110,6 +131,57 @@ class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
       if (mounted) setState(() => _incomingError = _friendlyError(error));
     } finally {
       if (mounted) setState(() => _loadingIncoming = false);
+    }
+  }
+
+  Future<void> _loadOutgoing() async {
+    setState(() {
+      _loadingOutgoing = true;
+      _outgoingError = null;
+    });
+    try {
+      final result = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/transfers/outgoing',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      if (!result.ok) {
+        throw StateError(
+          _extractError(
+            result.jsonObject,
+            'Could not load outgoing transfer requests.',
+          ),
+        );
+      }
+      final parsed = _parseTransferItems(result.jsonObject['items']);
+      if (!mounted) return;
+      setState(() {
+        _outgoing
+          ..clear()
+          ..addAll(parsed);
+      });
+    } catch (error) {
+      if (mounted) setState(() => _outgoingError = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _loadingOutgoing = false);
+    }
+  }
+
+  // Switching tabs never pushes a new route -- the whole point of the
+  // segmented switch is that both lists live on this one page. Outgoing's
+  // own load is lazy, triggered the first time the tab is actually
+  // selected (mirroring the previous separate page's own mount-triggered
+  // load), so a user who never looks at Outgoing never pays for that
+  // request; switching back and forth afterward never refetches.
+  void _selectTab(_MailboxTab tab) {
+    if (_tab == tab) return;
+    setState(() => _tab = tab);
+    if (tab == _MailboxTab.outgoing && !_requestedOutgoingLoad) {
+      final auth = AuthScope.of(context);
+      if (auth.role == 'office' || auth.role == 'admin') {
+        _requestedOutgoingLoad = true;
+        _loadOutgoing();
+      }
     }
   }
 
@@ -153,9 +225,9 @@ class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
       await _loadIncoming();
       // A decision resolves the destination office's own "please decide"
       // notification server-side (see accept/reject_ticket_transfer); tell
-      // the sidebar badge -- a sibling widget with no other connection to
-      // this action -- to refetch so it doesn't stay stale for the rest of
-      // this session.
+      // the sidebar/dashboard badge -- a sibling widget with no other
+      // connection to this action -- to refetch so it doesn't stay stale
+      // for the rest of this session.
       transferBadgeRefreshTick.value++;
     } catch (error) {
       if (mounted) {
@@ -171,15 +243,15 @@ class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
     }
   }
 
+  // Single shared action for both tabs -- a source office actually learns
+  // a transfer it sent was accepted/rejected via a notification addressed
+  // to it (type "transfer_accepted"/"transfer_rejected", see accept/
+  // reject_ticket_transfer in ticketing.py), never to the destination; the
+  // destination's own "please decide" notification is the one a decision
+  // itself resolves. One explicit, user-initiated bulk action reachable
+  // regardless of which tab is open covers both, rather than requiring a
+  // source office to find it only under a specific tab.
   Future<void> _markTransferNotificationsRead() async {
-    // Deliberately explicit, user-initiated -- never triggered just by
-    // opening or refreshing this screen. This is a bulk action, not a
-    // precise per-notification one: the mailbox only has transfer-request
-    // ids, not individual notification ids, so there is no safe way to
-    // target "just this one outgoing notification" without adding a
-    // finer-grained identifier the API doesn't expose. Marking the
-    // caller's whole transfer-notification backlog read in one explicit
-    // action is the safest supported alternative.
     if (_markingNotificationsRead) return;
     setState(() => _markingNotificationsRead = true);
     try {
@@ -260,20 +332,28 @@ class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
     }
   }
 
-  /// Opens the message's details. A Pending request's dialog returns
-  /// 'accept'/'reject'; this method runs the actual decision only after
-  /// that dialog has already closed, exactly mirroring how `_promptReject`
-  /// already hands off from its own sub-dialog.
-  Future<void> _openDetails(TicketTransferRequest request) async {
-    // A decision for this id is already in flight -- the row itself is
-    // disabled while that's true (see _buildBody), but this is a second,
-    // defensive guard against reopening details for it by any other path.
-    if (_actingOnIds.contains(request.id)) return;
+  /// Opens the message's details. A Pending INCOMING request's dialog
+  /// returns 'accept'/'reject'; an outgoing request's dialog never offers
+  /// those actions regardless of status (the caller never decides their
+  /// own sent request), so `action` is only ever meaningful when
+  /// `isIncoming` is true. The actual decision runs only after the dialog
+  /// has already closed, exactly mirroring how `_promptReject` already
+  /// hands off from its own sub-dialog.
+  Future<void> _openDetails(
+    TicketTransferRequest request, {
+    required bool isIncoming,
+  }) async {
+    // A decision for this id is already in flight -- the card itself is
+    // disabled while that's true (see _buildListArea), but this is a
+    // second, defensive guard against reopening details for it by any
+    // other path.
+    if (isIncoming && _actingOnIds.contains(request.id)) return;
     final action = await showDialog<String>(
       context: context,
-      builder: (_) => _TransferDetailsDialog(request: request),
+      builder:
+          (_) => _TransferDetailsDialog(request: request, isIncoming: isIncoming),
     );
-    if (!mounted || action == null) return;
+    if (!mounted || action == null || !isIncoming) return;
     if (action == 'accept') {
       await _decide(request, accept: true);
     } else if (action == 'reject') {
@@ -281,281 +361,307 @@ class _IncomingTransfersPageState extends State<IncomingTransfersPage> {
     }
   }
 
-  Future<void> _openOutgoing() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder:
-            (_) => _OutgoingTransfersPage(debugItems: widget.debugOutgoing),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final auth = AuthScope.of(context);
     final isOffice = auth.role == 'office';
-    final body = _buildBody();
-    final actions = [
-      TextButton(
-        onPressed: _openOutgoing,
-        child: const Text('Outgoing requests'),
-      ),
-      TextButton(
-        onPressed:
-            _markingNotificationsRead ? null : _markTransferNotificationsRead,
-        child: Text(
-          _markingNotificationsRead ? 'Marking…' : 'Mark notifications read',
-        ),
-      ),
-    ];
+    final body = _MailboxBody(
+      tab: _tab,
+      onSelectTab: _selectTab,
+      marking: _markingNotificationsRead,
+      onMarkRead:
+          _markingNotificationsRead ? null : _markTransferNotificationsRead,
+      listArea: _buildListArea(),
+    );
 
     if (isOffice) {
       return OfficeScaffold(
         current: StudentNavItem.officeIncomingTransfers,
-        title: 'Incoming Transfers',
-        description:
-            'Review office-to-office ticket transfer requests sent to your office.',
-        actions: actions,
+        title: 'Office Mailbox',
+        description: 'Manage ticket transfer requests',
+        fillBody: true,
+        showHeader: false,
         child: body,
       );
     }
     return AdminScaffold(
       current: StudentNavItem.adminIncomingTransfers,
-      title: 'Incoming Transfers',
-      description:
-          'Review office-to-office ticket transfer requests sent to your office.',
-      actions: actions,
+      title: 'Office Mailbox',
+      description: 'Manage ticket transfer requests',
+      fillBody: true,
+      showHeader: false,
       child: body,
     );
   }
 
-  Widget _buildBody() {
-    if (_loadingIncoming && _incoming.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 32),
-        child: Center(child: CircularProgressIndicator()),
+  Widget _buildListArea() {
+    final isIncoming = _tab == _MailboxTab.incoming;
+    final loading = isIncoming ? _loadingIncoming : _loadingOutgoing;
+    final error = isIncoming ? _incomingError : _outgoingError;
+    final items = isIncoming ? _incoming : _outgoing;
+    final onRetry = isIncoming ? _loadIncoming : _loadOutgoing;
+
+    if (loading && items.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (error != null) {
+      return _ErrorBanner(message: error, onRetry: onRetry);
+    }
+    if (items.isEmpty) {
+      return _MailboxEmptyState(
+        isIncoming: isIncoming,
+        onSwitchTab:
+            () => _selectTab(
+              isIncoming ? _MailboxTab.outgoing : _MailboxTab.incoming,
+            ),
       );
     }
-    if (_incomingError != null) {
-      return _ErrorBanner(message: _incomingError!, onRetry: _loadIncoming);
-    }
-    if (_incoming.isEmpty) {
-      return const _EmptyState(message: 'No incoming transfer requests.');
-    }
-    return Column(
-      children:
-          _incoming.map((request) {
-            final busy = _actingOnIds.contains(request.id);
-            return _MailboxRow(
-              request: request,
-              busy: busy,
-              onTap: busy ? null : () => _openDetails(request),
-            );
-          }).toList(),
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 16),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final request = items[index];
+        final busy = isIncoming && _actingOnIds.contains(request.id);
+        return _MailboxCard(
+          request: request,
+          isIncoming: isIncoming,
+          busy: busy,
+          onTap:
+              busy
+                  ? null
+                  : () => _openDetails(request, isIncoming: isIncoming),
+        );
+      },
     );
   }
 }
 
-/// A separate, secondary page for the caller's own outgoing transfer
-/// requests -- deliberately not a tab alongside the incoming mailbox (see
-/// IncomingTransfersPage's own doc comment). Self-contained: fetches its
-/// own data rather than depending on IncomingTransfersPage's state, so it
-/// stays correct however it's reached.
-class _OutgoingTransfersPage extends StatefulWidget {
-  const _OutgoingTransfersPage({this.debugItems});
+/// The page's own content: a responsive header (title + unread badge +
+/// the compact mark-read action), the Incoming/Outgoing switch, then
+/// whichever list/loading/error/empty state is current. OfficeScaffold/
+/// AdminScaffold are used with `showHeader: false` here -- their own
+/// title/description slot only ever takes a plain string, with no room
+/// for the badge or switch this page needs, so this builds its own header
+/// instead (the same choice OfficeDashboardPage already makes for its
+/// own, differently-shaped header).
+class _MailboxBody extends StatelessWidget {
+  const _MailboxBody({
+    required this.tab,
+    required this.onSelectTab,
+    required this.marking,
+    required this.onMarkRead,
+    required this.listArea,
+  });
 
-  @visibleForTesting
-  final List<Map<String, dynamic>>? debugItems;
-
-  @override
-  State<_OutgoingTransfersPage> createState() => _OutgoingTransfersPageState();
-}
-
-class _OutgoingTransfersPageState extends State<_OutgoingTransfersPage> {
-  final List<TicketTransferRequest> _items = [];
-  bool _loading = false;
-  String? _error;
-  bool _requestedInitialLoad = false;
-  bool _markingNotificationsRead = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final seed = widget.debugItems;
-    if (seed != null) {
-      _requestedInitialLoad = true;
-      _items.addAll(
-        seed.map(
-          (item) =>
-              TicketTransferRequest.fromJson(Map<String, dynamic>.from(item)),
-        ),
-      );
-    }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final auth = AuthScope.of(context);
-    final canLoad = auth.role == 'office' || auth.role == 'admin';
-    if (!_requestedInitialLoad && canLoad) {
-      _requestedInitialLoad = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _load();
-      });
-    }
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final result = await ApiClient.send(
-        method: 'GET',
-        url: '${AppConfig.resolvedApiBase}/tickets/transfers/outgoing',
-        headers: AuthScope.of(context).ticketHeaders(),
-      );
-      if (!result.ok) {
-        throw StateError(
-          _extractError(
-            result.jsonObject,
-            'Could not load outgoing transfer requests.',
-          ),
-        );
-      }
-      final parsed = _parseTransferItems(result.jsonObject['items']);
-      if (!mounted) return;
-      setState(() {
-        _items
-          ..clear()
-          ..addAll(parsed);
-      });
-    } catch (error) {
-      if (mounted) setState(() => _error = _friendlyError(error));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  /// This is where a source office actually learns a transfer it sent was
-  /// accepted/rejected -- the unread notification for that outcome
-  /// (type "transfer_accepted"/"transfer_rejected", see accept_ticket_
-  /// transfer/reject_ticket_transfer in ticketing.py) is addressed to the
-  /// SOURCE office, never to the destination. Previously this action only
-  /// existed on the Incoming page, which a pure source office may never
-  /// visit (they have nothing pending to decide there) -- leaving that
-  /// notification permanently unread and the sidebar badge stuck non-zero
-  /// even after returning to the office workspace. Same explicit,
-  /// user-initiated bulk action as Incoming's, hitting the same endpoint;
-  /// never auto-triggered just by viewing this list.
-  Future<void> _markTransferNotificationsRead() async {
-    if (_markingNotificationsRead) return;
-    setState(() => _markingNotificationsRead = true);
-    try {
-      final result = await ApiClient.send(
-        method: 'POST',
-        url:
-            '${AppConfig.resolvedApiBase}/tickets/notifications/transfers/read-all',
-        headers: AuthScope.of(context).ticketHeaders(),
-      );
-      if (!result.ok) {
-        throw StateError(
-          _extractError(
-            result.jsonObject,
-            'Could not mark notifications read.',
-          ),
-        );
-      }
-      transferBadgeRefreshTick.value++;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Transfer notifications marked read.')),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
-      }
-    } finally {
-      if (mounted) setState(() => _markingNotificationsRead = false);
-    }
-  }
+  final _MailboxTab tab;
+  final ValueChanged<_MailboxTab> onSelectTab;
+  final bool marking;
+  final VoidCallback? onMarkRead;
+  final Widget listArea;
 
   @override
   Widget build(BuildContext context) {
-    final auth = AuthScope.of(context);
-    final isOffice = auth.role == 'office';
-    final body = _buildBody();
-    final actions = [
-      TextButton(
-        onPressed:
-            _markingNotificationsRead ? null : _markTransferNotificationsRead,
-        child: Text(
-          _markingNotificationsRead ? 'Marking…' : 'Mark notifications read',
-        ),
-      ),
-    ];
-    if (isOffice) {
-      return OfficeScaffold(
-        current: StudentNavItem.officeIncomingTransfers,
-        title: 'Outgoing Transfers',
-        description: 'Transfer requests your office has sent to other offices.',
-        actions: actions,
-        child: body,
-      );
-    }
-    return AdminScaffold(
-      current: StudentNavItem.adminIncomingTransfers,
-      title: 'Outgoing Transfers',
-      description: 'Transfer requests sent to other offices.',
-      actions: actions,
-      child: body,
-    );
-  }
-
-  Widget _buildBody() {
-    if (_loading && _items.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 32),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-    if (_error != null) {
-      return _ErrorBanner(message: _error!, onRetry: _load);
-    }
-    if (_items.isEmpty) {
-      return const _EmptyState(message: 'No outgoing transfer requests.');
-    }
-    return Column(
-      children:
-          _items
-              .map(
-                (request) => _TransferCard(request: request, isIncoming: false),
-              )
-              .toList(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 900;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            wide ? 24 : 14,
+            wide ? 20 : 14,
+            wide ? 24 : 14,
+            0,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _MailboxHeader(marking: marking, onMarkRead: onMarkRead),
+              const SizedBox(height: 14),
+              _MailboxTabSwitch(tab: tab, onChanged: onSelectTab),
+              const SizedBox(height: 14),
+              Expanded(child: listArea),
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
-/// One mailbox-style row for the incoming list. Tapping it opens the
-/// request's details (see _TransferDetailsDialog) -- Accept/Reject live
-/// there, not inline on the row, so the mailbox reads as a list of
-/// messages rather than a grid of action cards.
-class _MailboxRow extends StatelessWidget {
-  const _MailboxRow({
+class _MailboxHeader extends StatelessWidget {
+  const _MailboxHeader({required this.marking, required this.onMarkRead});
+
+  final bool marking;
+  final VoidCallback? onMarkRead;
+
+  static const double _wrapBreakpoint = 520;
+
+  @override
+  Widget build(BuildContext context) {
+    final titleRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Text(
+                    'Office Mailbox',
+                    style: TextStyle(
+                      color: DesignTokens.ink,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  TransferBadge(),
+                ],
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Manage ticket transfer requests',
+                style: TextStyle(
+                  color: DesignTokens.muted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    final markReadButton = TextButton(
+      onPressed: onMarkRead,
+      child: Text(marking ? 'Marking…' : 'Mark all read'),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= _wrapBreakpoint) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: titleRow),
+              const SizedBox(width: 12),
+              markReadButton,
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            titleRow,
+            const SizedBox(height: 8),
+            Align(alignment: Alignment.centerLeft, child: markReadButton),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Incoming/Outgoing switch living inside the page, not a route push --
+/// selecting a segment just swaps which list `_buildListArea` shows.
+/// Plain Row of two Expanded, borderless-except-for-the-pill InkWells
+/// rather than Material's SegmentedButton, to match this app's existing
+/// hand-styled (not Material-3-default) chrome elsewhere.
+class _MailboxTabSwitch extends StatelessWidget {
+  const _MailboxTabSwitch({required this.tab, required this.onChanged});
+
+  final _MailboxTab tab;
+  final ValueChanged<_MailboxTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: DesignTokens.bgGrey,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _MailboxTabSegment(
+              label: 'Incoming',
+              selected: tab == _MailboxTab.incoming,
+              onTap: () => onChanged(_MailboxTab.incoming),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: _MailboxTabSegment(
+              label: 'Outgoing',
+              selected: tab == _MailboxTab.outgoing,
+              onTap: () => onChanged(_MailboxTab.outgoing),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MailboxTabSegment extends StatelessWidget {
+  const _MailboxTabSegment({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? DesignTokens.maroon : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: selected ? Colors.white : DesignTokens.muted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One email-style card, used for both the Incoming and Outgoing lists.
+/// The bold "sender" line is the OTHER office relative to the viewer --
+/// the source office for an incoming request, the destination office for
+/// an outgoing one -- matching how an inbox always names the other party,
+/// never the viewer's own office. Tapping anywhere on the card opens its
+/// details; Accept/Reject never appear inline here, only in that dialog,
+/// and only for an incoming, still-Pending request.
+class _MailboxCard extends StatelessWidget {
+  const _MailboxCard({
     required this.request,
+    required this.isIncoming,
     required this.onTap,
     this.busy = false,
   });
 
   final TicketTransferRequest request;
+  final bool isIncoming;
 
-  /// Null (not just a no-op callback) while `busy` is true, so the row is
+  /// Null (not just a no-op callback) while `busy` is true, so the card is
   /// genuinely un-tappable -- not just visually dimmed -- during its own
   /// in-flight accept/reject decision.
   final VoidCallback? onTap;
@@ -563,107 +669,110 @@ class _MailboxRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Inbox ordering: sender (source office) + timestamp on the first
-    // line, the reason as a subject-style preview on the second, then a
-    // small metadata line (ticket reference + status) -- the same fields
-    // as before, just ordered the way a mail list reads rather than a
-    // ticket-management card.
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
+    final otherOfficeName =
+        isIncoming ? request.sourceOfficeName : request.destinationOfficeName;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        child: Opacity(
-          opacity: busy ? 0.6 : 1,
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              border: Border.all(color: DesignTokens.border),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              request.sourceOfficeName,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14,
-                                color: DesignTokens.ink,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Opacity(
+            opacity: busy ? 0.6 : 1,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                border: Border.all(color: DesignTokens.border),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                otherOfficeName,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
+                                  color: DesignTokens.ink,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          // Flexible, not a bare Text: without a width
-                          // budget of its own this non-expanding sibling
-                          // forces a RenderFlex overflow on narrow screens
-                          // regardless of how short the string is.
-                          Flexible(
-                            child: Text(
-                              _formatRequestDateCompact(request.createdAt),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: DesignTokens.muted,
+                            const SizedBox(width: 8),
+                            // Flexible, not a bare Text: without a width
+                            // budget of its own this non-expanding sibling
+                            // forces a RenderFlex overflow on narrow
+                            // screens regardless of how short the string is.
+                            Flexible(
+                              child: Text(
+                                _formatRequestDateCompact(request.createdAt),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: DesignTokens.muted,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        request.reason.isEmpty
-                            ? 'No reason given.'
-                            : request.reason,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: DesignTokens.ink,
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Ticket #${request.ticketId}',
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: DesignTokens.muted,
+                        const SizedBox(height: 4),
+                        Text(
+                          request.reason.isEmpty
+                              ? 'No reason given.'
+                              : request.reason,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: DesignTokens.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              // Ticket title would belong here too, but the
+                              // backend's TicketTransferRequestSchema never
+                              // includes one (ticket_id only) -- shown only
+                              // when actually available, never invented.
+                              child: Text(
+                                'Ticket #${request.ticketId}',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: DesignTokens.muted,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          _StatusLabel(status: request.status),
-                        ],
-                      ),
-                    ],
+                            const SizedBox(width: 8),
+                            _StatusBadge(status: request.status),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                if (busy) ...[
-                  const SizedBox(width: 8),
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                  if (busy) ...[
+                    const SizedBox(width: 8),
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -672,22 +781,32 @@ class _MailboxRow extends StatelessWidget {
   }
 }
 
-/// A message's full details, opened from _MailboxRow. Pending requests get
-/// Accept/Reject; the actual decision runs only after this dialog has
-/// closed (see IncomingTransfersPage._openDetails), so this widget never
-/// needs its own busy/error state for the decision itself.
+/// A message's full details, opened from _MailboxCard. An incoming,
+/// Pending request's dialog returns 'accept'/'reject'; the actual decision
+/// runs only after this dialog has already closed (see
+/// IncomingTransfersPage._openDetails), so this widget never needs its own
+/// busy/error state for the decision itself. An outgoing request never
+/// offers Accept/Reject regardless of status -- the caller never decides
+/// their own sent request.
 class _TransferDetailsDialog extends StatelessWidget {
-  const _TransferDetailsDialog({required this.request});
+  const _TransferDetailsDialog({
+    required this.request,
+    required this.isIncoming,
+  });
 
   final TicketTransferRequest request;
+  final bool isIncoming;
 
   @override
   Widget build(BuildContext context) {
-    // Reading-pane layout: the sender (source office) and status read like
-    // an opened message's header, a divider separates header from body,
-    // the reason is the message body, and the rest is footer metadata --
-    // same fields as the row (ticket reference, destination, requested
-    // time, rejection reason), just ordered like a message, not a form.
+    final otherOfficeName =
+        isIncoming ? request.sourceOfficeName : request.destinationOfficeName;
+    final canDecide = isIncoming && request.isPending;
+    // Reading-pane layout: the other office and status read like an
+    // opened message's header, a divider separates header from body, the
+    // reason is the message body, and the rest is footer metadata -- same
+    // fields as the card (ticket reference, destination, requested time,
+    // rejection reason), just ordered like a message, not a form.
     return AlertDialog(
       title: Column(
         mainAxisSize: MainAxisSize.min,
@@ -697,12 +816,12 @@ class _TransferDetailsDialog extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  request.sourceOfficeName,
+                  otherOfficeName,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 8),
-              _StatusLabel(status: request.status),
+              _StatusBadge(status: request.status),
             ],
           ),
           const SizedBox(height: 4),
@@ -749,7 +868,7 @@ class _TransferDetailsDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Close'),
         ),
-        if (request.isPending) ...[
+        if (canDecide) ...[
           TextButton(
             onPressed: () => Navigator.of(context).pop('reject'),
             child: const Text('Reject'),
@@ -793,81 +912,10 @@ class _DetailLine extends StatelessWidget {
   }
 }
 
-/// Read-only card used only by the Outgoing subpage -- the caller never
-/// gets Accept/Reject on their own outgoing requests.
-class _TransferCard extends StatelessWidget {
-  const _TransferCard({required this.request, required this.isIncoming});
-
-  final TicketTransferRequest request;
-  final bool isIncoming;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        border: Border.all(color: DesignTokens.border),
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.white,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Ticket #${request.ticketId}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 14,
-                    color: DesignTokens.ink,
-                  ),
-                ),
-              ),
-              _StatusLabel(status: request.status),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            isIncoming
-                ? 'From ${request.sourceOfficeName}'
-                : 'To ${request.destinationOfficeName}',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: DesignTokens.muted,
-            ),
-          ),
-          if (request.reason.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              request.reason,
-              style: const TextStyle(fontSize: 13, color: DesignTokens.ink),
-            ),
-          ],
-          if (request.rejectionReason != null &&
-              request.rejectionReason!.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Rejection reason: ${request.rejectionReason}',
-              style: const TextStyle(fontSize: 12, color: DesignTokens.muted),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Text(
-            _formatRequestTimestamp(request.createdAt),
-            style: const TextStyle(fontSize: 11, color: DesignTokens.muted),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusLabel extends StatelessWidget {
-  const _StatusLabel({required this.status});
+/// A small filled pill, not just colored text -- "clear status badge" per
+/// design, legible at a glance across Pending/Accepted/Rejected.
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.status});
 
   final String status;
 
@@ -878,24 +926,64 @@ class _StatusLabel extends StatelessWidget {
       'Rejected' => const Color(0xFFB3261E),
       _ => DesignTokens.maroon,
     };
-    return Text(
-      status,
-      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: color),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color),
+      ),
     );
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.message});
+class _MailboxEmptyState extends StatelessWidget {
+  const _MailboxEmptyState({
+    required this.isIncoming,
+    required this.onSwitchTab,
+  });
 
-  final String message;
+  final bool isIncoming;
+  final VoidCallback onSwitchTab;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 32),
-      child: Center(
-        child: Text(message, style: const TextStyle(color: DesignTokens.muted)),
+    final title = isIncoming ? 'Inbox is clear' : 'No outgoing requests yet';
+    final description =
+        isIncoming
+            ? 'New transfer requests from other offices will appear here.'
+            : 'Transfer requests your office sends to other offices will appear here.';
+    final actionLabel =
+        isIncoming ? 'View outgoing requests' : 'View incoming requests';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: DesignTokens.ink,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, color: DesignTokens.muted),
+            ),
+            const SizedBox(height: 12),
+            TextButton(onPressed: onSwitchTab, child: Text(actionLabel)),
+          ],
+        ),
       ),
     );
   }
@@ -952,12 +1040,12 @@ String _formatRequestTimestamp(String iso) {
   return '${months[local.month - 1]} ${local.day}, ${local.year}, $hour:$minute $meridiem';
 }
 
-/// Short "Oct 13" form for the mailbox row, which shares its line with the
-/// sender name -- the full date+time form (_formatRequestTimestamp) is too
-/// wide there on narrow screens. The full form is still shown once the
-/// message is open (see _TransferDetailsDialog), matching how a mail
-/// client's list view uses a compact date and the opened message shows
-/// the full one.
+/// Short "Oct 13" form for the mailbox card, which shares its line with
+/// the other office's name -- the full date+time form
+/// (_formatRequestTimestamp) is too wide there on narrow screens. The full
+/// form is still shown once the message is open (see
+/// _TransferDetailsDialog), matching how a mail client's list view uses a
+/// compact date and the opened message shows the full one.
 String _formatRequestDateCompact(String iso) {
   final parsed = DateTime.tryParse(iso);
   if (parsed == null) return iso;

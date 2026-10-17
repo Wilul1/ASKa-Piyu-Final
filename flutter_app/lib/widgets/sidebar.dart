@@ -964,8 +964,11 @@ class _OfficeDarkSidebar extends StatelessWidget {
         StudentNavItem.officeDashboard),
     _SidebarData('Assigned Tickets', Icons.assignment_turned_in_rounded,
         StudentNavItem.officeAssignedTickets),
-    _SidebarData('Incoming Transfers', Icons.swap_horiz_rounded,
-        StudentNavItem.officeIncomingTransfers),
+    // Incoming Transfers is deliberately not a sidebar item here -- the
+    // Office Dashboard's own Mailbox button (beside the date/time card)
+    // is now the single entry point, reusing the same page and the same
+    // TransferBadge unread count. Removing this avoided a redundant
+    // second nav item pointing at the identical page.
     _SidebarData(
         'Account', Icons.manage_accounts_outlined, StudentNavItem.officeFaculty),
     _SidebarData('Knowledge Base', Icons.library_books_rounded,
@@ -1053,9 +1056,6 @@ class _OfficeDarkSidebar extends StatelessWidget {
                       icon: item.icon,
                       selected: current == item.item,
                       onTap: () => onNavigate(item.item, item.label),
-                      trailing: item.item == StudentNavItem.officeIncomingTransfers
-                          ? const TransferBadge()
-                          : null,
                     ),
                 ],
               ),

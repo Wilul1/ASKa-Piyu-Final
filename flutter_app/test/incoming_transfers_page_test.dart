@@ -554,7 +554,7 @@ void main() {
   // effect (updating the rendered count) can never be exercised here. The
   // only way to tell "a fetch was attempted" from "it was correctly
   // skipped" is the test-only debugTransferBadgeLoadAttempts counter in
-  // sidebar.dart, bumped at the top of _TransferBadge._load() regardless
+  // sidebar.dart, bumped at the top of TransferBadge._load() regardless
   // of whether the subsequent network call succeeds or fails. These tests
   // read it as a before/after delta, never an absolute value, since other
   // tests in this file may have already incremented it.
@@ -576,8 +576,17 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // These three exercise TransferBadge's RouteAware visibility/refresh
+  // mechanism itself (not anything page-specific), via whichever instance
+  // happens to be mounted alongside IncomingTransfersPage. The office
+  // sidebar no longer has one -- the Office Dashboard's Mailbox button
+  // is the sole entry point now (see sidebar.dart's _OfficeDarkSidebar) --
+  // so these pump as admin instead, whose sidebar still carries its own
+  // "Incoming Transfers" nav item and TransferBadge, untouched by that
+  // removal and exercising the exact same shared widget/mechanism.
+
   testWidgets('a visible badge refreshes when the refresh tick changes', (tester) async {
-    await pumpPage(tester, incoming: const []);
+    await pumpPage(tester, user: adminUser(), incoming: const []);
     final before = debugTransferBadgeLoadAttempts;
 
     transferBadgeRefreshTick.value++;
@@ -589,7 +598,7 @@ void main() {
 
   testWidgets('a covered badge does not refetch when the refresh tick changes while hidden',
       (tester) async {
-    await pumpPage(tester, incoming: const []);
+    await pumpPage(tester, user: adminUser(), incoming: const []);
     await pushCover(tester);
     final whileCovered = debugTransferBadgeLoadAttempts;
 
@@ -601,7 +610,7 @@ void main() {
   });
 
   testWidgets('returning to a previously covered page refreshes its badge', (tester) async {
-    await pumpPage(tester, incoming: const []);
+    await pumpPage(tester, user: adminUser(), incoming: const []);
     await pushCover(tester);
     final whileCovered = debugTransferBadgeLoadAttempts;
 

@@ -562,6 +562,79 @@ def filter_unpublished_faq_chunks(chunks: list) -> list:
     return kept
 
 
+def article_visible_for_role(article: PublishedArticle, user_role: str | None) -> bool:
+    """Same audience rule the public KB browse route (``GET /kb/articles``,
+    ``app.routes.knowledge_base._article_visible_for_role``) already uses --
+    duplicated here (not imported) so this service module never depends on
+    a routes module. Office/admin see everything; faculty see
+    faculty/both; everyone else (students, guests) sees student/both.
+    """
+    audience = str(getattr(article, "audience", None) or "student").strip().lower() or "student"
+    role = (user_role or "student").strip().lower()
+    if role in {"office", "admin"}:
+        return True
+    if role == "faculty":
+        return audience in {"faculty", "both"}
+    return audience in {"student", "both"}
+
+
+def gate_kb_article_citations(
+    sources: list[dict[str, Any]], user_role: str | None
+) -> list[dict[str, Any]]:
+    """Fail-closed defense-in-depth for citation ``kb_article_id`` links.
+
+    Every chunk reaching ``question_answering._sources_from_chunks`` already
+    passed role/audience filtering once (``filter_chunks_for_audience``) and,
+    for FAQ chunks, a published-article check (``filter_unpublished_faq_chunks``)
+    earlier in the same request -- so by the time a source dict carries a
+    candidate ``kb_article_id``, it should already be safe to show. This is a
+    second, independent re-check against current Postgres state right before
+    the link is returned to the client, mirroring ``filter_unpublished_faq_chunks``'s
+    own "defense in depth" precedent (guards the same rollback-after-Chroma-write
+    race, plus a between-retrieval-and-response unpublish). Mutates and returns
+    ``sources`` in place; any failure (DB error, missing row, wrong audience)
+    clears the offending ``kb_article_id`` to ``None`` rather than raising --
+    a citation never loses its existing PDF fallback because of this.
+    """
+    candidate_ids = {
+        str(item["kb_article_id"]).strip()
+        for item in sources
+        if str(item.get("kb_article_id") or "").strip()
+    }
+    if not candidate_ids:
+        return sources
+
+    visible_ids: set[str] = set()
+    try:
+        session_factory = get_session_factory()
+        session = session_factory()
+        try:
+            rows = (
+                session.query(PublishedArticle)
+                .filter(
+                    PublishedArticle.id.in_(list(candidate_ids)),
+                    PublishedArticle.published.is_(True),
+                )
+                .all()
+            )
+            visible_ids = {
+                row.id for row in rows if article_visible_for_role(row, user_role)
+            }
+        finally:
+            session.close()
+    except Exception:
+        logger.exception(
+            "Failed to verify published/visible KB articles for citation links; "
+            "dropping all kb_article_id links fail-closed"
+        )
+        visible_ids = set()
+
+    for item in sources:
+        if str(item.get("kb_article_id") or "").strip() not in visible_ids:
+            item["kb_article_id"] = None
+    return sources
+
+
 def best_effort_remove_faq_document(article_id: str) -> None:
     """Remove FAQ vectors without touching Postgres (commit-failure cleanup)."""
     document_id = faq_document_id(article_id)

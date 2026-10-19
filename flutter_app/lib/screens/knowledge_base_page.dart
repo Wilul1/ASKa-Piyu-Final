@@ -20,11 +20,20 @@ const _articleFontFamily = 'Inter';
 class KnowledgeBasePage extends StatefulWidget {
   final String? initialCategory;
   final String? initialQuery;
+  // When set, the page opens that one published article directly (e.g. a
+  // chatbot citation's kb_article_id) on top of the normal list, which
+  // still loads underneath so "back" lands somewhere populated. Fetched
+  // through the same GET /kb/articles/{id} endpoint the list's own
+  // article taps use -- unpublished/role-restricted/missing ids all 404
+  // identically there, so this never distinguishes "exists but hidden"
+  // from "doesn't exist".
+  final String? initialArticleId;
 
   const KnowledgeBasePage({
     super.key,
     this.initialCategory,
     this.initialQuery,
+    this.initialArticleId,
   });
 
   @override
@@ -42,6 +51,7 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
   String? _activeCategory;
   String? _lastAuthKey;
   bool _bootstrapped = false;
+  bool _openedInitialArticle = false;
 
   @override
   void initState() {
@@ -66,6 +76,36 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
       _bootstrapped = true;
       _lastAuthKey = authKey;
       _loadInitialData();
+    }
+    if (!_openedInitialArticle) {
+      final articleId = widget.initialArticleId?.trim();
+      if (articleId != null && articleId.isNotEmpty) {
+        // Guard set before the async fetch, not after -- a second
+        // didChangeDependencies call (e.g. an auth-state change) while
+        // the fetch is still in flight must not open the article twice.
+        _openedInitialArticle = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _openInitialArticle(articleId);
+        });
+      }
+    }
+  }
+
+  Future<void> _openInitialArticle(String articleId) async {
+    try {
+      final data = await _getJson('/kb/articles/${Uri.encodeComponent(articleId)}');
+      if (!mounted) return;
+      _openArticle(_KbArticle.fromJson(data));
+    } catch (_) {
+      // Covers "missing", "unpublished", and "role-restricted" alike --
+      // GET /kb/articles/{id} already 404s all three identically, so
+      // this never reveals which one it was. No broken navigation state:
+      // nothing was pushed, the student just stays on the (already
+      // loading/loaded) article list underneath.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('That article is unavailable.')),
+      );
     }
   }
 

@@ -321,6 +321,10 @@ class QASourceSchema(BaseModel):
     source_label: str | None = None
     pdf_available: bool | None = None
     citation_note: str | None = None
+    # Set only when this source is a published, role-visible Knowledge Base
+    # FAQ article -- lets the client link directly to GET /kb/articles/{id}
+    # instead of (or alongside) the PDF fallback above.
+    kb_article_id: str | None = None
 
 
 class QACitationSchema(BaseModel):
@@ -339,6 +343,9 @@ class QACitationSchema(BaseModel):
     path: str | None = None
     pdf_available: bool | None = None
     citation_note: str | None = None
+    # Set only when this citation is a published, role-visible Knowledge
+    # Base FAQ article -- see QASourceSchema.kb_article_id.
+    kb_article_id: str | None = None
     # Level-3 ready (optional / usually null for Level 2)
     bbox: list[float] | None = None
     page_width: float | None = None

@@ -169,11 +169,15 @@ def test_sources_from_chunks_include_citation_fields(tmp_path, monkeypatch):
     assert source["source_page_url"].startswith(f"/documents/{doc_id}/source/page/12?")
     assert "end=13" in source["source_page_url"]
     assert "section=" in source["source_page_url"]
+    # A raw (non-FAQ) document citation never gets a kb_article_id -- its
+    # existing PDF resolution above is the only link it ever gets.
+    assert source["kb_article_id"] is None
 
     citations = _citations_from_sources(sources)
     assert citations[0]["citation_id"] == f"{doc_id}::3"
     assert "#page=12" in citations[0]["source_view_url"]
     assert f"/documents/{doc_id}/source/page/12" in citations[0]["source_page_url"]
+    assert citations[0]["kb_article_id"] is None
 
 
 def test_orphan_legacy_chunk_has_no_clickable_source_view_url(tmp_path, monkeypatch):

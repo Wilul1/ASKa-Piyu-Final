@@ -19,6 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/chatbot_page.dart';
+import 'package:aska_piyu/screens/knowledge_base_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/services/local_store.dart';
 
@@ -35,6 +36,7 @@ Map<String, dynamic> _sourceJson({
   int? page,
   String? sourceViewUrl,
   bool pdfAvailable = true,
+  String? kbArticleId,
 }) {
   return {
     'title': title,
@@ -48,6 +50,7 @@ Map<String, dynamic> _sourceJson({
     'document_id': 'doc-${title.hashCode}',
     'pdf_available': pdfAvailable,
     'citation_id': 'cit-${title.hashCode}',
+    'kb_article_id': kbArticleId,
   };
 }
 
@@ -369,6 +372,107 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('low'), findsOneWidget);
+    });
+  });
+
+  group('Chatbot citation -> public Knowledge Base article link', () {
+    testWidgets(
+        'a citation with kb_article_id opens the Knowledge Base article, '
+        'not the PDF viewer', (tester) async {
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'How do I validate my ID?',
+        answerText: 'Present your school ID at the registrar\'s window.',
+        confidence: 'high',
+        sources: [
+          _sourceJson(
+            title: 'ID Validation FAQ',
+            path: 'Knowledge Base > ID Validation FAQ',
+            kbArticleId: 'article-abc-123',
+            // Deliberately also has PDF fields -- the article link must
+            // still win when both are present.
+            sourceViewUrl: '/documents/doc-1/source',
+          ),
+        ],
+      );
+
+      await tester.tap(find.text('Sources (1)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byType(KnowledgeBasePage), findsNothing);
+      await tester.tap(find.textContaining('ID Validation FAQ').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(KnowledgeBasePage), findsOneWidget);
+    });
+
+    testWidgets(
+        'a citation without kb_article_id still falls back to the PDF '
+        'viewer, unchanged', (tester) async {
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'What are the grade ranges for latin honors?',
+        answerText: 'Summa cum laude requires 1.20-1.45.',
+        confidence: 'high',
+        sources: [
+          _sourceJson(
+            title: 'Latin Honors',
+            path: 'Student Handbook > Graduation > Latin Honors',
+            page: 88,
+            sourceViewUrl: '/documents/doc-2/source',
+          ),
+        ],
+      );
+
+      await tester.tap(find.text('Sources (1)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.textContaining('Latin Honors').first);
+      await tester.pumpAndSettle();
+
+      // showSourcePdfViewer's own fetch has no backend to reach in this
+      // sandbox, so it fails gracefully with its own existing snackbar
+      // (a deterministic proof the PDF path -- never the Knowledge Base
+      // page -- was the one taken) rather than opening a real dialog.
+      expect(find.byType(KnowledgeBasePage), findsNothing);
+      expect(
+        find.text(
+          'PDF source unavailable. Re-index this document to enable PDF viewing.',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a citation with neither kb_article_id nor a PDF source is not '
+        'tappable, and opens nothing', (tester) async {
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'How do I validate my ID?',
+        answerText: 'Present your school ID at the registrar\'s window.',
+        confidence: 'high',
+        sources: [
+          _sourceJson(
+            title: 'ID Validation FAQ',
+            path: 'Knowledge Base > ID Validation FAQ',
+            sourceViewUrl: null,
+            pdfAvailable: false,
+          ),
+        ],
+      );
+
+      await tester.tap(find.text('Sources (1)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final rowInkWell = find.ancestor(
+        of: find.textContaining('ID Validation FAQ').first,
+        matching: find.byType(InkWell),
+      );
+      expect(tester.widget<InkWell>(rowInkWell.first).onTap, isNull);
     });
   });
 

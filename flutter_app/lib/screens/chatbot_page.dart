@@ -13,6 +13,7 @@ import '../services/local_store.dart';
 import '../widgets/phone_layout.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
+import 'knowledge_base_page.dart';
 import 'login_page.dart';
 import 'my_tickets_page.dart';
 
@@ -1693,18 +1694,28 @@ class _CompactSourceRow extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: source.canOpenSource
-            ? () => showSourcePdfViewer(
+        // A Knowledge Base article link (when the backend has confirmed
+        // one is safe to show) always wins over the PDF viewer -- it's
+        // the actual public page this citation is about, not just its
+        // source document. The PDF viewer remains the fallback for every
+        // other citation, unchanged.
+        onTap: source.canOpenKbArticle
+            ? () => softPush(
                   context,
-                  title: source.title,
-                  sourceLabel: source.sourceLabel ?? source.sourceFilename,
-                  sourceSection: source.sourceSection ?? source.path,
-                  page: source.pageNumber ?? source.page,
-                  pageEnd: source.pageEnd,
-                  viewUrl: source.sourceViewUrl,
-                  pageUrl: source.sourcePageUrl,
+                  KnowledgeBasePage(initialArticleId: source.kbArticleId),
                 )
-            : null,
+            : source.canOpenSource
+                ? () => showSourcePdfViewer(
+                      context,
+                      title: source.title,
+                      sourceLabel: source.sourceLabel ?? source.sourceFilename,
+                      sourceSection: source.sourceSection ?? source.path,
+                      page: source.pageNumber ?? source.page,
+                      pageEnd: source.pageEnd,
+                      viewUrl: source.sourceViewUrl,
+                      pageUrl: source.sourcePageUrl,
+                    )
+                : null,
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -2262,6 +2273,7 @@ class _QaSource {
   final String? sourceLabel;
   final bool? pdfAvailable;
   final String? citationNote;
+  final String? kbArticleId;
 
   const _QaSource({
     required this.title,
@@ -2280,7 +2292,15 @@ class _QaSource {
     this.sourceLabel,
     this.pdfAvailable,
     this.citationNote,
+    this.kbArticleId,
   });
+
+  // Preferred over the PDF viewer below when present -- the backend only
+  // ever sets kb_article_id for a citation it has independently confirmed
+  // (at answer time) is a published, role-visible Knowledge Base article
+  // (see gate_kb_article_citations), so no extra client-side check is
+  // needed here beyond "is it a non-empty string".
+  bool get canOpenKbArticle => (kbArticleId ?? '').trim().isNotEmpty;
 
   bool get canOpenSource =>
       ((sourceViewUrl ?? '').trim().isNotEmpty ||
@@ -2345,6 +2365,7 @@ class _QaSource {
         'source_label': sourceLabel,
         'pdf_available': pdfAvailable,
         'citation_note': citationNote,
+        'kb_article_id': kbArticleId,
       };
 
   factory _QaSource.fromJson(Map<String, dynamic> json) {
@@ -2381,6 +2402,7 @@ class _QaSource {
       sourceLabel: json['source_label']?.toString(),
       pdfAvailable: pdfAvailable,
       citationNote: json['citation_note']?.toString(),
+      kbArticleId: json['kb_article_id']?.toString(),
     );
   }
 }

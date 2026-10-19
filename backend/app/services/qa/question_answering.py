@@ -574,7 +574,9 @@ def answer_qa_question(
         if collection_mode
         else format_retrieved_context(selected_context)
     )
-    sources = _sources_from_chunks(selected_context, merge_articles=collection_mode)
+    sources = _sources_from_chunks(
+        selected_context, merge_articles=collection_mode, user_role=user_role
+    )
     retrieved_debug = _retrieved_debug(retrieved, context_filter)
     grouped_summary = _grouped_context_summary(selected_context) if broad_query else None
     collection_articles = [item["group"] for item in grouped_summary or []]
@@ -713,7 +715,7 @@ def answer_qa_question(
             sources=_display_sources_for_answer(
                 selected_context, typed_answer, merge_articles=collection_mode,
                 debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
-                async_verification_sink=async_verification_sink,
+                async_verification_sink=async_verification_sink, user_role=user_role,
             ),
             citation_status=_citation_status_after_sources(async_verification_sink),
             confidence=typed_answer_confidence,
@@ -839,7 +841,7 @@ def answer_qa_question(
                 sources=_display_sources_for_answer(
                     selected_context, typed_answer, merge_articles=collection_mode,
                     debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
-                    async_verification_sink=async_verification_sink,
+                    async_verification_sink=async_verification_sink, user_role=user_role,
                 ),
                 citation_status=_citation_status_after_sources(async_verification_sink),
                 confidence=typed_answer_confidence,
@@ -950,7 +952,7 @@ def answer_qa_question(
             sources=_display_sources_for_answer(
                 fallback_citation_context, fallback_answer, merge_articles=collection_mode,
                 debug_sink=citation_debug_sink, citation_v2_sink=citation_v2_sink,
-                async_verification_sink=async_verification_sink,
+                async_verification_sink=async_verification_sink, user_role=user_role,
             ),
             citation_status=_citation_status_after_sources(async_verification_sink),
             confidence=fallback_confidence,
@@ -1100,6 +1102,7 @@ def answer_qa_question(
             debug_sink=citation_debug_sink,
             citation_v2_sink=citation_v2_sink,
             async_verification_sink=async_verification_sink,
+            user_role=user_role,
         ),
         citation_status=_citation_status_after_sources(async_verification_sink),
         confidence=confidence,
@@ -5636,6 +5639,7 @@ def _display_sources_for_answer(
     debug_sink: list[dict[str, Any]] | None = None,
     citation_v2_sink: dict[str, Any] | None = None,
     async_verification_sink: dict[str, Any] | None = None,
+    user_role: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build the user-facing ``sources``/``citations`` list for ``answer``.
 
@@ -5684,7 +5688,7 @@ def _display_sources_for_answer(
     if mode not in ("lexical", "shadow", "llm", "async_shadow", "async_llm"):
         mode = "lexical"
     if mode == "lexical":
-        return _sources_from_chunks(v1_supporting, merge_articles=merge_articles)
+        return _sources_from_chunks(v1_supporting, merge_articles=merge_articles, user_role=user_role)
 
     from app.services.qa.citation_verification import CandidateEvidence, extract_claims, verify_citations
 
@@ -5724,7 +5728,7 @@ def _display_sources_for_answer(
                 }
             )
         if mode == "async_shadow":
-            return _sources_from_chunks(v1_supporting, merge_articles=merge_articles)
+            return _sources_from_chunks(v1_supporting, merge_articles=merge_articles, user_role=user_role)
         return []
 
     outcome = verify_citations(answer=answer, candidates=v2_candidates, mode=mode)
@@ -5750,7 +5754,7 @@ def _display_sources_for_answer(
         )
 
     if mode == "shadow":
-        return _sources_from_chunks(v1_supporting, merge_articles=merge_articles)
+        return _sources_from_chunks(v1_supporting, merge_articles=merge_articles, user_role=user_role)
 
     # mode == "llm": display ONLY V2-verified citations. A failed/empty
     # outcome yields verified_citation_ids == [] -> zero citations, by
@@ -5761,10 +5765,16 @@ def _display_sources_for_answer(
     verified_chunks = [
         id_to_chunk[cid] for cid in outcome.verified_citation_ids if cid in id_to_chunk
     ]
-    return _sources_from_chunks(verified_chunks, merge_articles=merge_articles)
+    return _sources_from_chunks(verified_chunks, merge_articles=merge_articles, user_role=user_role)
 
 
-def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool = False) -> list[dict[str, Any]]:
+def _sources_from_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    merge_articles: bool = False,
+    user_role: str | None = None,
+) -> list[dict[str, Any]]:
+    from app.services.article_rag_indexer import gate_kb_article_citations
     from app.services.document_storage import resolve_citation_document, source_page_url, source_view_url
 
     def _citation_fields(
@@ -5830,6 +5840,16 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
                 page_range = f"{resolved_page}-{page_end}"
             else:
                 page_range = str(resolved_page)
+        # Candidate only -- not yet confirmed safe to show. Chunks from
+        # article_rag_indexer._build_faq_chunks are stamped article_type
+        # "faq" and article_id == the originating PublishedArticle.id (the
+        # same value document_id's "faq:" prefix encodes). The actual
+        # published/role-visible re-check happens once, in bulk, in
+        # gate_kb_article_citations -- never here, to avoid a DB round
+        # trip per chunk.
+        kb_article_id = None
+        if str(metadata.get("article_type") or "").strip().lower() == "faq":
+            kb_article_id = str(metadata.get("article_id") or "").strip() or None
         return {
             "page": resolved_page,
             "page_number": resolved_page,
@@ -5849,6 +5869,7 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
             "source_page_url": page_url,
             "pdf_available": pdf_ready,
             "citation_note": note,
+            "kb_article_id": kb_article_id,
         }
 
     if not merge_articles:
@@ -5874,7 +5895,7 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
                 continue
             seen.add(key)
             sources.append(item)
-        return sources
+        return gate_kb_article_citations(sources, user_role)
 
     grouped: dict[str, dict[str, Any]] = {}
     for index, chunk in enumerate(chunks, start=1):
@@ -5944,7 +5965,7 @@ def _sources_from_chunks(chunks: list[RetrievedChunk], *, merge_articles: bool =
                     section=section,
                 )
         sources.append(item)
-    return sources
+    return gate_kb_article_citations(sources, user_role)
 
 
 def _citations_from_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5968,6 +5989,7 @@ def _citations_from_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any
                 "path": source.get("path"),
                 "pdf_available": source.get("pdf_available"),
                 "citation_note": source.get("citation_note"),
+                "kb_article_id": source.get("kb_article_id"),
                 "bbox": source.get("bbox"),
                 "page_width": source.get("page_width"),
                 "page_height": source.get("page_height"),

@@ -7,11 +7,13 @@ import 'package:aska_piyu/screens/my_tickets_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 
 /// Covers the My Tickets redesign toward a clean, compact, HESK-style
-/// list: trimmed ticket cards (subject, ticket ID, status, last-updated
-/// date only -- no priority chip, office/category/reply-count line, or
-/// description preview), a clear "Submit a Ticket" action on the
-/// genuinely-empty state, the status summary being phone-only-hidden,
-/// and Resolved tickets being excluded from the default dashboard list
+/// list: ID-only ticket cards (the ticket ID is the card's primary
+/// text -- no subject, priority chip, office/category/reply-count
+/// line, or description preview -- just ID, status, and last-updated
+/// date), a clear "Submit a Ticket" action on the genuinely-empty
+/// state, a burgundy Submit Ticket button on the compact heading at
+/// every width, the status summary being phone-only-hidden, and
+/// Resolved tickets being excluded from the default dashboard list
 /// while still reachable through the existing status filter.
 /// TicketCard and TicketEmptyState are plain, data-in widgets, so those
 /// are pumped directly rather than through MyTicketsPage -- there is no
@@ -106,25 +108,25 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
-  // --- Compact card: only subject, ID, status, last-updated date ----------
+  // --- ID-only compact card -----------------------------------------------
 
   testWidgets(
-      'the ticket card shows subject, ticket ID, status, and the '
-      'last-updated date', (tester) async {
+      'the ticket card shows the ticket ID as its primary text, plus '
+      'status and the last-updated date', (tester) async {
     await pumpCard(tester, buildTicket());
 
-    expect(find.text('Request for transcript of records'), findsOneWidget);
     expect(find.text('TK-20261019-ABC123'), findsOneWidget);
     expect(find.text('Open'), findsOneWidget);
     expect(find.textContaining('Oct 19'), findsOneWidget);
   });
 
   testWidgets(
-      'the ticket card does not show priority, office/category, reply '
-      'count, or a description preview -- trimmed for a clean, '
-      'non-noisy list', (tester) async {
+      'the ticket card does not show the subject, priority, office/'
+      'category, reply count, or a description preview -- ID-only, '
+      'trimmed for a clean, non-noisy list', (tester) async {
     await pumpCard(tester, buildTicket());
 
+    expect(find.text('Request for transcript of records'), findsNothing);
     expect(find.text('High'), findsNothing);
     expect(find.text('Registrar Office'), findsNothing);
     expect(find.text('Registrar'), findsNothing);
@@ -136,8 +138,17 @@ void main() {
     );
   });
 
-  testWidgets('the ticket card has no overflow at a narrow phone width',
-      (tester) async {
+  test(
+      'the subject survives on the TicketEntry model itself -- removing '
+      'it from the dashboard card never touched the ticket data, which '
+      'TicketDetailsPage (opened on tap) still reads', () {
+    final ticket = buildTicket();
+
+    expect(ticket.subject, 'Request for transcript of records');
+  });
+
+  testWidgets('the ticket card has no overflow at a narrow phone width, '
+      'even with a long ticket ID', (tester) async {
     tester.view.physicalSize = const Size(360, 700);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -153,11 +164,7 @@ void main() {
 
     await pumpCard(
       tester,
-      buildTicket(
-        subject:
-            'A much longer subject line that could plausibly overflow a '
-            'narrow phone-width ticket card if not truncated correctly',
-      ),
+      buildTicket(id: 'TK-20261019-A-MUCH-LONGER-TICKET-ID-THAN-USUAL-001'),
     );
 
     expect(unexpectedErrors, isEmpty);
@@ -176,7 +183,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Request for transcript of records'));
+    await tester.tap(find.text('TK-20261019-ABC123'));
     await tester.pump();
 
     expect(tapped, isTrue);
@@ -227,6 +234,70 @@ void main() {
     expect(find.widgetWithText(ElevatedButton, 'Submit a Ticket'), findsNothing);
   });
 
+  // --- Compact heading's Submit Ticket button ------------------------------
+
+  testWidgets(
+      'the compact heading shows a Submit Ticket button at a phone '
+      'width', (tester) async {
+    await pumpListTab(tester, size: const Size(390, 844));
+
+    expect(
+      find.widgetWithText(ElevatedButton, 'Submit Ticket'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'tapping the heading\'s Submit Ticket button switches to the '
+      'existing Submit Ticket tab -- no separate/duplicate submission '
+      'flow', (tester) async {
+    await pumpListTab(tester, size: const Size(390, 844));
+
+    // Starts on the List tab -- the Submit Ticket form isn't showing yet.
+    expect(find.text('Submit a Support Request'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Submit Ticket'));
+    await tester.pumpAndSettle();
+
+    // The same Submit Ticket tab/form this page has always had.
+    expect(find.text('Submit a Support Request'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the heading and its Submit Ticket button have no horizontal '
+      'overflow at a narrow phone width (360px)', (tester) async {
+    final unexpectedErrors = <String>[];
+    final previousOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      unexpectedErrors.add(details.toString());
+      previousOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previousOnError);
+
+    await pumpListTab(tester, size: const Size(360, 800));
+
+    expect(unexpectedErrors, isEmpty);
+    expect(find.text('My Tickets'), findsOneWidget);
+    expect(
+      find.widgetWithText(ElevatedButton, 'Submit Ticket'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'the Submit Ticket button is also present and tappable on desktop '
+      '(1200px), alongside the heading', (tester) async {
+    await pumpListTab(tester, size: const Size(1200, 900));
+
+    // At this wide width the header's own "My Tickets" nav link
+    // (now active) legitimately matches too, alongside the heading.
+    expect(find.text('My Tickets'), findsWidgets);
+    expect(
+      find.widgetWithText(ElevatedButton, 'Submit Ticket'),
+      findsOneWidget,
+    );
+  });
+
   // --- Status summary: phone-hidden, tablet/desktop-visible ---------------
   //
   // _TicketStatsSummary always renders regardless of ticket count (it
@@ -273,14 +344,19 @@ void main() {
 
   testWidgets(
       'hiding the status summary on a phone leaves no blank gap -- the '
-      'toolbar sits where the summary would otherwise start', (tester) async {
+      'toolbar sits directly below the heading block, not hundreds of '
+      'extra pixels down where a ~150px+ stats panel would otherwise '
+      'have pushed it', (tester) async {
     await pumpListTab(tester, size: const Size(360, 800));
 
-    // The search field is the toolbar's first control -- on a phone it
-    // should sit just below the compact heading, not hundreds of pixels
-    // down where a ~150px+ stats panel would otherwise have pushed it.
+    // The search field is the toolbar's first control. The heading
+    // block itself is now taller than before this change (it carries
+    // its own Submit Ticket button, stacked below the title on a
+    // phone), so the bound here is generous enough for that legitimate
+    // height while still well short of what an extra stats panel
+    // (another ~150px+) would have added on top of it.
     final searchFieldTop = tester.getTopLeft(find.byType(TextField).first).dy;
-    expect(searchFieldTop, lessThan(160));
+    expect(searchFieldTop, lessThan(280));
   });
 
   // --- Default dashboard filtering: Resolved hidden, Closed stays -------

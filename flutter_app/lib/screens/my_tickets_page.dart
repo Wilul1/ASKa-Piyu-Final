@@ -398,11 +398,7 @@ class _MyTicketsPageState extends State<MyTicketsPage>
                 // together with the summary itself so hiding it never
                 // leaves a blank gap.
                 if (!isPhoneLayout(context)) ...[
-                  _TicketStatsSummary(
-                    tickets: _tickets,
-                    isWide: isWide,
-                    onSubmitTicket: () => _tabController.animateTo(1),
-                  ),
+                  _TicketStatsSummary(tickets: _tickets, isWide: isWide),
                   SizedBox(height: isWide ? 18 : 14),
                 ],
                 _TicketToolbar(
@@ -479,7 +475,10 @@ class _MyTicketsPageState extends State<MyTicketsPage>
                   if (_tabController.index == 1) {
                     return _SubmitTicketCompactBanner(isWide: isWide);
                   }
-                  return _MyTicketsCompactHeading(isWide: isWide);
+                  return _MyTicketsCompactHeading(
+                    isWide: isWide,
+                    onSubmitTicket: () => _tabController.animateTo(1),
+                  );
                 },
               ),
               SizedBox(height: isWide ? 20 : 14),
@@ -566,11 +565,57 @@ List<TicketEntry> visibleTicketsForDashboard(
 /// ticket" icon-and-title header was the target this replaced it with).
 class _MyTicketsCompactHeading extends StatelessWidget {
   final bool isWide;
+  final VoidCallback onSubmitTicket;
 
-  const _MyTicketsCompactHeading({required this.isWide});
+  const _MyTicketsCompactHeading({
+    required this.isWide,
+    required this.onSubmitTicket,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final titleRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        StudentIconBox(
+          icon: Icons.confirmation_number_outlined,
+          size: isWide ? 40 : 34,
+        ),
+        const SizedBox(width: 12),
+        Text(
+          'My Tickets',
+          style: TextStyle(
+            fontSize: isWide ? 28 : 20,
+            fontWeight: FontWeight.w900,
+            color: DesignTokens.maroon,
+            height: 1.1,
+          ),
+        ),
+      ],
+    );
+
+    // Reuses the page's own submit flow (the Submit Ticket tab) --
+    // there is no second/duplicate submission path here, just another
+    // entry point into the same one.
+    final submitButton = SizedBox(
+      height: 40,
+      width: isWide ? null : double.infinity,
+      child: ElevatedButton(
+        onPressed: onSubmitTicket,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: DesignTokens.maroon,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 22),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: const Text(
+          'Submit Ticket',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        ),
+      ),
+    );
+
     return Padding(
       padding: EdgeInsets.fromLTRB(
         isWide ? 28 : 18,
@@ -578,24 +623,37 @@ class _MyTicketsCompactHeading extends StatelessWidget {
         isWide ? 28 : 18,
         0,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          StudentIconBox(
-            icon: Icons.confirmation_number_outlined,
-            size: isWide ? 40 : 34,
-          ),
-          const SizedBox(width: 12),
-          Text(
-            'My Tickets',
-            style: TextStyle(
-              fontSize: isWide ? 28 : 20,
-              fontWeight: FontWeight.w900,
-              color: DesignTokens.maroon,
-              height: 1.1,
-            ),
-          ),
-        ],
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isWide ? 20 : 14,
+          vertical: isWide ? 16 : 12,
+        ),
+        // Restrained rose tint + a gentle matching border -- just enough
+        // surface definition to stop the page from reading as flat white
+        // on grey, without becoming a banner (no gradient, no wave art,
+        // minimal padding).
+        decoration: BoxDecoration(
+          color: DesignTokens.maroon.withValues(alpha: 0.045),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: DesignTokens.maroon.withValues(alpha: 0.12)),
+        ),
+        child:
+            isWide
+                ? Row(
+                  children: [
+                    titleRow,
+                    const Spacer(),
+                    submitButton,
+                  ],
+                )
+                // Stacked on phones -- a title row plus an inline button
+                // wide enough to tap comfortably would either overflow or
+                // force the button down to an awkward width; full-width
+                // below the heading avoids both.
+                : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [titleRow, const SizedBox(height: 12), submitButton],
+                ),
       ),
     );
   }
@@ -727,18 +785,16 @@ class _LoginRequiredPage extends StatelessWidget {
 
 /// Real ticket counts presented as plain numbers/labels -- no status icons
 /// or icon containers, per the redesign's "typography over icons" mandate.
-/// The primary Submit Ticket action lives here (right side on desktop,
-/// full-width below the stats on narrow layouts).
+/// This panel only ever renders on tablet/desktop (see the
+/// `isPhoneLayout` guard at its call site), so its own Submit Ticket
+/// button was dropped once the compact heading above gained one that's
+/// visible at every width -- two buttons for the same action would have
+/// been clutter, not personality.
 class _TicketStatsSummary extends StatelessWidget {
   final List<TicketEntry> tickets;
   final bool isWide;
-  final VoidCallback onSubmitTicket;
 
-  const _TicketStatsSummary({
-    required this.tickets,
-    required this.isWide,
-    required this.onSubmitTicket,
-  });
+  const _TicketStatsSummary({required this.tickets, required this.isWide});
 
   @override
   Widget build(BuildContext context) {
@@ -784,26 +840,6 @@ class _TicketStatsSummary extends StatelessWidget {
           color: m.color,
         ),
     ];
-
-    final submitButton = SizedBox(
-      height: 42,
-      child: ElevatedButton(
-        onPressed: onSubmitTicket,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: DesignTokens.maroon,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        child: const Text(
-          'Submit Ticket',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-        ),
-      ),
-    );
 
     // Wide layout: a single row with a subtle vertical divider between each
     // metric, matching the approved target's summary card exactly.
@@ -856,24 +892,7 @@ class _TicketStatsSummary extends StatelessWidget {
         horizontal: isWide ? 20 : 14,
         vertical: isWide ? 12 : 14,
       ),
-      child:
-          isWide
-              ? Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(child: wideStatsRow),
-                  const SizedBox(width: 22),
-                  submitButton,
-                ],
-              )
-              : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  narrowStatsGrid,
-                  const SizedBox(height: 14),
-                  submitButton,
-                ],
-              ),
+      child: isWide ? wideStatsRow : narrowStatsGrid,
     );
   }
 }
@@ -1237,14 +1256,15 @@ class TicketsList extends StatelessWidget {
   }
 }
 
-/// Compact card: just the fields a student needs to scan a list of
-/// tickets -- subject, ticket ID, status, and when it last updated --
-/// with a trailing chevron for drill-down. Priority, office/category,
-/// reply counts, and a description preview (all still visible once a
-/// ticket is opened) were dropped from this list view; a row of
-/// secondary metadata on every card was more to scan, not less, and
-/// didn't serve the "clean, compact" goal this list is for.
-/// Stacks (ID+date above main) on narrower widths instead of overflowing.
+/// Compact card: the ticket ID is the card's primary text -- not the
+/// subject -- alongside the status chip and when it last updated, with
+/// a trailing chevron for drill-down. The subject, priority, office/
+/// category, reply counts, and a description preview (all still visible
+/// once a ticket is opened, and still fully searchable/filterable) were
+/// dropped from this list view; a row of secondary metadata on every
+/// card was more to scan, not less, and didn't serve the "clean,
+/// compact" goal this list is for. One row at every width -- a short
+/// ticket ID never needed the old subject-driven narrow/wide stacking.
 class TicketCard extends StatelessWidget {
   final TicketEntry ticket;
   final VoidCallback onTap;
@@ -1253,96 +1273,60 @@ class TicketCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final idAndDate = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          ticket.id,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: DesignTokens.maroon,
-            fontWeight: FontWeight.w900,
-            fontSize: 14,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          _formatDate(ticket.updatedAt),
-          style: const TextStyle(color: DesignTokens.muted, fontSize: 12.5),
-        ),
-      ],
-    );
-
-    final mainColumn = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        TicketStatusChip(status: ticket.status),
-        const SizedBox(height: 10),
-        Text(
-          ticket.subject,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: DesignTokens.ink,
-            fontWeight: FontWeight.w900,
-            fontSize: 17,
-          ),
-        ),
-      ],
-    );
-
     return StudentInkCard(
       onTap: onTap,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 640;
-          if (isNarrow) {
-            return Column(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          // A small rose-tinted badge behind the brand icon -- a touch
+          // of the same restrained accent as the heading block above,
+          // now that the ticket ID (not a long subject line) is the
+          // card's own focal point.
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: DesignTokens.maroon.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.confirmation_number_outlined,
+              color: DesignTokens.maroon,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: idAndDate),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      color: DesignTokens.muted,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                mainColumn,
-              ],
-            );
-          }
-
-          return IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(width: 180, child: idAndDate),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 18),
-                  child: VerticalDivider(
-                    width: 1,
-                    thickness: 1,
-                    color: DesignTokens.border,
+                Text(
+                  ticket.id,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: DesignTokens.maroon,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
                   ),
                 ),
-                Expanded(child: mainColumn),
-                const SizedBox(width: 10),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: DesignTokens.muted,
+                const SizedBox(height: 4),
+                Text(
+                  _formatDate(ticket.updatedAt),
+                  style: const TextStyle(
+                    color: DesignTokens.muted,
+                    fontSize: 12.5,
+                  ),
                 ),
               ],
             ),
-          );
-        },
+          ),
+          const SizedBox(width: 10),
+          TicketStatusChip(status: ticket.status),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right_rounded, color: DesignTokens.muted),
+        ],
       ),
     );
   }

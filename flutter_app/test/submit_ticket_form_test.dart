@@ -174,6 +174,24 @@ void main() {
     );
   });
 
+  testWidgets(
+      'the redundant "File requirements" guidance card is gone -- the '
+      'Attachment field\'s own helper text is now the only place file '
+      'rules are explained', (tester) async {
+    await pumpSubmitTab(tester, size: const Size(1200, 900));
+
+    expect(find.text('File requirements'), findsNothing);
+    expect(
+      find.textContaining('You can attach one file'),
+      findsNothing,
+    );
+    // The guidance column's other card (tips) is untouched.
+    expect(find.text('Before submitting'), findsOneWidget);
+    // And the Attachment field's own helper text still covers the same
+    // ground (format list + size limit).
+    expect(find.textContaining('— max 10 MB.'), findsOneWidget);
+  });
+
   // --- Preserved functionality --------------------------------------------
 
   testWidgets(

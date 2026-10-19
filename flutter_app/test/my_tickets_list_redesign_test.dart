@@ -10,11 +10,14 @@ import 'package:aska_piyu/services/auth_service.dart';
 /// list: ID-only ticket cards (the ticket ID is the card's primary
 /// text -- no subject, priority chip, office/category/reply-count
 /// line, or description preview -- just ID, status, and last-updated
-/// date), a clear "Submit a Ticket" action on the genuinely-empty
-/// state, a burgundy Submit Ticket button on the compact heading at
-/// every width, the status summary being phone-only-hidden, and
-/// Resolved tickets being excluded from the default dashboard list
-/// while still reachable through the existing status filter.
+/// date), no decorative icons anywhere on the page (the heading's and
+/// each card's former icon badges are gone, replaced with plain color
+/// accents, not other icons), a clear "Submit a Ticket" action on the
+/// genuinely-empty state, a burgundy Submit Ticket button on the
+/// compact heading at every width, the status summary being phone-
+/// only-hidden, and Resolved tickets being excluded from the default
+/// dashboard list while still reachable through the existing status
+/// filter.
 /// TicketCard and TicketEmptyState are plain, data-in widgets, so those
 /// are pumped directly rather than through MyTicketsPage -- there is no
 /// HTTP-mocking seam in this codebase's widget tests to seed a
@@ -138,6 +141,16 @@ void main() {
     );
   });
 
+  testWidgets(
+      'the ticket card shows no decorative icon -- the former ticket-'
+      'icon badge is gone, with only the functional chevron remaining',
+      (tester) async {
+    await pumpCard(tester, buildTicket());
+
+    expect(find.byIcon(Icons.confirmation_number_outlined), findsNothing);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+  });
+
   test(
       'the subject survives on the TicketEntry model itself -- removing '
       'it from the dashboard card never touched the ticket data, which '
@@ -232,6 +245,17 @@ void main() {
 
     expect(find.text('No matching tickets'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, 'Submit a Ticket'), findsNothing);
+  });
+
+  // --- Compact heading: no decorative icon ---------------------------------
+
+  testWidgets(
+      'the compact heading shows no ticket icon beside "My Tickets" -- '
+      'just the plain title and the Submit Ticket button', (tester) async {
+    await pumpListTab(tester, size: const Size(390, 844));
+
+    expect(find.text('My Tickets'), findsOneWidget);
+    expect(find.byIcon(Icons.confirmation_number_outlined), findsNothing);
   });
 
   // --- Compact heading's Submit Ticket button ------------------------------

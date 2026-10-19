@@ -574,24 +574,14 @@ class _MyTicketsCompactHeading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final titleRow = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        StudentIconBox(
-          icon: Icons.confirmation_number_outlined,
-          size: isWide ? 40 : 34,
-        ),
-        const SizedBox(width: 12),
-        Text(
-          'My Tickets',
-          style: TextStyle(
-            fontSize: isWide ? 28 : 20,
-            fontWeight: FontWeight.w900,
-            color: DesignTokens.maroon,
-            height: 1.1,
-          ),
-        ),
-      ],
+    final titleText = Text(
+      'My Tickets',
+      style: TextStyle(
+        fontSize: isWide ? 28 : 20,
+        fontWeight: FontWeight.w900,
+        color: DesignTokens.maroon,
+        height: 1.1,
+      ),
     );
 
     // Reuses the page's own submit flow (the Submit Ticket tab) --
@@ -641,7 +631,7 @@ class _MyTicketsCompactHeading extends StatelessWidget {
             isWide
                 ? Row(
                   children: [
-                    titleRow,
+                    titleText,
                     const Spacer(),
                     submitButton,
                   ],
@@ -652,7 +642,7 @@ class _MyTicketsCompactHeading extends StatelessWidget {
                 // below the heading avoids both.
                 : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [titleRow, const SizedBox(height: 12), submitButton],
+                  children: [titleText, const SizedBox(height: 12), submitButton],
                 ),
       ),
     );
@@ -1182,6 +1172,11 @@ class _FilterDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A subtle rose fill + border when a non-default value is picked --
+    // a quiet "this filter is active" cue (color/border only, no icon
+    // or badge) instead of the same neutral look whether or not the
+    // student has actually narrowed the list.
+    final isActive = values.isNotEmpty && value != values.first;
     return DropdownButtonFormField<String>(
       value: value,
       isExpanded: true,
@@ -1190,6 +1185,16 @@ class _FilterDropdown extends StatelessWidget {
           horizontal: 12,
           vertical: 10,
         ),
+        fillColor: isActive ? const Color(0xFFFBF2F3) : null,
+        enabledBorder:
+            isActive
+                ? OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(
+                    color: DesignTokens.maroon.withValues(alpha: 0.35),
+                  ),
+                )
+                : null,
       ),
       items: [
         for (var i = 0; i < values.length; i++)
@@ -1276,57 +1281,60 @@ class TicketCard extends StatelessWidget {
     return StudentInkCard(
       onTap: onTap,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        children: [
-          // A small rose-tinted badge behind the brand icon -- a touch
-          // of the same restrained accent as the heading block above,
-          // now that the ticket ID (not a long subject line) is the
-          // card's own focal point.
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: DesignTokens.maroon.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // A slim rose/burgundy accent bar -- color and shape, not
+            // an icon -- in place of the removed ticket-icon badge.
+            // Stretches to the row's own content height, so it never
+            // adds vertical space on its own.
+            Container(
+              width: 4,
+              decoration: BoxDecoration(
+                color: DesignTokens.maroon.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-            child: const Icon(
-              Icons.confirmation_number_outlined,
-              color: DesignTokens.maroon,
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  ticket.id,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: DesignTokens.maroon,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    ticket.id,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: DesignTokens.maroon,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _formatDate(ticket.updatedAt),
-                  style: const TextStyle(
-                    color: DesignTokens.muted,
-                    fontSize: 12.5,
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatDate(ticket.updatedAt),
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      fontSize: 12.5,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          TicketStatusChip(status: ticket.status),
-          const SizedBox(width: 6),
-          const Icon(Icons.chevron_right_rounded, color: DesignTokens.muted),
-        ],
+            const SizedBox(width: 10),
+            Center(child: TicketStatusChip(status: ticket.status)),
+            const SizedBox(width: 6),
+            const Center(
+              child: Icon(
+                Icons.chevron_right_rounded,
+                color: DesignTokens.muted,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3289,8 +3297,23 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
           DropdownButtonFormField<String?>(
             value: _selectedOfficeId,
             isExpanded: true,
+            // Same subtle rose "this is set" cue as My Tickets' own
+            // filter dropdowns -- active once a specific office is
+            // picked instead of automatic routing.
             decoration: _inputDecoration(
               hintText: 'Automatic routing — Let ASKa-Piyu choose',
+            ).copyWith(
+              fillColor:
+                  _selectedOfficeId != null ? const Color(0xFFFBF2F3) : null,
+              enabledBorder:
+                  _selectedOfficeId != null
+                      ? OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: DesignTokens.maroon.withValues(alpha: 0.35),
+                        ),
+                      )
+                      : null,
             ),
             items: [
               const DropdownMenuItem<String?>(
@@ -3431,17 +3454,15 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       ),
     );
 
-    final guidance = _SubmitTicketGuidance(
-      attachmentFormatsLabel: _attachmentFormatsLabel,
-    );
+    const guidance = _SubmitTicketGuidance();
 
     // The form card and the guidance column are deliberately two independent
     // pieces of composition, not one shared bordered container -- wrapping
     // both in a single StudentPanel made the right column's white background
     // stretch down to match the (much taller) form, leaving a huge empty
-    // bordered region below "File requirements". The guidance column's own
-    // two cards already carry their own borders/backgrounds, so it needs no
-    // outer panel at all; it simply sizes to its content.
+    // bordered region below it. The guidance column's own card already
+    // carries its own border/background, so it needs no outer panel at
+    // all; it simply sizes to its content.
     final formCard = StudentPanel(
       padding:
           widget.compact
@@ -3473,18 +3494,18 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
 
 /// The real, accurate list of file types [pickAppFile] accepts for ticket
 /// attachments (see [_CreateTicketFormState._pickAttachment]) -- kept as a
-/// single source of truth so the field helper and the guidance panel never
-/// drift from what the picker actually allows.
+/// single source of truth for the Attachment field's own helper text.
 const _attachmentFormatsLabel =
     'JPG, JPEG, PNG, WebP, GIF, BMP, HEIC, TIFF, or PDF';
 
 /// Right-side (desktop) / below-form (narrow) guidance column for the
-/// Submit Ticket view. The "Tips" list is static UI copy; the file
-/// requirements line always reflects the real accepted formats/size/count.
+/// Submit Ticket view. Just the "Before submitting" tips card -- the
+/// separate "File requirements" card that used to sit below it was
+/// redundant with the Attachment field's own helper text (format list +
+/// 10 MB limit), which already covers this, so it was removed rather
+/// than duplicated.
 class _SubmitTicketGuidance extends StatelessWidget {
-  final String attachmentFormatsLabel;
-
-  const _SubmitTicketGuidance({required this.attachmentFormatsLabel});
+  const _SubmitTicketGuidance();
 
   static const _tips = [
     'Provide a clear and specific subject',
@@ -3574,40 +3595,6 @@ class _SubmitTicketGuidance extends StatelessWidget {
                     ],
                   ),
                 ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: DesignTokens.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'File requirements',
-                style: TextStyle(
-                  color: DesignTokens.ink,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'You can attach one file ($attachmentFormatsLabel) with a '
-                'maximum size of 10 MB.',
-                style: const TextStyle(
-                  color: DesignTokens.muted,
-                  fontSize: 12.5,
-                  height: 1.4,
-                ),
-              ),
             ],
           ),
         ),

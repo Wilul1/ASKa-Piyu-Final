@@ -105,33 +105,75 @@ void main() {
     expect(find.text('Tell us what you need help with.'), findsNothing);
   });
 
-  // --- Compact form copy -------------------------------------------------
+  // --- Simple, consistent labels: no numbered badges, no per-field --------
+  // explainer paragraphs (HESK-style plain label + input), at every width.
 
   testWidgets(
-      'on a phone, the office field\'s long standalone explainer paragraph '
-      'is gone and the helper text is shortened', (tester) async {
+      'no field has a standalone explainer paragraph under its label, on '
+      'a phone', (tester) async {
     await pumpSubmitTab(tester, size: const Size(390, 844));
 
-    expect(
-      find.text('Choose an office, or leave on Automatic routing.'),
-      findsOneWidget,
-    );
     expect(
       find.textContaining('Not sure which office handles your concern?'),
       findsNothing,
     );
+    expect(
+      find.text('Select the office you want to send this ticket to.'),
+      findsNothing,
+    );
+    expect(find.text('A short summary of what you need help with.'), findsNothing);
+    expect(
+      find.textContaining('Include dates, reference numbers, offices visited'),
+      findsNothing,
+    );
   });
 
-  testWidgets('on a wide (desktop) layout, the original full helper copy is preserved',
-      (tester) async {
+  testWidgets(
+      'no field has a standalone explainer paragraph under its label, on '
+      'a wide (desktop) layout either -- the simplified labels are the '
+      'same at every width, not a mobile-only trim', (tester) async {
     await pumpSubmitTab(tester, size: const Size(1200, 900));
 
     expect(
-      find.text('Select the office you want to send this ticket to.'),
-      findsOneWidget,
+      find.textContaining('Not sure which office handles your concern?'),
+      findsNothing,
     );
     expect(
-      find.textContaining('Not sure which office handles your concern?'),
+      find.text('Select the office you want to send this ticket to.'),
+      findsNothing,
+    );
+    expect(find.text('A short summary of what you need help with.'), findsNothing);
+  });
+
+  testWidgets(
+      "the Subject field has no example-sentence placeholder, and the "
+      'Description field uses the short "Describe your concern" placeholder',
+      (tester) async {
+    await pumpSubmitTab(tester);
+
+    expect(
+      find.text('Example: How can I request my transcript of records?'),
+      findsNothing,
+    );
+    expect(
+      find.text('Tell us what happened and what help you need.'),
+      findsNothing,
+    );
+    expect(find.text('Describe your concern'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the Attachment field still shows the essential file-type/size info, '
+      'in one compact line, at every width', (tester) async {
+    await pumpSubmitTab(tester, size: const Size(390, 844));
+    expect(
+      find.textContaining('— max 10 MB.'),
+      findsOneWidget,
+    );
+
+    await pumpSubmitTab(tester, size: const Size(1200, 900));
+    expect(
+      find.textContaining('— max 10 MB.'),
       findsOneWidget,
     );
   });
@@ -163,6 +205,59 @@ void main() {
     await tester.pump();
 
     expect(find.text('Subject must be at least 8 characters.'), findsOneWidget);
+  });
+
+  // --- Notifications: Student Mailbox is now the only place for them ------
+  //
+  // My Tickets used to show its own unread-notification banner/card
+  // (separate state, its own poll, a "Mark all read" action, and up to 3
+  // notification previews) above the ticket list. That banner, and all of
+  // its supporting state/polling/listener code, has been removed -- the
+  // Student Mailbox page is now the single place student notifications
+  // are shown. These tests prove the banner is gone from both tabs, while
+  // student_mailbox_page_test.dart's own, separate suite continues to
+  // prove the Mailbox's own badge/list/mark-read behavior still works
+  // unchanged.
+
+  testWidgets(
+      'the List view never renders a notification banner, action, or '
+      'preview, even after enough time for a background load to settle',
+      (tester) async {
+    await pumpListTab(tester);
+    // Give the (failing, no-backend-in-this-sandbox) initial ticket load
+    // and any timer-driven poll a moment to run, same as production would
+    // after first paint -- the banner must still never appear.
+    await tester.pump(const Duration(seconds: 1));
+
+    // "Mark all read" is the notification banner's own distinguishing
+    // action -- it must never appear on My Tickets now, even though the
+    // Student Mailbox page still shows a button with this exact text.
+    expect(find.widgetWithText(TextButton, 'Mark all read'), findsNothing);
+    expect(find.textContaining('unread'), findsNothing);
+  });
+
+  testWidgets(
+      'the Submit Ticket view never renders a notification banner, '
+      'action, or preview either', (tester) async {
+    await pumpSubmitTab(tester);
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.widgetWithText(TextButton, 'Mark all read'), findsNothing);
+    expect(find.textContaining('unread'), findsNothing);
+  });
+
+  testWidgets(
+      'My Tickets still shows its own ticket-list chrome -- hero and '
+      'status summary -- with the banner gone', (tester) async {
+    await pumpListTab(tester);
+
+    expect(find.text('My Tickets'), findsOneWidget);
+    // _TicketStatsSummary -- unrelated to, and unaffected by, the removed
+    // notification banner.
+    expect(find.text('Open'), findsOneWidget);
+    expect(find.text('In Progress'), findsOneWidget);
+    expect(find.text('Closed'), findsOneWidget);
+    expect(find.text('Total'), findsOneWidget);
   });
 
   // --- Responsive: no overflow at the required widths -----------------

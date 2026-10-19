@@ -8,7 +8,6 @@ import '../app_config.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
-import '../models/ticket_notification_models.dart';
 import '../screens/login_page.dart';
 import '../services/api_client.dart';
 import '../services/download_file.dart';
@@ -186,7 +185,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final List<TicketEntry> _tickets = [];
-  final List<TicketNotification> _notifications = [];
   final TextEditingController _searchCtrl = TextEditingController();
   bool _loading = false;
   String? _error;
@@ -194,7 +192,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   String _officeFilter = 'All Offices';
   String _categoryFilter = 'All Categories';
   bool _requestedInitialLoad = false;
-  int _unreadNotifications = 0;
   Timer? _listPollTimer;
 
   @override
@@ -209,24 +206,15 @@ class _MyTicketsPageState extends State<MyTicketsPage>
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) setState(() {});
     });
+    // Ticket-list polling only -- notifications are the Student Mailbox's
+    // sole responsibility now (see StudentMailboxPage), so there is no
+    // longer a second, separately-fetched notification count here to
+    // keep in sync with it.
     _listPollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       if (!mounted || !AuthScope.of(context).isAuthenticated) return;
       if (_tabController.index != 0) return;
       _loadTickets(silent: true);
-      _loadNotifications(silent: true);
     });
-    ticketNotificationRefreshTick.addListener(_onNotificationRefreshTick);
-  }
-
-  // The Student Mailbox marks notifications read via its own, separate
-  // state -- this page's own _notifications/_unreadNotifications would
-  // otherwise only catch up on the next 8-second poll tick. Refreshing
-  // immediately here instead means the banner never shows a stale count
-  // for longer than it takes this one fetch to return.
-  void _onNotificationRefreshTick() {
-    registerTicketNotificationRefreshAttempt();
-    if (!mounted || !AuthScope.of(context).isAuthenticated) return;
-    _loadNotifications(silent: true);
   }
 
   @override
@@ -238,7 +226,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _loadTickets();
-          _loadNotifications();
         }
       });
     }
@@ -247,7 +234,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   @override
   void dispose() {
     _listPollTimer?.cancel();
-    ticketNotificationRefreshTick.removeListener(_onNotificationRefreshTick);
     _tabController.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -291,45 +277,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
         setState(() => _loading = false);
       }
     }
-  }
-
-  Future<void> _loadNotifications({bool silent = false}) async {
-    try {
-      final result = await ApiClient.send(
-        method: 'GET',
-        url: '${AppConfig.resolvedApiBase}/tickets/notifications',
-        headers: AuthScope.of(context).ticketHeaders(),
-      );
-      final data = _decodeObject(result.body);
-      final statusCode = result.statusCode;
-      if (statusCode < 200 || statusCode >= 300) return;
-      final items = data['items'] is List ? data['items'] as List : const [];
-      if (!mounted) return;
-      setState(() {
-        _notifications
-          ..clear()
-          ..addAll(
-            items.whereType<Map>().map(
-              (item) =>
-                  TicketNotification.fromJson(Map<String, dynamic>.from(item)),
-            ),
-          );
-        _unreadNotifications = _readInt(data['unread_count']);
-      });
-    } catch (_) {
-      // Non-blocking: ticket list still works without notifications.
-    }
-  }
-
-  Future<void> _markAllNotificationsRead() async {
-    try {
-      await ApiClient.send(
-        method: 'POST',
-        url: '${AppConfig.resolvedApiBase}/tickets/notifications/read-all',
-        headers: AuthScope.of(context).ticketHeaders(),
-      );
-      await _loadNotifications();
-    } catch (_) {}
   }
 
   void _ticketCreated(TicketEntry ticket) {
@@ -434,7 +381,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
         final listView = RefreshIndicator(
           onRefresh: () async {
             await _loadTickets();
-            await _loadNotifications();
           },
           color: DesignTokens.maroon,
           child: SingleChildScrollView(
@@ -442,18 +388,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (_unreadNotifications > 0) ...[
-                  _NotificationsBanner(
-                    notifications:
-                        _notifications
-                            .where((item) => !item.isRead)
-                            .take(3)
-                            .toList(),
-                    unreadCount: _unreadNotifications,
-                    onDismiss: _markAllNotificationsRead,
-                  ),
-                  SizedBox(height: isWide ? 16 : 12),
-                ],
                 _TicketStatsSummary(
                   tickets: _tickets,
                   isWide: isWide,
@@ -3472,11 +3406,12 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
 
   @override
   Widget build(BuildContext context) {
-    // Compact (phone): tighter gaps between fields/sections, and shorter
-    // helper copy -- the office field's own, separate explainer paragraph
-    // is dropped entirely rather than shortened, since the dropdown's own
-    // "Automatic routing — Let ASKa-Piyu choose" hint and the shortened
-    // field helper below already cover the same ground.
+    // Compact (phone): tighter gaps between fields/sections -- the field
+    // labels/placeholders themselves are now the same at every width (no
+    // numbered badges, no per-field explainer paragraphs, short/no
+    // placeholders), matching the HESK reference's plain label+input
+    // style rather than treating mobile as a stripped-down version of a
+    // more verbose desktop form.
     final fieldGap = widget.compact ? 12.0 : 18.0;
     final labelGap = widget.compact ? 4.0 : 6.0;
     final form = Form(
@@ -3484,14 +3419,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _FieldLabel(
-            number: 1,
-            label: 'Office (optional)',
-            helper:
-                widget.compact
-                    ? 'Choose an office, or leave on Automatic routing.'
-                    : 'Select the office you want to send this ticket to.',
-          ),
+          const _FieldLabel(label: 'Office (optional)'),
           SizedBox(height: labelGap),
           DropdownButtonFormField<String?>(
             value: _selectedOfficeId,
@@ -3516,66 +3444,29 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                     ? null
                     : (value) => setState(() => _selectedOfficeId = value),
           ),
-          if (!widget.compact) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Not sure which office handles your concern? Leave this on '
-              'Automatic Routing and ASKa-Piyu will send your ticket to the '
-              'appropriate office.',
-              style: const TextStyle(
-                color: DesignTokens.muted,
-                fontSize: 12.5,
-                height: 1.4,
-              ),
-            ),
-          ],
           SizedBox(height: fieldGap),
-          _FieldLabel(
-            number: 2,
-            label: 'Subject',
-            helper:
-                widget.compact
-                    ? 'A short summary of your concern.'
-                    : 'A short summary of what you need help with.',
-          ),
+          const _FieldLabel(label: 'Subject'),
           SizedBox(height: labelGap),
           TextFormField(
             controller: _subjectCtrl,
             validator: _validateTicketSubject,
             textInputAction: TextInputAction.next,
-            decoration: _inputDecoration(
-              hintText: 'Example: How can I request my transcript of records?',
-            ),
+            decoration: _inputDecoration(),
           ),
           SizedBox(height: fieldGap),
-          _FieldLabel(
-            number: 3,
-            label: 'Description',
-            helper:
-                widget.compact
-                    ? 'Dates, reference numbers, or steps you already tried.'
-                    : 'Include dates, reference numbers, offices visited, '
-                        'or steps you already tried.',
-          ),
+          const _FieldLabel(label: 'Description'),
           SizedBox(height: labelGap),
           TextFormField(
             controller: _descCtrl,
             validator: _validateTicketDescription,
             minLines: widget.compact ? 4 : 5,
             maxLines: widget.compact ? 6 : 7,
-            decoration: _inputDecoration(
-              hintText: 'Tell us what happened and what help you need.',
-            ),
+            decoration: _inputDecoration(hintText: 'Describe your concern'),
           ),
           SizedBox(height: fieldGap),
           _FieldLabel(
-            number: 4,
             label: 'Attachment (optional)',
-            helper:
-                widget.compact
-                    ? '$_attachmentFormatsLabel — max 10 MB.'
-                    : 'Screenshot or document ($_attachmentFormatsLabel — '
-                        'max 10 MB).',
+            helper: '$_attachmentFormatsLabel — max 10 MB.',
           ),
           SizedBox(height: labelGap),
           _AttachmentPicker(
@@ -3867,19 +3758,19 @@ class _TicketOfficeOption {
   const _TicketOfficeOption({required this.id, required this.name});
 }
 
-/// Field label with an optional small numbered marker (1-4) -- a
-/// navigation/hierarchy element for the Submit Ticket flow's numbered
-/// steps, not a decorative icon.
+/// A simple field label -- optionally with one short, essential line
+/// beneath it (used only by Attachment, for its file-type/size limit).
+/// No numbered marker: the Submit Ticket form reads as a plain list of
+/// labeled fields now, not a sequence of numbered steps.
 class _FieldLabel extends StatelessWidget {
   final String label;
-  final String helper;
-  final int? number;
+  final String? helper;
 
-  const _FieldLabel({required this.label, required this.helper, this.number});
+  const _FieldLabel({required this.label, this.helper});
 
   @override
   Widget build(BuildContext context) {
-    final text = Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
@@ -3889,10 +3780,10 @@ class _FieldLabel extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
-        if (helper.isNotEmpty) ...[
+        if (helper != null && helper!.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(
-            helper,
+            helper!,
             style: const TextStyle(
               color: DesignTokens.muted,
               fontSize: 12,
@@ -3900,31 +3791,6 @@ class _FieldLabel extends StatelessWidget {
             ),
           ),
         ],
-      ],
-    );
-    if (number == null) return text;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: DesignTokens.maroon.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Text(
-            '$number',
-            style: const TextStyle(
-              color: DesignTokens.maroon,
-              fontWeight: FontWeight.w900,
-              fontSize: 12,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(child: text),
       ],
     );
   }
@@ -4048,7 +3914,7 @@ class _ChipStyle {
   const _ChipStyle(this.color);
 }
 
-InputDecoration _inputDecoration({required String hintText}) {
+InputDecoration _inputDecoration({String? hintText}) {
   return InputDecoration(
     hintText: hintText,
     filled: true,
@@ -4148,77 +4014,6 @@ class _TicketAttachment {
   }
 
   bool get isImage => contentType.toLowerCase().startsWith('image/');
-}
-
-class _NotificationsBanner extends StatelessWidget {
-  final List<TicketNotification> notifications;
-  final int unreadCount;
-  final VoidCallback onDismiss;
-
-  const _NotificationsBanner({
-    required this.notifications,
-    required this.unreadCount,
-    required this.onDismiss,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return StudentPanel(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.notifications_active_rounded,
-                color: DesignTokens.maroon,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '$unreadCount new ticket update${unreadCount == 1 ? '' : 's'}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: DesignTokens.ink,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: onDismiss,
-                child: const Text('Mark all read'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...notifications.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: DesignTokens.ink,
-                    ),
-                  ),
-                  Text(
-                    item.body,
-                    style: const TextStyle(
-                      color: DesignTokens.muted,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 String _extractError(Map<String, dynamic> data, String fallback) {

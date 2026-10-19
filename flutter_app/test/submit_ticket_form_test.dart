@@ -245,9 +245,15 @@ void main() {
   testWidgets(
       'My Tickets still shows its own ticket-list chrome -- compact '
       'heading and status summary -- with the banner gone', (tester) async {
-    await pumpListTab(tester);
+    // A tablet/desktop width -- the status summary is intentionally
+    // hidden on phones (see my_tickets_list_redesign_test.dart), so a
+    // wider width is needed here to exercise it.
+    await pumpListTab(tester, size: const Size(1200, 900));
 
-    expect(find.text('My Tickets'), findsOneWidget);
+    // At this wide width the header's own "My Tickets" nav link (now
+    // active) legitimately matches too, alongside the page's own
+    // compact heading.
+    expect(find.text('My Tickets'), findsWidgets);
     // _TicketStatsSummary -- unrelated to, and unaffected by, the removed
     // notification banner.
     expect(find.text('Open'), findsOneWidget);

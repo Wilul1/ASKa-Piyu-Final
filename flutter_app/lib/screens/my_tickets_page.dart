@@ -353,17 +353,13 @@ class _MyTicketsPageState extends State<MyTicketsPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
-        final filteredTickets =
-            _tickets
-                .where(
-                  (ticket) => ticket.matches(
-                    _searchCtrl.text,
-                    _statusFilter,
-                    officeFilter: _officeFilter,
-                    categoryFilter: _categoryFilter,
-                  ),
-                )
-                .toList();
+        final filteredTickets = visibleTicketsForDashboard(
+          _tickets,
+          _searchCtrl.text,
+          _statusFilter,
+          officeFilter: _officeFilter,
+          categoryFilter: _categoryFilter,
+        );
         final officeOptions = [
           'All Offices',
           ..._distinctSorted(_tickets.map((t) => t.assignedOffice)),
@@ -388,12 +384,27 @@ class _MyTicketsPageState extends State<MyTicketsPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _TicketStatsSummary(
-                  tickets: _tickets,
-                  isWide: isWide,
-                  onSubmitTicket: () => _tabController.animateTo(1),
-                ),
-                SizedBox(height: isWide ? 18 : 14),
+                // Hidden on phones -- on a narrow screen the four stat
+                // blocks either wrapped onto their own crowded rows or
+                // pushed the actual ticket list well below the fold, and
+                // a tablet/desktop-only overview is still just a tap away
+                // via the per-ticket status chips below. Tablets and
+                // desktop keep it. Uses the same phone breakpoint as the
+                // rest of the site's chrome (PublicSiteHeader's own
+                // narrow cutoff), not the 900px isWide used for this
+                // summary's own internal grid-vs-row layout -- the two
+                // are different questions (show it at all vs. how to lay
+                // it out once shown). The spacing below it is skipped
+                // together with the summary itself so hiding it never
+                // leaves a blank gap.
+                if (!isPhoneLayout(context)) ...[
+                  _TicketStatsSummary(
+                    tickets: _tickets,
+                    isWide: isWide,
+                    onSubmitTicket: () => _tabController.animateTo(1),
+                  ),
+                  SizedBox(height: isWide ? 18 : 14),
+                ],
                 _TicketToolbar(
                   searchCtrl: _searchCtrl,
                   statusFilter: _statusFilter,
@@ -513,6 +524,38 @@ List<String> _distinctSorted(Iterable<String> values) {
   }
   final list = set.toList()..sort();
   return list;
+}
+
+/// Tickets to show in the dashboard list for the given search/filters --
+/// [TicketEntry.matches] plus one extra dashboard-only default: a
+/// Resolved ticket is left out unless the student has explicitly picked
+/// the "Resolved" status filter (`statusFilter != 'All'` already implies
+/// `matches` has filtered everything else out, so this only narrows the
+/// "All Status" case). Closed tickets are never hidden by this --
+/// Resolved and Closed are two distinct, independent terminal statuses
+/// in this app (separate backend columns/timestamps, a dedicated
+/// 4-value CHECK constraint, their own filter options and chip colors),
+/// not synonyms. A standalone top-level function so this exact behavior
+/// is directly testable without a running page/backend.
+@visibleForTesting
+List<TicketEntry> visibleTicketsForDashboard(
+  List<TicketEntry> tickets,
+  String query,
+  String statusFilter, {
+  required String officeFilter,
+  required String categoryFilter,
+}) {
+  return tickets
+      .where(
+        (ticket) => ticket.matches(
+          query,
+          statusFilter,
+          officeFilter: officeFilter,
+          categoryFilter: categoryFilter,
+        ),
+      )
+      .where((ticket) => statusFilter != 'All' || ticket.status != 'Resolved')
+      .toList();
 }
 
 /// My Tickets' own compact heading -- a small icon and the page title,

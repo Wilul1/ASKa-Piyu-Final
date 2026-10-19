@@ -8,6 +8,7 @@ import '../app_config.dart';
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
+import '../models/ticket_notification_models.dart';
 import '../screens/login_page.dart';
 import '../services/api_client.dart';
 import '../services/download_file.dart';
@@ -185,7 +186,7 @@ class _MyTicketsPageState extends State<MyTicketsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final List<TicketEntry> _tickets = [];
-  final List<_TicketNotification> _notifications = [];
+  final List<TicketNotification> _notifications = [];
   final TextEditingController _searchCtrl = TextEditingController();
   bool _loading = false;
   String? _error;
@@ -297,7 +298,7 @@ class _MyTicketsPageState extends State<MyTicketsPage>
           ..addAll(
             items.whereType<Map>().map(
               (item) =>
-                  _TicketNotification.fromJson(Map<String, dynamic>.from(item)),
+                  TicketNotification.fromJson(Map<String, dynamic>.from(item)),
             ),
           );
         _unreadNotifications = _readInt(data['unread_count']);
@@ -4052,37 +4053,8 @@ class _TicketAttachment {
   bool get isImage => contentType.toLowerCase().startsWith('image/');
 }
 
-class _TicketNotification {
-  final String id;
-  final String? ticketId;
-  final String type;
-  final String title;
-  final String body;
-  final bool isRead;
-
-  const _TicketNotification({
-    required this.id,
-    required this.ticketId,
-    required this.type,
-    required this.title,
-    required this.body,
-    required this.isRead,
-  });
-
-  factory _TicketNotification.fromJson(Map<String, dynamic> json) {
-    return _TicketNotification(
-      id: (json['id'] ?? '').toString(),
-      ticketId: json['ticket_id']?.toString(),
-      type: (json['type'] ?? '').toString(),
-      title: (json['title'] ?? 'Update').toString(),
-      body: (json['body'] ?? '').toString(),
-      isRead: json['is_read'] == true,
-    );
-  }
-}
-
 class _NotificationsBanner extends StatelessWidget {
-  final List<_TicketNotification> notifications;
+  final List<TicketNotification> notifications;
   final int unreadCount;
   final VoidCallback onDismiss;
 

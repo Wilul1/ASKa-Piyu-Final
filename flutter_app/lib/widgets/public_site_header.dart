@@ -11,12 +11,14 @@ import '../screens/my_tickets_page.dart';
 import '../screens/settings_page.dart';
 import '../screens/signup_page.dart';
 import '../screens/student_home.dart';
+import '../screens/student_mailbox_page.dart';
 
 /// Shared top navigation for public landing / Knowledge Base (no sidebar).
 class PublicSiteHeader extends StatelessWidget {
   final bool knowledgeBaseActive;
   final bool askAssistantActive;
   final bool myTicketsActive;
+  final bool mailboxActive;
   final bool accountActive;
   final bool slim;
 
@@ -32,6 +34,7 @@ class PublicSiteHeader extends StatelessWidget {
     this.knowledgeBaseActive = false,
     this.askAssistantActive = false,
     this.myTicketsActive = false,
+    this.mailboxActive = false,
     this.accountActive = false,
     this.slim = false,
     this.transparentBackground = false,
@@ -41,6 +44,7 @@ class PublicSiteHeader extends StatelessWidget {
       knowledgeBaseActive ||
       askAssistantActive ||
       myTicketsActive ||
+      mailboxActive ||
       accountActive;
 
   Future<void> _goHome(BuildContext context) =>
@@ -56,10 +60,19 @@ class PublicSiteHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final isNarrow = width < 880;
     final auth = AuthScope.of(context);
     final isAuthed = auth.isAuthenticated;
     final role = auth.role;
+    // An authenticated student/faculty desktop nav has one more link
+    // (Mailbox) than every other case (logged out, or office/admin, who
+    // never see it) -- confirmed by direct measurement that the full row
+    // then needs ~1101px of content width (page width minus the 32px*2
+    // horizontal padding) before it stops overflowing. Only widen the
+    // breakpoint for the case that actually needs it, so a logged-out
+    // visitor or office/admin user isn't pushed into mobile mode any
+    // earlier than before.
+    final showsMailboxLink = isAuthed && role != 'office' && role != 'admin';
+    final isNarrow = width < (showsMailboxLink ? 1140 : 880);
 
     return Material(
       color: transparentBackground ? Colors.transparent : Colors.white,
@@ -149,6 +162,21 @@ class PublicSiteHeader extends StatelessWidget {
                       );
                     },
                   ),
+                  if (showsMailboxLink)
+                    _NavLink(
+                      label: 'Mailbox',
+                      active: mailboxActive,
+                      onTap: () {
+                        if (mailboxActive) return;
+                        openProtectedPage(
+                          context,
+                          builder: (_) => const StudentMailboxPage(),
+                          replace: _onPublicPeerPage,
+                          requireVerifiedEmail: true,
+                          message: emailVerifyRequiredMessage,
+                        );
+                      },
+                    ),
                   if (!isAuthed)
                     _NavLink(
                       label: 'Login',
@@ -197,21 +225,13 @@ class PublicSiteHeader extends StatelessWidget {
                       'Sign up',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
-                  )
-                else if (!isNarrow && isAuthed)
-                  OutlinedButton(
-                    onPressed: () => signOutToHome(context),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: DesignTokens.maroon,
-                      side: const BorderSide(color: DesignTokens.maroon),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      shape: const StadiumBorder(),
-                    ),
-                    child: const Text('Sign out'),
                   ),
+                // No "Sign out" button here -- Account already has one
+                // (SettingsPage's own Sign out row), and showing a second,
+                // independent control for the same action in every shared
+                // public/student header was redundant. Office/admin keep
+                // their own, separate sign-out on their sidebar shell,
+                // untouched by this.
                 if (isNarrow)
                   IconButton(
                     tooltip: 'Menu',
@@ -381,6 +401,22 @@ class PublicSiteHeader extends StatelessWidget {
                           );
                         },
                       ),
+                      if (auth.isAuthenticated &&
+                          auth.role != 'office' &&
+                          auth.role != 'admin')
+                        item(
+                          label: 'Mailbox',
+                          active: mailboxActive,
+                          onTap: () {
+                            openProtectedPage(
+                              context,
+                              builder: (_) => const StudentMailboxPage(),
+                              replace: _onPublicPeerPage,
+                              requireVerifiedEmail: true,
+                              message: emailVerifyRequiredMessage,
+                            );
+                          },
+                        ),
                       const SizedBox(height: 12),
                       Text(
                         'Account',
@@ -445,23 +481,8 @@ class PublicSiteHeader extends StatelessWidget {
                             }
                           },
                         ),
-                        const Spacer(),
-                        OutlinedButton(
-                          onPressed: () async {
-                            Navigator.pop(dialogContext);
-                            await signOutToHome(context);
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: DesignTokens.maroon,
-                            side: const BorderSide(color: DesignTokens.maroon),
-                            minimumSize: const Size.fromHeight(48),
-                            shape: const StadiumBorder(),
-                          ),
-                          child: const Text(
-                            'Sign out',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
+                        // No "Sign out" here either -- same reasoning as
+                        // the desktop nav above: Account already has one.
                       ],
                     ],
                   ),

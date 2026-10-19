@@ -7,7 +7,12 @@ import '../models/auth_models.dart';
 import '../widgets/public_site_header.dart';
 import 'verify_email_page.dart';
 
-/// Account settings: slim left nav (Account only) + row-based account panel.
+/// Account settings: a single, centered column -- no side nav. A left nav
+/// listing one single, unclickable "Account" entry was removed: Account is
+/// the only settings section that exists, so that nav never did any real
+/// navigating. Removing it also frees the width for a tighter, more
+/// typical settings-page column instead of stretching to a dashboard-like
+/// 980px.
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -16,7 +21,7 @@ class SettingsPage extends StatelessWidget {
     final auth = AuthScope.of(context);
     final user = auth.currentUser;
     final width = MediaQuery.sizeOf(context).width;
-    final showNav = width >= 760;
+    final wide = width >= 640;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
@@ -26,12 +31,12 @@ class SettingsPage extends StatelessWidget {
           Expanded(
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 980),
+                constraints: const BoxConstraints(maxWidth: 640),
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
-                    showNav ? 20 : 16,
+                    wide ? 20 : 16,
                     24,
-                    showNav ? 20 : 16,
+                    wide ? 20 : 16,
                     32,
                   ),
                   child: user == null
@@ -45,19 +50,11 @@ class SettingsPage extends StatelessWidget {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(18),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (showNav) const _SettingsSideNav(),
-                                Expanded(
-                                  child: _AccountPanel(
-                                    user: user,
-                                    onChangePassword: () =>
-                                        _showChangePasswordDialog(context),
-                                    onSignOut: () => signOutToHome(context),
-                                  ),
-                                ),
-                              ],
+                            child: _AccountPanel(
+                              user: user,
+                              onChangePassword: () =>
+                                  _showChangePasswordDialog(context),
+                              onSignOut: () => signOutToHome(context),
                             ),
                           ),
                         ),
@@ -96,72 +93,6 @@ class SettingsPage extends StatelessWidget {
         const SnackBar(content: Text('Password updated.')),
       );
     }
-  }
-}
-
-class _SettingsSideNav extends StatelessWidget {
-  const _SettingsSideNav();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      decoration: const BoxDecoration(
-        color: Color(0xFFFAFAFA),
-        border: Border(right: BorderSide(color: DesignTokens.border)),
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 18, 12, 18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(10, 0, 10, 14),
-                child: Text(
-                  'Settings',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                    color: DesignTokens.muted,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-              ),
-              Material(
-                color: DesignTokens.maroon.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () {},
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.person_outline_rounded,
-                          size: 20,
-                          color: DesignTokens.maroon,
-                        ),
-                        SizedBox(width: 10),
-                        Text(
-                          'Account',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                            color: DesignTokens.maroon,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 

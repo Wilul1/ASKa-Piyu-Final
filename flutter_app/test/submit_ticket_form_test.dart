@@ -71,35 +71,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
-  // --- Compact banner (Submit Ticket view only) -----------------------
+  // --- Compact headings (both tabs; neither has the old decorative hero) --
 
   testWidgets(
-      'Submit Ticket shows the small compact banner, not the List view\'s '
-      'decorative hero', (tester) async {
+      'Submit Ticket shows its own small compact banner, not the List '
+      'view\'s heading', (tester) async {
     await pumpSubmitTab(tester);
 
     expect(find.text('Submit a Support Request'), findsOneWidget);
     expect(find.text('Tell us what you need help with.'), findsOneWidget);
-    // The full hero's own decorative elements never render here.
-    expect(find.text('SUBMIT TICKET'), findsNothing);
-    expect(
-      find.text(
-        'Share your concern and any details the office will need to help you.',
-      ),
-      findsNothing,
-    );
+    expect(find.text('My Tickets'), findsNothing);
   });
 
   testWidgets(
-      'the List view still shows its full decorative hero, unaffected by '
-      'the Submit Ticket banner change', (tester) async {
+      'the List view shows only a small compact heading -- no decorative '
+      'hero, eyebrow label, or introductory paragraph', (tester) async {
     await pumpListTab(tester);
 
-    expect(find.text('TICKETS'), findsOneWidget);
     expect(find.text('My Tickets'), findsOneWidget);
+    // The old hero's own decorative elements (eyebrow label, large wave
+    // banner, and introductory subtitle paragraph) are gone entirely.
+    expect(find.text('TICKETS'), findsNothing);
+    expect(find.text('SUBMIT TICKET'), findsNothing);
     expect(
       find.textContaining('Create support requests, track progress'),
-      findsOneWidget,
+      findsNothing,
     );
     // The compact Submit Ticket banner's own copy never renders here.
     expect(find.text('Tell us what you need help with.'), findsNothing);
@@ -247,8 +243,8 @@ void main() {
   });
 
   testWidgets(
-      'My Tickets still shows its own ticket-list chrome -- hero and '
-      'status summary -- with the banner gone', (tester) async {
+      'My Tickets still shows its own ticket-list chrome -- compact '
+      'heading and status summary -- with the banner gone', (tester) async {
     await pumpListTab(tester);
 
     expect(find.text('My Tickets'), findsOneWidget);
@@ -289,10 +285,7 @@ void main() {
   //
   // Not a pass/fail assertion -- prints the measured Y position of the
   // first form field (the Office label) on a representative phone width,
-  // for the "what vertical space was removed" report. The banner's own
-  // old height was computed by hand from the original _TicketsHeroBanner
-  // code (padding 18+20+34, eyebrow+title(24pt)+8+subtitle(13pt, up to 2
-  // lines) -- see the task report).
+  // for the "what vertical space was removed" report.
 
   testWidgets('measurement: Office label Y position on a 390px phone',
       (tester) async {

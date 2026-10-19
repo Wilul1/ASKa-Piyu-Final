@@ -426,6 +426,7 @@ class _MyTicketsPageState extends State<MyTicketsPage>
                     tickets: filteredTickets,
                     hasAnyTickets: _tickets.isNotEmpty,
                     onTicketTap: _openTicketDetails,
+                    onSubmitTicket: () => _tabController.animateTo(1),
                   ),
               ],
             ),
@@ -450,27 +451,24 @@ class _MyTicketsPageState extends State<MyTicketsPage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Neither tab shows a "Back to ..." row above the hero -- the
-              // navbar's own My Tickets nav item (kept active on both tabs)
-              // already provides navigation, matching both approved targets.
+              // Neither tab shows a "Back to ..." row above the heading --
+              // the navbar's own My Tickets nav item (kept active on both
+              // tabs) already provides navigation.
               //
-              // The Submit Ticket view gets its own, much smaller banner
-              // instead of the List view's full decorative hero -- on a
-              // phone, the full hero (wave art, large title, generous
-              // padding) pushed the actual form fields well below the
-              // fold. _TicketsHeroBanner itself is untouched and keeps
-              // rendering exactly as before for the List view.
+              // Both tabs use a small, plain-text heading -- no wave art,
+              // colored panel, eyebrow label, or introductory paragraph --
+              // matching the simple HESK-style "View existing ticket"
+              // reference this list was redesigned against. The List view
+              // previously had its own much larger decorative hero; the
+              // status summary and ticket list below now speak for
+              // themselves instead of a header introducing them.
               AnimatedBuilder(
                 animation: _tabController,
                 builder: (context, _) {
                   if (_tabController.index == 1) {
                     return _SubmitTicketCompactBanner(isWide: isWide);
                   }
-                  return _TicketsHeroBanner(
-                    tabController: _tabController,
-                    isWide: isWide,
-                    isFaculty: AuthScope.of(context).role == 'faculty',
-                  );
+                  return _MyTicketsCompactHeading(isWide: isWide);
                 },
               ),
               SizedBox(height: isWide ? 20 : 14),
@@ -517,118 +515,58 @@ List<String> _distinctSorted(Iterable<String> values) {
   return list;
 }
 
-/// Shared hero banner for the My Tickets / Submit Ticket experience --
-/// carries the same restrained light-maroon/pink wave language as the
-/// approved homepage hero (a soft gradient with a single gentle curved
-/// edge), without literally reusing the homepage's own multi-layer wave
-/// painter. Reacts to [tabController] so the eyebrow/heading/subtitle swap
-/// between the list and submit views instead of each view rendering its
-/// own separate header.
-class _TicketsHeroBanner extends StatelessWidget {
-  final TabController tabController;
+/// My Tickets' own compact heading -- a small icon and the page title,
+/// nothing else. No wave art, colored panel, eyebrow label, or
+/// introductory paragraph (the List view previously had a much larger
+/// decorative hero with both, closer to a marketing banner than a plain
+/// list header -- the HESK mobile reference's own simple "View existing
+/// ticket" icon-and-title header was the target this replaced it with).
+class _MyTicketsCompactHeading extends StatelessWidget {
   final bool isWide;
-  final bool isFaculty;
 
-  const _TicketsHeroBanner({
-    required this.tabController,
-    required this.isWide,
-    required this.isFaculty,
-  });
+  const _MyTicketsCompactHeading({required this.isWide});
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: tabController,
-      builder: (context, _) {
-        final onSubmitView = tabController.index == 1;
-        final eyebrow = onSubmitView ? 'SUBMIT TICKET' : 'TICKETS';
-        final title = onSubmitView ? 'Submit a Support Request' : 'My Tickets';
-        final subtitle =
-            onSubmitView
-                ? 'Share your concern and any details the office will need to help you.'
-                : isFaculty
-                ? 'Create faculty support requests, track progress, and read office replies in one place.'
-                : 'Create support requests, track progress, and read office replies in one place.';
-
-        return ClipRect(
-          child: Container(
-            width: double.infinity,
-            color: const Color(0xFFFDF1F2),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(painter: _TicketsHeroWavePainter()),
-                  ),
-                ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    isWide ? 28 : 18,
-                    isWide ? 26 : 20,
-                    isWide ? 28 : 18,
-                    isWide ? 46 : 34,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        eyebrow,
-                        style: const TextStyle(
-                          color: DesignTokens.maroon,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 12,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: isWide ? 37 : 24,
-                          fontWeight: FontWeight.w900,
-                          // Both hero titles share the same maroon
-                          // treatment -- intentional visual consistency
-                          // between My Tickets and Submit Ticket.
-                          color: DesignTokens.maroon,
-                          height: 1.05,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: isWide ? 620 : 420,
-                        ),
-                        child: Text(
-                          subtitle,
-                          style: TextStyle(
-                            fontSize: isWide ? 14 : 13,
-                            color: DesignTokens.muted,
-                            height: 1.4,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        isWide ? 28 : 18,
+        isWide ? 18 : 10,
+        isWide ? 28 : 18,
+        0,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          StudentIconBox(
+            icon: Icons.confirmation_number_outlined,
+            size: isWide ? 40 : 34,
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'My Tickets',
+            style: TextStyle(
+              fontSize: isWide ? 28 : 20,
+              fontWeight: FontWeight.w900,
+              color: DesignTokens.maroon,
+              height: 1.1,
             ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }
 
 /// Submit Ticket's own, deliberately small banner -- no wave art, no
-/// colored background panel, no eyebrow label, a fraction of
-/// _TicketsHeroBanner's padding. On a phone, the full hero pushed the
-/// actual form fields well below the fold (HESK's own mobile submit form
-/// was the layout reference for keeping the form itself near the top);
-/// this keeps the page title and ASKa-Piyu's maroon brand color while
-/// cutting the decorative height that didn't serve that goal. Still
-/// plain text on the page background, not a card -- the form card right
-/// below it is the page's only bordered panel.
+/// colored background panel, no eyebrow label. On a phone, the old full
+/// decorative hero pushed the actual form fields well below the fold
+/// (HESK's own mobile submit form was the layout reference for keeping
+/// the form itself near the top); this keeps the page title and
+/// ASKa-Piyu's maroon brand color while cutting the decorative height
+/// that didn't serve that goal. Still plain text on the page background,
+/// not a card -- the form card right below it is the page's only
+/// bordered panel.
 class _SubmitTicketCompactBanner extends StatelessWidget {
   final bool isWide;
 
@@ -668,116 +606,6 @@ class _SubmitTicketCompactBanner extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Wave shapes across the hero, rebuilt from pixel measurements of the
-/// approved target screenshot (1672x941): a per-column scan for sustained
-/// dusty-rose color found genuine wave presence only in the left ~14% and
-/// right ~28% of the hero's width, with a wide, essentially flat/pale
-/// middle band (x roughly 15%-70%) showing no sustained wave color at all.
-/// That is a materially different silhouette from a single continuous
-/// crest-and-valley: two independent, edge-anchored bands rather than one
-/// wave spanning the full width. A soft top-to-bottom base tint (measured
-/// going from ~(248,237,240) just below the navbar to ~(240,225,228) at
-/// the hero's bottom edge, uniform across x) supplies the remaining depth
-/// through that flat middle, standing in for the background gradient the
-/// target shows there.
-class _TicketsHeroWavePainter extends CustomPainter {
-  const _TicketsHeroWavePainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Uniform base gradient (not x-dependent): the measured middle band has
-    // no distinct wave shape, just a gentle top-to-bottom deepening.
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFFFDF1F2), Color(0xFFF6E1E4)],
-        ).createShader(Offset.zero & size),
-    );
-
-    // Full-width soft wave: a single gentle S-curve visible across the whole
-    // hero, at a light-enough tint that it doesn't register as "sustained
-    // deep rose" in a strict per-column color scan (which is why the edge-
-    // measurement below found the middle "empty") but still reads visually
-    // as a continuous curved band, matching the target's overall softness.
-    _paintLayer(
-      canvas,
-      size,
-      color: const Color(0xFFEFC3CA).withValues(alpha: 0.40),
-      anchors: const [
-        Offset(0.00, 0.40),
-        Offset(0.25, 0.58),
-        Offset(0.50, 0.76),
-        Offset(0.75, 0.62),
-        Offset(1.00, 0.50),
-      ],
-    );
-
-    // Left band: measured sustained-rose top edge rises from ~49% of the
-    // hero height at x=0 to ~90% (nearly gone) by x=~14%, then stays absent
-    // through the wide middle.
-    _paintLayer(
-      canvas,
-      size,
-      color: const Color(0xFFC17E88).withValues(alpha: 0.42),
-      anchors: const [
-        Offset(0.00, 0.49),
-        Offset(0.05, 0.60),
-        Offset(0.10, 0.74),
-        Offset(0.15, 0.95),
-      ],
-    );
-
-    // Right band: reappears around x=~72% (top edge ~90% down, i.e. barely
-    // present) and thickens steadily toward the right edge (top edge ~55%
-    // down at x=100%), the strongest/deepest point of the whole hero.
-    _paintLayer(
-      canvas,
-      size,
-      color: const Color(0xFFC17E88).withValues(alpha: 0.55),
-      anchors: const [
-        Offset(0.65, 0.98),
-        Offset(0.72, 0.90),
-        Offset(0.85, 0.75),
-        Offset(1.00, 0.55),
-      ],
-    );
-  }
-
-  void _paintLayer(
-    Canvas canvas,
-    Size size, {
-    required Color color,
-    required List<Offset> anchors,
-  }) {
-    final pts = <Offset>[
-      for (final a in anchors) Offset(size.width * a.dx, size.height * a.dy),
-    ];
-    final path =
-        Path()
-          ..moveTo(0, size.height)
-          ..lineTo(pts.first.dx, pts.first.dy);
-    for (var i = 0; i < pts.length - 1; i++) {
-      final p0 = i == 0 ? pts[i] : pts[i - 1];
-      final p1 = pts[i];
-      final p2 = pts[i + 1];
-      final p3 = (i + 2 < pts.length) ? pts[i + 2] : pts[i + 1];
-      final c1 = p1 + (p2 - p0) / 6;
-      final c2 = p2 - (p3 - p1) / 6;
-      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
-    }
-    path
-      ..lineTo(size.width, size.height)
-      ..close();
-    canvas.drawPath(path, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(covariant _TicketsHeroWavePainter oldDelegate) => false;
 }
 
 class _LoginRequiredPage extends StatelessWidget {
@@ -1322,12 +1150,14 @@ class TicketsList extends StatelessWidget {
   final List<TicketEntry> tickets;
   final bool hasAnyTickets;
   final ValueChanged<TicketEntry> onTicketTap;
+  final VoidCallback onSubmitTicket;
 
   const TicketsList({
     super.key,
     required this.tickets,
     required this.hasAnyTickets,
     required this.onTicketTap,
+    required this.onSubmitTicket,
   });
 
   @override
@@ -1339,6 +1169,11 @@ class TicketsList extends StatelessWidget {
             hasAnyTickets
                 ? 'Try changing the search text, status, or priority filter.'
                 : 'Submitted support requests will appear here with status updates and office replies.',
+        // A student with filtered-out tickets already has tickets --
+        // "Submit a Ticket" belongs here only for the genuinely-empty
+        // (never submitted one) state, not as a redundant prompt on top
+        // of an active filter.
+        onSubmitTicket: hasAnyTickets ? null : onSubmitTicket,
       );
     }
 
@@ -1359,9 +1194,13 @@ class TicketsList extends StatelessWidget {
   }
 }
 
-/// Wide horizontal card matching the approved target: a left ID/date
-/// column, a vertical divider, a main column (status/priority, subject,
-/// office/category/replies, description preview), and a trailing chevron.
+/// Compact card: just the fields a student needs to scan a list of
+/// tickets -- subject, ticket ID, status, and when it last updated --
+/// with a trailing chevron for drill-down. Priority, office/category,
+/// reply counts, and a description preview (all still visible once a
+/// ticket is opened) were dropped from this list view; a row of
+/// secondary metadata on every card was more to scan, not less, and
+/// didn't serve the "clean, compact" goal this list is for.
 /// Stacks (ID+date above main) on narrower widths instead of overflowing.
 class TicketCard extends StatelessWidget {
   final TicketEntry ticket;
@@ -1397,14 +1236,7 @@ class TicketCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            TicketStatusChip(status: ticket.status),
-            TicketPriorityChip(priority: ticket.priority),
-          ],
-        ),
+        TicketStatusChip(status: ticket.status),
         const SizedBox(height: 10),
         Text(
           ticket.subject,
@@ -1416,28 +1248,6 @@ class TicketCard extends StatelessWidget {
             fontSize: 17,
           ),
         ),
-        const SizedBox(height: 8),
-        _TicketMetaLine(
-          parts: [
-            ticket.assignedOffice,
-            ticket.category,
-            '${ticket.messages.length} '
-                '${ticket.messages.length == 1 ? 'reply' : 'replies'}',
-          ],
-        ),
-        if (ticket.description.trim().isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Text(
-            ticket.description,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 13,
-              height: 1.35,
-            ),
-          ),
-        ],
       ],
     );
 
@@ -3089,11 +2899,17 @@ class _ChipPill extends StatelessWidget {
 class TicketEmptyState extends StatelessWidget {
   final String title;
   final String message;
+  // Only set for the genuinely-empty ("No tickets yet") state -- a clear
+  // path to submitting a first ticket right where the empty message is,
+  // not just the summary row's own Submit Ticket button further up the
+  // page.
+  final VoidCallback? onSubmitTicket;
 
   const TicketEmptyState({
     super.key,
     required this.title,
     required this.message,
+    this.onSubmitTicket,
   });
 
   @override
@@ -3117,6 +2933,28 @@ class TicketEmptyState extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(color: DesignTokens.muted, height: 1.35),
           ),
+          if (onSubmitTicket != null) ...[
+            const SizedBox(height: 18),
+            ElevatedButton(
+              onPressed: onSubmitTicket,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: DesignTokens.maroon,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 13,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'Submit a Ticket',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -3867,46 +3705,6 @@ class _AttachmentPicker extends StatelessWidget {
   }
 }
 
-/// Plain, bullet-separated ticket metadata (office • category • updated •
-/// replies) -- typography and a simple separator carry the hierarchy
-/// instead of a row of decorative metadata icons. Each piece truncates on
-/// its own so long office/category text can't break the card layout.
-class _TicketMetaLine extends StatelessWidget {
-  final List<String> parts;
-
-  const _TicketMetaLine({required this.parts});
-
-  @override
-  Widget build(BuildContext context) {
-    final nonEmpty = parts.where((p) => p.trim().isNotEmpty).toList();
-    return Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < nonEmpty.length; i++) ...[
-          if (i > 0)
-            const Text(
-              '•',
-              style: TextStyle(color: DesignTokens.muted, fontSize: 12),
-            ),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 220),
-            child: Text(
-              nonEmpty[i],
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: DesignTokens.muted,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
 
 class _ChipStyle {
   final Color color;

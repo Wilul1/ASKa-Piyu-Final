@@ -130,6 +130,9 @@ class _StudentMailboxPageState extends State<StudentMailboxPage> {
         );
       }
       await _load();
+      // Tells MyTicketsPage's own, separately-fetched notification banner
+      // to refresh now rather than waiting for its own periodic poll.
+      ticketNotificationRefreshTick.value++;
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -176,6 +179,9 @@ class _StudentMailboxPageState extends State<StudentMailboxPage> {
             }
             if (_unreadCount > 0) _unreadCount -= 1;
           });
+          // Same reasoning as _markAllRead -- MyTicketsPage's own banner
+          // should not have to wait for its own periodic poll.
+          ticketNotificationRefreshTick.value++;
         }
       }
       final ticketId = notification.ticketId;

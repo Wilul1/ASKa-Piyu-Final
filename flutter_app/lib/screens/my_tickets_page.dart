@@ -215,6 +215,18 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       _loadTickets(silent: true);
       _loadNotifications(silent: true);
     });
+    ticketNotificationRefreshTick.addListener(_onNotificationRefreshTick);
+  }
+
+  // The Student Mailbox marks notifications read via its own, separate
+  // state -- this page's own _notifications/_unreadNotifications would
+  // otherwise only catch up on the next 8-second poll tick. Refreshing
+  // immediately here instead means the banner never shows a stale count
+  // for longer than it takes this one fetch to return.
+  void _onNotificationRefreshTick() {
+    registerTicketNotificationRefreshAttempt();
+    if (!mounted || !AuthScope.of(context).isAuthenticated) return;
+    _loadNotifications(silent: true);
   }
 
   @override
@@ -235,6 +247,7 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   @override
   void dispose() {
     _listPollTimer?.cancel();
+    ticketNotificationRefreshTick.removeListener(_onNotificationRefreshTick);
     _tabController.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -506,10 +519,25 @@ class _MyTicketsPageState extends State<MyTicketsPage>
               // Neither tab shows a "Back to ..." row above the hero -- the
               // navbar's own My Tickets nav item (kept active on both tabs)
               // already provides navigation, matching both approved targets.
-              _TicketsHeroBanner(
-                tabController: _tabController,
-                isWide: isWide,
-                isFaculty: AuthScope.of(context).role == 'faculty',
+              //
+              // The Submit Ticket view gets its own, much smaller banner
+              // instead of the List view's full decorative hero -- on a
+              // phone, the full hero (wave art, large title, generous
+              // padding) pushed the actual form fields well below the
+              // fold. _TicketsHeroBanner itself is untouched and keeps
+              // rendering exactly as before for the List view.
+              AnimatedBuilder(
+                animation: _tabController,
+                builder: (context, _) {
+                  if (_tabController.index == 1) {
+                    return _SubmitTicketCompactBanner(isWide: isWide);
+                  }
+                  return _TicketsHeroBanner(
+                    tabController: _tabController,
+                    isWide: isWide,
+                    isFaculty: AuthScope.of(context).role == 'faculty',
+                  );
+                },
               ),
               SizedBox(height: isWide ? 20 : 14),
               if (isWide)
@@ -654,6 +682,56 @@ class _TicketsHeroBanner extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Submit Ticket's own, deliberately small banner -- no wave art, no
+/// colored background panel, no eyebrow label, a fraction of
+/// _TicketsHeroBanner's padding. On a phone, the full hero pushed the
+/// actual form fields well below the fold (HESK's own mobile submit form
+/// was the layout reference for keeping the form itself near the top);
+/// this keeps the page title and ASKa-Piyu's maroon brand color while
+/// cutting the decorative height that didn't serve that goal. Still
+/// plain text on the page background, not a card -- the form card right
+/// below it is the page's only bordered panel.
+class _SubmitTicketCompactBanner extends StatelessWidget {
+  final bool isWide;
+
+  const _SubmitTicketCompactBanner({required this.isWide});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        isWide ? 28 : 18,
+        isWide ? 18 : 10,
+        isWide ? 28 : 18,
+        0,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Submit a Support Request',
+            style: TextStyle(
+              fontSize: isWide ? 28 : 20,
+              fontWeight: FontWeight.w900,
+              color: DesignTokens.maroon,
+              height: 1.1,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Tell us what you need help with.',
+            style: TextStyle(
+              fontSize: isWide ? 14 : 13,
+              color: DesignTokens.muted,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -3394,6 +3472,13 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
 
   @override
   Widget build(BuildContext context) {
+    // Compact (phone): tighter gaps between fields/sections, and shorter
+    // helper copy -- the office field's own, separate explainer paragraph
+    // is dropped entirely rather than shortened, since the dropdown's own
+    // "Automatic routing — Let ASKa-Piyu choose" hint and the shortened
+    // field helper below already cover the same ground.
+    final fieldGap = widget.compact ? 12.0 : 18.0;
+    final labelGap = widget.compact ? 4.0 : 6.0;
     final form = Form(
       key: _formKey,
       child: Column(
@@ -3402,9 +3487,12 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
           _FieldLabel(
             number: 1,
             label: 'Office (optional)',
-            helper: 'Select the office you want to send this ticket to.',
+            helper:
+                widget.compact
+                    ? 'Choose an office, or leave on Automatic routing.'
+                    : 'Select the office you want to send this ticket to.',
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: labelGap),
           DropdownButtonFormField<String?>(
             value: _selectedOfficeId,
             isExpanded: true,
@@ -3428,24 +3516,29 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                     ? null
                     : (value) => setState(() => _selectedOfficeId = value),
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Not sure which office handles your concern? Leave this on '
-            'Automatic Routing and ASKa-Piyu will send your ticket to the '
-            'appropriate office.',
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12.5,
-              height: 1.4,
+          if (!widget.compact) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Not sure which office handles your concern? Leave this on '
+              'Automatic Routing and ASKa-Piyu will send your ticket to the '
+              'appropriate office.',
+              style: const TextStyle(
+                color: DesignTokens.muted,
+                fontSize: 12.5,
+                height: 1.4,
+              ),
             ),
-          ),
-          const SizedBox(height: 18),
+          ],
+          SizedBox(height: fieldGap),
           _FieldLabel(
             number: 2,
             label: 'Subject',
-            helper: 'A short summary of what you need help with.',
+            helper:
+                widget.compact
+                    ? 'A short summary of your concern.'
+                    : 'A short summary of what you need help with.',
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: labelGap),
           TextFormField(
             controller: _subjectCtrl,
             validator: _validateTicketSubject,
@@ -3454,15 +3547,17 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
               hintText: 'Example: How can I request my transcript of records?',
             ),
           ),
-          const SizedBox(height: 18),
+          SizedBox(height: fieldGap),
           _FieldLabel(
             number: 3,
             label: 'Description',
             helper:
-                'Include dates, reference numbers, offices visited, '
-                'or steps you already tried.',
+                widget.compact
+                    ? 'Dates, reference numbers, or steps you already tried.'
+                    : 'Include dates, reference numbers, offices visited, '
+                        'or steps you already tried.',
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: labelGap),
           TextFormField(
             controller: _descCtrl,
             validator: _validateTicketDescription,
@@ -3472,15 +3567,17 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
               hintText: 'Tell us what happened and what help you need.',
             ),
           ),
-          const SizedBox(height: 18),
+          SizedBox(height: fieldGap),
           _FieldLabel(
             number: 4,
             label: 'Attachment (optional)',
             helper:
-                'Screenshot or document ($_attachmentFormatsLabel — '
-                'max 10 MB).',
+                widget.compact
+                    ? '$_attachmentFormatsLabel — max 10 MB.'
+                    : 'Screenshot or document ($_attachmentFormatsLabel — '
+                        'max 10 MB).',
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: labelGap),
           _AttachmentPicker(
             fileName: _attachmentName,
             onPick: _submitting ? null : _pickAttachment,
@@ -3492,7 +3589,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                       _attachmentName = null;
                     }),
           ),
-          const SizedBox(height: 20),
+          SizedBox(height: widget.compact ? 14 : 20),
           LayoutBuilder(
             builder: (context, constraints) {
               final isNarrow = constraints.maxWidth < 420;
@@ -3592,7 +3689,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
     final formCard = StudentPanel(
       padding:
           widget.compact
-              ? const EdgeInsets.fromLTRB(16, 16, 16, 16)
+              ? const EdgeInsets.fromLTRB(14, 14, 14, 14)
               : const EdgeInsets.fromLTRB(24, 24, 22, 22),
       child: form,
     );

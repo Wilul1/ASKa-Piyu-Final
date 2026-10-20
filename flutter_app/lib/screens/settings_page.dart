@@ -4,15 +4,18 @@ import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/auth_models.dart';
+import '../services/eye_comfort.dart';
 import '../widgets/public_site_header.dart';
 import 'verify_email_page.dart';
 
 /// Account settings: a single, centered column -- no side nav. A left nav
 /// listing one single, unclickable "Account" entry was removed: Account is
 /// the only settings section that exists, so that nav never did any real
-/// navigating. Removing it also frees the width for a tighter, more
-/// typical settings-page column instead of stretching to a dashboard-like
-/// 980px.
+/// navigating. The column width matches StudentPage's own default
+/// (student_ui.dart, used by My Tickets and Knowledge Base) -- this app's
+/// standard "wide content" width -- instead of the much narrower 640px
+/// this used to be, which on wide desktop viewports left most of the
+/// screen empty on both sides.
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -22,16 +25,18 @@ class SettingsPage extends StatelessWidget {
     final user = auth.currentUser;
     final width = MediaQuery.sizeOf(context).width;
     final wide = width >= 640;
+    final eyeComfort = EyeComfortScope.isEnabled(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor:
+          eyeComfort ? EyeComfortColors.bg : const Color(0xFFF3F4F6),
       body: Column(
         children: [
           const PublicSiteHeader(accountActive: true),
           Expanded(
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
+                constraints: const BoxConstraints(maxWidth: 1180),
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
                     wide ? 20 : 16,
@@ -43,9 +48,15 @@ class SettingsPage extends StatelessWidget {
                       ? const _SettingsSignedOut()
                       : DecoratedBox(
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: eyeComfort
+                                ? EyeComfortColors.cardBg
+                                : Colors.white,
                             borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: DesignTokens.border),
+                            border: Border.all(
+                              color: eyeComfort
+                                  ? EyeComfortColors.border
+                                  : DesignTokens.border,
+                            ),
                             boxShadow: DesignTokens.softShadow(0.04),
                           ),
                           child: ClipRRect(
@@ -186,6 +197,19 @@ class _AccountPanel extends StatelessWidget {
         const SizedBox(height: 14),
         _AccountGroup(
           children: [
+            _AccountToggleRow(
+              label: 'Eye Comfort',
+              helper: 'Warm, low-glare colors for easier reading.',
+              value: EyeComfortScope.isEnabled(context),
+              onChanged: (value) =>
+                  EyeComfortScope.of(context).setEnabled(value),
+              isLast: true,
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        _AccountGroup(
+          children: [
             _AccountActionRow(
               label: 'Sign out',
               trailing: const Icon(
@@ -211,11 +235,16 @@ class _AccountGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: eyeComfort
+            ? EyeComfortColors.cardBg
+            : const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: DesignTokens.border),
+        border: Border.all(
+          color: eyeComfort ? EyeComfortColors.border : DesignTokens.border,
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(children: children),
@@ -335,6 +364,75 @@ class _AccountActionRow extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A single on/off preference row -- same row chrome as
+/// _AccountValueRow/_AccountActionRow, a Switch instead of a chevron or
+/// value text. Used for Eye Comfort; not a general-purpose settings list,
+/// so it stays private and undocumented beyond that one use.
+class _AccountToggleRow extends StatelessWidget {
+  final String label;
+  final String? helper;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final bool isLast;
+
+  const _AccountToggleRow({
+    required this.label,
+    this.helper,
+    required this.value,
+    required this.onChanged,
+    this.isLast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        border: isLast
+            ? null
+            : const Border(bottom: BorderSide(color: DesignTokens.border)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: DesignTokens.ink,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                if (helper != null && helper!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    helper!,
+                    style: const TextStyle(
+                      color: DesignTokens.muted,
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeColor: DesignTokens.maroon,
+          ),
+        ],
       ),
     );
   }

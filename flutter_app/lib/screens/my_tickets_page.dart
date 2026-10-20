@@ -11,6 +11,7 @@ import '../design_tokens.dart';
 import '../screens/login_page.dart';
 import '../services/api_client.dart';
 import '../services/download_file.dart';
+import '../services/eye_comfort.dart';
 import '../services/file_pick.dart';
 import '../widgets/phone_keyboard_inset.dart';
 import '../widgets/phone_layout.dart';
@@ -501,8 +502,10 @@ class _MyTicketsPageState extends State<MyTicketsPage>
           ),
         );
 
+        final eyeComfort = EyeComfortScope.isEnabled(context);
         return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
+          backgroundColor:
+              eyeComfort ? EyeComfortColors.bg : DesignTokens.bgGrey,
           body: Column(
             children: [
               const PublicSiteHeader(myTicketsActive: true),
@@ -665,6 +668,11 @@ class _SubmitTicketCompactBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // This subtitle sits directly on the page's own background (no card
+    // behind it), so it needs the Eye-Comfort-aware muted tone -- the
+    // default DesignTokens.muted was never designed against the warm
+    // cream page background and falls short of WCAG AA there.
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Padding(
       padding: EdgeInsets.fromLTRB(
         isWide ? 28 : 18,
@@ -690,7 +698,7 @@ class _SubmitTicketCompactBanner extends StatelessWidget {
             'Tell us what you need help with.',
             style: TextStyle(
               fontSize: isWide ? 14 : 13,
-              color: DesignTokens.muted,
+              color: eyeComfort ? EyeComfortColors.muted : DesignTokens.muted,
             ),
           ),
         ],
@@ -761,8 +769,9 @@ class _LoginRequiredPage extends StatelessWidget {
       ),
     );
 
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Scaffold(
-      backgroundColor: DesignTokens.bgGrey,
+      backgroundColor: eyeComfort ? EyeComfortColors.bg : DesignTokens.bgGrey,
       body: Column(
         children: [
           const PublicSiteHeader(myTicketsActive: true),
@@ -1022,6 +1031,7 @@ class _TicketToolbarState extends State<_TicketToolbar> {
           final searchField = TextField(
             controller: widget.searchCtrl,
             decoration: _inputDecoration(
+              context,
               hintText: 'Search ticket ID, subject, office, or category...',
             ).copyWith(
               contentPadding: const EdgeInsets.symmetric(
@@ -1180,7 +1190,7 @@ class _FilterDropdown extends StatelessWidget {
     return DropdownButtonFormField<String>(
       value: value,
       isExpanded: true,
-      decoration: _inputDecoration(hintText: label).copyWith(
+      decoration: _inputDecoration(context, hintText: label).copyWith(
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 12,
           vertical: 10,
@@ -1763,12 +1773,14 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
       ),
     );
 
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     if (phone && _phoneThreadOpen) {
       // Web keyboards often do not update MediaQuery alone. Pad with the
       // shared inset and keep resizeToAvoidBottomInset off so the gap does
       // not double when the inset returns to zero.
       return Scaffold(
-        backgroundColor: DesignTokens.bgGrey,
+        backgroundColor:
+            eyeComfort ? EyeComfortColors.bg : DesignTokens.bgGrey,
         resizeToAvoidBottomInset: false,
         body: Padding(
           padding: EdgeInsets.only(bottom: phoneKeyboardInset(context)),
@@ -1833,7 +1845,7 @@ class _TicketDetailsPageState extends State<TicketDetailsPage> {
     }
 
     return Scaffold(
-      backgroundColor: DesignTokens.bgGrey,
+      backgroundColor: eyeComfort ? EyeComfortColors.bg : DesignTokens.bgGrey,
       resizeToAvoidBottomInset: false,
       body: Column(
         children: [
@@ -2098,7 +2110,9 @@ class _TicketReplyComposer extends StatelessWidget {
             decoration: InputDecoration(
               hintText: 'Write a reply to the office…',
               filled: true,
-              fillColor: const Color(0xFFF8FAFC),
+              fillColor: EyeComfortScope.isEnabled(context)
+                  ? EyeComfortColors.bg
+                  : const Color(0xFFF8FAFC),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: const BorderSide(color: DesignTokens.border),
@@ -3301,6 +3315,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
             // filter dropdowns -- active once a specific office is
             // picked instead of automatic routing.
             decoration: _inputDecoration(
+              context,
               hintText: 'Automatic routing — Let ASKa-Piyu choose',
             ).copyWith(
               fillColor:
@@ -3339,7 +3354,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
             controller: _subjectCtrl,
             validator: _validateTicketSubject,
             textInputAction: TextInputAction.next,
-            decoration: _inputDecoration(),
+            decoration: _inputDecoration(context),
           ),
           SizedBox(height: fieldGap),
           const _FieldLabel(label: 'Description'),
@@ -3349,7 +3364,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
             validator: _validateTicketDescription,
             minLines: widget.compact ? 4 : 5,
             maxLines: widget.compact ? 6 : 7,
-            decoration: _inputDecoration(hintText: 'Describe your concern'),
+            decoration: _inputDecoration(context, hintText: 'Describe your concern'),
           ),
           SizedBox(height: fieldGap),
           _FieldLabel(
@@ -3726,11 +3741,17 @@ class _ChipStyle {
   const _ChipStyle(this.color);
 }
 
-InputDecoration _inputDecoration({String? hintText}) {
+InputDecoration _inputDecoration(BuildContext context, {String? hintText}) {
+  // 0xFFF8FAFC is (intentionally) almost identical to DesignTokens.bgGrey
+  // -- a field reads as the page background showing through a white
+  // card, not a separate surface of its own. EyeComfortColors.bg keeps
+  // that same relationship instead of blending into the (brighter)
+  // warm card background.
+  final eyeComfort = EyeComfortScope.isEnabled(context);
   return InputDecoration(
     hintText: hintText,
     filled: true,
-    fillColor: const Color(0xFFF8FAFC),
+    fillColor: eyeComfort ? EyeComfortColors.bg : const Color(0xFFF8FAFC),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
       borderSide: const BorderSide(color: DesignTokens.border),

@@ -9,6 +9,7 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../navigation/soft_page_route.dart';
 import '../services/api_client.dart';
+import '../services/eye_comfort.dart';
 import '../widgets/public_site_header.dart';
 import 'chatbot_page.dart';
 import 'knowledge_base_page.dart';
@@ -134,9 +135,10 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final isNarrow = width < 880;
+    final eyeComfort = EyeComfortScope.isEnabled(context);
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: eyeComfort ? EyeComfortColors.bg : Colors.white,
       body: Stack(
         children: [
           RefreshIndicator(

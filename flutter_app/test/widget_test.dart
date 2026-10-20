@@ -1,18 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/main.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/student_home.dart';
 import 'package:aska_piyu/services/auth_service.dart';
+import 'package:aska_piyu/services/eye_comfort.dart';
+import 'package:aska_piyu/services/local_store.dart';
 import 'package:aska_piyu/widgets/sidebar.dart';
 
 void main() {
   testWidgets('student home shows ASKa-Piyu entry points',
       (WidgetTester tester) async {
+    // The only test in this file that pumps the real MyApp (the others
+    // use their own minimal AuthScope/MaterialApp harnesses below) --
+    // MyApp's own _MyAppState now reads/writes the Eye Comfort
+    // preference via LocalStore, which needs SharedPreferences mocked
+    // first, same as every other test in this codebase that exercises
+    // local storage.
+    LocalStore.resetForTest();
+    SharedPreferences.setMockInitialValues(const {});
+    await LocalStore.init();
+
     await tester.pumpWidget(const MyApp());
     await tester.pump(); // settle initial auth load frame
+    await tester.pump(); // settle the post-frame Eye Comfort load
 
     // Heading is intentionally two-toned ("Welcome to" / "ASKa-Piyu") via
     // RichText/TextSpan, so the finder must read across spans. "ASKa-Piyu"
@@ -152,6 +166,34 @@ void main() {
     expect(
       find.text('Welcome to ASKa‑Piyu', findRichText: true),
       findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'student home page background follows Eye Comfort, matching the '
+      'shared header it always wears', (WidgetTester tester) async {
+    LocalStore.resetForTest();
+    SharedPreferences.setMockInitialValues(const {});
+    await LocalStore.init();
+
+    final controller = await _authenticatedController('student');
+
+    await tester.pumpWidget(_homeHarness(controller));
+    await tester.pump();
+    expect(
+      tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
+      Colors.white,
+    );
+
+    final eyeComfort = EyeComfortController();
+    await eyeComfort.setEnabled(true);
+    await tester.pumpWidget(
+      EyeComfortScope(controller: eyeComfort, child: _homeHarness(controller)),
+    );
+    await tester.pump();
+    expect(
+      tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
+      EyeComfortColors.bg,
     );
   });
 }

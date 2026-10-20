@@ -5,6 +5,7 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../models/ticket_notification_models.dart';
 import '../services/api_client.dart';
+import '../services/eye_comfort.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/student_ui.dart';
 import 'my_tickets_page.dart';
@@ -218,10 +219,11 @@ class _StudentMailboxPageState extends State<StudentMailboxPage> {
   @override
   Widget build(BuildContext context) {
     final auth = AuthScope.of(context);
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     if (!auth.isAuthenticated) {
-      return const Scaffold(
-        backgroundColor: Color(0xFFF3F4F6),
-        body: Column(
+      return Scaffold(
+        backgroundColor: eyeComfort ? EyeComfortColors.bg : const Color(0xFFF3F4F6),
+        body: const Column(
           children: [
             PublicSiteHeader(mailboxActive: true),
             Expanded(
@@ -238,7 +240,7 @@ class _StudentMailboxPageState extends State<StudentMailboxPage> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: eyeComfort ? EyeComfortColors.bg : const Color(0xFFF3F4F6),
       body: Column(
         children: [
           const PublicSiteHeader(mailboxActive: true),

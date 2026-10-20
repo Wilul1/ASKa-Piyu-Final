@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../design_tokens.dart';
+import '../services/eye_comfort.dart';
 
 class StudentPage extends StatelessWidget {
   final Widget child;
@@ -48,14 +49,17 @@ class StudentPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Container(
       width: double.infinity,
       margin: margin,
       padding: padding,
       decoration: BoxDecoration(
-        color: DesignTokens.cardBg,
+        color: eyeComfort ? EyeComfortColors.cardBg : DesignTokens.cardBg,
         borderRadius: BorderRadius.circular(DesignTokens.radius),
-        border: Border.all(color: DesignTokens.border),
+        border: Border.all(
+          color: eyeComfort ? EyeComfortColors.border : DesignTokens.border,
+        ),
         boxShadow: shadow ? DesignTokens.softShadow() : null,
       ),
       child: child,
@@ -81,12 +85,15 @@ class StudentInkCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Container(
       margin: margin,
       decoration: BoxDecoration(
-        color: DesignTokens.cardBg,
+        color: eyeComfort ? EyeComfortColors.cardBg : DesignTokens.cardBg,
         borderRadius: BorderRadius.circular(DesignTokens.radius),
-        border: Border.all(color: DesignTokens.border),
+        border: Border.all(
+          color: eyeComfort ? EyeComfortColors.border : DesignTokens.border,
+        ),
         boxShadow: shadow ? DesignTokens.softShadow(0.045) : null,
       ),
       child: Material(
@@ -116,6 +123,7 @@ class StudentSectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -124,17 +132,17 @@ class StudentSectionTitle extends StatelessWidget {
           style: TextStyle(
             fontSize: compact ? 17 : 20,
             fontWeight: FontWeight.w900,
-            color: DesignTokens.ink,
+            color: eyeComfort ? EyeComfortColors.ink : DesignTokens.ink,
           ),
         ),
         if (subtitle != null) ...[
           const SizedBox(height: 4),
           Text(
             subtitle!,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.35,
-              color: DesignTokens.muted,
+              color: eyeComfort ? EyeComfortColors.muted : DesignTokens.muted,
             ),
           ),
         ],

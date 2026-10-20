@@ -8,6 +8,7 @@ import '../models/admin_article_models.dart';
 import '../models/article_media_models.dart';
 import '../navigation/soft_page_route.dart';
 import '../services/api_client.dart';
+import '../services/eye_comfort.dart';
 import '../services/print_helper.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/safe_article_html.dart';
@@ -260,8 +261,9 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
       onOpenArticle: _openArticle,
     );
 
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: eyeComfort ? EyeComfortColors.bg : Colors.white,
       body: Column(
         children: [
           const PublicSiteHeader(knowledgeBaseActive: true),
@@ -396,6 +398,11 @@ class _CategoryHelpCenterView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // This header renders directly on the page's own background (no
+    // card behind it), so its secondary text needs the Eye-Comfort-aware
+    // muted tone -- see _SubmitTicketCompactBanner's own comment in
+    // my_tickets_page.dart for the same reasoning.
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -427,11 +434,12 @@ class _CategoryHelpCenterView extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Browse published articles in this category',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: DesignTokens.muted,
+                  color:
+                      eyeComfort ? EyeComfortColors.muted : DesignTokens.muted,
                   fontSize: 15,
                 ),
               ),
@@ -478,10 +486,12 @@ class _CategoryHelpCenterView extends StatelessWidget {
         else if (error != null)
           _ErrorState(message: error!, onRetry: onRetry)
         else if (articles.isEmpty)
-          const Text(
+          Text(
             'No published articles in this category yet.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: DesignTokens.muted),
+            style: TextStyle(
+              color: eyeComfort ? EyeComfortColors.muted : DesignTokens.muted,
+            ),
           )
         else
           LayoutBuilder(
@@ -1225,8 +1235,9 @@ class _ArticleReaderPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: eyeComfort ? EyeComfortColors.bg : Colors.white,
       body: Column(
         children: [
           const PublicSiteHeader(knowledgeBaseActive: true),

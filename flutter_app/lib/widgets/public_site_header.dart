@@ -12,6 +12,7 @@ import '../screens/settings_page.dart';
 import '../screens/signup_page.dart';
 import '../screens/student_home.dart';
 import '../screens/student_mailbox_page.dart';
+import '../services/eye_comfort.dart';
 
 /// Shared top navigation for public landing / Knowledge Base (no sidebar).
 class PublicSiteHeader extends StatelessWidget {
@@ -74,8 +75,11 @@ class PublicSiteHeader extends StatelessWidget {
     final showsMailboxLink = isAuthed && role != 'office' && role != 'admin';
     final isNarrow = width < (showsMailboxLink ? 1140 : 880);
 
+    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Material(
-      color: transparentBackground ? Colors.transparent : Colors.white,
+      color: transparentBackground
+          ? Colors.transparent
+          : (eyeComfort ? EyeComfortColors.headerBg : Colors.white),
       child: Container(
         decoration: transparentBackground
             ? null

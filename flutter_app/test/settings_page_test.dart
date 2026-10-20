@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/settings_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
+import 'package:aska_piyu/services/eye_comfort.dart';
+import 'package:aska_piyu/services/local_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +30,7 @@ void main() {
     WidgetTester tester, {
     AuthUser? user,
     Size size = const Size(1200, 900),
+    EyeComfortController? eyeComfort,
   }) async {
     // SettingsPage embeds PublicSiteHeader, which reads MediaQuery.sizeOf
     // directly rather than via a LayoutBuilder; setting tester.view
@@ -42,10 +46,17 @@ void main() {
       const LoginRequest(email: 'student@example.edu', password: 'password'),
     );
 
+    final settingsPage = const MaterialApp(home: SettingsPage());
     await tester.pumpWidget(
       AuthScope(
         controller: controller,
-        child: const MaterialApp(home: SettingsPage()),
+        // Most tests here don't care about Eye Comfort at all, so they
+        // pass no controller -- EyeComfortScope.isEnabled's safe default
+        // (off, the existing look) already covers that case without a
+        // wrapper, same as the real app's own default-off behavior.
+        child: eyeComfort == null
+            ? settingsPage
+            : EyeComfortScope(controller: eyeComfort, child: settingsPage),
       ),
     );
     await tester.pump();
@@ -143,6 +154,110 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+  });
+
+  // --- Preferences: Eye Comfort --------------------------------------------
+
+  group('Eye Comfort', () {
+    setUp(() {
+      LocalStore.resetForTest();
+      SharedPreferences.setMockInitialValues(const {});
+    });
+
+    testWidgets('no Notifications section exists -- notifications stay in '
+        'Mailbox only', (tester) async {
+      await pumpSettings(tester);
+
+      expect(find.textContaining('Notification'), findsNothing);
+    });
+
+    testWidgets('the Preferences toggle is present, labeled "Eye Comfort", '
+        'and off by default', (tester) async {
+      await LocalStore.init();
+      await pumpSettings(tester, eyeComfort: EyeComfortController());
+
+      expect(find.text('Eye Comfort'), findsOneWidget);
+      final toggle = tester.widget<Switch>(find.byType(Switch));
+      expect(toggle.value, isFalse);
+    });
+
+    testWidgets(
+        'tapping the toggle turns Eye Comfort on, updates the switch, '
+        'changes the page background, and persists the choice',
+        (tester) async {
+      await LocalStore.init();
+      final controller = EyeComfortController();
+      await pumpSettings(tester, eyeComfort: controller);
+
+      Color scaffoldBg() =>
+          tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor!;
+
+      // Existing default appearance, unchanged while off.
+      expect(scaffoldBg(), const Color(0xFFF3F4F6));
+
+      await tester.tap(find.byType(Switch));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        tester.widget<Switch>(find.byType(Switch)).value,
+        isTrue,
+      );
+      expect(scaffoldBg(), EyeComfortColors.bg);
+      expect(controller.enabled, isTrue);
+      expect(LocalStore.getEyeComfortPreference(), isTrue);
+    });
+
+    testWidgets(
+        'Eye Comfort survives navigation -- a controller already on stays '
+        'on, and the preference reloads as on after a simulated restart',
+        (tester) async {
+      await LocalStore.init();
+      final controller = EyeComfortController();
+      await controller.setEnabled(true);
+
+      await pumpSettings(tester, eyeComfort: controller);
+      expect(
+        tester.widget<Switch>(find.byType(Switch)).value,
+        isTrue,
+      );
+
+      // Simulated app restart: a brand-new controller, loaded fresh from
+      // the same (mocked) persisted storage -- not the same in-memory
+      // instance.
+      final restarted = EyeComfortController();
+      restarted.load();
+      expect(restarted.enabled, isTrue);
+
+      await pumpSettings(tester, eyeComfort: restarted);
+      expect(
+        tester.widget<Switch>(find.byType(Switch)).value,
+        isTrue,
+      );
+    });
+
+    testWidgets(
+        'turning Eye Comfort back off restores the existing default '
+        'appearance and persists', (tester) async {
+      await LocalStore.init();
+      final controller = EyeComfortController();
+      await controller.setEnabled(true);
+      await pumpSettings(tester, eyeComfort: controller);
+
+      await tester.tap(find.byType(Switch));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        tester.widget<Switch>(find.byType(Switch)).value,
+        isFalse,
+      );
+      expect(
+        tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
+        const Color(0xFFF3F4F6),
+      );
+      expect(LocalStore.getEyeComfortPreference(), isFalse);
+    });
   });
 
   testWidgets(

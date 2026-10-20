@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aska_piyu/auth/auth_state.dart';
+import 'package:aska_piyu/design_tokens.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/my_tickets_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
+import 'package:aska_piyu/services/eye_comfort.dart';
+import 'package:aska_piyu/services/local_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +38,7 @@ void main() {
   Future<void> pumpSubmitTab(
     WidgetTester tester, {
     Size size = const Size(390, 844),
+    EyeComfortController? eyeComfort,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -41,10 +46,16 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final controller = await buildLoggedInController();
+    const submitPage = MaterialApp(home: MyTicketsPage(initialTab: 1));
     await tester.pumpWidget(
       AuthScope(
         controller: controller,
-        child: const MaterialApp(home: MyTicketsPage(initialTab: 1)),
+        // Most tests here don't care about Eye Comfort -- isEnabled's
+        // safe default (off, the existing look) already covers that
+        // case with no wrapper needed.
+        child: eyeComfort == null
+            ? submitPage
+            : EyeComfortScope(controller: eyeComfort, child: submitPage),
       ),
     );
     await tester.pump();
@@ -319,6 +330,71 @@ void main() {
     // ignore: avoid_print
     print('MEASURED Office label Y (390px, compact banner) = $y');
     expect(y, greaterThan(0));
+  });
+
+  // --- Eye Comfort: form-field fill color and compact banner text ---------
+
+  group('Eye Comfort form-field warmth', () {
+    setUp(() {
+      LocalStore.resetForTest();
+      SharedPreferences.setMockInitialValues(const {});
+    });
+
+    testWidgets(
+        'the Subject field keeps the exact existing fill color when Eye '
+        'Comfort is off (default, unchanged)', (tester) async {
+      await LocalStore.init();
+      await pumpSubmitTab(tester, eyeComfort: EyeComfortController());
+
+      final fields = find.byType(TextField);
+      expect(fields, findsWidgets);
+      final decoration = tester.widget<TextField>(fields.first).decoration;
+      expect(decoration?.fillColor, const Color(0xFFF8FAFC));
+    });
+
+    testWidgets(
+        'the Subject field switches to the warm fill color when Eye '
+        'Comfort is on, while its border/focus styling is unchanged',
+        (tester) async {
+      await LocalStore.init();
+      final controller = EyeComfortController();
+      await controller.setEnabled(true);
+      await pumpSubmitTab(tester, eyeComfort: controller);
+
+      final fields = find.byType(TextField);
+      final decoration = tester.widget<TextField>(fields.first).decoration;
+      expect(decoration?.fillColor, EyeComfortColors.bg);
+      // Borders are untouched by this change -- same values either way.
+      final enabledBorder = decoration?.enabledBorder as OutlineInputBorder?;
+      expect(enabledBorder?.borderSide.color, DesignTokens.border);
+    });
+
+    testWidgets(
+        "the Submit Ticket compact banner's subtitle uses the existing "
+        'muted color when Eye Comfort is off', (tester) async {
+      await LocalStore.init();
+      await pumpSubmitTab(tester, eyeComfort: EyeComfortController());
+
+      final text = tester.widget<Text>(
+        find.text('Tell us what you need help with.'),
+      );
+      expect(text.style?.color, DesignTokens.muted);
+    });
+
+    testWidgets(
+        "the Submit Ticket compact banner's subtitle switches to the "
+        'WCAG-AA-passing Eye Comfort muted color when enabled',
+        (tester) async {
+      await LocalStore.init();
+      final controller = EyeComfortController();
+      await controller.setEnabled(true);
+      await pumpSubmitTab(tester, eyeComfort: controller);
+
+      final text = tester.widget<Text>(
+        find.text('Tell us what you need help with.'),
+      );
+      expect(text.style?.color, EyeComfortColors.muted);
+    });
   });
 }
 

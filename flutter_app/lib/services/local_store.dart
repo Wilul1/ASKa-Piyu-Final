@@ -16,6 +16,7 @@ class LocalStore {
 
   static const _secureTokenKey = 'aska_access_token';
   static const _rememberMePrefKey = 'aska_remember_me_pref';
+  static const _eyeComfortPrefKey = 'aska_eye_comfort_pref';
 
   static SharedPreferences? _prefs;
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
@@ -88,6 +89,17 @@ class LocalStore {
 
   static Future<void> setRememberMePreference(bool value) {
     return instance.setBool(_rememberMePrefKey, value);
+  }
+
+  /// Student's Eye Comfort preference (warm cream surfaces, softer
+  /// shared-text tone). Defaults to off -- the existing default
+  /// appearance is unchanged until a student opts in.
+  static bool getEyeComfortPreference() {
+    return instance.getBool(_eyeComfortPrefKey) ?? false;
+  }
+
+  static Future<void> setEyeComfortPreference(bool value) {
+    return instance.setBool(_eyeComfortPrefKey, value);
   }
 
   static Future<bool> setString(String key, String value) async {

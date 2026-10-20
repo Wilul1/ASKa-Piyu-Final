@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/student_mailbox_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
+import 'package:aska_piyu/services/eye_comfort.dart';
+import 'package:aska_piyu/services/local_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    LocalStore.resetForTest();
+    SharedPreferences.setMockInitialValues(const {});
+  });
 
   Map<String, dynamic> notificationJson({
     required String id,
@@ -47,6 +55,7 @@ void main() {
     WidgetTester tester, {
     List<Map<String, dynamic>>? notifications,
     Size size = const Size(1200, 900),
+    EyeComfortController? eyeComfort,
   }) async {
     // StudentMailboxPage embeds PublicSiteHeader, which reads
     // MediaQuery.sizeOf directly rather than via a LayoutBuilder; setting
@@ -62,16 +71,23 @@ void main() {
       const LoginRequest(email: 'student@example.edu', password: 'password'),
     );
 
+    final mailbox = StudentMailboxPage(debugNotifications: notifications ?? const []);
+    final child = MaterialApp(home: mailbox);
+
     await tester.pumpWidget(
       AuthScope(
         controller: controller,
-        child: MaterialApp(
-          home: StudentMailboxPage(debugNotifications: notifications ?? const []),
-        ),
+        child: eyeComfort == null
+            ? child
+            : EyeComfortScope(controller: eyeComfort, child: child),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
+  }
+
+  Color mailboxScaffoldColor(WidgetTester tester) {
+    return tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor!;
   }
 
   testWidgets('populated mailbox shows title, unread badge, and each notification',
@@ -197,6 +213,37 @@ void main() {
     // the guarantee is structural, not client-side filtering.
     expect(find.textContaining('transfer'), findsNothing);
     expect(find.textContaining('Internal'), findsNothing);
+  });
+
+  // --- Eye Comfort -----------------------------------------------------------
+  // Mailbox isn't one of the four pages Eye Comfort was originally scoped to,
+  // but PublicSiteHeader (embedded on every page) always picks up the warm
+  // header color, so leaving this Scaffold's own background un-themed
+  // produced a jarring half-themed look (cream header over grey body).
+
+  testWidgets('defaults to the existing grey background when Eye Comfort is off',
+      (tester) async {
+    await pumpMailbox(
+      tester,
+      notifications: [notificationJson(id: 'n-1')],
+      eyeComfort: EyeComfortController(),
+    );
+
+    expect(mailboxScaffoldColor(tester), const Color(0xFFF3F4F6));
+  });
+
+  testWidgets('switches to the warm background when Eye Comfort is on',
+      (tester) async {
+    await LocalStore.init();
+    final controller = EyeComfortController();
+    await controller.setEnabled(true);
+    await pumpMailbox(
+      tester,
+      notifications: [notificationJson(id: 'n-1')],
+      eyeComfort: controller,
+    );
+
+    expect(mailboxScaffoldColor(tester), EyeComfortColors.bg);
   });
 
   // --- Responsive header at required widths --------------------------------

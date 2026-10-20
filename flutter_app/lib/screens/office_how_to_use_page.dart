@@ -66,16 +66,43 @@ class _OfficeHowToUsePageState extends State<OfficeHowToUsePage> {
                 'office. You will never see another office\'s tickets here -- '
                 'this is enforced by the system, not just hidden in the UI.',
               ),
-              _SubHeading('Reading the list'),
+              _SubHeading('Finding a ticket'),
               _Para(
                 'Each ticket shows a status badge: Open, In Progress, '
-                'Resolved, or Closed. Use the search box and the Status / '
-                'Priority filters above the list to find a specific ticket '
-                'quickly.',
+                'Resolved, or Closed.',
               ),
+              _AnnotatedScreenshot(
+                asset: 'assigned_tickets_list.png',
+                alt:
+                    'Assigned Tickets page showing the search box, status '
+                    'filter chips, priority dropdown, and a list of ticket '
+                    'cards for Office of Student Affairs.',
+                aspectRatio: 1280 / 617,
+                caption:
+                    'Requester names in this screenshot are redacted (greyed '
+                    'out) -- everything else is the real, unmodified interface.',
+                callouts: [
+                  _ScreenshotCallout(
+                      number: 1, left: 0.1737, top: 0.1861, width: 0.1862, height: 0.0563),
+                  _ScreenshotCallout(
+                      number: 2, left: 0.1737, top: 0.2597, width: 0.1653, height: 0.1028),
+                  _ScreenshotCallout(
+                      number: 3, left: 0.1737, top: 0.3766, width: 0.1862, height: 0.0563),
+                  _ScreenshotCallout(
+                      number: 4, left: 0.1737, top: 0.4545, width: 0.1862, height: 0.1677),
+                ],
+              ),
+              _Steps([
+                'Use the search box to find a ticket by its ticket ID, '
+                    'subject, or requester.',
+                'Use the status filter chips (All / Open / In Progress / '
+                    'Resolved) to narrow the list.',
+                'Use the priority dropdown if you need to filter by '
+                    'priority.',
+                'Tap a ticket card to open it.',
+              ]),
               _SubHeading('Opening a ticket'),
               _Steps([
-                'Tap a ticket in the list to open its details.',
                 'Read the student\'s original request and the full reply '
                     'thread before responding.',
                 'If the ticket has attachments, open the "Attachments" '
@@ -141,33 +168,50 @@ class _OfficeHowToUsePageState extends State<OfficeHowToUsePage> {
                 'page students browse -- see the distinction at the end of '
                 'this section and in Part C.',
               ),
+              _Para('Open Knowledge Base from the sidebar.'),
+              _AnnotatedScreenshot(
+                asset: 'kb_extract_index.png',
+                alt:
+                    'Knowledge Base Extract & Index page: a file picker, '
+                    'Extract & Structure and Index for Chatbot Retrieval '
+                    'buttons, a five-stage Processing Status row, and an '
+                    'empty Full Extraction Result panel.',
+                aspectRatio: 1280 / 612,
+                caption: 'Shown before any document has been chosen.',
+                callouts: [
+                  _ScreenshotCallout(
+                      number: 1, left: 0.1787, top: 0.2723, width: 0.5247, height: 0.0708),
+                  _ScreenshotCallout(
+                      number: 2, left: 0.7129, top: 0.2614, width: 0.1105, height: 0.0654),
+                  _ScreenshotCallout(
+                      number: 3, left: 0.8285, top: 0.2614, width: 0.1449, height: 0.0654),
+                  _ScreenshotCallout(
+                      number: 4, left: 0.1787, top: 0.4575, width: 0.7947, height: 0.1307),
+                  _ScreenshotCallout(
+                      number: 5, left: 0.1787, top: 0.6536, width: 0.7947, height: 0.3464),
+                ],
+              ),
               _Steps([
-                'Open Knowledge Base from the sidebar.',
-                'Choose a supported source file (PDF or image).',
-                'Tap "Extract & Structure." The app runs OCR/PDF extraction, '
-                    'automatic cleaning, and structuring, and shows you a '
-                    'Validation Report plus a preview of the extracted text '
-                    'and knowledge units.',
-                'Read the Validation Report. Its status reads "Ready for '
-                    'Indexing" (green) or "Needs Review" (amber), alongside '
-                    'counts for missing metadata, TOC-like units, empty '
-                    'units, suspicious units, and oversized chunks.',
-                'Check the preview text itself for anything the metrics '
-                    'might miss: missing sections, garbled characters, '
-                    'duplicated passages, or content in the wrong order.',
-                'If something is wrong, you can edit the extracted text '
-                    'directly in the review box before indexing -- or, for '
-                    'bigger problems, choose a cleaner source file and run '
-                    'Extract & Structure again. There is no separate OCR '
-                    'editor beyond this review box.',
-                'Once you\'re satisfied, tap "Index for Chatbot Retrieval." '
-                    'This saves your reviewed text as searchable knowledge '
-                    'units in ChromaDB.',
-                'Confirm it worked: a status message reports how many '
-                    'chunks were indexed, and the statistics panel below '
-                    'shows Documents indexed, Total chunks indexed, and the '
-                    'most recently indexed document.',
+                'Choose a PDF or image using the file picker.',
+                'Tap Extract & Structure to run OCR/PDF extraction, '
+                    'automatic cleaning, and structuring.',
+                'Index for Chatbot Retrieval saves the reviewed text into '
+                    'ChromaDB -- you\'ll use this after reviewing the result, '
+                    'not right away.',
+                'Watch the Processing Status row for each pipeline stage.',
+                'Review the Full Extraction Result panel once extraction '
+                    'finishes.',
               ]),
+              _Para(
+                'Once extraction finishes, a Validation Report appears. Its '
+                'status reads "Ready for Indexing" (green) or "Needs '
+                'Review" (amber), alongside counts for missing metadata, '
+                'TOC-like units, empty units, suspicious units, and '
+                'oversized chunks. Check the preview text itself for '
+                'anything those metrics might miss: missing sections, '
+                'garbled characters, duplicated passages, or content in the '
+                'wrong order.',
+              ),
               _Callout(
                 'If the Validation Report status reads "Needs Review," do '
                 'not tap Index for Chatbot Retrieval yet. The app will not '
@@ -196,6 +240,32 @@ class _OfficeHowToUsePageState extends State<OfficeHowToUsePage> {
                 'indexed is what comes back. Don\'t consider the job done '
                 'until you\'ve tried this.',
               ),
+              _SubHeading('Review & Publish'),
+              _Para(
+                'Scroll further down this same Knowledge Base page and '
+                'you\'ll find a Review & Publish section -- it lists the '
+                'knowledge units from what you just extracted and offers a '
+                'separate, optional way to generate draft article '
+                'candidates from them. This is not part of the indexing '
+                'steps above, and it is not the same as creating an '
+                'article the way Part C describes -- it\'s a third, '
+                'document-driven starting point.',
+              ),
+              _AnnotatedScreenshot(
+                asset: 'kb_review_publish.png',
+                alt:
+                    'The Review & Publish section of the Knowledge Base '
+                    'page, below Extract & Index, shown with no document '
+                    'extracted yet.',
+                aspectRatio: 1280 / 612,
+                caption:
+                    'Shown empty, before any document has been extracted on '
+                    'this page.',
+                callouts: [
+                  _ScreenshotCallout(
+                      number: 1, left: 0.1786, top: 0.1089, width: 0.186, height: 0.1416),
+                ],
+              ),
               _Callout(
                 'Extraction and indexing are not the same as creating a '
                 'Knowledge Article, and neither is interchangeable with the '
@@ -219,21 +289,65 @@ class _OfficeHowToUsePageState extends State<OfficeHowToUsePage> {
                 'source documents and chunks you index in Part B.',
               ),
               _SubHeading('Starting a new article'),
+              _AnnotatedScreenshot(
+                asset: 'knowledge_article_list.png',
+                alt:
+                    'Knowledge Article page with zero articles yet, showing '
+                    'the Total Articles / Published / Drafts / Categories '
+                    'stats and the Create Article button in the top-right '
+                    'corner.',
+                aspectRatio: 1280 / 613,
+                callouts: [
+                  _ScreenshotCallout(
+                      number: 1, left: 0.9083, top: 0.0305, width: 0.0792, height: 0.037),
+                ],
+              ),
               _Bullets([
-                'Tap "Create Article" on the Knowledge Article page for a '
-                    'blank form.',
+                'Tap "Create Article" for a blank form.',
                 'Or, from a resolved ticket, tap "Add to KB" -- it pre-fills '
                     'the Title, Category, Summary, and Content from that '
                     'ticket so you\'re not starting from scratch. (It reads '
                     '"Update KB draft" or "KB published" once that ticket '
                     'already has an article.)',
               ]),
+              _AnnotatedScreenshot(
+                asset: 'knowledge_article_create.png',
+                alt:
+                    'Create Knowledge Article form with Title, Category, '
+                    'Related Office, Summary, and Content fields on the '
+                    'left, and Publish Settings with a Status dropdown, '
+                    'Save as draft, and Publish Article on the right.',
+                aspectRatio: 1280 / 611,
+                callouts: [
+                  _ScreenshotCallout(
+                      number: 1, left: 0.1786, top: 0.1801, width: 0.5568, height: 0.315),
+                  _ScreenshotCallout(
+                      number: 2, left: 0.1786, top: 0.5404, width: 0.5568, height: 0.3221),
+                  _ScreenshotCallout(
+                      number: 3, left: 0.7583, top: 0.2893, width: 0.2115, height: 0.0513),
+                  _ScreenshotCallout(
+                      number: 4, left: 0.7458, top: 0.8865, width: 0.2375, height: 0.048),
+                  _ScreenshotCallout(
+                      number: 5, left: 0.7458, top: 0.9454, width: 0.2375, height: 0.048),
+                ],
+              ),
+              _Steps([
+                'Fill in Basic Information: Title, Category, Related Office '
+                    '(locked to your office), and an optional Summary.',
+                'Write the article body in the Content editor.',
+                'Check Status in Publish Settings -- it starts on Draft.',
+                '"Save as draft" keeps the article private to office/admin '
+                    'staff.',
+                '"Publish Article" makes it visible in the public Knowledge '
+                    'Base immediately -- there is no separate admin approval '
+                    'step, so you are personally responsible for its '
+                    'accuracy the moment you publish.',
+              ]),
               _Para(
-                'The form has four fields: Title, Category, Summary, and '
-                'Content. Write a specific, searchable title and keep the '
-                'content accurate and concise -- a short, correct answer '
-                'helps students more than a long one. Double-check what '
-                'you write against the official source document, not memory.',
+                'Write a specific, searchable title and keep the content '
+                'accurate and concise -- a short, correct answer helps '
+                'students more than a long one. Double-check what you write '
+                'against the official source document, not memory.',
               ),
               _Callout(
                 'When you type a title, the app automatically checks for an '
@@ -241,14 +355,6 @@ class _OfficeHowToUsePageState extends State<OfficeHowToUsePage> {
                 'that warning before continuing -- a near-duplicate article '
                 'usually means you should edit the existing one instead of '
                 'publishing a second one.',
-              ),
-              _SubHeading('Save as draft vs. Publish Article'),
-              _Para(
-                '"Save as draft" keeps the article private to office/admin '
-                'staff. "Publish Article" makes it visible in the public '
-                'Knowledge Base immediately -- there is no separate admin '
-                'approval step, so you are personally responsible for its '
-                'accuracy the moment you publish.',
               ),
               _SubHeading('Editing and unpublishing'),
               _Para(
@@ -617,6 +723,225 @@ class _Dot extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One numbered callout drawn over a screenshot: a highlight box around a
+/// real UI element plus a numbered badge next to it. Coordinates are
+/// fractional (0..1 of the image's own width/height) so they stay correct
+/// at any display size -- calibrated against the actual screenshot files
+/// (cropped and visually re-verified pixel-by-pixel while building this
+/// page, not guessed). `number` must match the position of the
+/// corresponding instruction in the `_Steps` list placed directly under
+/// the image it belongs to.
+class _ScreenshotCallout {
+  final int number;
+  final double left;
+  final double top;
+  final double width;
+  final double height;
+
+  const _ScreenshotCallout({
+    required this.number,
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
+  });
+}
+
+/// A real (redacted where needed) app screenshot with numbered annotation
+/// markers drawn on top -- highlight box, short leader line, and a
+/// numbered badge, in this app's own burgundy, for each `_ScreenshotCallout`.
+/// The annotations are painted at runtime (CustomPainter, built into
+/// Flutter -- no extra package) rather than baked into the image file, so
+/// they stay crisp at any size and are reviewable as plain Dart code. Only
+/// permanent redaction (names, in the source screenshots) is baked into
+/// the underlying PNG, by flutter_app/tool/prepare_how_to_use_screenshots.py.
+/// Tapping the image opens a larger, pannable/zoomable view.
+class _AnnotatedScreenshot extends StatelessWidget {
+  final String asset;
+  final String alt;
+  final double aspectRatio;
+  final List<_ScreenshotCallout> callouts;
+  final String? caption;
+
+  const _AnnotatedScreenshot({
+    required this.asset,
+    required this.alt,
+    required this.aspectRatio,
+    this.callouts = const [],
+    this.caption,
+  });
+
+  void _openLarge(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: InteractiveViewer(
+          maxScale: 4,
+          child: _image(BoxFit.contain),
+        ),
+      ),
+    );
+  }
+
+  Widget _image(BoxFit fit) {
+    return Semantics(
+      label: alt,
+      image: true,
+      child: CustomPaint(
+        foregroundPainter: _ScreenshotPainter(callouts),
+        child: Image.asset(
+          'assets/images/how_to_use/$asset',
+          fit: fit,
+          excludeFromSemantics: true,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: DesignTokens.border),
+              ),
+              child: GestureDetector(
+                onTap: () => _openLarge(context),
+                child: AspectRatio(
+                  aspectRatio: aspectRatio,
+                  child: _image(BoxFit.cover),
+                ),
+              ),
+            ),
+          ),
+          if (caption != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                caption!,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  height: 1.4,
+                  fontStyle: FontStyle.italic,
+                  color: DesignTokens.muted,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScreenshotPainter extends CustomPainter {
+  final List<_ScreenshotCallout> callouts;
+
+  const _ScreenshotPainter(this.callouts);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final c in callouts) {
+      final rect = Rect.fromLTWH(
+        c.left * size.width,
+        c.top * size.height,
+        c.width * size.width,
+        c.height * size.height,
+      );
+      final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(8));
+
+      canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4.5,
+      );
+      canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = DesignTokens.maroon
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5,
+      );
+
+      const badgeRadius = 13.0;
+      final badgeCenter = Offset(
+        (rect.left - badgeRadius - 2).clamp(badgeRadius + 2, size.width - badgeRadius - 2),
+        (rect.top - badgeRadius - 2).clamp(badgeRadius + 2, size.height - badgeRadius - 2),
+      );
+
+      // Short leader line from the badge to the highlighted box's corner,
+      // the "arrow" connecting the number to exactly what it refers to.
+      final target = rect.topLeft;
+      canvas.drawLine(
+        badgeCenter,
+        target,
+        Paint()
+          ..color = DesignTokens.maroon
+          ..strokeWidth = 2,
+      );
+      final dir = (target - badgeCenter);
+      final dist = dir.distance;
+      if (dist > 1) {
+        final unit = dir / dist;
+        final tip = target;
+        final left = tip - unit * 9 + Offset(-unit.dy, unit.dx) * 4;
+        final right = tip - unit * 9 - Offset(-unit.dy, unit.dx) * 4;
+        final path = Path()
+          ..moveTo(tip.dx, tip.dy)
+          ..lineTo(left.dx, left.dy)
+          ..lineTo(right.dx, right.dy)
+          ..close();
+        canvas.drawPath(path, Paint()..color = DesignTokens.maroon);
+      }
+
+      canvas.drawCircle(
+        badgeCenter,
+        badgeRadius,
+        Paint()..color = DesignTokens.maroon,
+      );
+      canvas.drawCircle(
+        badgeCenter,
+        badgeRadius,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: '${c.number}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      textPainter.paint(
+        canvas,
+        badgeCenter -
+            Offset(textPainter.width / 2, textPainter.height / 2),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScreenshotPainter oldDelegate) =>
+      oldDelegate.callouts != callouts;
 }
 
 /// A single important-caution box, styled distinctly from ordinary body

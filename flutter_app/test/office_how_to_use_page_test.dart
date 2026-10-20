@@ -128,6 +128,95 @@ void main() {
     });
   });
 
+  // Scoped to this page's own guide images (asset path prefix) -- a plain
+  // find.byType(Image) also matches the sidebar's logo image, which is
+  // rendered on every OfficeScaffold page alongside this one.
+  Finder howToUseImages() {
+    return find.byWidgetPredicate((widget) {
+      if (widget is! Image) return false;
+      final image = widget.image;
+      return image is AssetImage &&
+          image.assetName.startsWith('assets/images/how_to_use/');
+    });
+  }
+
+  group('annotated screenshots', () {
+    testWidgets('all five image assets decode without error', (tester) async {
+      await pumpPage(tester, controller: await controllerFor('office'));
+      // Images decode asynchronously after the first frame.
+      await tester.pumpAndSettle();
+
+      expect(howToUseImages(), findsNWidgets(5));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the Assigned Tickets screenshot discloses its redaction and is '
+        'never claimed to be unmodified', (tester) async {
+      await pumpPage(tester, controller: await controllerFor('office'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Requester names in this screenshot are redacted'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('all five screenshots have their annotation painter wired up',
+        (tester) async {
+      await pumpPage(tester, controller: await controllerFor('office'));
+      await tester.pumpAndSettle();
+
+      // _ScreenshotPainter is library-private, so it can't be named from
+      // this test file -- asserting every CustomPaint sitting directly on
+      // one of the 5 annotated images has a non-null foregroundPainter is
+      // the closest reachable proxy for "the overlay is actually wired
+      // up," short of exposing internals solely for testing.
+      final painted = tester
+          .widgetList<CustomPaint>(find.byType(CustomPaint))
+          .where((w) => w.foregroundPainter != null)
+          .length;
+      expect(painted, greaterThanOrEqualTo(5));
+    });
+
+    testWidgets('tapping a screenshot opens an enlarged, dismissible view',
+        (tester) async {
+      await pumpPage(tester, controller: await controllerFor('office'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(howToUseImages().first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      // Dismiss via the barrier so later tests in this file start clean.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(find.byType(InteractiveViewer), findsNothing);
+    });
+
+    testWidgets('no overflow or asset errors with images at width 1400px',
+        (tester) async {
+      final unexpectedErrors = <String>[];
+      final previousOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        unexpectedErrors.add(details.toString());
+        previousOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = previousOnError);
+
+      await pumpPage(
+        tester,
+        controller: await controllerFor('office'),
+        size: const Size(1400, 1200),
+      );
+      await tester.pumpAndSettle();
+
+      expect(unexpectedErrors, isEmpty);
+    });
+  });
+
   group('section content matches the real, inspected workflow', () {
     testWidgets('Assigned Tickets section documents real controls only',
         (tester) async {

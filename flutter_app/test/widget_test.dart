@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/main.dart';
 import 'package:aska_piyu/models/auth_models.dart';
+import 'package:aska_piyu/screens/office_how_to_use_page.dart';
 import 'package:aska_piyu/screens/student_home.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/services/eye_comfort.dart';
@@ -137,6 +138,7 @@ void main() {
     expect(find.text('Account'), findsOneWidget);
     expect(find.text('Knowledge Base'), findsOneWidget);
     expect(find.text('Knowledge Article'), findsOneWidget);
+    expect(find.text('How to Use'), findsOneWidget);
     expect(find.text('Logout'), findsOneWidget);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
@@ -146,6 +148,17 @@ void main() {
     expect(find.text('Reports'), findsNothing);
     expect(find.text('Announcements'), findsNothing);
     expect(find.text('Abuse Detection'), findsNothing);
+  });
+
+  testWidgets('tapping How to Use in the office sidebar opens OfficeHowToUsePage',
+      (WidgetTester tester) async {
+    final controller = await _authenticatedController('office');
+
+    await tester.pumpWidget(_sidebarHarness(controller));
+    await tester.tap(find.text('How to Use'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(OfficeHowToUsePage), findsOneWidget);
   });
 
   testWidgets('sidebar brand subtitle follows student and faculty roles',

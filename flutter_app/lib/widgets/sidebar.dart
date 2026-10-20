@@ -11,6 +11,7 @@ import '../screens/incoming_transfers_page.dart';
 import '../screens/knowledge_articles_page.dart';
 import '../screens/knowledge_base_page.dart';
 import '../screens/login_page.dart';
+import '../screens/office_how_to_use_page.dart';
 import '../screens/settings_page.dart';
 import '../screens/student_home.dart';
 import '../screens/my_tickets_page.dart';
@@ -29,6 +30,7 @@ enum StudentNavItem {
   officeKnowledgeBase,
   officeKnowledgeArticles,
   officeGenerateArticles,
+  officeHowToUse,
   adminDashboard,
   adminAllTickets,
   adminIncomingTransfers,
@@ -299,6 +301,14 @@ class AppSidebar extends StatelessWidget {
       openOfficePage(
         context,
         builder: (_) => const KnowledgeArticlesPage(),
+      );
+      return;
+    }
+
+    if (item == StudentNavItem.officeHowToUse) {
+      openOfficePage(
+        context,
+        builder: (_) => const OfficeHowToUsePage(),
       );
       return;
     }
@@ -975,6 +985,8 @@ class _OfficeDarkSidebar extends StatelessWidget {
         StudentNavItem.officeKnowledgeBase),
     _SidebarData('Knowledge Article', Icons.article_outlined,
         StudentNavItem.officeKnowledgeArticles),
+    _SidebarData('How to Use', Icons.menu_book_rounded,
+        StudentNavItem.officeHowToUse),
   ];
 
   @override

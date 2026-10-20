@@ -141,12 +141,12 @@ void main() {
   }
 
   group('annotated screenshots', () {
-    testWidgets('all five image assets decode without error', (tester) async {
+    testWidgets('all seven image assets decode without error', (tester) async {
       await pumpPage(tester, controller: await controllerFor('office'));
       // Images decode asynchronously after the first frame.
       await tester.pumpAndSettle();
 
-      expect(howToUseImages(), findsNWidgets(5));
+      expect(howToUseImages(), findsNWidgets(7));
       expect(tester.takeException(), isNull);
     });
 
@@ -162,7 +162,20 @@ void main() {
       );
     });
 
-    testWidgets('all five screenshots have their annotation painter wired up',
+    testWidgets(
+        'the ticket-detail screenshot discloses its redaction too '
+        '(name, avatar, email, and message text)', (tester) async {
+      await pumpPage(tester, controller: await controllerFor('office'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining("requester's name, avatar, email, and message "
+            'text'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('all seven screenshots have their annotation painter wired up',
         (tester) async {
       await pumpPage(tester, controller: await controllerFor('office'));
       await tester.pumpAndSettle();
@@ -176,7 +189,7 @@ void main() {
           .widgetList<CustomPaint>(find.byType(CustomPaint))
           .where((w) => w.foregroundPainter != null)
           .length;
-      expect(painted, greaterThanOrEqualTo(5));
+      expect(painted, greaterThanOrEqualTo(7));
     });
 
     testWidgets('tapping a screenshot opens an enlarged, dismissible view',
@@ -191,6 +204,45 @@ void main() {
       expect(tester.takeException(), isNull);
 
       // Dismiss via the barrier so later tests in this file start clean.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(find.byType(InteractiveViewer), findsNothing);
+    });
+
+    testWidgets(
+        'the reply screenshot specifically can be enlarged enough to '
+        'inspect the toolbar and Internal Note icon, then dismissed',
+        (tester) async {
+      await pumpPage(tester, controller: await controllerFor('office'));
+      await tester.pumpAndSettle();
+
+      final replyImage = find.byWidgetPredicate((widget) {
+        if (widget is! Image) return false;
+        final image = widget.image;
+        return image is AssetImage &&
+            image.assetName.endsWith('ticket_detail_reply.png');
+      });
+      expect(replyImage, findsOneWidget);
+
+      // It sits well below the fold on this long page.
+      await tester.ensureVisible(replyImage);
+      await tester.pumpAndSettle();
+
+      await tester.tap(replyImage);
+      await tester.pumpAndSettle();
+
+      final viewer = tester.widget<InteractiveViewer>(
+        find.byType(InteractiveViewer),
+      );
+      // Toolbar icons are small in the inline card; maxScale must allow
+      // zooming in far enough to actually tell them apart.
+      expect(viewer.maxScale, greaterThanOrEqualTo(4));
+      expect(
+        find.descendant(of: find.byType(InteractiveViewer), matching: replyImage),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
       await tester.tapAt(const Offset(5, 5));
       await tester.pumpAndSettle();
       expect(find.byType(InteractiveViewer), findsNothing);
@@ -240,7 +292,41 @@ void main() {
         find.textContaining('only an Admin account can close a ticket'),
         findsOneWidget,
       );
-      expect(find.textContaining('Internal Note'), findsOneWidget);
+      expect(find.textContaining('Internal Note'), findsWidgets);
+    });
+
+    testWidgets(
+        'Assigned Tickets section documents the real ticket-detail view: '
+        'conversation, Ticket Details panel, reply toolbar, and Send Reply',
+        (tester) async {
+      await pumpPage(tester, controller: await controllerFor('office'));
+
+      expect(find.textContaining('Ticket Details panel'), findsOneWidget);
+      expect(find.textContaining('Conversation tab'), findsOneWidget);
+      expect(
+        find.textContaining('Assigned Office, Category, Requester, Email'),
+        findsOneWidget,
+      );
+      // Real, confirmed toolbar controls only (from staff_ticket_console.dart
+      // tooltips) -- never an invented formatting option.
+      expect(
+        find.textContaining('Bold, Italic, Underline, Attach image, Attach '
+            'file'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Quick responses'), findsWidgets);
+      expect(find.textContaining('Send Reply'), findsWidgets);
+      // The confirmed, code-level behavior of the toggle: placeholder
+      // changes and the icon turns maroon -- not an invented confirmation
+      // dialog or separate internal-note screen.
+      expect(
+        find.textContaining('Write an internal note'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('never shown to the student'),
+        findsOneWidget,
+      );
     });
 
     testWidgets(

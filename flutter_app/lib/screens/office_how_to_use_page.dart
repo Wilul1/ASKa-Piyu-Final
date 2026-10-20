@@ -101,24 +101,77 @@ class _OfficeHowToUsePageState extends State<OfficeHowToUsePage> {
                     'priority.',
                 'Tap a ticket card to open it.',
               ]),
-              _SubHeading('Opening a ticket'),
-              _Steps([
-                'Read the student\'s original request and the full reply '
-                    'thread before responding.',
-                'If the ticket has attachments, open the "Attachments" '
-                    'section and review each file before you reply -- it may '
-                    'contain the information you need (a form, a screenshot, '
-                    'a receipt).',
-              ]),
-              _SubHeading('Replying'),
-              _Para(
-                'Write a clear, professional reply addressed to the student. '
-                'You can also attach a file or image to your reply (10 MB '
-                'limit). If you need to leave a note for other office staff '
-                'or an admin that the student should never see, mark it as '
-                'an Internal Note instead of a normal reply -- internal '
-                'notes are never shown to the student.',
+              _SubHeading('Opening a ticket: status, details, and conversation'),
+              _AnnotatedScreenshot(
+                asset: 'ticket_detail_conversation.png',
+                alt:
+                    'Open ticket showing its ID, subject, status and '
+                    'priority chips, the Conversation tab with the '
+                    'student\'s message and the office\'s reply, and the '
+                    'Ticket Details panel on the right.',
+                aspectRatio: 1205 / 750,
+                caption:
+                    'The requester\'s name, avatar, email, and message text '
+                    'are redacted (greyed out) -- everything else is the '
+                    'real, unmodified interface.',
+                callouts: [
+                  _ScreenshotCallout(
+                      number: 1, left: 0.0125, top: 0.044, width: 0.1701, height: 0.1533),
+                  _ScreenshotCallout(
+                      number: 2, left: 0.0125, top: 0.2933, width: 0.6556, height: 0.3267),
+                  _ScreenshotCallout(
+                      number: 3, left: 0.7012, top: 0.2507, width: 0.2822, height: 0.48),
+                ],
               ),
+              _Steps([
+                'Ticket ID, subject, Status, and Priority sit at the top -- '
+                    'the same status/priority values shown back in the list.',
+                'The Conversation tab is where you read the student\'s '
+                    'original request and every reply since, including the '
+                    'office\'s own.',
+                'The Ticket Details panel (right) shows Assigned Office, '
+                    'Category, Requester, Email, and timestamps for this '
+                    'ticket.',
+              ]),
+              _Para(
+                'If the ticket has attachments, open the "Attachments" '
+                'section and review each file before you reply -- it may '
+                'contain the information you need (a form, a screenshot, a '
+                'receipt).',
+              ),
+              _SubHeading('Replying and Internal Notes'),
+              _AnnotatedScreenshot(
+                asset: 'ticket_detail_reply.png',
+                alt:
+                    'The reply box with its formatting and attachment '
+                    'toolbar (Bold, Italic, Underline, Attach image, Attach '
+                    'file, Quick responses), the Internal note icon, Add to '
+                    'KB, and the Send Reply button.',
+                aspectRatio: 1205 / 175,
+                callouts: [
+                  _ScreenshotCallout(
+                      number: 1, left: 0.0149, top: 0.04, width: 0.6548, height: 0.6343),
+                  _ScreenshotCallout(
+                      number: 2, left: 0.0183, top: 0.6743, width: 0.2058, height: 0.1714),
+                  _ScreenshotCallout(
+                      number: 3, left: 0.2324, top: 0.6743, width: 0.0307, height: 0.1714),
+                  _ScreenshotCallout(
+                      number: 4, left: 0.4133, top: 0.6743, width: 0.1261, height: 0.1943),
+                ],
+              ),
+              _Steps([
+                'Type your message in the reply box.',
+                'The toolbar offers Bold, Italic, Underline, Attach image, '
+                    'Attach file (PDF or image, 10 MB limit), and Quick '
+                    'responses (pre-written replies you can insert).',
+                'Tap the note icon to toggle Internal Note mode -- it turns '
+                    'maroon and the placeholder changes to "Write an '
+                    'internal note…" so you can tell at a glance you\'re not '
+                    'writing a public reply. Internal notes are never shown '
+                    'to the student.',
+                'Tap Send Reply to post a public reply, or while Internal '
+                    'Note mode is on, to save the note instead.',
+              ]),
               _SubHeading('Status: Resolve, and what you cannot do here'),
               _Bullets([
                 'Status is not a dropdown you set directly. The only way to '

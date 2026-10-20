@@ -24,6 +24,7 @@ ever becomes an app asset.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 from PIL import Image, ImageDraw
 
@@ -54,8 +55,19 @@ def resize(im: Image.Image, max_width: int = MAX_WIDTH) -> Image.Image:
     return im.resize((max_width, round(im.height * ratio)), Image.LANCZOS)
 
 
-JOBS: list[tuple[str, str, list[tuple[int, int, int, int]]]] = [
-    (
+class Job(NamedTuple):
+    source: str
+    out_name: str
+    redact_boxes: list[tuple[int, int, int, int]] = []
+    # Applied AFTER redaction, in the same full-source-image coordinate
+    # space the redact_boxes use -- lets one source screenshot yield a
+    # tighter, more readable crop (e.g. just the reply toolbar) without
+    # needing separately-calibrated redaction coordinates per crop.
+    crop: tuple[int, int, int, int] | None = None
+
+
+JOBS: list[Job] = [
+    Job(
         "12.png",
         "assigned_tickets_list.png",
         # Three requester names in the ticket list cards -- coordinates
@@ -67,28 +79,65 @@ JOBS: list[tuple[str, str, list[tuple[int, int, int, int]]]] = [
             (333, 829, 500, 853),
         ],
     ),
-    ("13.png", "kb_extract_index.png", []),
-    ("14.png", "kb_review_publish.png", []),
-    ("15.png", "knowledge_article_list.png", []),
-    ("16.png", "knowledge_article_create.png", []),
+    Job("13.png", "kb_extract_index.png"),
+    Job("14.png", "kb_review_publish.png"),
+    Job("15.png", "knowledge_article_list.png"),
+    Job("16.png", "knowledge_article_create.png"),
+    Job(
+        "17.png",
+        "ticket_detail_conversation.png",
+        # Requester avatar initials, name (conversation sender label and
+        # the Ticket Details "Requester" field), both message bubbles'
+        # text, and the Email field. "Office of Student Affairs Staff ·
+        # Office" is left as-is -- it names a role, not a person.
+        [
+            (728, 296, 772, 340),
+            (783, 302, 925, 323),
+            (783, 338, 1155, 376),
+            (783, 440, 1120, 517),
+            (1561, 415, 1725, 438),
+            (1561, 475, 1815, 498),
+        ],
+        crop=(715, 70, 1920, 820),
+    ),
+    Job(
+        "17.png",
+        "ticket_detail_reply.png",
+        # This crop (the reply box + toolbar) contains no requester text
+        # at all, so no redaction is needed for it specifically -- but it
+        # still goes through the same redact-then-crop source image as
+        # the conversation shot, for consistency and in case that ever
+        # changes.
+        [
+            (728, 296, 772, 340),
+            (783, 302, 925, 323),
+            (783, 338, 1155, 376),
+            (783, 440, 1120, 517),
+            (1561, 415, 1725, 438),
+            (1561, 475, 1815, 498),
+        ],
+        crop=(715, 740, 1920, 915),
+    ),
 ]
 
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for source_name, out_name, boxes in JOBS:
-        src_path = SOURCE_DIR / source_name
+    for job in JOBS:
+        src_path = SOURCE_DIR / job.source
         im = Image.open(src_path).convert("RGBA")
-        if boxes:
-            im = redact(im, boxes)
+        if job.redact_boxes:
+            im = redact(im, job.redact_boxes)
+        if job.crop:
+            im = im.crop(job.crop)
         im = resize(im)
         # Flatten onto white before saving -- these are opaque screenshots,
         # and RGBA PNGs are larger for no benefit here.
         flat = Image.new("RGB", im.size, (255, 255, 255))
         flat.paste(im, mask=im.split()[3])
-        out_path = OUT_DIR / out_name
+        out_path = OUT_DIR / job.out_name
         flat.save(out_path, "PNG", optimize=True)
-        print(f"{source_name} -> {out_path.relative_to(OUT_DIR.parent.parent.parent)} ({flat.size[0]}x{flat.size[1]})")
+        print(f"{job.source} -> {out_path.relative_to(OUT_DIR.parent.parent.parent)} ({flat.size[0]}x{flat.size[1]})")
 
 
 if __name__ == "__main__":

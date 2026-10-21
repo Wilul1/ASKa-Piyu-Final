@@ -231,7 +231,10 @@ void main() {
       );
     });
 
-    testWidgets('confidence indicator still renders', (tester) async {
+    testWidgets(
+        'confidence indicator (Low/Medium/High badge) is no longer rendered '
+        '-- removed for the 2026-10-20 UI cleanup; backend confidence is '
+        'unaffected, only this visible badge is gone', (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
         question: 'What is the passing grade?',
@@ -246,7 +249,7 @@ void main() {
         ],
       );
 
-      expect(find.text('medium'), findsOneWidget);
+      expect(find.text('medium'), findsNothing);
     });
 
     testWidgets(
@@ -354,8 +357,10 @@ void main() {
       expect(answerY, lessThan(sourcesY));
     });
 
-    testWidgets('a low-confidence answer with zero sources renders no Sources section',
-        (tester) async {
+    testWidgets(
+        'a low-confidence answer with zero sources renders no Sources '
+        'section and no confidence badge, but the answer text is '
+        'preserved as-is', (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
         question: 'What is the deadline for filing an appeal?',
@@ -371,7 +376,33 @@ void main() {
         find.textContaining('I do not have enough information'),
         findsOneWidget,
       );
-      expect(find.text('low'), findsOneWidget);
+      // Confidence badge removed for the UI cleanup -- the literal word
+      // "low" must not appear anywhere as a standalone badge label.
+      expect(find.text('low'), findsNothing);
+    });
+
+    testWidgets(
+        'the two citation-verification warning notices never render, even '
+        'for a zero-source answer where the old note would have shown',
+        (tester) async {
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'What is the deadline for filing an appeal?',
+        answerText: 'I do not have enough information in the knowledge base '
+            'to answer that question. Please contact the relevant office.',
+        confidence: 'low',
+        sources: const [],
+      );
+
+      expect(
+        find.textContaining("No official source was found to support"),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Source verification could not be completed'),
+        findsNothing,
+      );
+      expect(find.byIcon(Icons.error_outline), findsNothing);
     });
   });
 

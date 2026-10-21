@@ -1350,8 +1350,6 @@ class _AnswerBubble extends StatelessWidget {
                     color: DesignTokens.ink,
                   ),
                 ),
-                const Spacer(),
-                _ConfidenceChip(confidence: answer.confidence),
               ],
             ),
             const SizedBox(height: 10),
@@ -1359,10 +1357,10 @@ class _AnswerBubble extends StatelessWidget {
             // bubble) so drag-to-select/right-click-copy/Ctrl+C work across
             // the complete multi-paragraph/bullet response in one
             // continuous selection, like a normal chat answer -- while
-            // leaving the Sources links, confidence chip, and Submit
-            // ticket button (all outside this wrapper) exactly as tappable
-            // as before, and without this small selection region competing
-            // with the enclosing ListView's own vertical drag-to-scroll.
+            // leaving the Sources links and Submit ticket button (all
+            // outside this wrapper) exactly as tappable as before, and
+            // without this small selection region competing with the
+            // enclosing ListView's own vertical drag-to-scroll.
             SelectionArea(
               child: _ChatMarkdown(
                 text: answer.text,
@@ -1376,9 +1374,6 @@ class _AnswerBubble extends StatelessWidget {
             if (answer.sources.isNotEmpty) ...[
               const SizedBox(height: 14),
               _CollapsibleSources(sources: answer.sources),
-            ] else if (answer.citationStatus != null) ...[
-              const SizedBox(height: 14),
-              _CitationStatusNote(status: answer.citationStatus!),
             ],
             if (isLowConfidence) ...[
               const SizedBox(height: 14),
@@ -1554,57 +1549,6 @@ CitationStatusPresentation? citationStatusPresentationFor(String status) {
       );
     default:
       return null;
-  }
-}
-
-/// Inline note for the async citation verification lifecycle -- shown only
-/// when there are no sources to display yet (or at all) for a turn whose
-/// citation_verification_mode is async_shadow/async_llm. `verifying` keeps
-/// the original minimal muted-caption treatment; the three terminal
-/// unverified statuses (see [citationStatusPresentationFor]) use a visibly
-/// distinct warning treatment -- reusing this file's own existing "low
-/// confidence" color (see _ConfidenceChip) rather than introducing a new
-/// color or any new dependency -- so an unverified answer can never look
-/// like a quiet, successful aside.
-class _CitationStatusNote extends StatelessWidget {
-  final String status;
-
-  const _CitationStatusNote({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final presentation = citationStatusPresentationFor(status);
-    if (presentation == null) {
-      return const SizedBox.shrink();
-    }
-    if (!presentation.isUnverifiedWarning) {
-      return Text(
-        presentation.message,
-        style: const TextStyle(
-          fontSize: 12.5,
-          color: DesignTokens.muted,
-          fontStyle: FontStyle.italic,
-        ),
-      );
-    }
-    const warningColor = Color(0xFFB91C1C); // same red as the low-confidence chip
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Icon(Icons.error_outline, size: 15, color: warningColor),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            presentation.message,
-            style: const TextStyle(
-              fontSize: 12.5,
-              color: warningColor,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ],
-    );
   }
 }
 
@@ -2027,37 +1971,6 @@ class _Composer extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ConfidenceChip extends StatelessWidget {
-  final String confidence;
-
-  const _ConfidenceChip({required this.confidence});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = confidence == 'high'
-        ? const Color(0xFF15803D)
-        : confidence == 'medium'
-            ? const Color(0xFFD97706)
-            : const Color(0xFFB91C1C);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        confidence,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-          color: color,
         ),
       ),
     );

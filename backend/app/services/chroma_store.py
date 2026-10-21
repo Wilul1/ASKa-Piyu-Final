@@ -85,6 +85,16 @@ def _clamp_embedding_query_text(text: str, *, max_chars: int = EMBEDDING_QUERY_M
 # collection.get(where=...) directly with no limit.
 CHROMA_GET_PAGE_SIZE = 300
 
+# Chroma Cloud also enforces a per-request "Add" action quota (same 300
+# ceiling; see app.services.admin.digital_ingestion.CHROMA_ADD_MAX_BATCH_SIZE,
+# which exists for the exact same reason on the ingestion-publish path --
+# a 371-record add() was rejected with "current usage of 371 exceeds limit
+# of 300"). restore_document_export() below must batch its add() calls at
+# or under this size for the same reason. Duplicated here rather than
+# imported to avoid a circular import (digital_ingestion imports this
+# module, not the reverse); keep both constants in sync.
+CHROMA_RESTORE_MAX_BATCH_SIZE = 250
+
 
 def _strip_indexed_metadata_block(text: str) -> str:
     if _INDEXED_METADATA_MARKER in text:
@@ -555,13 +565,101 @@ class KnowledgeBaseStore:
         }
 
     def delete_document(self, document_id: str) -> None:
-        existing = self._collection.get(where={"document_id": document_id})
-        if existing["ids"]:
-            self._collection.delete(ids=existing["ids"])
+        """Remove every chunk for ``document_id``.
+
+        Fixed 2026-10-21 to use the exhaustive ``_get_all_matching`` read
+        instead of a bare ``collection.get()`` -- this method is a direct
+        dependency of ``restore_document_export``'s cleanup-on-failure path
+        and of ``export_document``'s callers (e.g. ``article_rag_indexer``),
+        so for any document over ``CHROMA_GET_PAGE_SIZE`` (300) chunks (the
+        492-chunk LSPU Student Handbook included) the old bare call would
+        silently delete only the first ~300 records, leaving the rest
+        behind -- exactly the same incident class ``delete_by_document_id``
+        was already fixed for. Deletes in the same paginated batches it
+        discovered, defensively, in case ``collection.delete(ids=...)`` has
+        its own undocumented size cap mirroring the Get-action one.
+        """
+        existing = self._get_all_matching(where={"document_id": document_id})
+        ids = list(dict.fromkeys(existing.get("ids") or []))
+        for start in range(0, len(ids), CHROMA_GET_PAGE_SIZE):
+            batch = ids[start : start + CHROMA_GET_PAGE_SIZE]
+            if batch:
+                self._collection.delete(ids=batch)
 
     def export_document(self, document_id: str) -> dict[str, Any] | None:
-        """Snapshot chunks for a document so re-index can restore on failure."""
-        existing = self._collection.get(
+        """Snapshot ALL chunks for a document so re-index can restore on
+        failure.
+
+        Uses the same exhaustive, paginated read as every other safety-
+        critical ingestion read (see ``_get_all_matching``) -- never a
+        bare ``collection.get()``, which silently caps at
+        ``CHROMA_GET_PAGE_SIZE`` (300) on Chroma Cloud with no truncation
+        warning (see that constant's docstring; this is exactly the
+        pattern that caused the 2026-10-04 incident). A document at or
+        under 300 chunks behaves identically to before; a larger one
+        (e.g. the 492-chunk LSPU Student Handbook) is now actually
+        captured in full instead of silently truncated.
+
+        Fails closed: returns ``None`` only when the document genuinely
+        has no chunks (unchanged contract -- existing callers such as
+        ``article_rag_indexer.index_published_article`` treat ``None`` as
+        "nothing to restore"). Any other form of incompleteness or
+        inconsistency raises instead of returning a snapshot that looks
+        usable but isn't.
+
+        CONCURRENCY LIMITATION -- read this before trusting this method
+        for an unattended/automated backup: the standard Chroma API
+        (``get``/``count``/``add``/``delete``/``upsert``/``update``) has
+        no point-in-time snapshot, transaction, or read-consistency token
+        for a `where`-filtered read -- checked directly against the
+        installed chromadb 1.5.9 client's ``Collection`` API surface.
+        There IS one genuine atomic-copy primitive, ``Collection.fork()``
+        ("Hosted Chroma only" -- i.e. Chroma Cloud), which forks the
+        ENTIRE collection (every document, not just this one) into a new,
+        separate, persistently-named collection with its own lifecycle
+        and cost. It is not used anywhere in this codebase, has never
+        been exercised against this project's actual Chroma Cloud tenant,
+        and adopting it would be a materially larger, separately-scoped
+        change (naming/cleanup lifecycle, cost, confirming it actually
+        behaves as documented for our plan) than this fix -- not
+        something to wire in without real production validation, which is
+        out of scope here.
+
+        What this method does instead, as the safest practical guard
+        available without that: a single independently-issued exhaustive
+        count, taken immediately after the read, must agree with the
+        number of records actually read. This narrows, but does NOT
+        eliminate, the window for a concurrent write to this exact
+        document_id to produce a count-consistent but content-
+        inconsistent snapshot -- pagination followed by a count check is
+        still not atomic. The required operational precaution this does
+        not replace: only run this export when no ingestion/publish job
+        for the same document_id is concurrently running against it.
+
+        A stricter variant -- bracketing the read with a SECOND count
+        taken immediately BEFORE it, not just after -- was tried and then
+        deliberately kept out of the shipped version, for a reason
+        narrower than originally suspected: while testing it, this
+        project's own existing integration test (``test_chroma_rebuild.py``
+        -- it calls this same method via
+        ``article_rag_indexer.index_published_article`` under FastAPI's
+        threaded/async test harness) crashed with a real
+        ``Windows fatal exception: access violation`` inside chromadb's
+        embedded Rust backend (``chromadb/api/rust.py``). Reverting to
+        this single-count version did NOT make the crash go away --
+        re-running ``test_chroma_rebuild.py`` against the fully original,
+        unmodified store code (before any change in this module at all)
+        reproduces the exact same access violation, on a bare
+        ``collection.get()`` call with no ``count()`` involved at all.
+        So this is a pre-existing, environment-specific flakiness in
+        chromadb's native backend under this local Windows test harness
+        -- not something this method's call pattern causes or can fix --
+        and the single-count design here was kept for simplicity (fewer
+        native calls), not because it was proven to avoid the crash.
+        Treat ``test_chroma_rebuild.py`` as independently flaky on this
+        machine; it is not a signal about this method's correctness.
+        """
+        existing = self._get_all_matching(
             where={"document_id": document_id},
             include=["documents", "metadatas"],
         )
@@ -570,6 +668,33 @@ class KnowledgeBaseStore:
             return None
         documents = list(existing.get("documents") or [])
         metadatas = [dict(meta or {}) for meta in (existing.get("metadatas") or [])]
+
+        if len(documents) != len(ids) or len(metadatas) != len(ids):
+            raise ValueError(
+                f"export_document({document_id!r}) read misaligned data: "
+                f"{len(ids)} ids, {len(documents)} documents, {len(metadatas)} metadatas."
+            )
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"export_document({document_id!r}) returned duplicate ids.")
+        mismatched = [meta.get("document_id") for meta in metadatas if meta.get("document_id") != document_id]
+        if mismatched:
+            raise ValueError(
+                f"export_document({document_id!r}) returned {len(mismatched)} record(s) "
+                "whose own document_id metadata does not match the requested id."
+            )
+
+        # Independent cross-check: a second, separately-issued exhaustive
+        # count must agree with what was just read, or the export is not
+        # trustworthy enough to return. See the CONCURRENCY LIMITATION
+        # note above for exactly what this does and does not guarantee.
+        count_after = self.document_chunk_count(document_id)
+        if count_after != len(ids):
+            raise ValueError(
+                f"export_document({document_id!r}) read {len(ids)} record(s) but an "
+                f"independent count taken immediately after reports {count_after}; "
+                "refusing to return a possibly-inconsistent snapshot."
+            )
+
         return {
             "document_id": document_id,
             "ids": ids,
@@ -578,7 +703,27 @@ class KnowledgeBaseStore:
         }
 
     def restore_document_export(self, export: dict[str, Any]) -> None:
-        """Restore a snapshot produced by ``export_document``."""
+        """Restore a snapshot produced by ``export_document``, in batches.
+
+        A single unbatched ``add()`` would risk the exact per-request
+        Chroma Cloud quota that ``CHROMA_ADD_MAX_BATCH_SIZE`` (in
+        ``app.services.admin.digital_ingestion``) already exists to avoid
+        -- see that constant's own comment: a 371-record ``add()`` was
+        rejected with "current usage of 371 exceeds limit of 300".
+        ``CHROMA_RESTORE_MAX_BATCH_SIZE`` below is the same safe size,
+        duplicated rather than imported to avoid a circular import
+        (``digital_ingestion`` already imports this module, not the
+        reverse) -- keep both in sync if the underlying quota ever
+        changes.
+
+        If a later batch fails after earlier ones already landed, this
+        attempts to clean up everything THIS call added (delete-by-
+        document_id, re-verified down to zero) before raising, so a retry
+        starts from a clean slate rather than risking a duplicate partial
+        restore. If that cleanup itself cannot be verified complete, the
+        raised error says so explicitly rather than claiming a clean
+        state that was not actually confirmed.
+        """
         ids = list(export.get("ids") or [])
         if not ids:
             return
@@ -586,10 +731,71 @@ class KnowledgeBaseStore:
         metadatas = [dict(meta or {}) for meta in (export.get("metadatas") or [])]
         if len(documents) != len(ids) or len(metadatas) != len(ids):
             raise ValueError("Invalid document export: ids/documents/metadatas length mismatch.")
+        if len(set(ids)) != len(ids):
+            raise ValueError("Invalid document export: duplicate ids.")
+
         document_id = str(export.get("document_id") or "").strip()
         if document_id:
-            self.delete_document(document_id)
-        self._collection.add(ids=ids, documents=documents, metadatas=metadatas)
+            # Precondition for every batch below: document_id must be
+            # verifiably empty before any add() happens, or a partially-
+            # cleared pre-restore state could silently mix with the
+            # restored records. Both the delete and the verification
+            # query are covered by the same try/except -- either one
+            # failing aborts here, before anything is added.
+            try:
+                self.delete_document(document_id)
+                remaining_before_restore = self.document_chunk_count(document_id)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"restore_document_export aborted before adding any records: "
+                    f"clearing document_id={document_id!r} before restore failed: {exc}. "
+                    "No records were added."
+                ) from exc
+            if remaining_before_restore != 0:
+                raise RuntimeError(
+                    f"restore_document_export aborted before adding any records: "
+                    f"document_id={document_id!r} still has {remaining_before_restore} "
+                    "record(s) after delete_document() -- the pre-restore state could "
+                    "not be verified clean. No records were added."
+                )
+
+        for start in range(0, len(ids), CHROMA_RESTORE_MAX_BATCH_SIZE):
+            end = start + CHROMA_RESTORE_MAX_BATCH_SIZE
+            try:
+                self._collection.add(
+                    ids=ids[start:end],
+                    documents=documents[start:end],
+                    metadatas=metadatas[start:end],
+                )
+            except Exception as exc:
+                if not document_id:
+                    raise RuntimeError(
+                        f"restore_document_export failed partway (batch starting at {start}): "
+                        f"{exc}. No document_id was provided, so no automatic cleanup was "
+                        "attempted; the collection may now hold a partial restore."
+                    ) from exc
+                try:
+                    self.delete_document(document_id)
+                    remaining = self.document_chunk_count(document_id)
+                except Exception as cleanup_exc:
+                    raise RuntimeError(
+                        f"restore_document_export failed partway (batch starting at {start}): "
+                        f"{exc}. Automatic cleanup of the partial restore ALSO failed: "
+                        f"{cleanup_exc}. document_id={document_id!r} may hold a partial "
+                        "restore; manual verification is required before retrying."
+                    ) from exc
+                if remaining != 0:
+                    raise RuntimeError(
+                        f"restore_document_export failed partway (batch starting at {start}): "
+                        f"{exc}. Cleanup left {remaining} record(s) behind under "
+                        f"document_id={document_id!r}; manual verification is required "
+                        "before retrying."
+                    ) from exc
+                raise RuntimeError(
+                    f"restore_document_export failed partway (batch starting at {start}): "
+                    f"{exc}. The partial restore was cleaned up and verified removed "
+                    f"(document_id={document_id!r} now has 0 chunks) -- safe to retry."
+                ) from exc
 
     def delete_by_source_filename(self, source_filename: str) -> int:
         """Remove all chunks previously indexed for the same source PDF/filename.

@@ -723,6 +723,13 @@ class KnowledgeBaseStore:
         restore. If that cleanup itself cannot be verified complete, the
         raised error says so explicitly rather than claiming a clean
         state that was not actually confirmed.
+
+        After every batch add() call returns without raising, an
+        independent final count (document_chunk_count) is still checked
+        against the expected number of exported ids (2026-10-31 fix) --
+        mirroring export_document's own symmetric check -- so a backend
+        that silently accepts fewer records than given, without itself
+        raising, is still caught here rather than reported as a success.
         """
         ids = list(export.get("ids") or [])
         if not ids:
@@ -796,6 +803,41 @@ class KnowledgeBaseStore:
                     f"{exc}. The partial restore was cleaned up and verified removed "
                     f"(document_id={document_id!r} now has 0 chunks) -- safe to retry."
                 ) from exc
+
+        # Final completeness check (2026-10-31 fix): every add() call above
+        # returned without raising, but that alone does not prove every
+        # record was actually accepted -- export_document's own symmetric
+        # independent-count check exists for exactly this reason. A silent
+        # partial accept here would otherwise report success while leaving
+        # an incomplete restore with nothing to catch it.
+        if document_id:
+            restored_count = self.document_chunk_count(document_id)
+            if restored_count != len(ids):
+                try:
+                    self.delete_document(document_id)
+                    remaining = self.document_chunk_count(document_id)
+                except Exception as cleanup_exc:
+                    raise RuntimeError(
+                        f"restore_document_export completed its batches but the final count "
+                        f"({restored_count}) does not match the expected {len(ids)} record(s). "
+                        f"Automatic cleanup of the incomplete restore ALSO failed: {cleanup_exc}. "
+                        f"document_id={document_id!r} may hold a partial restore; manual "
+                        "verification is required before retrying."
+                    ) from cleanup_exc
+                if remaining != 0:
+                    raise RuntimeError(
+                        f"restore_document_export completed its batches but the final count "
+                        f"({restored_count}) does not match the expected {len(ids)} record(s). "
+                        f"Cleanup left {remaining} record(s) behind under "
+                        f"document_id={document_id!r}; manual verification is required "
+                        "before retrying."
+                    )
+                raise RuntimeError(
+                    f"restore_document_export completed its batches but the final count "
+                    f"({restored_count}) does not match the expected {len(ids)} record(s). "
+                    f"The incomplete restore was cleaned up and verified removed "
+                    f"(document_id={document_id!r} now has 0 chunks) -- safe to retry."
+                )
 
     def delete_by_source_filename(self, source_filename: str) -> int:
         """Remove all chunks previously indexed for the same source PDF/filename.

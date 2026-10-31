@@ -53,6 +53,11 @@ class FakeCappedChromaCollection:
     exercise restore's own partial-batch-failure cleanup path.
     fail_on_delete_document_id / fail_all_deletes mirror
     test_chroma_pagination_fix.py's fixture for the rollback scenarios.
+    silently_drop_on_add_call (2026-10-31 addition) lets a test make the
+    Nth add() call accept and return normally while actually storing one
+    fewer record than it was given -- modeling a backend that does NOT
+    raise on a partial accept, to exercise restore's own final-count
+    verification (which a raising-only fake can never exercise).
     """
 
     def __init__(
@@ -61,12 +66,14 @@ class FakeCappedChromaCollection:
         fail_on_add_call: int | None = None,
         fail_on_delete_document_id: str | None = None,
         fail_all_deletes: bool = False,
+        silently_drop_on_add_call: int | None = None,
     ):
         self._records: dict[str, dict] = {}
         self._documents: dict[str, str] = {}
         self.fail_on_add_call = fail_on_add_call
         self.fail_on_delete_document_id = fail_on_delete_document_id
         self.fail_all_deletes = fail_all_deletes
+        self.silently_drop_on_add_call = silently_drop_on_add_call
         self.add_call_count = 0
         self.add_batch_sizes: list[int] = []
         self.get_calls: list[dict] = []
@@ -87,6 +94,11 @@ class FakeCappedChromaCollection:
                 f"Simulated Chroma Cloud quota exceeded: current usage of {len(ids)} "
                 "exceeds limit of 300"
             )
+        if self.silently_drop_on_add_call == self.add_call_count and ids:
+            # Accept and return normally (no exception), but actually
+            # store one fewer record than given -- the exact "silent
+            # partial accept" shape a raising-only fake cannot model.
+            ids, documents, metadatas = ids[1:], documents[1:], metadatas[1:]
         for _id, doc, meta in zip(ids, documents, metadatas):
             self._records[_id] = meta
             self._documents[_id] = doc
@@ -528,6 +540,43 @@ def test_restore_failure_cleanup_itself_failing_is_reported_not_hidden():
 
     with pytest.raises(RuntimeError, match="manual verification is required"):
         store.restore_document_export(export)
+
+
+# --- restore_document_export(): final count verification (2026-10-31) ----
+
+
+def test_restore_detects_silent_partial_accept_and_cleans_up():
+    """A backend that accepts an add() call without raising, but actually
+    stores fewer records than it was given, must still be caught: the
+    final independent count check (document_chunk_count vs. len(ids))
+    exists for exactly this "silent partial accept" shape, which none of
+    the raising-only failure hooks above can exercise. Restore must not
+    report success, must clean up the incomplete restore, must verify
+    that cleanup, and must leave an unrelated, separately-seeded document
+    completely untouched."""
+    collection = FakeCappedChromaCollection(silently_drop_on_add_call=2)
+    store = make_store(collection)
+    # Consumes add_call_count == 1, so the restore's own single-batch
+    # add() below is call #2 -- the one silently_drop_on_add_call targets.
+    seed_real_records(store, collection, document_id="unrelated", n_chunks=10, filename="Other.pdf")
+
+    export = {
+        "document_id": "doc",
+        "ids": [f"doc::{i}" for i in range(5)],
+        "documents": [f"text {i}" for i in range(5)],
+        "metadatas": [{"document_id": "doc", "chunk_index": i} for i in range(5)],
+    }
+
+    with pytest.raises(RuntimeError, match="does not match the expected"):
+        store.restore_document_export(export)
+
+    # The incomplete restore (4 of the 5 expected records, since add()
+    # silently dropped one without raising) was cleaned up and verified
+    # removed -- not left behind, and not reported as a false success.
+    assert store.document_chunk_count("doc") == 0
+    # The unrelated, separately-seeded document was never touched by
+    # that cleanup.
+    assert store.document_chunk_count("unrelated") == 10
 
 
 def test_restore_round_trips_through_export_for_492_records():

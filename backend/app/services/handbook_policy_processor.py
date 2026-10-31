@@ -9,9 +9,13 @@ values so the same path can process other handbooks/manuals.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from app.services.text_cleaner import normalize_whitespace, repair_ocr_word_splits
+
+if TYPE_CHECKING:
+    from app.utils.pdf.pymupdf_extractor import PageExtraction
 
 
 HANDBOOK_POLICY_TYPE = "handbook_policy"
@@ -204,7 +208,23 @@ def build_handbook_policy_document(
     raw_text: str,
     page_texts: list[str],
     source_title: str | None = None,
+    pdf_pages: list["PageExtraction"] | None = None,
 ) -> HandbookPolicyDocument:
+    """Build the handbook/policy document from per-page text.
+
+    ``pdf_pages`` is optional and defaults to ``None``, which keeps this
+    function's behavior byte-for-byte identical to before for every
+    existing caller (including every test in this module's own test file)
+    -- it is consumed only by ``_apply_structured_disciplinary_tables``
+    below, which itself no-ops immediately when it is ``None``. Pass the
+    same ``list[PageExtraction]`` already produced by
+    ``app.utils.pdf.pymupdf_extractor.extract_pdf`` (see
+    ``document_ingestion._ingest_pdf``) to let this function use PyMuPDF's
+    native, already-computed table geometry (``PageExtraction.table_regions``)
+    for pages whose disciplinary-offense table it can positively identify,
+    instead of the plain per-page text alone.
+    """
+    page_texts = _apply_structured_disciplinary_tables(page_texts, pdf_pages)
     lines = _clean_page_lines(page_texts)
     cleaned_text = normalize_whitespace("\n".join(line.text for line in lines))
     metadata = _extract_document_metadata(raw_text, cleaned_text)
@@ -240,6 +260,7 @@ def build_handbook_policy_document(
                 )
             ]
 
+    units = _finalize_disciplinary_penalty_metadata(units)
     return HandbookPolicyDocument(
         document_type=HANDBOOK_POLICY_TYPE,
         source_title=resolved_title,
@@ -254,6 +275,7 @@ def _clean_page_lines(page_texts: list[str]) -> list[_Line]:
     repeated = _repeated_edge_lines(page_texts)
     cleaned: list[_Line] = []
     for page_number, page in enumerate(page_texts, start=1):
+        page_parts: list[str] = []
         for raw_line in page.splitlines():
             line = _clean_line(raw_line)
             if not line:
@@ -263,11 +285,692 @@ def _clean_page_lines(page_texts: list[str]) -> list[_Line]:
             if _is_layout_header_footer(line):
                 continue
             for numbered_part in _split_embedded_numbered_headings(line):
-                cleaned.extend(
-                    _Line(text=part, page=page_number)
-                    for part in _split_embedded_lettered_headings(numbered_part)
-                )
+                page_parts.extend(_split_embedded_lettered_headings(numbered_part))
+        page_parts = _drop_offense_table_header_block(page_parts)
+        cleaned.extend(_Line(text=part, page=page_number) for part in page_parts)
     return _merge_wrapped_heading_lines(cleaned)
+
+
+_OFFENSE_ORDINAL_FRAGMENTS = {
+    "1st", "2nd", "3rd", "4th", "5th", "offense", "offenses",
+    "1st offense", "2nd offense", "3rd offense", "4th offense", "5th offense",
+}
+
+
+def _is_offense_table_header_anchor(line: str) -> bool:
+    """The disciplinary-offense table's own repeating column-header label
+    (e.g. "Section/Title/Definition | 1st Offense | 2nd Offense | 3rd
+    Offense"), which recurs on every page of that table but far too few
+    times across the WHOLE document to pass _repeated_edge_lines' document-
+    wide 50% threshold. This literal label never appears as real policy
+    prose, so it is safe to recognize and drop unconditionally -- see
+    _drop_offense_table_header_block.
+    """
+    return _canonical_heading_text(line) == "section title definition"
+
+
+def _is_offense_ordinal_fragment(line: str) -> bool:
+    return _canonical_heading_text(line) in _OFFENSE_ORDINAL_FRAGMENTS
+
+
+_ORDINAL_TOKEN_RE = re.compile(r"^[1-9][0-9]*(?:st|nd|rd|th)$")
+
+
+def _is_combined_offense_table_header_anchor(line: str) -> bool:
+    """The anchor's ACTUAL shape in the real PDF extraction, confirmed
+    2026-10-25 against a raw .text dump of the real LSPU Student Handbook
+    (pages 64-71 of 183, i.e. the whole Sec. 1-8 disciplinary-offense run):
+    unlike _is_offense_table_header_anchor's one-cell-per-line assumption
+    (never actually observed in this document), PyMuPDF joins the anchor
+    label with the ordinal cells onto ONE line using "|", e.g.
+    "Section/Title/Definition | 1st | 2nd | 3rd" -- byte-identical on every
+    one of the 8 consecutive sampled pages. Still narrowly anchored on the
+    same "section title definition" prefix, so this cannot match real
+    policy prose; only the trailing ordinal-token check is new.
+    """
+    canon = _canonical_heading_text(line)
+    prefix = "section title definition "
+    if not canon.startswith(prefix):
+        return False
+    tokens = canon[len(prefix) :].split()
+    return bool(tokens) and all(_ORDINAL_TOKEN_RE.match(token) for token in tokens)
+
+
+def _is_combined_offense_row_anchor(line: str) -> bool:
+    """The real second header line that always immediately follows
+    _is_combined_offense_table_header_anchor in the actual extraction,
+    e.g. "Offense | Offense | Offense" -- confirmed on the same 8 sampled
+    pages as that anchor. Exact repeated-word-only match, so it cannot
+    match real prose (which never consists solely of the word "offense"
+    repeated with nothing else)."""
+    tokens = _canonical_heading_text(line).split()
+    return bool(tokens) and all(token == "offense" for token in tokens)
+
+
+def _drop_offense_table_header_block(lines: list[str]) -> list[str]:
+    """Drop the offense-table header row, in either of its two observed
+    shapes:
+
+    1. One-cell-per-line (the anchor line plus the ordinal "1st"/
+       "Offense"/"2nd"/"Offense"/"3rd"/"Offense" fragments immediately
+       following it, each its own short line). Kept for robustness, but
+       not actually observed in the real handbook PDF -- see (2).
+    2. Combined-line (the anchor line already carrying the ordinal cells,
+       e.g. "Section/Title/Definition | 1st | 2nd | 3rd", immediately
+       followed by one line combining the "Offense" cells, e.g.
+       "Offense | Offense | Offense"). This is the shape PyMuPDF actually
+       produces for this table; see _is_combined_offense_table_header_anchor.
+
+    Both are scoped strictly to lines that directly follow the anchor, so
+    real inline text elsewhere (e.g. "1st offense: Suspension for one (1)
+    semester...") is never touched -- only the repeating column-header
+    row itself is removed. This does not attempt to reconstruct the
+    penalty-column text that follows the header on each page: PyMuPDF's
+    plain-text extraction does not reliably preserve which column each
+    word belongs to for that part (see the 2026-10-25 investigation notes
+    in this module's tests), so that content is left as-is rather than
+    risk inventing or cross-contaminating penalty text.
+    """
+    result: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if _is_offense_table_header_anchor(line):
+            index += 1
+            while index < len(lines) and _is_offense_ordinal_fragment(lines[index]):
+                index += 1
+            continue
+        if _is_combined_offense_table_header_anchor(line):
+            index += 1
+            if index < len(lines) and _is_combined_offense_row_anchor(lines[index]):
+                index += 1
+            continue
+        result.append(line)
+        index += 1
+    return result
+
+
+# === 2026-10-26: structured disciplinary-offense-table extraction =========
+#
+# The 2026-10-25 fix above only removes the table's own repeating header
+# row from the line-based text stream -- it does nothing about the
+# penalty-column text itself, which PyMuPDF's plain-text extraction
+# interleaves with the offense description using an unreliable "|"
+# delimiter (confirmed inconsistent: it marks a real column boundary in
+# some places and splits a single column's own wrapped word in others --
+# see the 2026-10-25/26 investigation notes). The 2026-10-26 investigation
+# confirmed PyMuPDF's NATIVE `page.find_tables().extract()` already
+# reconstructs this exact table into clean, correctly separated 4-cell
+# rows (description, 1st/2nd/3rd offense) for every one of the 15 pages
+# (73-87) the table spans in the real LSPU Student Handbook PDF -- this
+# section consumes that already-computed data (`PageExtraction.table_regions`,
+# passed in via the optional `pdf_pages` parameter) instead of re-deriving
+# column boundaries from raw word positions.
+#
+# Design: before line-based cleaning runs, replace ONLY the raw text of
+# pages whose native table positively matches the exact disciplinary-table
+# header shape with a reconstructed, clean paragraph per offense (merging
+# description-only continuation rows, and appending an explicit penalty
+# sentence per column). This flows through the EXISTING, unchanged
+# heading/title-splitting logic below (the "1.1."/"Sec. N." numbering
+# patterns this module already recognizes are untouched) -- no new
+# unit-splitting logic is needed, and no other page or document type is
+# affected. A hidden, content-embedded marker (stripped by
+# _finalize_disciplinary_penalty_metadata right after _build_units
+# returns, so it never reaches a student-facing answer) carries each
+# entry's per-column confidence into the resulting unit's metadata. Using
+# a content marker rather than relying on positional/ordering matching
+# between table rows and the resulting units is deliberate: it is immune
+# to _build_units' own splitting/merging/filtering behavior.
+#
+# Confidence per penalty cell is one of:
+#   "confirmed"   -- non-empty cell; used verbatim, exact wording.
+#   "empty"       -- empty cell on a bare "Sec. N. <title>." intro-only
+#                    row (no numbered sub-item), i.e. genuinely no penalty
+#                    by design (e.g. "Sec. 17. Habitual Offenders...").
+#   "unconfirmed" -- empty cell on a genuine numbered sub-item row (e.g.
+#                    "1.5."), where sibling sub-items of the same section
+#                    DO carry a penalty. This is a confirmed GAP in the
+#                    source extraction, not a confirmed absence of
+#                    penalty -- see PENALTY_UNCONFIRMED_NOTE. Never
+#                    presented to a reader as if it were "empty".
+
+PENALTY_CONFIDENCE_CONFIRMED = "confirmed"
+PENALTY_CONFIDENCE_EMPTY = "empty"
+PENALTY_CONFIDENCE_UNCONFIRMED = "unconfirmed"
+
+# Distinctive, non-ASCII bracket pair (U+27E6/U+27E7) chosen specifically
+# so this marker can never collide with real policy prose and never
+# contains a control character (unlike e.g. "\x00"), which could cause
+# problems in later text storage/serialization if the strip step below
+# were ever skipped by a bug -- this stays safely printable either way.
+_PENALTY_MARKER_RE = re.compile(r"⟦PENALTY_CONFIDENCE:([a-z]+),([a-z]+),([a-z]+)⟧")
+
+
+def _render_penalty_marker(confidence: list[str]) -> str:
+    return "⟦PENALTY_CONFIDENCE:{},{},{}⟧".format(*confidence)
+
+
+# Trailing period before the whitespace is optional: 2026-10-26 fix for
+# offense 14.3, whose actual source text is "14.3 Recruitment..." --
+# missing the period every sibling entry ("14.1.", "14.2.") has. Confirmed
+# this is a one-off source-PDF typesetting variant, not a different
+# numbering scheme.
+_SUBITEM_NUMBER_RE = re.compile(r"^\s*\d+(?:\.\d+)+\.?\s")
+_SECTION_NUMBER_RE = re.compile(r"^\s*Sec\.\s*\d+\.\s", re.I)
+_PENALTY_ORDINAL_HEADER_RE = re.compile(r"^[1-9][0-9]*(?:st|nd|rd|th) offense$")
+_PENALTY_ORDINAL_LABELS = ("First", "Second", "Third")
+
+PENALTY_UNCONFIRMED_NOTE = (
+    "not confirmed in the source document -- automated extraction could "
+    "not determine this value; verify with the issuing office before citing"
+)
+
+_INVALID_DISCIPLINARY_TABLE_NOTICE = (
+    "[EXTRACTION_UNCERTAIN: a disciplinary-offense table was detected on "
+    "this page but its structure could not be reliably parsed. Manual "
+    "review of the source PDF is required; no penalty content from this "
+    "page is presented as verified.]"
+)
+
+
+def _disciplinary_table_header_row_matches(row: object) -> bool:
+    if not isinstance(row, list) or len(row) != 4:
+        return False
+    if _canonical_heading_text(str(row[0] or "")) != "section title definition":
+        return False
+    return all(
+        _PENALTY_ORDINAL_HEADER_RE.match(_canonical_heading_text(str(cell or "")))
+        for cell in row[1:]
+    )
+
+
+def _dewrap_table_cell_text(value: object) -> str:
+    """Join a PyMuPDF table cell's internal PDF-wrap newlines into one
+    flowing phrase, repairing end-of-line hyphenation the same way the
+    rest of this module repairs hyphenated line wraps elsewhere."""
+    text = str(value or "")
+    if not text:
+        return ""
+    raw_lines = [part.strip() for part in text.splitlines() if part.strip()]
+    if not raw_lines:
+        return ""
+    joined = raw_lines[0]
+    for part in raw_lines[1:]:
+        if joined.endswith("-") and not joined.endswith("--"):
+            joined = joined[:-1] + part
+        else:
+            joined = f"{joined} {part}"
+    return normalize_whitespace(joined)
+
+
+def _find_disciplinary_tables(
+    page: "PageExtraction",
+) -> list[tuple[str, list[list[object]] | None, list[float] | None]]:
+    """Locate EVERY native table on this page whose header matches the
+    disciplinary-offense shape, not just the first -- a single page can
+    genuinely contain more than one (confirmed on the real LSPU Student
+    Handbook PDF: a numbered Article's table ending, and a new Article's
+    own table beginning, further down the same page -- see page 82,
+    where "Sec. 16/17" and "Article 3 / Sec. 1 Attendance" are two
+    separate native tables). Sorted by each table's own vertical position
+    (bbox top), so callers process them in true page order regardless of
+    the order PyMuPDF's ``find_tables()`` happened to return them in --
+    unrelated tables (e.g. the repeating page-header boilerplate table)
+    never match the header check below and are excluded entirely.
+
+    Each entry is ``(status, body_rows, bbox)``:
+
+    - ``("valid", rows, bbox)``: the header matched and every body row
+      has exactly 4 cells (the header row itself is excluded from
+      ``rows``). ``bbox`` is this table's own bounding box, used to find
+      genuine non-table content before the next table, or (for the last
+      match) below it (see ``_words_between``).
+    - ``("invalid", None, bbox)``: the header matched but at least one
+      body row did not have exactly 4 cells -- callers must NOT fall back
+      to this page's flattened text (see
+      ``_INVALID_DISCIPLINARY_TABLE_NOTICE``); this has never been
+      observed in the real document, but is handled defensively.
+
+    An empty list means no table on this page matches the known 4-column
+    disciplinary header at all -- this page is left completely untouched
+    by the rest of this section.
+    """
+    matches: list[tuple[str, list[list[object]] | None, list[float] | None, float]] = []
+    for table in page.table_regions or []:
+        rows = table.get("rows") if isinstance(table, dict) else None
+        if not rows:
+            continue
+        if not _disciplinary_table_header_row_matches(rows[0]):
+            continue
+        bbox = table.get("bbox")
+        top = float(bbox[1]) if bbox else 0.0
+        body = rows[1:]
+        if all(isinstance(row, list) and len(row) == 4 for row in body):
+            matches.append(("valid", body, bbox, top))
+        else:
+            matches.append(("invalid", None, bbox, top))
+    matches.sort(key=lambda item: item[3])
+    return [(status, rows, bbox) for status, rows, bbox, _top in matches]
+
+
+def _find_disciplinary_table(
+    page: "PageExtraction",
+) -> tuple[str, list[list[object]] | None, list[float] | None]:
+    """The first disciplinary table on this page, if any -- see
+    ``_find_disciplinary_tables`` for the full list (a page can contain
+    more than one). Returns ``("not_found", None, None)`` when there is
+    none. Kept as a thin wrapper, not duplicated matching logic, so the
+    two can never drift out of sync; retained for any caller that only
+    ever needs a single page's first match.
+    """
+    matches = _find_disciplinary_tables(page)
+    if not matches:
+        return "not_found", None, None
+    return matches[0]
+
+
+_NARRATIVE_CONSEQUENCE_PHRASES = (
+    "dropped from the roll",
+    "automatically failed",
+)
+_MAXIMUM_SEVERITY_WORDS_RE = re.compile(r"\b(?:expulsion|dismissal|dismissed)\b", re.I)
+
+
+def _classify_penalty_confidences(
+    description_lines: list[str],
+    penalty_texts: list[str],
+    *,
+    is_numbered_subitem: bool,
+) -> list[str]:
+    """Classify each of the three penalty cells' confidence.
+
+    2026-10-26 refinement, confirmed against the real native-table output
+    for every named case below. Looks ONLY at this row's own description
+    and its own three cells -- never at any other row/entry -- so a
+    penalty is never inferred from a neighboring offense. In order of
+    precedence:
+
+    1. Non-empty cell -> confirmed (verbatim).
+    2. Empty cell on a bare "Sec. N." intro row (not a numbered
+       sub-item) -> empty (unchanged, pre-2026-10-26 rule). E.g.
+       "Sec. 17. Habitual Offenders...".
+    3. Empty cell on a numbered sub-item whose OWN description already
+       states its consequence directly in narrative prose (e.g. "...
+       shall be dropped from the roll of students") -> empty: the
+       consequence is not missing, it is simply not expressed as a
+       Suspension/Expulsion table cell. Covers entries 1.2.3/1.2.4.
+    4. Empty cell on a numbered sub-item whose description is a bare
+       "Subsequent offense" escalation label (not a substantive offense
+       of its own) -> empty: there is no further tier to escalate to.
+       Covers entry 3.2.
+    5. Empty cell where an EARLIER cell in the SAME row already contains
+       "expulsion"/"dismissal" (this document's own maximum-severity
+       vocabulary, confirmed by its repeated use as the 3rd-offense
+       value elsewhere in this table) -> empty: nothing escalates past
+       expulsion. Covers entries 1.6, 1.7, 1.8.
+    6. Empty THIRD cell where the first AND second cells are BOTH
+       confirmed -> empty: a consistent 2-tier-only shape, confirmed
+       against sibling entries 14.2 and 14.3, which both share this
+       exact shape (this is evidence from the row's OWN two already-
+       confirmed cells, not from a different offense).
+    7. Otherwise (default, conservative, unchanged) -> unconfirmed.
+       Covers entry 1.5 (no cell has any evidence at all, unlike every
+       sibling 1.1-1.4/1.6-1.9) and entry 9.2 (only the 1st cell is
+       filled, with no expulsion/dismissal signal and no 2nd-cell
+       confirmation to extend rule 6 to the 3rd cell -- kept unconfirmed
+       per explicit instruction, absent stronger source evidence).
+    """
+    description_text = " ".join(description_lines)
+    # "3.2. Subsequent offense" canonicalizes to "3 2 subsequent offense"
+    # (the leading sub-item number stays in, as separate tokens) -- check
+    # for the phrase anywhere in a SHORT description, not as a strict
+    # prefix, so the leading numbering doesn't defeat the match. The word
+    # cap keeps this from firing on a long paragraph that merely mentions
+    # "subsequent offense" in passing.
+    is_subsequent_offense_label = (
+        len(description_text.split()) <= 6
+        and "subsequent offense" in _canonical_heading_text(description_text)
+    )
+    has_narrative_consequence = any(
+        phrase in description_text.lower() for phrase in _NARRATIVE_CONSEQUENCE_PHRASES
+    )
+
+    confidence: list[str] = []
+    for index, text in enumerate(penalty_texts):
+        if text:
+            confidence.append(PENALTY_CONFIDENCE_CONFIRMED)
+            continue
+        if not is_numbered_subitem:
+            confidence.append(PENALTY_CONFIDENCE_EMPTY)
+            continue
+        if has_narrative_consequence:
+            confidence.append(PENALTY_CONFIDENCE_EMPTY)
+            continue
+        if is_subsequent_offense_label:
+            confidence.append(PENALTY_CONFIDENCE_EMPTY)
+            continue
+        if any(_MAXIMUM_SEVERITY_WORDS_RE.search(earlier) for earlier in penalty_texts[:index]):
+            confidence.append(PENALTY_CONFIDENCE_EMPTY)
+            continue
+        if index == 2 and penalty_texts[0] and penalty_texts[1]:
+            confidence.append(PENALTY_CONFIDENCE_EMPTY)
+            continue
+        confidence.append(PENALTY_CONFIDENCE_UNCONFIRMED)
+    return confidence
+
+
+def _classify_disciplinary_rows(rows: list[list[object]]) -> tuple[str | None, list[dict]]:
+    """Merge description-only continuation rows and classify each
+    resulting entry's per-column penalty confidence.
+
+    Returns ``(leading_continuation_text, entries)``. ``leading_continuation_text``
+    is set only when this page's very first body row is itself a
+    continuation of the PREVIOUS page's last offense (no new numbering,
+    all three penalty cells empty) -- confirmed to occur in the real
+    document (e.g. Sec. 4 "Bringing of Deadly Weapons" spans pages 75-76:
+    its full penalty is already complete on page 75, but its description
+    continues as a headerless, all-empty-penalty row at the top of
+    page 76). Callers are responsible for attaching this text to the
+    previous replaced page, where the EXISTING line-based unit-builder's
+    own "lines after a heading become that heading's body" behavior
+    attaches it to the correct offense with no further special-casing.
+    """
+    entries: list[dict] = []
+    leading_continuation_lines: list[str] | None = None
+
+    for row in rows:
+        description_raw = str(row[0] or "")
+        # Deliberately NOT dewrapped into one flowing line: _parse_heading
+        # (used by the EXISTING, unchanged _build_units below) recognizes
+        # a numbered heading like "1.1. Cyber bullying or bullying" by its
+        # own short first physical PDF line, then treats every following
+        # line as that heading's body -- exactly like it already does for
+        # every other naturally multi-line-wrapped paragraph in this
+        # document. Collapsing the whole cell into one long line defeats
+        # that (a >8-word "title" is rejected as low-confidence -- see
+        # _is_low_confidence_section_title), so the cell's own original
+        # per-line shape is preserved here; only the short per-line
+        # cleanup every other raw line already gets (via _clean_line) is
+        # applied, not cross-line joining.
+        description_lines = [part.strip() for part in description_raw.splitlines() if part.strip()]
+        if not description_lines:
+            continue
+        penalty_texts = [_dewrap_table_cell_text(cell) for cell in row[1:4]]
+        all_penalties_empty = all(not text for text in penalty_texts)
+        starts_new_entry = bool(
+            _SUBITEM_NUMBER_RE.match(description_raw) or _SECTION_NUMBER_RE.match(description_raw)
+        )
+
+        if not starts_new_entry and all_penalties_empty and not entries:
+            leading_continuation_lines = (leading_continuation_lines or []) + description_lines
+            continue
+
+        if not starts_new_entry and all_penalties_empty:
+            entries[-1]["description_lines"].extend(description_lines)
+            continue
+
+        if not starts_new_entry and not all_penalties_empty:
+            # Unexpected shape: no new numbering, yet penalty cells are
+            # present. Never guess which entry this belongs to -- surface
+            # it as its own entry with every column unconfirmed rather
+            # than silently attaching possibly-mismatched penalty data to
+            # the wrong offense. Not observed in the real document.
+            entries.append(
+                {
+                    "description_lines": description_lines,
+                    "penalty_texts": penalty_texts,
+                    "confidence": [PENALTY_CONFIDENCE_UNCONFIRMED] * 3,
+                }
+            )
+            continue
+
+        is_numbered_subitem = bool(_SUBITEM_NUMBER_RE.match(description_raw))
+        confidence = _classify_penalty_confidences(
+            description_lines, penalty_texts, is_numbered_subitem=is_numbered_subitem
+        )
+        entries.append(
+            {
+                "description_lines": description_lines,
+                "penalty_texts": penalty_texts,
+                "confidence": confidence,
+            }
+        )
+
+    leading_continuation = "\n".join(leading_continuation_lines) if leading_continuation_lines else None
+    return leading_continuation, entries
+
+
+def _render_disciplinary_entry_text(entry: dict) -> str:
+    """Render one offense entry as: the description's own original
+    per-line text (so the EXISTING heading/title detection below sees the
+    same short first-line shape it already recognizes for every other
+    numbered offense in this document), followed by the penalty sentences
+    as a clearly separate trailing paragraph (plain body content -- never
+    a heading candidate itself, regardless of its own length)."""
+    lines = list(entry["description_lines"])
+    sentences = []
+    for label, text, confidence in zip(
+        _PENALTY_ORDINAL_LABELS, entry["penalty_texts"], entry["confidence"]
+    ):
+        if confidence == PENALTY_CONFIDENCE_CONFIRMED:
+            sentences.append(f"{label} offense: {text}.")
+        elif confidence == PENALTY_CONFIDENCE_UNCONFIRMED:
+            sentences.append(f"{label} offense: {PENALTY_UNCONFIRMED_NOTE}.")
+        # PENALTY_CONFIDENCE_EMPTY: no sentence -- genuinely not applicable,
+        # never invented.
+    if sentences:
+        lines.append(" ".join(sentences) + _render_penalty_marker(entry["confidence"]))
+    return "\n".join(lines)
+
+
+def _words_between(
+    page: "PageExtraction", *, bottom: float, top: float | None = None
+) -> str:
+    """Reconstruct genuine non-table content whose words sit at or below
+    ``bottom`` and, when ``top`` is given, strictly above it -- i.e.
+    between two consecutive matched disciplinary tables on the same
+    page. With ``top=None`` (the default), this is every word genuinely
+    trailing the LAST matched table on the page, exactly
+    ``_after_table_text``'s original single-table behavior. Reuses this
+    project's own existing, already-correct row-clustering/text-rendering
+    for non-table content (unchanged, imported rather than duplicated),
+    so content that was never part of a matched table is never touched
+    by anything in this section, and one table's own rows never leak
+    into another's -- each call is scoped strictly to the gap between
+    (or after) the specific tables its caller names.
+    """
+    if not page.words:
+        return ""
+    candidates = [w for w in page.words if w.get("y0", 0.0) >= bottom - 1.0]
+    if top is not None:
+        candidates = [w for w in candidates if w.get("y0", 0.0) < top - 1.0]
+    if not candidates:
+        return ""
+    from app.utils.pdf.pymupdf_extractor import _cluster_rows, _rows_to_text
+
+    return _rows_to_text(_cluster_rows(candidates))
+
+
+def _after_table_text(page: "PageExtraction", table_bbox: list[float] | None) -> str:
+    """Reconstruct any genuine non-table content below the disciplinary
+    table on a page where the table does not span the whole page body
+    (confirmed to occur once, on page 87, where the table ends after
+    "9.2. Unauthorized climbing..." and "Article 4. Norms and Decorum..."
+    follows on the same page). A thin wrapper over ``_words_between``
+    (unbounded above) -- kept so any existing caller's exact signature
+    and behavior is unchanged.
+    """
+    if not table_bbox:
+        return ""
+    return _words_between(page, bottom=table_bbox[3])
+
+
+def _attach_leading_continuation(
+    segments: list[object], leading_continuation: str
+) -> dict | None:
+    """Merges ``leading_continuation`` into the last offense ENTRY found
+    in ``segments`` (searching backward so a trailing between/after-table
+    text segment, if any, is skipped rather than mistaken for an entry),
+    mutating that entry's ``description_lines`` in place. Returns None on
+    success; returns a fresh placeholder entry dict (for the caller to
+    insert instead) when no prior entry exists to attach to.
+    """
+    for segment in reversed(segments):
+        if isinstance(segment, dict):
+            segment["description_lines"].extend(leading_continuation.splitlines())
+            return None
+    return {
+        "description_lines": leading_continuation.splitlines(),
+        "penalty_texts": ["", "", ""],
+        "confidence": [PENALTY_CONFIDENCE_UNCONFIRMED] * 3,
+    }
+
+
+def _apply_structured_disciplinary_tables(
+    page_texts: list[str],
+    pdf_pages: "list[PageExtraction] | None",
+) -> list[str]:
+    """Replace ONLY the pages whose native table(s) positively match the
+    disciplinary-offense header with a clean, reconstructed paragraph per
+    offense. Every other page's text -- and every call site that passes
+    ``pdf_pages=None`` (the default) -- is returned completely unchanged.
+
+    A single page may contain more than one matching table (see
+    ``_find_disciplinary_tables``); each is processed through the same
+    structured row classification and rendering as a lone table would
+    be, in true page order, with any genuine non-table prose between
+    (or after) them reconstructed via ``_words_between`` -- never
+    discarded, and never mistaken for a table's own rows.
+    """
+    if not pdf_pages:
+        return page_texts
+
+    pages_by_number = {page.page_number: page for page in pdf_pages}
+    result = list(page_texts)
+
+    # Two passes, deliberately: a page-boundary continuation (e.g. Sec. 4
+    # "Bringing of Deadly Weapons" spanning pages 75-76) must land INSIDE
+    # the previous page's last entry's description, BEFORE that entry's
+    # own penalty sentences are rendered -- never appended after an
+    # already-rendered penalty block (which is what stitching rendered
+    # TEXT across the page loop produced before 2026-10-26: the
+    # continuation ended up reading as "...Third offense: Expulsion from
+    # the University. to anyone who possesses bolo/s..."). Rendering is
+    # deferred to pass 2 so pass 1 can mutate a still-unrendered entry's
+    # ``description_lines`` in place. ``page_segments`` holds, per page,
+    # an ordered mix of offense-entry dicts (rendered via
+    # ``_render_disciplinary_entry_text``) and plain reconstructed-prose
+    # strings (rendered as-is) -- never flattened into one or the other
+    # ahead of time, so a between-tables heading/prose segment is never
+    # mistaken for an offense entry by the continuation-attachment logic
+    # above.
+    page_segments: dict[int, list[object]] = {}
+    page_order: list[int] = []
+    last_matched_index: int | None = None
+
+    for index in range(len(page_texts)):
+        page_number = index + 1
+        page = pages_by_number.get(page_number)
+        if page is None:
+            continue
+        matches = _find_disciplinary_tables(page)
+        if not matches:
+            continue
+        if any(status == "invalid" for status, _rows, _bbox in matches):
+            # Never partially trust a page that has even one invalid
+            # table alongside any others -- same conservative rule the
+            # single-table case already applied.
+            result[index] = _INVALID_DISCIPLINARY_TABLE_NOTICE
+            last_matched_index = None
+            continue
+
+        segments: list[object] = []
+        for table_index, (_status, rows, bbox) in enumerate(matches):
+            leading_continuation, entries = _classify_disciplinary_rows(rows or [])
+            if leading_continuation:
+                if table_index == 0 and last_matched_index is not None:
+                    placeholder = _attach_leading_continuation(
+                        page_segments[last_matched_index], leading_continuation
+                    )
+                else:
+                    placeholder = _attach_leading_continuation(segments, leading_continuation)
+                if placeholder is not None:
+                    # No prior entry anywhere to attach to (e.g. this
+                    # table's very first page) -- surface it as its own
+                    # entry rather than silently discarding real
+                    # description text.
+                    entries.insert(0, placeholder)
+
+            segments.extend(entries)
+
+            next_bbox = matches[table_index + 1][2] if table_index + 1 < len(matches) else None
+            if next_bbox is not None and bbox is not None:
+                between_text = _words_between(page, bottom=bbox[3], top=next_bbox[1])
+                if between_text:
+                    segments.append(between_text)
+            elif bbox is not None:
+                trailing_text = _words_between(page, bottom=bbox[3])
+                if trailing_text:
+                    segments.append(trailing_text)
+
+        page_segments[index] = segments
+        page_order.append(index)
+        last_matched_index = index
+
+    for index in page_order:
+        parts = [
+            _render_disciplinary_entry_text(segment) if isinstance(segment, dict) else segment
+            for segment in page_segments[index]
+        ]
+        result[index] = "\n".join(parts)
+
+    return result
+
+
+def _finalize_disciplinary_penalty_metadata(
+    units: list["HandbookKnowledgeUnit"],
+) -> list["HandbookKnowledgeUnit"]:
+    """Extract the hidden per-entry confidence marker (if present) from
+    each unit's content into its metadata, then strip the marker so it
+    never reaches a student-facing answer. A no-op for every unit that
+    does not contain the marker -- i.e. every unit untouched by this
+    section, for every document and every call site that omits
+    ``pdf_pages``.
+
+    ``HandbookKnowledgeUnit`` is a frozen dataclass, so this returns a
+    NEW list (via ``dataclasses.replace``) with matched units replaced
+    in place positionally; untouched units are returned unchanged
+    (same object, not copied).
+    """
+    result: list[HandbookKnowledgeUnit] = []
+    for unit in units:
+        match = _PENALTY_MARKER_RE.search(unit.content)
+        if not match:
+            result.append(unit)
+            continue
+        confidences = list(match.groups())
+        if PENALTY_CONFIDENCE_UNCONFIRMED in confidences:
+            overall = PENALTY_CONFIDENCE_UNCONFIRMED
+        elif PENALTY_CONFIDENCE_CONFIRMED in confidences:
+            overall = PENALTY_CONFIDENCE_CONFIRMED
+        else:
+            overall = PENALTY_CONFIDENCE_EMPTY
+        metadata = dict(unit.metadata)
+        metadata["penalty_1st_confidence"] = confidences[0]
+        metadata["penalty_2nd_confidence"] = confidences[1]
+        metadata["penalty_3rd_confidence"] = confidences[2]
+        metadata["penalty_confidence"] = overall
+        result.append(
+            replace(
+                unit,
+                content=_PENALTY_MARKER_RE.sub("", unit.content).strip(),
+                raw_text=_PENALTY_MARKER_RE.sub("", unit.raw_text).strip(),
+                title=_PENALTY_MARKER_RE.sub("", unit.title).strip(),
+                metadata=metadata,
+            )
+        )
+    return result
 
 
 def _repeated_edge_lines(page_texts: list[str]) -> set[str]:
@@ -446,16 +1149,67 @@ def _looks_like_broken_heading_word(left: str, right: str) -> bool:
     tail = left.rsplit(" ", 1)[-1]
     if tail.lower() in {"and", "or", "of", "for", "to", "in"}:
         return False
-    if _broken_word_remainder_looks_like_body(right):
+    if _broken_word_remainder_looks_like_body(right, left_tail=tail):
         return False
     return len(tail) >= 3 and len(right.split()) <= 3
 
 
-def _broken_word_remainder_looks_like_body(text: str) -> bool:
-    match = re.match(r"^[a-z]{2,}\b\s*(.*)$", text.strip(), flags=re.S)
+_BODY_CONTINUATION_LEAD_WORDS = {
+    "from", "the", "a", "an", "of", "in", "on", "at", "by", "with",
+    "within", "to", "for", "and", "or",
+}
+
+# Exact (left-tail, right-first-word) pairs that form a real, known
+# compound word (within, thereof, wherein, ...). Narrower than exempting
+# every word that starts with "with"/"there"/"where"/etc. from the
+# stopword check below: "with" + "in" must still repair to "within", but
+# "with" + "the" must NOT be exempted (there is no word "withthe").
+#
+# "up"+"on" ("upon") and "in"/"on"+"to" ("into"/"onto") are deliberately
+# NOT listed: _looks_like_broken_heading_word's own `len(tail) >= 3` check
+# (further down) already rejects any left-tail shorter than 3 characters,
+# so a pair whose left word is "up"/"in"/"on" can never actually reach a
+# merge decision here regardless of this set -- listing them would be
+# dead, misleading entries.
+_KNOWN_COMPOUND_WORD_SPLITS = {
+    ("with", "in"),
+    ("there", "of"), ("there", "in"), ("there", "by"), ("there", "to"),
+    ("here", "of"), ("here", "in"), ("here", "by"), ("here", "to"),
+    ("where", "of"), ("where", "in"), ("where", "by"),
+}
+
+
+def _broken_word_remainder_looks_like_body(text: str, *, left_tail: str = "") -> bool:
+    match = re.match(r"^([a-z]{2,})\b\s*(.*)$", text.strip(), flags=re.S)
     if not match:
         return False
-    remainder = match.group(1).strip()
+    first_word = match.group(1).lower()
+    remainder = match.group(2).strip()
+    # A genuinely split single word (e.g. "Devel" + "opment") never
+    # continues with a standalone closed-class word like "from"/"the" --
+    # those mark the start of a new clause, not the tail of the left
+    # word. Without this, a complete word immediately followed by such a
+    # word (e.g. "Expulsion" + "from the University") was wrongly treated
+    # as a broken-word fragment and joined with no space at all
+    # ("Expulsionfrom"), which is the opposite of what the OCR/PDF-wrap
+    # repair below exists for -- see _looks_like_broken_heading_word.
+    if first_word in _BODY_CONTINUATION_LEAD_WORDS:
+        is_known_compound = (left_tail.lower(), first_word) in _KNOWN_COMPOUND_WORD_SPLITS
+        # A genuine compound-word completion is normally followed by an
+        # article/determiner ("within the Classroom", "thereof this
+        # policy", "herein stated") -- lowercase. When the very next word
+        # is capitalized with nothing in between (e.g. "in Person", "by
+        # Email", "in Dormitory A"), that reads as the start of a new,
+        # unrelated phrase, not a continuation of the compound word.
+        # There's no dictionary to resolve this with certainty, so when
+        # the signal is ambiguous (anything not a known-safe lowercase
+        # continuation), conservatively keep the space rather than risk a
+        # false merge -- this is what blocks "here"+"in Person" ->
+        # "herein Person" while still allowing "with"+"in the Classroom"
+        # -> "within the Classroom".
+        looks_like_known_completion = is_known_compound and (not remainder or remainder[0].islower())
+        if not looks_like_known_completion:
+            return True
     if not remainder:
         return False
     return bool(
@@ -1021,7 +1775,25 @@ def _is_short_definition_unit(unit: HandbookKnowledgeUnit) -> bool:
         return False
     if not unit.metadata.get("section"):
         return False
-    if re.search(r"\b(requirement|offense|sanction|penalt|procedure|step)\b", f"{unit.title} {unit.content}", flags=re.I):
+    # Check the enclosing chapter/article/section labels too, not just this
+    # unit's own title/content: a numbered disciplinary-offense row (e.g.
+    # "1.1 Cyber bullying or bullying ... Suspension for one (1) month")
+    # often doesn't repeat the word "offense" in its own text at all -- the
+    # offense/sanction keyword typically lives one level up, on the
+    # enclosing "Article 2. Major Offense" heading. Without this, such rows
+    # were merged into one generic "Major Offense" blob by
+    # _merge_short_definition_units below, exactly the kind of definition-
+    # glossary grouping that heuristic is for -- just on the wrong content.
+    haystack = " ".join(
+        [
+            unit.title,
+            unit.content,
+            str(unit.metadata.get("chapter") or ""),
+            str(unit.metadata.get("article") or ""),
+            str(unit.metadata.get("section") or ""),
+        ]
+    )
+    if re.search(r"\b(requirement|offense|sanction|penalt|procedure|step)\b", haystack, flags=re.I):
         return False
     return bool(re.match(r"^[A-Z][A-Za-z ,'/()-]{2,}$", unit.title))
 
@@ -1282,11 +2054,28 @@ def _split_inline_definition_title(title: str) -> tuple[str, str]:
     return title, ""
 
 
+def _looks_like_clean_short_title(text: str) -> bool:
+    """A short (<=8 words), cleanly capitalized, letters/spaces-only
+    (plus common title punctuation) phrase. Used to narrowly exempt a
+    genuine short title from _is_continuation_clause()'s own "if|when|
+    any|the student|students|a student" rejection (confirmed 2026-10-26
+    against real disciplinary-offense titles beginning with "Any", e.g.
+    "Any severe or repeated use of...", "Any slanderous statement
+    or...", "Any drunkenness or drunken...") without weakening
+    _is_continuation_clause itself or either of its other two call
+    sites: this check only ever NARROWS a rejection into an exemption
+    for text that is independently confirmed to look like a real title,
+    never broadens what counts as a continuation clause."""
+    return bool(len(text.split()) <= 8 and re.match(r"^[A-Z][A-Za-z ,'/()-]{2,80}$", text.strip()))
+
+
 def _is_low_confidence_section_title(title: str, inline_body: str) -> bool:
     title = title.strip()
     if not title:
         return False
-    if _is_table_style_row(title) or _is_continuation_clause(title):
+    if _is_table_style_row(title):
+        return True
+    if _is_continuation_clause(title) and not _looks_like_clean_short_title(title):
         return True
     if len(title.split()) > 8 and not inline_body:
         return True
@@ -1303,7 +2092,21 @@ def _is_numeric_table_value(value: str, title: str) -> bool:
         return True
     if re.fullmatch(r"\d+\.\d{1,2}", marker):
         # GPA/grade values commonly appear as 2.25, 3.0, 5.0 and should stay inside tables.
-        return not _looks_like_numbered_definition_title(title)
+        if _looks_like_numbered_definition_title(title):
+            return False
+        # 2026-10-26 narrowing (confirmed against the real LSPU Student
+        # Handbook disciplinary-offense table, entries 5.1/5.4/6.2):
+        # _looks_like_numbered_definition_title rejects ANY title
+        # _is_continuation_clause() flags, which includes every title
+        # starting with the word "Any" -- a real, confirmed pattern for
+        # several genuine disciplinary-offense titles in this document
+        # ("Any severe or repeated use of...", "Any slanderous statement
+        # or...", "Any drunkenness or drunken..."), not a continuation
+        # clause at all. See _looks_like_clean_short_title for why this
+        # exemption cannot misclassify a real GPA/grade value.
+        if _looks_like_clean_short_title(title):
+            return False
+        return True
     if _is_table_style_row(f"{marker} {title}") or _is_continuation_clause(title):
         return True
     return False

@@ -102,6 +102,25 @@ GENERIC_INTENT_TOKENS = frozenset(
         "definition",
         "means",
         "meaning",
+        # Disciplinary-domain classification boilerplate: these words label
+        # the ENTIRE "Major Offense"/"Minor Offense" article shared by
+        # ~250+ unrelated disciplinary-rule chunks, so treating them as
+        # distinctive rewards any chunk under that shared ancestor label
+        # merely because the query says "offense" or "penalty" -- the same
+        # failure mode "policy"/"regulation" above already guard against,
+        # just for the disciplinary domain. See the Cyberbullying/Gambling
+        # investigation report: this is why a chunk that IS the correct
+        # answer (e.g. the real Cyberbullying penalty text) can be
+        # outranked by an unrelated sibling offense (e.g. "Unauthorized
+        # climbing") that merely shares the "offense" title-path keyword.
+        "offense",
+        "offenses",
+        "penalty",
+        "penalties",
+        "violation",
+        "violations",
+        "sanction",
+        "sanctions",
     }
 )
 DRESS_CODE_TERMS = (
@@ -160,6 +179,37 @@ _DISCIPLINARY_RECORDS_CHECK_RE = re.compile(r"\b(?:disciplinary|discipline)\s+re
 _NON_UNIFORM_DISCIPLINARY_TERMS = tuple(
     term for term in _NON_RECORDS_DISCIPLINARY_TERMS if term != "uniform"
 )
+# A query that explicitly asks about a penalty/offense/sanction value, for
+# a chunk that is itself genuinely about attendance/tardiness -- not just
+# any disciplinary chunk -- must not be treated as attendance-domain noise
+# the way a genuine absence-excuse/attendance-record query correctly still
+# treats an UNRELATED disciplinary chunk (see
+# test_attendance_query_penalizes_offenses_ojt_and_appendices, whose query
+# has no penalty-seeking term at all, so this exception never applies
+# there). Scoped narrowly on BOTH sides -- the query must carry an
+# explicit penalty-seeking term, AND the chunk's own content/title/path
+# (normalized_content already includes both, see rerank_chunks) must
+# already be on-topic for attendance/tardiness -- so this can never let
+# an unrelated disciplinary chunk (e.g. "Non-wearing of ID") dominate
+# merely because the query happens to say "penalty" or "offense".
+_ATTENDANCE_PENALTY_INTENT_RE = re.compile(r"\b(?:penalt(?:y|ies)|sanctions?|offenses?|violations?)\b", re.I)
+_ATTENDANCE_TOPIC_TERMS = ("attendance", "tardiness", "tardy", "absence", "absent")
+# A query's explicit numbered-section reference ("section 1.2.1", "sec.
+# 1.2.1", "under 1.2.1", "what does 1.2.1 say") should be able to win over
+# fuzzy title-phrase matching when a chunk's own heading-derived metadata
+# names that exact section. Conservative on purpose: only a dotted number
+# with >= 2 dots (3+ segments, e.g. "1.2.1") counts as an explicit section
+# reference on the query side -- a single-dot decimal ("1.5", a peso amount
+# or GPA) is never treated as a section number, and a query naming more
+# than one distinct such number is ambiguous and never boosted (see
+# _query_section_reference). The chunk's own number is parsed only from the
+# start of its existing section/article metadata string -- the extraction
+# pipeline's own "<number> > <heading text>" format (e.g. "1.2.1 >
+# Tardiness in all activities"), never scanned out of body text -- and
+# compared by exact string equality, so "1.2" can never match a query
+# naming "1.2.1" (see _chunk_section_number).
+_QUERY_SECTION_REF_RE = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)*)\b")
+_METADATA_SECTION_NUMBER_RE = re.compile(r"^(\d+(?:\.\d+)+)\b")
 FACULTY_AUDIENCE_TERMS = (
     "faculty",
     "faculty member",
@@ -909,6 +959,7 @@ def rerank_chunks(
     normalized_query = _normalize(query)
     profile = _query_profile(normalized_query)
     intent_phrases = _intent_phrases(normalized_query)
+    section_reference = _query_section_reference(normalized_query)
     citation_ready_cache: dict[str, bool] = {}
     reranked: list[RetrievedChunk] = []
     named_boosts = _named_service_boosts_enabled(ablation)
@@ -1147,6 +1198,34 @@ def rerank_chunks(
         if profile["graduate"] and _is_undergraduate_chunk(normalized_content, metadata):
             score -= 0.28
             reasons.append("penalty_undergraduate_for_graduate_query")
+        # A penalty/offense-seeking query, against a chunk that is both
+        # tagged disciplinary_rule and itself on-topic for attendance/
+        # tardiness, gets a narrow positive signal that it is the chunk
+        # actually answering the question -- not just topically adjacent to
+        # it (e.g. a same-domain "Attendance Policy" chunk with no offense
+        # text, or an unrelated disciplinary chunk such as "Non-wearing of
+        # ID"). See _is_attendance_penalty_answer_chunk for why this does
+        # not need the query to name "attendance"/"tardiness" itself. But
+        # when the query explicitly names a DIFFERENT specific section
+        # number (e.g. "penalty under section 1.2.1" while this chunk is
+        # "1.2.2"), the query has already disambiguated which sub-rule it
+        # wants -- this chunk's own disciplinary_rule tag and topic match
+        # must not override that explicit choice.
+        if _is_attendance_penalty_answer_chunk(
+            normalized_query, normalized_content, metadata_content_type
+        ) and (section_reference is None or _chunk_section_number(metadata) == section_reference):
+            score += 0.5
+            reasons.append("boost_attendance_penalty_answer_match")
+        # An explicit numbered-section reference ("section 1.2.1", "under
+        # 1.2.1", "what does 1.2.1 say") naming exactly the section this
+        # chunk's own heading-derived metadata carries. Exact string
+        # equality only -- "1.2" never matches a query naming "1.2.1" -- and
+        # skipped entirely when the query names zero or more than one such
+        # number (see _query_section_reference) or the chunk's metadata
+        # isn't number-led (see _chunk_section_number).
+        if section_reference and _chunk_section_number(metadata) == section_reference:
+            score += 0.5
+            reasons.append(f"boost_exact_section_number_match:{section_reference}")
         score += _domain_noise_penalty(
             profile=profile,
             normalized_query=normalized_query,
@@ -2245,6 +2324,76 @@ def _specific_curricular_path_boost(query: str, title_path: str, reasons: list[s
     return 0.0
 
 
+def _is_genuine_attendance_penalty_query(
+    profile: dict[str, bool], normalized_query: str, normalized_content: str
+) -> bool:
+    """A query that explicitly asks about a penalty/offense/sanction value,
+    for a chunk that is itself genuinely about attendance/tardiness -- not
+    just any disciplinary chunk. Scoped narrowly on BOTH sides -- the query
+    must carry an explicit penalty-seeking term, AND the chunk's own
+    content/title/path (normalized_content already includes both, see
+    rerank_chunks) must already be on-topic for attendance/tardiness -- so
+    this can never let an unrelated disciplinary chunk (e.g. "Non-wearing
+    of ID") dominate merely because the query happens to say "penalty" or
+    "offense". Used only by _domain_noise_penalty's exception -- kept
+    exactly as originally scoped (gated on _query_profile's existing,
+    narrower "attendance" flag) so that function's behavior is unchanged.
+    """
+    return bool(
+        profile.get("attendance")
+        and _ATTENDANCE_PENALTY_INTENT_RE.search(normalized_query)
+        and _contains_any(normalized_content, _ATTENDANCE_TOPIC_TERMS)
+    )
+
+
+def _is_attendance_penalty_answer_chunk(
+    normalized_query: str, normalized_content: str, content_type: str
+) -> bool:
+    """A penalty/offense/sanction-seeking query, matched against a chunk
+    that is both tagged disciplinary_rule (its OWN body text actually
+    contains offense/penalty/sanction wording -- see _content_type -- not
+    merely filed under a disciplinary chapter) and itself on-topic for
+    attendance/tardiness in its OWN content.
+
+    Deliberately does not require the query itself to name an
+    attendance/tardiness word (unlike
+    _is_genuine_attendance_penalty_query's profile["attendance"] gate,
+    which only recognizes attendance/absent/absence/illness/excuse/
+    medical -- not "tardiness" -- and so misses plain follow-ups like "What
+    happens for the second offense?"). Safe to drop that requirement here
+    because the CHUNK-side topic check already does the narrowing: a
+    chunk tagged disciplinary_rule that is not itself about attendance/
+    tardiness (e.g. "Non-wearing of ID") never matches
+    _ATTENDANCE_TOPIC_TERMS against its own content, so a bare
+    "penalty"/"offense" query can never pull in an unrelated disciplinary
+    chunk just because the chunk happens to carry that tag.
+    """
+    return bool(
+        content_type == "disciplinary rule"
+        and _ATTENDANCE_PENALTY_INTENT_RE.search(normalized_query)
+        and _contains_any(normalized_content, _ATTENDANCE_TOPIC_TERMS)
+    )
+
+
+def _query_section_reference(normalized_query: str) -> str | None:
+    """The single explicit section number the query names, or ``None`` when
+    it names zero or more than one -- an ambiguous query is never boosted."""
+    matches = _dedupe(_QUERY_SECTION_REF_RE.findall(normalized_query))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _chunk_section_number(metadata: dict) -> str | None:
+    """The chunk's own section number, parsed only from the start of its
+    existing heading-derived metadata string -- never scanned out of body
+    text -- or ``None`` when that metadata is absent or not number-led."""
+    for key in ("section", "article", "source_section", "section_heading"):
+        value = str(metadata.get(key) or "").strip()
+        match = _METADATA_SECTION_NUMBER_RE.match(value)
+        if match:
+            return match.group(1)
+    return None
+
+
 def _domain_noise_penalty(
     *,
     profile: dict[str, bool],
@@ -2296,9 +2445,21 @@ def _domain_noise_penalty(
             and content_type not in {"disciplinary_rule", "offense"}
             and not _contains_any(normalized_content, _NON_UNIFORM_DISCIPLINARY_TERMS)
         )
-        if not is_benign_disciplinary_records_check and not is_benign_uniform_mention and not (
-            profile.get("identity_document")
-            and _contains_any(normalized_content, ("identification card", "id validation", "student id"))
+        # Genuine attendance/tardiness PENALTY-seeking query, against a
+        # chunk that is itself genuinely about attendance/tardiness -- see
+        # _is_genuine_attendance_penalty_query's own docstring for why both
+        # sides are required.
+        is_genuine_attendance_penalty_query = _is_genuine_attendance_penalty_query(
+            profile, normalized_query, normalized_content
+        )
+        if (
+            not is_benign_disciplinary_records_check
+            and not is_benign_uniform_mention
+            and not is_genuine_attendance_penalty_query
+            and not (
+                profile.get("identity_document")
+                and _contains_any(normalized_content, ("identification card", "id validation", "student id"))
+            )
         ):
             penalty -= 0.55
             reasons.append("penalty_disciplinary_offense_out_of_domain")

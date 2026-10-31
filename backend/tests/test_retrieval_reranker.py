@@ -2,8 +2,10 @@ from typing import Any
 
 from app.services.chroma_store import RetrievedChunk
 from app.services.retrieval_reranker import (
+    GENERIC_INTENT_TOKENS,
     MAX_HEURISTIC_DELTA_MAGNITUDE,
     _apply_heuristic_delta_cap,
+    _query_section_reference,
     expand_query,
     is_faculty_restricted_query,
     prepare_retrieval_query,
@@ -288,6 +290,298 @@ def test_attendance_query_penalizes_offenses_ojt_and_appendices():
     assert "penalty_disciplinary_offense_out_of_domain" in noisy_reasons["Non-wearing of ID"]
     assert "penalty_unrelated_procedure" in noisy_reasons["OJT Procedures"]
     assert "penalty_unrelated_appendix" in noisy_reasons["Appendix A"]
+
+
+# === 2026-10-28 fix: genuine attendance/tardiness PENALTY-seeking queries =
+# must not have the attendance-domain noise penalty applied to a chunk
+# that is itself genuinely about attendance/tardiness, merely because it
+# is tagged disciplinary_rule or mentions a disciplinary term. The benign
+# query above (no penalty-seeking term at all) is unaffected -- it never
+# reaches the new exception, confirmed by its own continued pass above.
+
+
+def test_attendance_penalty_question_ranks_relevant_disciplinary_chunk_above_unrelated_policy():
+    """A natural-language attendance PENALTY question must not bury the
+    one chunk that actually answers it below an unrelated absence-excuse
+    policy chunk -- the exact defect confirmed by this session's own
+    read-only investigation (real page-82 "1.2.2" tardiness-penalty
+    content, equal starting scores, ranked LAST before this fix)."""
+    ranked = rerank_chunks(
+        "What is the penalty for tardiness in all activities where attendance is required?",
+        [
+            chunk(
+                "1.2.2 > Three (3) tardiness in a",
+                "class shall be considered one (1) absence from the same. First offense: One (1) day "
+                "absent plus community service. Second offense: Inform the parents/guardians with "
+                "three (3) days suspension. Third offense: Suspension for one (1) week.",
+                0.80,
+                metadata={"content_type": "disciplinary_rule", "article": "Article 3 > Minor Offense"},
+            ),
+            chunk(
+                "Excuse Slip for Illness",
+                "For absence due to illness, submit an excuse slip and medical certificate to OSAS.",
+                0.72,
+                metadata={"content_type": "policy", "chapter": "Undergraduate Academic Policies"},
+            ),
+        ],
+    )
+    assert ranked[0].metadata["section"] == "1.2.2 > Three (3) tardiness in a"
+    assert "penalty_disciplinary_offense_out_of_domain" not in ranked[0].rerank_reasons
+
+
+def test_first_or_second_offense_question_does_not_trigger_attendance_domain_penalty():
+    """An explicit first-/second-offense question (no "attendance"/
+    "absent"/"illness"/"excuse"/"medical" wording at all) never even
+    enters the attendance-domain profile, so the disciplinary chunk must
+    not be demoted by this rule either way -- confirmed directly, not
+    merely assumed from the profile definition."""
+    for question in (
+        "What is the penalty for the first tardiness offense?",
+        "What happens for the second offense?",
+    ):
+        ranked = rerank_chunks(
+            question,
+            [
+                chunk(
+                    "1.2.2 > Three (3) tardiness in a",
+                    "First offense: One (1) day absent plus community service. Second offense: "
+                    "Inform the parents/guardians with three (3) days suspension.",
+                    0.75,
+                    metadata={"content_type": "disciplinary_rule", "article": "Article 3 > Minor Offense"},
+                ),
+            ],
+        )
+        assert "penalty_disciplinary_offense_out_of_domain" not in ranked[0].rerank_reasons
+
+
+def test_explicit_section_number_question_does_not_blindly_penalize_disciplinary_chunk():
+    """An explicit numbered-section question ("under section 1.2.1") also
+    carries none of the attendance-profile trigger words, so the
+    disciplinary chunk must not be penalized by this rule for that
+    question either -- confirmed directly."""
+    ranked = rerank_chunks(
+        "What is the penalty under section 1.2.1?",
+        [
+            chunk(
+                "1.2.1 > Tardiness in all activities",
+                "where attendance is required shall be considered one (1) absence in class.",
+                0.75,
+                metadata={"content_type": "policy", "article": "Article 3 > Minor Offense"},
+            ),
+        ],
+    )
+    assert "penalty_disciplinary_offense_out_of_domain" not in ranked[0].rerank_reasons
+
+
+def test_benign_attendance_absence_excuse_query_still_penalizes_unrelated_disciplinary_chunk():
+    """The new exception requires an explicit penalty/offense/sanction
+    term in the QUERY itself -- a genuinely benign absence-excuse query
+    (no such term) must still penalize an out-of-domain disciplinary
+    chunk exactly as before, even when that chunk happens to be the same
+    real tardiness-penalty content used in the fix's own positive test
+    above. This is the narrow-exception boundary the fix must not widen."""
+    ranked = rerank_chunks(
+        "What should I do if I was absent due to illness?",
+        [
+            chunk(
+                "1.2.2 > Three (3) tardiness in a",
+                "class shall be considered one (1) absence from the same. First offense: One (1) "
+                "day absent plus community service.",
+                0.80,
+                metadata={"content_type": "disciplinary_rule", "article": "Article 3 > Minor Offense"},
+            ),
+            chunk(
+                "Excuse Slip for Illness",
+                "For absence due to illness, submit an excuse slip and medical certificate to OSAS.",
+                0.72,
+                metadata={"content_type": "policy", "chapter": "Undergraduate Academic Policies"},
+            ),
+        ],
+    )
+    assert ranked[0].metadata["section"] == "Excuse Slip for Illness"
+    noisy = {r.metadata["section"]: r.rerank_reasons for r in ranked}
+    assert "penalty_disciplinary_offense_out_of_domain" in noisy["1.2.2 > Three (3) tardiness in a"]
+
+
+# === 2026-10-28 follow-up fix: a positive answer-relevance signal for
+# genuine penalty-seeking queries against a chunk that is both tagged
+# disciplinary_rule and on-topic for attendance/tardiness
+# (boost_attendance_penalty_answer_match), and an exact section-number
+# match signal for explicit section references
+# (boost_exact_section_number_match). Both close gaps the exception above
+# cannot: that exception only stops a wrongful PENALTY on the correct
+# chunk, but does nothing when a different chunk's own title/path happens
+# to win on fuzzy title-phrase matching instead, nor when two chunks tie
+# outright (first/second-offense), nor when the query names a specific
+# section number at all.
+
+
+def test_attendance_penalty_query_wins_full_four_candidate_field():
+    """The exact four-candidate field from this session's own diagnosis:
+    the real "1.2.2" penalty-bearing chunk must outrank BOTH the "1.2.1"
+    chunk (same topic, no penalty text) and unrelated-but-same-domain
+    "Attendance Policy"/"Excuse Slip for Illness" chunks -- not just the
+    2-way field the original fix's own test above used. Checked with both
+    candidate orderings to prove the win is not an input-order artifact."""
+
+    def candidates():
+        return [
+            chunk(
+                "1.2.2 > Three (3) tardiness in a",
+                "class shall be considered one (1) absence from the same. First offense: One (1) day "
+                "absent plus community service. Second offense: Inform the parents/guardians with "
+                "three (3) days suspension. Third offense: Suspension for one (1) week.",
+                0.75,
+                metadata={"content_type": "disciplinary_rule", "article": "Article 3 > Minor Offense"},
+            ),
+            chunk(
+                "1.2.1 > Tardiness in all activities",
+                "where attendance is required shall be considered one (1) absence in class.",
+                0.75,
+                metadata={"content_type": "policy", "article": "Article 3 > Minor Offense"},
+            ),
+            chunk(
+                "Excuse Slip for Illness",
+                "For absence due to illness, submit an excuse slip and medical certificate to OSAS.",
+                0.75,
+                metadata={"content_type": "policy", "chapter": "Undergraduate Academic Policies"},
+            ),
+            chunk(
+                "Attendance Policy",
+                "For absence due to illness, submit an excuse slip and medical certificate to OSAS.",
+                0.75,
+                metadata={"chapter": "Undergraduate Academic Policies", "article": "Attendance"},
+            ),
+        ]
+
+    query = "What is the penalty for tardiness in all activities where attendance is required?"
+    for candidate_list in (candidates(), list(reversed(candidates()))):
+        ranked = rerank_chunks(query, candidate_list)
+        assert ranked[0].metadata["section"] == "1.2.2 > Three (3) tardiness in a"
+        assert "boost_attendance_penalty_answer_match" in ranked[0].rerank_reasons
+
+
+def test_first_and_second_offense_questions_pick_penalty_bearing_chunk_over_incomplete_one():
+    """Unlike the exception test above (which only confirms the disciplinary
+    chunk isn't penalized), this confirms it actually WINS over a same-topic
+    competitor that lacks the penalty text -- and that the win holds in
+    both candidate orderings, so it is not decided by input order (the
+    pre-fix behavior was an exact score tie)."""
+
+    def candidates():
+        return [
+            chunk(
+                "1.2.2 > Three (3) tardiness in a",
+                "First offense: One (1) day absent plus community service. Second offense: "
+                "Inform the parents/guardians with three (3) days suspension.",
+                0.75,
+                metadata={"content_type": "disciplinary_rule", "article": "Article 3 > Minor Offense"},
+            ),
+            chunk(
+                "1.2.1 > Tardiness in all activities",
+                "where attendance is required shall be considered one (1) absence in class.",
+                0.75,
+                metadata={"content_type": "policy", "article": "Article 3 > Minor Offense"},
+            ),
+        ]
+
+    for question in (
+        "What is the penalty for the first tardiness offense?",
+        "What happens for the second offense?",
+    ):
+        for candidate_list in (candidates(), list(reversed(candidates()))):
+            ranked = rerank_chunks(question, candidate_list)
+            assert ranked[0].metadata["section"] == "1.2.2 > Three (3) tardiness in a"
+            assert ranked[0].reranked_score > ranked[1].reranked_score
+
+
+def test_exact_section_number_reference_picks_the_matching_chunk():
+    """An explicit "section 1.2.1"/"section 1.2.2" reference must pick that
+    exact chunk over its sibling, in both candidate orderings -- the
+    section-number gap this session's diagnosis found (no signal existed
+    for this at all before this fix)."""
+
+    def candidates():
+        return [
+            chunk(
+                "1.2.1 > Tardiness in all activities",
+                "where attendance is required shall be considered one (1) absence in class.",
+                0.75,
+                metadata={"content_type": "policy", "article": "Article 3 > Minor Offense"},
+            ),
+            chunk(
+                "1.2.2 > Three (3) tardiness in a",
+                "class shall be considered one (1) absence from the same. First offense: One (1) "
+                "day absent plus community service.",
+                0.75,
+                metadata={"content_type": "disciplinary_rule", "article": "Article 3 > Minor Offense"},
+            ),
+        ]
+
+    cases = (
+        ("What is the penalty under section 1.2.1?", "1.2.1 > Tardiness in all activities"),
+        ("What happens under section 1.2.2?", "1.2.2 > Three (3) tardiness in a"),
+    )
+    for query, expected_section in cases:
+        for candidate_list in (candidates(), list(reversed(candidates()))):
+            ranked = rerank_chunks(query, candidate_list)
+            assert ranked[0].metadata["section"] == expected_section
+            assert any(
+                reason.startswith("boost_exact_section_number_match:") for reason in ranked[0].rerank_reasons
+            )
+
+
+def test_section_number_match_requires_exact_equality_not_prefix():
+    """"1.2" must never match a query naming "1.2.1" -- a prefix match would
+    wrongly treat a parent section as if it were the specific sub-item the
+    query asked about."""
+    ranked = rerank_chunks(
+        "What is the penalty under section 1.2.1?",
+        [
+            chunk(
+                "1.2 > Tardiness and absences",
+                "General tardiness and absence policy overview.",
+                0.75,
+                metadata={"content_type": "policy"},
+            ),
+            chunk(
+                "1.2.1 > Tardiness in all activities",
+                "where attendance is required shall be considered one (1) absence in class.",
+                0.75,
+                metadata={"content_type": "policy"},
+            ),
+        ],
+    )
+    reasons_by_section = {r.metadata["section"]: r.rerank_reasons for r in ranked}
+    assert not any(
+        reason.startswith("boost_exact_section_number_match:")
+        for reason in reasons_by_section["1.2 > Tardiness and absences"]
+    )
+    assert any(
+        reason.startswith("boost_exact_section_number_match:")
+        for reason in reasons_by_section["1.2.1 > Tardiness in all activities"]
+    )
+
+
+def test_section_number_query_recognition_accepts_expected_phrasings():
+    for query in (
+        "What is the penalty under section 1.2.1?",
+        "Sec. 1.2.1 - what does it say?",
+        "under 1.2.1, what happens?",
+        "what does 1.2.1 say",
+    ):
+        assert _query_section_reference(query.lower()) == "1.2.1"
+
+
+def test_section_number_query_recognition_rejects_decimals_and_ambiguous_queries():
+    # Single-dot decimals (money, GPA, percentages) are never section numbers.
+    assert _query_section_reference("what is 1.5 times the base pay?") is None
+    assert _query_section_reference("the tuition is p 2.5 per unit.") is None
+    # No number at all.
+    assert _query_section_reference("what is the penalty for tardiness?") is None
+    # More than one distinct section number named -- ambiguous, so no single
+    # answer can be confidently inferred.
+    assert _query_section_reference("compare section 1.2.1 and 1.2.2 side by side.") is None
 
 
 def test_scholastic_delinquency_penalizes_awards_and_major_offenses():
@@ -1440,3 +1734,192 @@ def test_generic_policy_title_penalty_still_applies_to_own_generic_title():
         ],
     )
     assert "penalty_generic_policy_title_without_topic" in ranked[0].rerank_reasons
+
+
+# --- Regression tests for the Cyberbullying/Gambling disciplinary-domain
+# generalization (see the investigation report): "offense"/"penalty" and
+# their disciplinary-classification siblings are the Article-level
+# boilerplate shared by every chunk under "Major Offense"/"Minor Offense",
+# not a topic word -- the same failure mode "policy"/"regulation" already
+# guard against in GENERIC_INTENT_TOKENS, just for the disciplinary domain.
+
+
+def test_offense_keyword_alone_does_not_boost_unrelated_sibling_chunk():
+    """An unrelated sibling offense that shares only the ancestor 'Major
+    Offense'/'Minor Offense' label with the query's own wording ('offense')
+    must not out-rank the chunk that actually answers the question -- even
+    when its own raw relevance score is slightly higher, mirroring the
+    real observed near-tie between the Cyberbullying chunk and
+    'Unauthorized climbing'.
+    """
+    ranked = rerank_chunks(
+        "What is the prescribed penalty for a first offense of cyberbullying?",
+        [
+            chunk(
+                "Cyber bullying or bullying",
+                "Done through the use of technology or any electronic means. First offense: "
+                "Suspension for one (1) month.",
+                0.853,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Major Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+            chunk(
+                "Unauthorized climbing",
+                "Climbing fences, walls, or roofs within university premises without authorization.",
+                0.856,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Minor Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+        ],
+    )
+    assert ranked[0].metadata["section"] == "Cyber bullying or bullying"
+    unrelated = next(r for r in ranked if r.metadata["section"] == "Unauthorized climbing")
+    assert "title_path_keyword_match" not in unrelated.rerank_reasons
+    assert not any(reason.startswith("boost_near_exact_service_title:offense") for reason in unrelated.rerank_reasons)
+    assert not any(reason.startswith("boost_distinctive_title_terms:offense") for reason in unrelated.rerank_reasons)
+
+
+def test_distinctive_offense_topic_word_still_boosts_correct_chunk():
+    """Excluding 'offense'/'penalty' from GENERIC_INTENT_TOKENS must not
+    weaken a genuine, specific topic match -- 'gambling' is still a real
+    distinctive term and must still win against an unrelated sibling
+    offense."""
+    ranked = rerank_chunks(
+        "What is the penalty for a first offense of gambling within the university premises?",
+        [
+            chunk(
+                "Gambling",
+                "Engaging in any form/s of gambling and/or possessing of cards or any gambling "
+                "paraphernalia within the University premises. First offense: Suspension for one "
+                "(1) week.",
+                0.84,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Major Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+            chunk(
+                "Drinking/Alcohol-related",
+                "Drinking alcoholic beverages or exhibiting drunken behavior within university premises.",
+                0.86,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Major Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+        ],
+    )
+    assert ranked[0].metadata["section"] == "Gambling"
+    assert any(
+        reason.startswith("boost_distinctive_title_terms:gambling")
+        or reason.startswith("boost_distinctive_content_terms:gambling")
+        for reason in ranked[0].rerank_reasons
+    )
+
+
+def test_generic_intent_tokens_additive_not_replacing_existing_entries():
+    """The disciplinary-boilerplate additions are purely additive -- every
+    pre-existing generic token (used across every other, non-disciplinary
+    domain already covered by this test file) must still be present."""
+    pre_existing = {
+        "policy",
+        "policies",
+        "regulation",
+        "regulations",
+        "procedure",
+        "section",
+        "article",
+        "office",
+    }
+    assert pre_existing <= GENERIC_INTENT_TOKENS
+    new_disciplinary_terms = {
+        "offense",
+        "offenses",
+        "penalty",
+        "penalties",
+        "violation",
+        "violations",
+        "sanction",
+        "sanctions",
+    }
+    assert new_disciplinary_terms <= GENERIC_INTENT_TOKENS
+
+
+def test_two_offense_comparison_surfaces_both_offenses_above_unrelated_siblings():
+    """General two-offense comparison requirement: a query naming two
+    different disciplinary offenses, with no query-specific rule for
+    either name, must rank both offenses' own chunks above unrelated
+    siblings that merely share the same ancestor Article label. Modeled on
+    the real Cyberbullying/Gambling structure (see the investigation
+    report), but with a synthetic, non-production fixture -- no live
+    snapshot IDs or production data.
+    """
+    ranked = rerank_chunks(
+        "What is the prescribed penalty for a first offense of cyberbullying versus a first "
+        "offense of gambling within the university premises?",
+        [
+            chunk(
+                "Cyber bullying or bullying",
+                "Done through the use of technology or any electronic means. First offense: "
+                "Suspension for one (1) month.",
+                0.86,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Major Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+            chunk(
+                "Gambling",
+                "Engaging in any form/s of gambling and/or possessing of cards or any gambling "
+                "paraphernalia within the University premises. First offense: Suspension for one "
+                "(1) week.",
+                0.86,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Major Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+            chunk(
+                "Unauthorized climbing",
+                "Climbing fences, walls, or roofs within university premises without authorization.",
+                0.865,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Minor Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+            chunk(
+                "Drinking/Alcohol-related",
+                "Drinking alcoholic beverages or exhibiting drunken behavior within university premises.",
+                0.865,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Major Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+            chunk(
+                "Other Offenses",
+                "Other offenses not stated herein shall be treated on a case to case basis.",
+                0.865,
+                metadata={
+                    "chapter": "Student Discipline",
+                    "article": "Minor Offense",
+                    "content_type": "disciplinary_rule",
+                },
+            ),
+        ],
+    )
+    top_two_titles = {ranked[0].metadata["section"], ranked[1].metadata["section"]}
+    assert top_two_titles == {"Cyber bullying or bullying", "Gambling"}

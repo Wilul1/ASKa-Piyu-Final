@@ -16,7 +16,7 @@ from typing import Any
 import re
 
 from app.config import settings
-from app.services.chunking import DocumentChunk, chunk_document_text
+from app.services.chunking import DocumentChunk
 from app.services.chroma_store import get_knowledge_base_store
 from app.models.schemas import DocumentFieldSchema, StructuredDocumentSchema
 from app.services.document_ingestion import ingest_document
@@ -40,6 +40,12 @@ from app.services.knowledge_document_types import (
     detect_knowledge_document_type,
 )
 from app.services.structured_document_parser import build_structured_document, format_structured_document
+from app.services.common_representation.adapters import (
+    adapt_generic_text,
+    adapt_handbook_document,
+    adapt_prebuilt_chunks,
+)
+from app.services.common_representation.chunker import chunk_document_record
 from app.services.text_cleaner import looks_like_toc_entry_line, is_heading_candidate
 
 
@@ -278,6 +284,59 @@ def _compat_response_document_type(extraction, kb_document_type: KnowledgeDocume
     return kb_document_type.value
 
 
+class ChunkSizeConfigurationError(RuntimeError):
+    """``settings.chunk_hard_max_chars`` must be >= ``settings.chunk_max_chars``
+    for the global chunker's target-vs-hard-maximum packing logic to make
+    sense. Raised instead of silently clamping either value."""
+
+
+def _validated_chunk_size_settings() -> tuple[int, int, int]:
+    target_chars = settings.chunk_max_chars
+    hard_max_chars = settings.chunk_hard_max_chars
+    if hard_max_chars < target_chars:
+        raise ChunkSizeConfigurationError(
+            f"settings.chunk_hard_max_chars ({hard_max_chars}) must be >= "
+            f"settings.chunk_max_chars ({target_chars}). Check "
+            "ASKA_CHUNK_HARD_MAX_CHARS / ASKA_CHUNK_MAX_CHARS."
+        )
+    return target_chars, hard_max_chars, settings.chunk_overlap
+
+
+def _with_compat_metadata(
+    chunks: list[DocumentChunk],
+    *,
+    document_type: str,
+    title: str,
+    source_document: str,
+) -> list[DocumentChunk]:
+    """The global chunker's own metadata keys (document_id, source_filename,
+    content_type, page_start/page_end) don't match the legacy key names
+    several downstream consumers read directly -- notably
+    question_answering.py's ``_raw_page_number``, which reads ONLY
+    ``metadata["page_number"]`` (never ``page_start``) by its own explicit
+    design. Each key is filled in only where missing/falsy, never
+    overwriting a value a branch's own adapter or structured_fields
+    passthrough already set correctly."""
+    result: list[DocumentChunk] = []
+    for chunk in chunks:
+        metadata = dict(chunk.metadata or {})
+        metadata.setdefault("document_type", document_type)
+        if not metadata.get("title"):
+            metadata["title"] = title
+        metadata.setdefault("source_document", source_document)
+        if "page_number" not in metadata and metadata.get("page_start") is not None:
+            metadata["page_number"] = metadata["page_start"]
+        result.append(
+            DocumentChunk(
+                text=chunk.text,
+                chunk_index=chunk.chunk_index,
+                char_start=chunk.char_start,
+                metadata=metadata,
+            )
+        )
+    return result
+
+
 def _chunks_for_extraction(
     extraction,
     index_text: str,
@@ -287,8 +346,29 @@ def _chunks_for_extraction(
     source_document: str = "unknown",
     preview_file_path: str | None = None,
 ) -> list[DocumentChunk]:
-    if kb_document_type != KnowledgeDocumentType.INFORMATION:
-        return build_typed_chunks(
+    target_chars, hard_max_chars, overlap_chars = _validated_chunk_size_settings()
+
+    if kb_document_type in (KnowledgeDocumentType.PROCEDURE, KnowledgeDocumentType.REQUIREMENT):
+        # _procedure_chunks/_requirement_chunks (knowledge_document_types.py)
+        # fuse recognition, field normalization, noise/artifact filtering,
+        # and content-text synthesis together in private helpers this file
+        # is not authorized to modify or reproduce. Their existing,
+        # already-correct output is used as-is; the global chunker is used
+        # only to split any individual chunk that exceeds hard_max_chars.
+        #
+        # target_chars=hard_max_chars (not the usual chunk_max_chars target)
+        # is deliberate here: _chunk_paragraph repacks at whatever
+        # target_chars it's given, regardless of how it got there, so
+        # passing the normal 1200-char target would re-split an
+        # already-correctly-bounded prebuilt chunk purely for being over
+        # 1200 chars, even though it's already under the 1800-char hard
+        # ceiling (confirmed empirically against the real Citizen's
+        # Charter: 4/134 real service chunks fell in that band and were
+        # split without being oversized). Using hard_max_chars as both
+        # target and max makes chunk_document_record's packing step a
+        # no-op for anything already within the hard ceiling, so prebuilt
+        # chunks are only ever split when they actually exceed it.
+        legacy_chunks = build_typed_chunks(
             kb_document_type=kb_document_type,
             extraction=extraction,
             index_text=index_text,
@@ -296,35 +376,42 @@ def _chunks_for_extraction(
             source_document=source_document,
             preview_file_path=preview_file_path,
         )
+        record = adapt_prebuilt_chunks(
+            legacy_chunks,
+            document_id=source_document,
+            source_filename=source_document,
+            classification=kb_document_type.value,
+        )
+        chunks = chunk_document_record(
+            record, target_chars=hard_max_chars, max_chars=hard_max_chars, overlap_chars=overlap_chars
+        )
+        return _with_compat_metadata(
+            chunks, document_type=kb_document_type.value, title=title, source_document=source_document
+        )
+
     structured = getattr(extraction, "structured", None)
     if isinstance(structured, HandbookPolicyDocument):
-        return build_typed_chunks(
-            kb_document_type=KnowledgeDocumentType.INFORMATION,
-            extraction=extraction,
-            index_text=index_text,
+        record = adapt_handbook_document(structured, document_id=source_document)
+        chunks = chunk_document_record(
+            record, target_chars=target_chars, max_chars=hard_max_chars, overlap_chars=overlap_chars
+        )
+        return _with_compat_metadata(
+            chunks,
+            document_type=KnowledgeDocumentType.INFORMATION.value,
             title=title,
             source_document=source_document,
-            preview_file_path=preview_file_path,
         )
-    chunks = chunk_document_text(
-        index_text,
-        chunk_size=settings.chunk_max_chars,
-        chunk_overlap=settings.chunk_overlap,
+
+    record = adapt_generic_text(index_text, document_id=source_document, source_filename=source_document)
+    chunks = chunk_document_record(
+        record, target_chars=target_chars, max_chars=hard_max_chars, overlap_chars=overlap_chars
     )
-    return [
-        DocumentChunk(
-            text=chunk.text,
-            chunk_index=chunk.chunk_index,
-            char_start=chunk.char_start,
-            metadata={
-                **(chunk.metadata or {}),
-                "document_type": KnowledgeDocumentType.INFORMATION.value,
-                "title": title,
-                "source_document": source_document,
-            },
-        )
-        for chunk in chunks
-    ]
+    return _with_compat_metadata(
+        chunks,
+        document_type=KnowledgeDocumentType.INFORMATION.value,
+        title=title,
+        source_document=source_document,
+    )
 
 
 def _word_count(text: str) -> int:
@@ -877,10 +964,37 @@ def _quality_payload_from_charter_v2_services(
     Matches ingest: do not re-parse rendered V2 text through procedure/information
     chunking, and do not overwrite charter office metadata via taxonomy enrichment.
     """
-    chunks = build_chunks_from_charter_v2_services(
+    # build_chunks_from_charter_v2_services (knowledge_document_types.py) fuses
+    # recognition, field normalization, and noise/artifact/reference-section
+    # filtering together in private helpers this file is not authorized to
+    # modify or reproduce. Its existing, already-correct output is used as-is;
+    # the global chunker is used only to split any individual chunk that
+    # exceeds hard_max_chars.
+    #
+    # target_chars=hard_max_chars (see the identical comment in
+    # _chunks_for_extraction's Procedure/Requirement branch above): passing
+    # the normal 1200-char target here would re-split an already-correctly-
+    # bounded real service chunk just for being over 1200 chars, even
+    # though it's under the 1800-char hard ceiling -- confirmed empirically
+    # against the real Citizen's Charter PDF (4/134 real service chunks
+    # fell in that band).
+    legacy_chunks = build_chunks_from_charter_v2_services(
         services,
         title=title,
         source_document=source_document,
+    )
+    _target_chars, hard_max_chars, overlap_chars = _validated_chunk_size_settings()
+    record = adapt_prebuilt_chunks(
+        legacy_chunks,
+        document_id=source_document,
+        source_filename=source_document,
+        classification="citizen_charter",
+    )
+    chunks = chunk_document_record(
+        record, target_chars=hard_max_chars, max_chars=hard_max_chars, overlap_chars=overlap_chars
+    )
+    chunks = _with_compat_metadata(
+        chunks, document_type="citizen_charter", title=title, source_document=source_document
     )
     units = _knowledge_units_for_extraction(
         extraction,

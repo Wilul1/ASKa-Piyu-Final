@@ -58,7 +58,15 @@ from app.services.admin.knowledge_base_pipeline import (
 )
 from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
-from app.services.chunking import DocumentChunk, chunk_document_text
+from app.services.chunking import DocumentChunk
+# NOTE: adapt_handbook_document is NOT imported here -- this baseline
+# (674f95ae) has no _chunks_from_handbook_document or any Handbook-
+# detection dispatch to use it with (see the Stage 3 reconstruction
+# report's explicit note on the unresolved Handbook-integration portion).
+# Importing it unused here would be misleading dead code, not a faithful
+# reconstruction of the approved change.
+from app.services.common_representation.adapters import adapt_generic_text
+from app.services.common_representation.chunker import chunk_document_record
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
 from app.services.text_cleaner import (
     _ARTICLE_CHAPTER_HEADING_RE,
@@ -698,6 +706,46 @@ def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> 
     return updated
 
 
+def _apply_lightweight_compat_metadata(
+    chunks: list[DocumentChunk],
+    *,
+    document_type: str,
+    title: str,
+    source_filename: str,
+) -> list[DocumentChunk]:
+    """Non-destructive compatibility fill for metadata keys the shared
+    global chunker (app.services.common_representation.chunker) doesn't
+    itself produce, but this module's own downstream consumers --
+    knowledge_units_for_extraction/chunk_preview/validation_report (via
+    knowledge_base_pipeline.py, reused unchanged here) and, on the
+    generic path only, enrich_chunks_with_category_metadata -- read
+    directly. Every key is filled only where missing/falsy, never
+    overwriting a value the chunker, an adapter, or an earlier step
+    (e.g. _attach_section_headings) already set correctly. section_heading
+    specifically: the Handbook adapter's chunker output already carries
+    the equivalent signal under "section"/"article"/"chapter" (chunker.py's
+    own _build_metadata); this mirrors it into "section_heading" too, the
+    exact key this module's Handbook branch has always set, so no
+    consumer that reads that literal key name loses the signal."""
+    result: list[DocumentChunk] = []
+    for chunk in chunks:
+        metadata = dict(chunk.metadata or {})
+        metadata.setdefault("document_type", document_type)
+        if not metadata.get("title"):
+            metadata["title"] = title
+        metadata.setdefault("source_document", source_filename)
+        if "page_number" not in metadata and metadata.get("page_start") is not None:
+            metadata["page_number"] = metadata["page_start"]
+        if not metadata.get("section_heading"):
+            fallback_heading = metadata.get("section") or metadata.get("article") or metadata.get("chapter")
+            if fallback_heading:
+                metadata["section_heading"] = fallback_heading
+        result.append(
+            DocumentChunk(text=chunk.text, chunk_index=chunk.chunk_index, char_start=chunk.char_start, metadata=metadata)
+        )
+    return result
+
+
 def build_chunks_with_pages(
     page_texts: list[str],
     page_offsets: list[int],
@@ -712,23 +760,34 @@ def build_chunks_with_pages(
     if not cleaned.strip():
         raise DigitalIngestionError("No usable text remained after cleaning.")
 
-    raw_chunks = chunk_document_text(cleaned, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    # Stage 4B: reuses the shared global chunker (app.services.
+    # common_representation) instead of calling chunk_document_text
+    # directly, so this path gets the same hard_max_chars ceiling the
+    # full/local pipeline already enforces (Stage 4A Task 4/6) -- this
+    # path had no size cap at all before. target_chars=chunk_size (this
+    # function's existing parameter, always settings.chunk_max_chars at
+    # every call site) keeps normal packing behavior unchanged;
+    # max_chars=settings.chunk_hard_max_chars is the new hard ceiling.
+    record = adapt_generic_text(cleaned, document_id=source_filename, source_filename=source_filename)
+    raw_chunks = chunk_document_record(
+        record,
+        target_chars=chunk_size,
+        max_chars=settings.chunk_hard_max_chars,
+        overlap_chars=chunk_overlap,
+    )
     chunks = [
         DocumentChunk(
             text=c.text,
             chunk_index=c.chunk_index,
             char_start=c.char_start,
-            metadata={
-                **(c.metadata or {}),
-                "document_type": "information",
-                "title": title,
-                "source_document": source_filename,
-                "page_number": _page_for_offset(c.char_start, page_offsets),
-            },
+            metadata={**(c.metadata or {}), "page_number": _page_for_offset(c.char_start, page_offsets)},
         )
         for c in raw_chunks
     ]
     chunks = _attach_section_headings(chunks, cleaned)
+    chunks = _apply_lightweight_compat_metadata(
+        chunks, document_type="information", title=title, source_filename=source_filename
+    )
     # allow_llm=False: this path must stay fast and free of per-chunk LLM
     # calls (classify_chunk's Groq fallback can take minutes and cost real
     # API usage across a multi-page document) -- rule/similarity-only
@@ -746,10 +805,19 @@ def _mirror_page_range_metadata(chunks: list[DocumentChunk]) -> list[DocumentChu
     read page_start/page_end; this pipeline's chunks only carry page_number
     (consumed separately by citation grounding -- see chroma_store.py /
     question_answering.py). Purely additive: page_number is left untouched.
+
+    Checks the VALUE of page_start, not merely whether the key is present
+    (Stage 4B): the shared global chunker (app.services.common_representation)
+    always sets page_start explicitly -- None when no real page range is
+    known, e.g. for generic text -- unlike this pipeline's own pre-Stage-4B
+    chunks, which simply omitted the key. A key-presence check would treat
+    an explicit None as "already set" and skip the mirror, silently losing
+    page_number's value. A real, already-present page_start (e.g. a
+    Handbook unit's true page range) is left exactly as-is either way.
     """
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        if "page_number" in metadata and "page_start" not in metadata:
+        if "page_number" in metadata and metadata.get("page_start") is None:
             metadata["page_start"] = metadata["page_number"]
             metadata["page_end"] = metadata["page_number"]
     return chunks

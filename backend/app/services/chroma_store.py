@@ -325,6 +325,20 @@ class KnowledgeBaseStore:
             for key, value in (document_metadata or {}).items():
                 if isinstance(value, (str, int, float, bool)):
                     metadata[f"doc_{key}"] = value
+            # Reassert AFTER the chunk-metadata merge above: this
+            # function's own document_id argument -- the UUID this
+            # publish assigns, which export/delete/count/verification all
+            # query by -- is the sole authority for Chroma document
+            # identity. A chunk's own metadata can legitimately carry a
+            # "document_id" key from the common structured representation
+            # (app.services.common_representation.chunker, which labels
+            # each chunk with its source DocumentRecord's id -- typically
+            # the source filename, a different concept from this
+            # function's per-publish UUID); without this line, that value
+            # would silently overwrite the real identity above, breaking
+            # every identity-based lookup for the record. No-op for any
+            # chunk without its own "document_id" key.
+            metadata["document_id"] = document_id
             _enrich_chunk_citation_metadata(metadata, chunk_text=chunk.text)
             metadatas.append(metadata)
 

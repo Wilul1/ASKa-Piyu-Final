@@ -102,6 +102,15 @@ class KnowledgeUnitSchema(BaseModel):
     status: str
     suspicious_reasons: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+    # Advisory-only diagnostic context from
+    # knowledge_base_pipeline.suspicious_unit_diagnostics(), attached by
+    # digital_ingestion._attach_unit_diagnostics() when this unit's own
+    # status is "Suspicious". None for every other unit, and None here
+    # (rather than omitted) for any older/cached payload that predates
+    # these two fields -- never authoritative, never written back into
+    # title/content/status/suspicious_reasons/metadata above.
+    original_page_text_snippet: str | None = None
+    proposed_classification: str | None = None
 
 
 class ChunkPreviewSchema(BaseModel):

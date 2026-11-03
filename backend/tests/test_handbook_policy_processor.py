@@ -1534,6 +1534,7 @@ def test_suspicious_unit_diagnostics_include_source_snippet_and_classification()
 
     assert diagnostics == [
         {
+            "unit_index": 0,
             "original_page_text_snippet": page_texts[0].strip(),
             "extracted_unit_title": "Minor Offense",
             "extracted_content": "",
@@ -1541,6 +1542,89 @@ def test_suspicious_unit_diagnostics_include_source_snippet_and_classification()
             "proposed_classification": "extraction issue",
         }
     ]
+
+
+def _suspicious_unit(title: str = "Minor Offense") -> dict:
+    return {
+        "title": title,
+        "content": "",
+        "content_type": "disciplinary_rule",
+        "status": "Suspicious",
+        "suspicious_reasons": ["very_short"],
+        "metadata": {"source_title": "Student Handbook", "chapter": "Chapter 7 > Student Discipline", "page_start": 1},
+    }
+
+
+def _ok_unit(title: str = "Admission Requirements") -> dict:
+    return {
+        "title": title,
+        "content": "A student seeking admission must comply with the following minimum requirements for enrolment.",
+        "content_type": "policy",
+        "status": "OK",
+        "suspicious_reasons": [],
+        "metadata": {"source_title": "Student Handbook", "chapter": "Chapter 3 > Admission", "page_start": 1},
+    }
+
+
+def test_suspicious_unit_diagnostics_unit_index_at_original_position_zero():
+    page_texts = ["Minor Offense\nSome disciplinary content."]
+    diagnostics = suspicious_unit_diagnostics(page_texts=page_texts, units=[_suspicious_unit()])
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["unit_index"] == 0
+
+
+def test_suspicious_unit_diagnostics_non_suspicious_unit_does_not_shift_later_index():
+    page_texts = ["Admission Requirements\nSome policy text.", "Minor Offense\nSome disciplinary content."]
+    units = [_ok_unit(), _suspicious_unit()]
+
+    diagnostics = suspicious_unit_diagnostics(page_texts=page_texts, units=units)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["unit_index"] == 1, "the leading OK unit must not shift the suspicious unit's original index"
+
+
+def test_suspicious_unit_diagnostics_multiple_suspicious_units_retain_original_indices():
+    page_texts = [
+        "Minor Offense\nFirst disciplinary content.",
+        "Admission Requirements\nSome policy text.",
+        "Major Offense\nSecond disciplinary content.",
+    ]
+    units = [
+        _suspicious_unit(title="Minor Offense"),
+        _ok_unit(),
+        _suspicious_unit(title="Major Offense"),
+    ]
+
+    diagnostics = suspicious_unit_diagnostics(page_texts=page_texts, units=units)
+
+    assert [d["unit_index"] for d in diagnostics] == [0, 2]
+    assert [d["extracted_unit_title"] for d in diagnostics] == ["Minor Offense", "Major Offense"]
+
+
+def test_suspicious_unit_diagnostics_identical_units_at_different_positions_get_distinct_indices():
+    # Deliberately the SAME dict object at two different positions in the
+    # list -- units.index(unit) would wrongly return 0 for both; this must
+    # not happen with the enumerate-based implementation.
+    duplicate = _suspicious_unit(title="Minor Offense")
+    units = [duplicate, duplicate]
+    page_texts = ["Minor Offense\nSome disciplinary content."]
+
+    diagnostics = suspicious_unit_diagnostics(page_texts=page_texts, units=units)
+
+    assert len(diagnostics) == 2
+    assert [d["unit_index"] for d in diagnostics] == [0, 1]
+    # Every other field is identical between the two entries, as expected
+    # for two occurrences of the exact same unit content.
+    assert diagnostics[0]["extracted_unit_title"] == diagnostics[1]["extracted_unit_title"]
+    assert diagnostics[0]["proposed_classification"] == diagnostics[1]["proposed_classification"]
+
+
+def test_suspicious_unit_diagnostics_no_suspicious_units_returns_empty_list():
+    page_texts = ["Admission Requirements\nSome policy text."]
+    diagnostics = suspicious_unit_diagnostics(page_texts=page_texts, units=[_ok_unit()])
+
+    assert diagnostics == []
 
 
 def test_diagnostic_report_summarizes_units_and_samples():

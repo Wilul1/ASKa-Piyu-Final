@@ -37,7 +37,9 @@ from app.models.db_models import IngestionJob
 from app.services.admin.digital_ingestion import (
     DigitalIngestionError,
     DigitalIngestionReconciliationError,
+    _attach_unit_diagnostics,
 )
+from app.services.admin.knowledge_base_pipeline import suspicious_unit_diagnostics
 from app.services.chroma_store import KnowledgeBaseStore
 
 ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key"}
@@ -571,3 +573,210 @@ def test_active_job_concurrency_guard_returns_409_not_a_historical_job():
 
     mock_post.assert_not_called()
     assert response.status_code == 409
+
+
+# --- Stage 23 Part 2: suspicious-unit diagnostics attached to the preview --
+#
+# Pure, no-HTTP/no-Chroma unit tests of _attach_unit_diagnostics() -- the
+# function that joins knowledge_base_pipeline.suspicious_unit_diagnostics()
+# results back onto their exact source unit by unit_index (never by title,
+# never by units.index(), never by filter-then-zip position). See Stage 23
+# Part 1 for why unit_index is the only safe join key.
+
+
+def _suspicious_unit(unit_index: int, title: str = "Minor Offense", page_start: int = 1) -> dict:
+    return {
+        "unit_index": unit_index,
+        "title": title,
+        "content": "",
+        "content_type": "disciplinary_rule",
+        "status": "Suspicious",
+        "suspicious_reasons": ["very_short"],
+        "metadata": {"page_start": page_start},
+    }
+
+
+def _ok_unit(unit_index: int, title: str = "Admission Requirements", page_start: int = 1) -> dict:
+    return {
+        "unit_index": unit_index,
+        "title": title,
+        "content": "A student seeking admission must comply with the minimum requirements for enrolment.",
+        "content_type": "policy",
+        "status": "OK",
+        "suspicious_reasons": [],
+        "metadata": {"page_start": page_start, "chapter": "Chapter 3 > Admission"},
+    }
+
+
+def test_attach_unit_diagnostics_suspicious_unit_receives_snippet_and_classification():
+    page_texts = ["Minor Offense\nSome disciplinary content on this page."]
+    units = [_suspicious_unit(0)]
+
+    result = _attach_unit_diagnostics(units, page_texts)
+
+    assert result[0]["original_page_text_snippet"] == page_texts[0].strip()
+    assert result[0]["proposed_classification"] == "extraction issue"
+    # Existing fields untouched.
+    assert result[0]["title"] == "Minor Offense"
+    assert result[0]["status"] == "Suspicious"
+    assert result[0]["suspicious_reasons"] == ["very_short"]
+
+
+def test_attach_unit_diagnostics_normal_unit_has_none_for_both_new_fields():
+    page_texts = ["Admission Requirements\nSome policy text."]
+    units = [_ok_unit(0)]
+
+    result = _attach_unit_diagnostics(units, page_texts)
+
+    assert result[0]["original_page_text_snippet"] is None
+    assert result[0]["proposed_classification"] is None
+    assert result[0]["status"] == "OK"
+
+
+def test_attach_unit_diagnostics_suspicious_unit_without_matching_page_text_does_not_raise():
+    # page_start points past the end of page_texts -- suspicious_unit_
+    # diagnostics() already handles this (empty snippet); this proves the
+    # merge layer propagates that without raising or inventing a fallback.
+    units = [_suspicious_unit(0, page_start=5)]
+
+    result = _attach_unit_diagnostics(units, page_texts=["Only one real page."])
+
+    assert result[0]["original_page_text_snippet"] == ""
+    assert result[0]["proposed_classification"] == "extraction issue"
+
+
+def test_attach_unit_diagnostics_multiple_suspicious_units_retain_correct_association():
+    page_texts = [
+        "Minor Offense\nFirst disciplinary content.",
+        "Admission Requirements\nSome policy text.",
+        "Major Offense\nSecond disciplinary content.",
+    ]
+    units = [
+        _suspicious_unit(0, title="Minor Offense", page_start=1),
+        _ok_unit(1, page_start=2),
+        _suspicious_unit(2, title="Major Offense", page_start=3),
+    ]
+
+    result = _attach_unit_diagnostics(units, page_texts)
+
+    assert result[0]["original_page_text_snippet"] == page_texts[0].strip()
+    assert result[1]["original_page_text_snippet"] is None
+    assert result[2]["original_page_text_snippet"] == page_texts[2].strip()
+
+
+def test_attach_unit_diagnostics_identical_units_do_not_swap_diagnostic_data():
+    # Two units with the SAME title/content but different unit_index and
+    # different page_start -- each must receive its OWN page's snippet,
+    # proving association is never by title/content alone.
+    units = [
+        _suspicious_unit(0, title="Minor Offense", page_start=1),
+        _suspicious_unit(1, title="Minor Offense", page_start=2),
+    ]
+    page_texts = [
+        "Minor Offense\nFirst occurrence content.",
+        "Minor Offense\nSecond occurrence content.",
+    ]
+
+    result = _attach_unit_diagnostics(units, page_texts)
+
+    assert result[0]["original_page_text_snippet"] == page_texts[0].strip()
+    assert result[1]["original_page_text_snippet"] == page_texts[1].strip()
+    assert result[0]["original_page_text_snippet"] != result[1]["original_page_text_snippet"]
+
+
+def test_attach_unit_diagnostics_older_payload_shape_without_new_fields_still_builds():
+    """A unit dict shaped exactly like output predating this change (no
+    original_page_text_snippet/proposed_classification keys at all) must
+    still be processable -- this function only ever reads pre-existing
+    keys and adds the two new ones; it never requires them to already
+    exist."""
+    units = [_ok_unit(0)]
+    assert "original_page_text_snippet" not in units[0]
+
+    result = _attach_unit_diagnostics(units, page_texts=["Admission Requirements\nSome policy text."])
+
+    assert result[0]["original_page_text_snippet"] is None
+    assert result[0]["proposed_classification"] is None
+
+
+def test_attach_unit_diagnostics_no_suspicious_units_preserves_existing_behavior():
+    units = [_ok_unit(0), _ok_unit(1, title="Attendance Policy")]
+    page_texts = ["Admission Requirements\nSome policy text.", "Attendance Policy\nMore policy text."]
+
+    result = _attach_unit_diagnostics(units, page_texts)
+
+    assert len(result) == 2
+    assert all(u["original_page_text_snippet"] is None for u in result)
+    assert all(u["proposed_classification"] is None for u in result)
+    assert [u["title"] for u in result] == ["Admission Requirements", "Attendance Policy"]
+
+
+def test_attach_unit_diagnostics_out_of_range_index_is_dropped_not_misattached(monkeypatch):
+    """Defends the merge layer itself: even if suspicious_unit_diagnostics()
+    returned an entry whose unit_index matches no real unit (a defensive
+    scenario, not one reachable today since that function derives its
+    index from enumerate(units) over this exact same list), the merge must
+    never fall back to attaching it to some other unit by position."""
+    units = [_ok_unit(0), _suspicious_unit(1)]
+
+    def _fake_diagnostics(*, page_texts, units):
+        real = suspicious_unit_diagnostics(page_texts=page_texts, units=units)
+        # Inject an extra, unmatched diagnostic entry (unit_index=99).
+        return real + [
+            {
+                "unit_index": 99,
+                "original_page_text_snippet": "should never be attached to anything",
+                "extracted_unit_title": "nonexistent",
+                "extracted_content": "",
+                "suspicious_reasons": [],
+                "proposed_classification": "needs review",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.services.admin.digital_ingestion.suspicious_unit_diagnostics", _fake_diagnostics
+    )
+
+    result = _attach_unit_diagnostics(units, page_texts=["Admission Requirements\nSome policy text.", "Minor Offense\nSome disciplinary content."])
+
+    assert result[0]["original_page_text_snippet"] is None, "the OK unit must not receive the orphaned diagnostic"
+    assert result[1]["original_page_text_snippet"] is not None, "the real suspicious unit must still get its own diagnostic"
+    assert "should never be attached to anything" not in [
+        result[0]["original_page_text_snippet"], result[1]["original_page_text_snippet"]
+    ]
+
+
+def test_job_preview_endpoint_includes_diagnostic_fields_on_knowledge_units(monkeypatch):
+    """End-to-end: the real /preview HTTP response's knowledge_units carry
+    the two new optional keys, proving this is actually wired in, not just
+    unit-tested in isolation. Does not force a specific OK/Suspicious
+    outcome for the real generic-chunked text (that depends on heading
+    detection, not something this test should hard-code) -- it only
+    asserts the keys exist with the correct None-vs-populated shape for
+    whatever status each real unit actually received."""
+    monkeypatch.setattr("app.services.admin.digital_ingestion.settings.ocr_worker_enabled", True)
+    monkeypatch.setattr("app.services.admin.digital_ingestion.settings.ocr_worker_url", FAKE_URL)
+    monkeypatch.setattr("app.services.admin.digital_ingestion.settings.ocr_worker_token", FAKE_TOKEN)
+    store, _collection = make_fake_store()
+    p1, p2 = patched_store(store)
+    payload = _completed_payload([(1, "Scanned registrar text about enrollment. " * 30)])
+
+    with p1, p2, patch("httpx.post", return_value=_fake_http_response(200, payload)):
+        extract_response = _extract(_make_blank_scanned_pdf(), "review_index_test_diagnostics_shape.pdf")
+        job_id = extract_response.json()["job_id"]
+
+        preview_response = client.get(
+            f"/admin/knowledge-base/jobs/{job_id}/preview", headers=ADMIN_HEADERS
+        )
+
+    assert preview_response.status_code == 200
+    units = preview_response.json()["knowledge_units"]
+    assert units, "expected at least one real knowledge unit from the scanned-text pipeline"
+    for unit in units:
+        assert "original_page_text_snippet" in unit
+        assert "proposed_classification" in unit
+        if unit["status"] == "Suspicious":
+            assert unit["proposed_classification"] is not None
+        else:
+            assert unit["original_page_text_snippet"] is None
+            assert unit["proposed_classification"] is None

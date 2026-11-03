@@ -1,7 +1,9 @@
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aska_piyu/screens/admin_kb_workspace.dart';
 import 'package:aska_piyu/services/kb_workspace_session.dart';
 import 'package:aska_piyu/services/file_pick.dart';
 
@@ -88,6 +90,147 @@ void main() {
       session.extractJobId = 'job-123';
       session.clear();
       expect(session.extractJobId, isNull);
+    });
+  });
+
+  // Stage 25 (Part 3): the two Stage 24 preview fields --
+  // original_page_text_snippet / proposed_classification -- rendered by
+  // _KnowledgeUnitTile inside KbKnowledgeUnitsReviewPanel. Forced wide
+  // (>=900 logical px) so the GridView/fixed-aspect-ratio layout -- the
+  // one actually at risk of a RenderFlex overflow from unbounded text --
+  // is what's under test, not the narrower ListView fallback.
+  group('KbKnowledgeUnitsReviewPanel diagnostic display', () {
+    Future<void> pumpPanel(
+      WidgetTester tester,
+      List<Map<String, dynamic>> units,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1000,
+              height: 600,
+              child: KbKnowledgeUnitsReviewPanel(
+                knowledgeUnits: units,
+                fileName: 'handbook.pdf',
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Map<String, dynamic> suspiciousUnit({
+      String? originalSnippet = 'Sec. 9. Indecency and Obscenity. Original page text.',
+      String? classification = 'needs review',
+    }) {
+      return {
+        'unit_index': 0,
+        'title': 'Minor Offense',
+        'content': 'Short extracted content.',
+        'content_type': 'disciplinary_rule',
+        'hierarchy_path': 'Chapter 6 > Article 1',
+        'status': 'Suspicious',
+        'suspicious_reasons': ['very_short'],
+        'page_start': 78,
+        'original_page_text_snippet': originalSnippet,
+        'proposed_classification': classification,
+      };
+    }
+
+    Map<String, dynamic> okUnitOlderShape() {
+      // Exactly the pre-Stage-24 shape: no original_page_text_snippet,
+      // no proposed_classification keys at all (not even null-valued).
+      return {
+        'unit_index': 1,
+        'title': 'Admission Requirements',
+        'content': 'A student seeking admission must comply with requirements.',
+        'content_type': 'policy',
+        'hierarchy_path': 'Chapter 3 > Admission',
+        'status': 'OK',
+        'suspicious_reasons': <String>[],
+        'page_start': 12,
+      };
+    }
+
+    testWidgets('diagnostic snippet and suggested classification render when present', (tester) async {
+      await pumpPanel(tester, [suspiciousUnit()]);
+
+      expect(find.textContaining('Suggested classification: needs review'), findsOneWidget);
+      expect(find.textContaining('Original page text — unverified source context'), findsOneWidget);
+
+      // Collapsed by default -- the snippet text itself is not yet shown.
+      expect(find.text('Sec. 9. Indecency and Obscenity. Original page text.'), findsNothing);
+
+      await tester.tap(find.textContaining('Original page text — unverified source context'));
+      await tester.pump();
+
+      expect(find.text('Sec. 9. Indecency and Obscenity. Original page text.'), findsOneWidget);
+    });
+
+    testWidgets('missing diagnostic fields render no diagnostic section', (tester) async {
+      await pumpPanel(tester, [okUnitOlderShape()]);
+
+      expect(find.textContaining('Original page text'), findsNothing);
+      expect(find.textContaining('Suggested classification'), findsNothing);
+      // The rest of the tile still renders normally.
+      expect(find.text('Admission Requirements'), findsOneWidget);
+    });
+
+    testWidgets('empty diagnostic snippet renders no original-page section', (tester) async {
+      await pumpPanel(
+        tester,
+        [suspiciousUnit(originalSnippet: '   ', classification: 'extraction issue')],
+      );
+
+      expect(find.textContaining('Original page text'), findsNothing);
+      // An empty/whitespace-only snippet must not suppress a genuinely
+      // present classification -- the two fields are independent.
+      expect(find.textContaining('Suggested classification: extraction issue'), findsOneWidget);
+    });
+
+    testWidgets('suggested classification never changes the status chip', (tester) async {
+      await pumpPanel(tester, [suspiciousUnit()]);
+
+      expect(find.text('Suspicious'), findsOneWidget);
+      expect(find.text('needs review'), findsNothing);
+      expect(find.textContaining('Suggested classification'), findsOneWidget);
+    });
+
+    testWidgets('long original-page text expands and collapses without overflow', (tester) async {
+      final longSnippet = 'Repeated disciplinary table text. ' * 200; // ~7000 chars
+      await pumpPanel(tester, [suspiciousUnit(originalSnippet: longSnippet)]);
+
+      final toggle = find.textContaining('Original page text — unverified source context');
+      await tester.tap(toggle);
+      await tester.pump();
+
+      expect(tester.takeException(), isNull, reason: 'expanding a long snippet must not overflow the fixed-aspect-ratio grid cell');
+      expect(find.textContaining('Repeated disciplinary table text.'), findsOneWidget);
+
+      await tester.tap(toggle);
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('Repeated disciplinary table text.'), findsNothing);
+    });
+
+    testWidgets('existing tile content (title, status, page, content snippet) remains visible', (tester) async {
+      await pumpPanel(tester, [suspiciousUnit()]);
+
+      expect(find.text('Minor Offense'), findsOneWidget);
+      expect(find.text('Chapter 6 > Article 1'), findsOneWidget);
+      expect(find.text('Suspicious'), findsOneWidget);
+      expect(find.text('Page 78'), findsOneWidget);
+      expect(find.text('Short extracted content.'), findsOneWidget);
+    });
+
+    testWidgets('older response-shaped unit maps render without exception', (tester) async {
+      await pumpPanel(tester, [okUnitOlderShape(), suspiciousUnit()]);
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('Admission Requirements'), findsOneWidget);
+      expect(find.text('Minor Offense'), findsOneWidget);
     });
   });
 }

@@ -1383,13 +1383,29 @@ class _KbKnowledgeUnitsReviewPanelState
   }
 }
 
-class _KnowledgeUnitTile extends StatelessWidget {
+class _KnowledgeUnitTile extends StatefulWidget {
   const _KnowledgeUnitTile({required this.unit});
 
   final Map<String, dynamic> unit;
 
   @override
+  State<_KnowledgeUnitTile> createState() => _KnowledgeUnitTileState();
+}
+
+class _KnowledgeUnitTileState extends State<_KnowledgeUnitTile> {
+  // Collapsed by default: the original-page-text snippet is unverified,
+  // advisory-only context (see Stage 21-25's extraction-diagnostics work),
+  // not something an admin needs to see unless they choose to -- and
+  // _KnowledgeUnitTile can sit inside a GridView cell with a fixed aspect
+  // ratio (see KbKnowledgeUnitsReviewPanel), so an always-expanded,
+  // unbounded-length snippet risks a RenderFlex overflow there. Expanding
+  // reveals it inside a height-capped, independently scrollable box
+  // instead of growing the tile itself.
+  bool _diagnosticsExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final unit = widget.unit;
     final title = (unit['title'] ?? 'Untitled').toString().trim();
     final path =
         (unit['hierarchy_path'] ?? unit['source_section'] ?? '').toString().trim();
@@ -1405,6 +1421,16 @@ class _KnowledgeUnitTile extends StatelessWidget {
         : pageEnd != null && pageEnd != pageStart
             ? 'Pages $pageStart–$pageEnd'
             : 'Page $pageStart';
+
+    // Both new fields are optional (Stage 24): absent on any older/cached
+    // preview response, and null for every unit that was never flagged
+    // Suspicious. Treated as "present" only when non-null AND non-empty
+    // after trimming, so an older response or a non-suspicious unit never
+    // renders an empty diagnostic section.
+    final originalPageSnippet = (unit['original_page_text_snippet'] ?? '').toString().trim();
+    final hasOriginalPageSnippet = originalPageSnippet.isNotEmpty;
+    final proposedClassification = (unit['proposed_classification'] ?? '').toString().trim();
+    final hasProposedClassification = proposedClassification.isNotEmpty;
 
     return Container(
       width: double.infinity,
@@ -1460,6 +1486,75 @@ class _KnowledgeUnitTile extends StatelessWidget {
                 color: DesignTokens.ink,
               ),
             ),
+          ],
+          // Advisory-only: a suggestion for the admin to weigh, never an
+          // authoritative verdict and never a replacement for the OK /
+          // Suspicious status chip above, which this never alters.
+          if (hasProposedClassification) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Suggested classification: $proposedClassification',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+                color: DesignTokens.muted,
+              ),
+            ),
+          ],
+          if (hasOriginalPageSnippet) ...[
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => setState(() => _diagnosticsExpanded = !_diagnosticsExpanded),
+              child: Row(
+                children: [
+                  Icon(
+                    _diagnosticsExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 14,
+                    color: DesignTokens.muted,
+                  ),
+                  const SizedBox(width: 4),
+                  const Expanded(
+                    child: Text(
+                      'Original page text — unverified source context',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: DesignTokens.muted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_diagnosticsExpanded) ...[
+              const SizedBox(height: 4),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 140),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF7E8),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFE8D9B0)),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Text(
+                      originalPageSnippet,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        height: 1.4,
+                        color: DesignTokens.ink,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),

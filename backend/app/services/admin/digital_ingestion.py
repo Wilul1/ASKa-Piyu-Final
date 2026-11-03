@@ -54,6 +54,7 @@ from app.services.admin.knowledge_base_pipeline import (
     knowledge_base_statistics,
     knowledge_units_for_extraction,
     pipeline_stages,
+    suspicious_unit_diagnostics,
     validation_report,
 )
 from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
@@ -880,6 +881,37 @@ def _extract_or_ocr(file_bytes: bytes) -> tuple[list[str], list[int], str]:
     return page_texts, page_offsets, extraction_method
 
 
+def _attach_unit_diagnostics(units: list[dict], page_texts: list[str]) -> list[dict]:
+    """Merge knowledge_base_pipeline.suspicious_unit_diagnostics() results
+    back onto their exact source unit, by unit_index -- never by title,
+    never by units.index(), and never by filtering+zipping without an
+    identifier. Relies on that function returning the original enumerate()
+    position (see Stage 23 Part 1) as the sole join key, which is why this
+    is safe even if two units are otherwise identical.
+
+    Mutates and returns the same `units` list in place (each unit dict was
+    just freshly built by knowledge_units_for_extraction() in this same
+    call, so this is not shared/cached state) -- adds exactly two keys,
+    both None for any unit that received no diagnostic. Never touches
+    page_texts, nor any existing key on any unit (title/content/status/
+    suspicious_reasons/metadata are read, never written, here).
+
+    An out-of-range or otherwise unmatched unit_index in the diagnostics
+    list is simply never looked up by any real unit's own index, so it
+    cannot attach to the wrong unit -- it is silently dropped, not an
+    error, since iteration is driven by `units`, not by `diagnostics`.
+    """
+    diagnostics_by_index = {
+        diagnostic["unit_index"]: diagnostic
+        for diagnostic in suspicious_unit_diagnostics(page_texts=page_texts, units=units)
+    }
+    for unit in units:
+        diagnostic = diagnostics_by_index.get(unit.get("unit_index"))
+        unit["original_page_text_snippet"] = diagnostic["original_page_text_snippet"] if diagnostic else None
+        unit["proposed_classification"] = diagnostic["proposed_classification"] if diagnostic else None
+    return units
+
+
 def assemble_preview_payload(
     page_texts: list[str],
     *,
@@ -912,6 +944,7 @@ def assemble_preview_payload(
     chunks = _mirror_page_range_metadata(chunks)
 
     units = knowledge_units_for_extraction(None, chunks, kb_document_type=None)
+    units = _attach_unit_diagnostics(units, page_texts)
     previews = chunk_preview(chunks)
     validation = validation_report(document_type="information", units=units, chunks=chunks)
     stages = pipeline_stages(

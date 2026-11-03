@@ -662,8 +662,19 @@ def _unit_status(unit: dict) -> tuple[str, list[str]]:
 
 
 def suspicious_unit_diagnostics(*, page_texts: list[str], units: list[dict]) -> list[dict]:
+    """
+    NOTE on unit_index: deliberately derived from enumerate(units) -- the
+    unit's position in THIS list -- rather than trusting a pre-existing
+    unit.get("unit_index") key. Real pipeline-produced units already carry
+    a unit_index that happens to match their position (see
+    _knowledge_units_for_extraction), but this function must not assume
+    that: a caller-constructed unit (as in this module's own tests) may
+    omit that key entirely, and units.index(unit) would be unsafe for
+    duplicate/identical unit dicts. Enumerating this list directly is the
+    only representation guaranteed correct for any caller.
+    """
     diagnostics: list[dict] = []
-    for unit in units:
+    for original_index, unit in enumerate(units):
         status = unit.get("status")
         reasons = list(unit.get("suspicious_reasons") or [])
         if status != "Suspicious" and not reasons:
@@ -676,6 +687,7 @@ def suspicious_unit_diagnostics(*, page_texts: list[str], units: list[dict]) -> 
             original_snippet = _page_snippet_for_unit(page_texts[page_index], str(unit.get("title") or ""))
         diagnostics.append(
             {
+                "unit_index": original_index,
                 "original_page_text_snippet": original_snippet,
                 "extracted_unit_title": unit.get("title"),
                 "extracted_content": unit.get("content"),

@@ -1132,3 +1132,92 @@ class GenerateArticleCandidatesFromPreviewRequest(BaseModel):
     filename: str | None = None
     max_candidates: int | None = None
     save_mode: str = "preview_only"
+
+
+# --- Admin: Model Evaluation System ---
+
+
+class EvaluationModelInfoSchema(BaseModel):
+    component: str
+    model_name: str
+    shares_model_with: str | None = None
+    allow_llm_fallback: bool | None = None
+
+
+class EvaluationModelsResponse(BaseModel):
+    models: list[EvaluationModelInfoSchema]
+
+
+class StartEvaluationRunResponse(BaseModel):
+    run_id: str
+    status: str
+
+
+class EvaluationRunSummarySchema(BaseModel):
+    run_id: str
+    status: str
+    triggered_by_user_id: str | None = None
+    started_at: str
+    completed_at: str | None = None
+    error_message: str | None = None
+
+
+class EvaluationMetricSchema(BaseModel):
+    metric_name: str
+    metric_value: float | None = None
+    extra: Any | None = None
+
+
+class EvaluationComponentSchema(BaseModel):
+    component_id: str
+    component: str
+    status: str
+    reason: str | None = None
+    note: str | None = None
+    model_name: str
+    shares_model_with: str | None = None
+    allow_llm_fallback: bool | None = None
+    case_count: int
+    skipped_unlabeled_count: int
+    has_confusion_matrix: bool = False
+    metrics: list[EvaluationMetricSchema] = Field(default_factory=list)
+
+
+class EvaluationRunDetailSchema(EvaluationRunSummarySchema):
+    config: dict[str, Any] = Field(default_factory=dict)
+    components: list[EvaluationComponentSchema] = Field(default_factory=list)
+
+
+class EvaluationRunListResponse(BaseModel):
+    runs: list[EvaluationRunSummarySchema]
+    total: int
+    limit: int
+    offset: int
+
+
+class EvaluationSummaryResponse(BaseModel):
+    latest_run: EvaluationRunSummarySchema | None = None
+    components: list[EvaluationComponentSchema] = Field(default_factory=list)
+
+
+class EvaluationConfusionMatrixResponse(BaseModel):
+    component: str
+    labels: list[str]
+    matrix: list[list[int]]
+    case_count: int
+
+
+class EvaluationCaseResultSchema(BaseModel):
+    case_id: str
+    predicted: str | None = None
+    expected: str | None = None
+    correct: bool | None = None
+    latency_ms: float | None = None
+
+
+class EvaluationCaseResultListResponse(BaseModel):
+    component: str
+    case_results: list[EvaluationCaseResultSchema]
+    total: int
+    limit: int
+    offset: int

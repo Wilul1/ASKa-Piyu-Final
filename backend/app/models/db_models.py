@@ -14,6 +14,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -523,3 +524,145 @@ class Announcement(Base):
         onupdate=utc_now,
         nullable=False,
     )
+
+
+class EvaluationRun(Base):
+    """One execution of the Model Evaluation System
+    (``app.services.evaluation.evaluation_service.run_evaluation``).
+
+    Additive feature: never touches production ChromaDB or chatbot
+    behavior -- this and the four tables below only record what an
+    evaluation run computed. ``config_json`` is a JSON snapshot (model
+    ids, embedding model, dataset versions/sha256, retrieval settings,
+    app commit) captured at run time, for reproducibility.
+    """
+
+    __tablename__ = "evaluation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="ck_evaluation_runs_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True, nullable=False)
+    triggered_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    components: Mapped[list["EvaluationComponent"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class EvaluationComponent(Base):
+    """One evaluated (or ``not_evaluable``/``failed``) AI component within
+    one run (e.g. "classify_chunk(allow_llm=True)", "reranker",
+    "citation_verifier_llm") -- see ``evaluation_service.
+    ComponentEvaluationResult``, which this mirrors field for field."""
+
+    __tablename__ = "evaluation_components"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('evaluated', 'not_evaluable', 'failed')",
+            name="ck_evaluation_components_status",
+        ),
+        UniqueConstraint("run_id", "component", name="uq_evaluation_components_run_component"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    shares_model_with: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    allow_llm_fallback: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    case_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_unlabeled_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    run: Mapped[EvaluationRun] = relationship(back_populates="components")
+    results: Mapped[list["EvaluationResult"]] = relationship(
+        back_populates="component_row", cascade="all, delete-orphan"
+    )
+    confusion_matrix: Mapped["EvaluationConfusionMatrix | None"] = relationship(
+        back_populates="component_row", cascade="all, delete-orphan", uselist=False
+    )
+    case_results: Mapped[list["EvaluationCaseResult"]] = relationship(
+        back_populates="component_row", cascade="all, delete-orphan"
+    )
+
+
+class EvaluationResult(Base):
+    """One metric_name -> metric_value row for one component. ``metric_value``
+    is NULL when that metric genuinely was not computed for this component
+    (e.g. a metric with zero contributing cases) -- never a fabricated 0.0.
+    """
+
+    __tablename__ = "evaluation_results"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("evaluation_components.id"), index=True, nullable=False
+    )
+    metric_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    component_row: Mapped[EvaluationComponent] = relationship(back_populates="results")
+
+
+class EvaluationConfusionMatrix(Base):
+    """One confusion matrix for one classification component
+    (``classify_chunk``/``classify_question`` only -- never persisted for
+    a non-classification component)."""
+
+    __tablename__ = "evaluation_confusion_matrices"
+    __table_args__ = (
+        UniqueConstraint("component_id", name="uq_evaluation_confusion_matrices_component_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("evaluation_components.id"), index=True, nullable=False
+    )
+    labels_json: Mapped[str] = mapped_column(Text, nullable=False)
+    matrix_json: Mapped[str] = mapped_column(Text, nullable=False)
+    case_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    component_row: Mapped[EvaluationComponent] = relationship(back_populates="confusion_matrix")
+
+
+class EvaluationCaseResult(Base):
+    """One case's raw prediction for one component -- reproducibility
+    record, not a transcript store. ``raw_response_json`` (when present)
+    is sanitized before persistence: never an API key/token/authorization
+    header (see ``app.services.evaluation.persistence._sanitize_raw_response``).
+    """
+
+    __tablename__ = "evaluation_case_results"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("evaluation_components.id"), index=True, nullable=False
+    )
+    case_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    predicted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    component_row: Mapped[EvaluationComponent] = relationship(back_populates="case_results")

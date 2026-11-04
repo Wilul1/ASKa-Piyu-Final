@@ -5,6 +5,7 @@ import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../screens/admin_management_pages.dart';
+import '../screens/admin_model_evaluation_page.dart';
 import '../screens/admin_panel_page.dart';
 import '../screens/chatbot_page.dart';
 import '../screens/incoming_transfers_page.dart';
@@ -40,6 +41,7 @@ enum StudentNavItem {
   adminUsersRoles,
   adminOffices,
   adminReports,
+  adminModelEvaluation,
   settings,
 }
 
@@ -380,6 +382,14 @@ class AppSidebar extends StatelessWidget {
       return;
     }
 
+    if (item == StudentNavItem.adminModelEvaluation) {
+      openAdminPage(
+        context,
+        builder: (_) => const AdminModelEvaluationPage(),
+      );
+      return;
+    }
+
     if (item == StudentNavItem.settings) {
       openProtectedPage(
         context,
@@ -585,6 +595,8 @@ class _AdminDarkSidebar extends StatelessWidget {
     _AdminNavGroup('Reports & Analytics', [
       _SidebarData(
           'Reports', Icons.insights_rounded, StudentNavItem.adminReports),
+      _SidebarData('Model Evaluation', Icons.science_rounded,
+          StudentNavItem.adminModelEvaluation),
     ]),
   ];
 

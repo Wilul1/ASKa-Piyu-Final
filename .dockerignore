@@ -33,10 +33,19 @@ backend/.pytest-tmp-*/
 backend/.mypy_cache/
 backend/.ruff_cache/
 
-# Not needed in the runtime image (tests/benchmarks never COPY'd into
-# stage 2; the compiled web/ output is all stage 2 needs from Flutter).
+# Not needed in the runtime image (tests never COPY'd into stage 2;
+# the compiled web/ output is all stage 2 needs from Flutter).
 backend/tests/
-backend/benchmarks/
+# Benchmark dumps stay out of the image. The four Model Evaluation
+# dataset/overlay JSON files must ship: run_evaluation loads them from
+# backend/benchmarks/evaluation/. Docker cannot re-include a file if its
+# parent directory was excluded, so ignore contents then un-ignore these.
+backend/benchmarks/**
+!backend/benchmarks/evaluation/
+!backend/benchmarks/evaluation/classification_eval_dataset.json
+!backend/benchmarks/evaluation/retrieval_relevance_dataset.json
+!backend/benchmarks/evaluation/rag_eval_dataset.json
+!backend/benchmarks/evaluation/human_answer_quality_overview.json
 backend/run_server.bat
 
 # Flutter: stage 1 runs its own `flutter pub get` + `flutter build web`

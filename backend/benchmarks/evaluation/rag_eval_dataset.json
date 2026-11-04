@@ -1,0 +1,5 @@
+{
+  "dataset_version": "2026-11-04-v1-empty-template",
+  "notes": "Labeled dataset for RAG/LLM evaluation (faithfulness, answer relevancy, context precision/recall, answer correctness, citation-set precision/recall). Mirrors backend/benchmarks/citation_grounding_benchmark.json's case shape, but inherits that file's current state honestly: per the Phase 1 audit, every case there is still 'excluded_unlabeled' -- the two-labeler adjudication process was designed but never completed. This file ships empty rather than copying those still-unlabeled cases in as if they were ready. Schema per labeled case: {\"case_id\": str, \"question\": str, \"reference_answer\": str (optional -- enables answer_correctness), \"gold_citation_ids\": [chunk_id, ...] (optional -- enables citation_set_precision/recall), \"labeling_status\": \"labeled\"}.",
+  "cases": []
+}

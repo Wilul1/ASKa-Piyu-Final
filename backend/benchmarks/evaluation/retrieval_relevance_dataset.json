@@ -1,0 +1,154 @@
+{
+  "dataset_version": "2026-11-04-v2-human-reviewed-rag-benchmark-q1-q12",
+  "notes": "Human-reviewed retrieval relevance judgments derived from manual candidate-matching review of scripts/rag_benchmark.py's 12 known-answer questions against the 691-record Chroma extraction artifact (backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json), cross-checked against the candidate-matching review artifact (backend/benchmarks/results/rag_benchmark_candidate_review_20261104T104800Z.json). Grading scale: 3 = highly relevant/directly answers the question; 2 = relevant supporting information; 1 = partially relevant, incomplete, or superseded information; 0 = irrelevant (not included in relevant_ids). graded_relevance values feed nDCG@K; relevant_ids (grade > 0 only) feed Hit@K/MRR/Precision@K/Recall@K. Reviewed and approved by a human; no label here was model-generated or fabricated. Two cases carry a 'note' field documenting a known source-document issue: rag_benchmark_04 (Citizen's Charter P30 flat fee vs. older Student Handbook P20/unit fee for dropping a subject -- both real, Charter figure is the intended answer) and rag_benchmark_05 (the only candidate's extracted fee text is truncated -- '2 pesos per' with no unit -- graded down rather than treated as a complete answer).",
+  "cases": [
+    {
+      "query_id": "rag_benchmark_01",
+      "query": "How much does it cost to get a copy of my Transcript of Records?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_02",
+      "query": "How much is the fee for a second copy of my diploma?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_03",
+      "query": "Which office handles student enrollment?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_04",
+      "query": "How much does it cost to drop a subject?",
+      "relevant_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82": 1.0
+      },
+      "labeling_status": "labeled",
+      "note": "Two conflicting real fee schedules for the same action: the Citizen's Charter (::97) states a flat P30.00 dropping fee; the older Student Handbook policy (::82, LSPU BOR 1046 s.2012) states P20/unit. The Charter figure is the intended current answer (grade 3); the Handbook figure is superseded/conflicting information, not wrong in isolation (grade 1)."
+    },
+    {
+      "query_id": "rag_benchmark_05",
+      "query": "What is the fee for library circulation service if my book is overdue?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::10"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::10": 1.0
+      },
+      "labeling_status": "labeled",
+      "note": "Correct service page, but the extracted fee text is incomplete ('2 pesos per' -- the unit, e.g. per day overdue, is missing from the source extraction). Graded partially relevant/incomplete rather than 3; the missing unit must not be invented."
+    },
+    {
+      "query_id": "rag_benchmark_06",
+      "query": "How long does the LSPU entrance examination take, including orientation?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::78"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::78": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_07",
+      "query": "What is the process for validating my student ID?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::14"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::14": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_08",
+      "query": "What happens if I fail more than 75% of my units?",
+      "relevant_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+      ],
+      "graded_relevance": {
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66": 2.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_09",
+      "query": "How is faculty teaching load determined?",
+      "relevant_ids": [
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::14",
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::15",
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::16"
+      ],
+      "graded_relevance": {
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::16": 3.0,
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::14": 2.0,
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::15": 2.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_10",
+      "query": "What are the responsibilities of an LSPU faculty member?",
+      "relevant_ids": [
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::7",
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::8"
+      ],
+      "graded_relevance": {
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::8": 3.0,
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::7": 1.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_11",
+      "query": "What is honorable dismissal for a student?",
+      "relevant_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118"
+      ],
+      "graded_relevance": {
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_12",
+      "query": "Who is the current LSPU president?",
+      "relevant_ids": [
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::6",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::10"
+      ],
+      "graded_relevance": {
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::6": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::10": 3.0
+      },
+      "labeling_status": "labeled"
+    }
+  ]
+}

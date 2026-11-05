@@ -43,6 +43,21 @@ def load_human_rag_overview(path: Path | None = None) -> dict[str, Any] | None:
     return payload
 
 
+def overlay_case_breakdown(payload: dict[str, Any] | None = None) -> list[dict[str, Any]] | None:
+    """Per-question human scores already stored in the overlay file.
+
+    Returns None when the overlay has no ``cases`` list. Never invents a
+    question or a score.
+    """
+    data = payload if payload is not None else load_human_rag_overview()
+    if not data:
+        return None
+    cases = data.get("cases")
+    if not isinstance(cases, list) or not cases:
+        return None
+    return [case for case in cases if isinstance(case, dict)]
+
+
 def apply_human_rag_overview_to_run(session: Session, run: EvaluationRun) -> bool:
     payload = load_human_rag_overview()
     if payload is None or run is None:
@@ -109,6 +124,22 @@ def apply_human_rag_overview_to_run(session: Session, run: EvaluationRun) -> boo
                     metric_name=name,
                     metric_value=float(metric["value"]),
                     extra_json=json.dumps(extra),
+                )
+            )
+
+    cases = overlay_case_breakdown(payload)
+    if cases:
+        if "per_case_breakdown" in existing:
+            existing["per_case_breakdown"].metric_value = None
+            existing["per_case_breakdown"].extra_json = json.dumps(cases)
+        else:
+            session.add(
+                EvaluationResult(
+                    run_id=run.id,
+                    component_id=component.id,
+                    metric_name="per_case_breakdown",
+                    metric_value=None,
+                    extra_json=json.dumps(cases),
                 )
             )
 

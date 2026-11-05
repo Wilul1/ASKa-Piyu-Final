@@ -179,7 +179,12 @@ def test_get_run_detail_returns_components_metrics_and_config(client_and_session
     assert body["config"]["dataset_versions"] == {"classification": "cv1", "retrieval": "rv1", "rag": "gv1"}
     by_name = {c["component"]: c for c in body["components"]}
     assert by_name["classify_question"]["has_confusion_matrix"] is True
-    assert by_name["embedding_retrieval"]["status"] == "not_evaluable"
+    assert by_name["embedding_retrieval"]["status"] == "evaluated"
+    retrieval_metrics = {m["metric_name"]: m["metric_value"] for m in by_name["embedding_retrieval"]["metrics"]}
+    assert retrieval_metrics["embedding_hit_at_k"] == 0.8333
+    assert by_name["reranker"]["status"] == "evaluated"
+    rerank_metrics = {m["metric_name"]: m["metric_value"] for m in by_name["reranker"]["metrics"]}
+    assert rerank_metrics["reranked_hit_at_k"] == 0.9167
     metric_values = {m["metric_name"]: m["metric_value"] for m in by_name["classify_question"]["metrics"]}
     assert metric_values["accuracy"] == 1.0
 

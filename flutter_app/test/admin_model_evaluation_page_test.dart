@@ -752,6 +752,201 @@ void main() {
       ),
       findsNothing,
     );
+    expect(find.byKey(const Key('eval-rag-case-table-title')), findsNothing);
+  });
+
+  testWidgets('overview lists each human-scored question under the RAG cards', (tester) async {
+    const runId = 'run-human-overlay';
+    final components = [
+      _componentJson(
+        componentId: 'c-answer',
+        component: 'answer_generation_llm',
+        status: 'evaluated',
+        note: 'Human-scored live student chatbot screenshots',
+        modelName: 'human_live_student_chat',
+        caseCount: 12,
+        skippedUnlabeledCount: 2,
+        metrics: [
+          _metricJson('answer_correctness', 0.5833),
+          _metricJson('faithfulness', 0.5417),
+          _metricJson('answer_relevancy', 0.9167),
+          _metricJson('citation_set_precision', 0.9000),
+          {
+            'metric_name': 'per_case_breakdown',
+            'metric_value': null,
+            'extra': [
+              {
+                'case_id': 'aq_01_tor_fee',
+                'question': 'How much does it cost to get a copy of my Transcript of Records?',
+                'included': true,
+                'correctness': {'label': 'pass', 'score': 1.0},
+                'faithfulness': {'label': 'faithful', 'score': 1.0},
+                'relevance': {'label': 'addressed', 'score': 1.0},
+                'citation': {'label': 'no_sources_visible', 'score': null},
+                'note': 'Undergraduate P75.00/page matches the Charter.',
+              },
+              {
+                'case_id': 'aq_04_dropping_fee_multi_document',
+                'question': 'How much does it cost to drop a subject?',
+                'included': true,
+                'correctness': {'label': 'fail', 'score': 0.0},
+                'faithfulness': {'label': 'faithful', 'score': 1.0},
+                'relevance': {'label': 'addressed', 'score': 1.0},
+                'citation': {'label': 'no_sources_visible', 'score': null},
+              },
+              {
+                'case_id': 'aq_09_faculty_teaching_load',
+                'question': 'How is faculty teaching load determined?',
+                'included': false,
+                'exclusion_reason': 'role_gated_faculty',
+                'correctness': {'label': 'role_gated', 'score': null},
+                'faithfulness': {'label': 'role_gated', 'score': null},
+                'relevance': {'label': 'role_gated', 'score': null},
+                'citation': {'label': 'role_gated', 'score': null},
+                'note': 'Faculty Manual is faculty-audience only.',
+              },
+            ],
+          },
+        ],
+      ),
+    ];
+
+    await pumpPage(
+      tester,
+      build: () => AdminModelEvaluationPage(
+        debugFetchModels: () async => const [],
+        debugFetchSummary: () async => EvaluationSummary.fromJson({
+          'latest_run': {
+            'run_id': runId,
+            'status': 'completed',
+            'triggered_by_user_id': null,
+            'started_at': '2026-11-04T08:00:00+00:00',
+            'completed_at': '2026-11-04T08:05:00+00:00',
+            'error_message': null,
+          },
+          'components': components,
+        }),
+        debugFetchHistory: ({required limit, required offset}) async =>
+            const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
+        debugFetchRunDetail: (id) async => EvaluationRunDetail.fromJson({
+          'run_id': runId,
+          'status': 'completed',
+          'triggered_by_user_id': null,
+          'started_at': '2026-11-04T08:00:00+00:00',
+          'completed_at': '2026-11-04T08:05:00+00:00',
+          'error_message': null,
+          'config': <String, dynamic>{},
+          'components': components,
+        }),
+      ),
+    );
+
+    expect(find.text('0.5833'), findsOneWidget);
+    expect(find.byKey(const Key('eval-rag-case-table-title')), findsOneWidget);
+    expect(find.text('Per-question scores'), findsOneWidget);
+    expect(
+      find.textContaining('How much does it cost to get a copy of my Transcript of Records?'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('How much does it cost to drop a subject?'), findsOneWidget);
+    expect(find.textContaining('How is faculty teaching load determined?'), findsOneWidget);
+    expect(find.text('Correctness · Pass 1.0'), findsOneWidget);
+    expect(find.text('Correctness · Fail 0.0'), findsOneWidget);
+    expect(find.text('Correctness · Excluded'), findsWidgets);
+  });
+
+  testWidgets('overview shows retrieval overlay hit rate and per-question hits', (tester) async {
+    const runId = 'run-retrieval-overlay';
+    final components = [
+      _componentJson(
+        componentId: 'c-rerank',
+        component: 'reranker',
+        status: 'evaluated',
+        note: 'Scored against the isolated chroma_evaluation corpus.',
+        modelName: 'rule-based query expansion + heuristic boosting (not a trained model)',
+        caseCount: 12,
+        metrics: [
+          _metricJson('embedding_hit_at_k', 0.8333),
+          {
+            'metric_name': 'reranked_hit_at_k',
+            'metric_value': 0.9167,
+            'extra': {'not_live_chroma': true, 'durable_overview_overlay': true},
+          },
+          _metricJson('reranked_mrr', 0.8125),
+          _metricJson('reranked_ndcg_at_k', 0.7812),
+          {
+            'metric_name': 'per_case_breakdown',
+            'metric_value': null,
+            'extra': [
+              {
+                'case_id': 'rag_benchmark_01',
+                'question': 'How much does it cost to get a copy of my Transcript of Records?',
+                'embedding_hit': true,
+                'reranked_hit': true,
+              },
+              {
+                'case_id': 'rag_benchmark_03',
+                'question': 'Which office handles student enrollment?',
+                'embedding_hit': false,
+                'reranked_hit': true,
+              },
+              {
+                'case_id': 'rag_benchmark_10',
+                'question': 'What are the responsibilities of an LSPU faculty member?',
+                'embedding_hit': false,
+                'reranked_hit': false,
+              },
+            ],
+          },
+        ],
+      ),
+    ];
+
+    await pumpPage(
+      tester,
+      build: () => AdminModelEvaluationPage(
+        debugFetchModels: () async => const [],
+        debugFetchSummary: () async => EvaluationSummary.fromJson({
+          'latest_run': {
+            'run_id': runId,
+            'status': 'completed',
+            'triggered_by_user_id': null,
+            'started_at': '2026-11-04T08:00:00+00:00',
+            'completed_at': '2026-11-04T08:05:00+00:00',
+            'error_message': null,
+          },
+          'components': components,
+        }),
+        debugFetchHistory: ({required limit, required offset}) async =>
+            const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
+        debugFetchRunDetail: (id) async => EvaluationRunDetail.fromJson({
+          'run_id': runId,
+          'status': 'completed',
+          'triggered_by_user_id': null,
+          'started_at': '2026-11-04T08:00:00+00:00',
+          'completed_at': '2026-11-04T08:05:00+00:00',
+          'error_message': null,
+          'config': <String, dynamic>{},
+          'components': components,
+        }),
+      ),
+    );
+
+    expect(find.text('91.67%'), findsWidgets);
+    expect(
+      find.textContaining('Saved 12-question benchmark snapshot — not live Heroku retrieval'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Not a live Heroku / production Chroma score'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('eval-retrieval-case-table-title')), findsOneWidget);
+    expect(find.textContaining('How much does it cost to get a copy of my Transcript of Records?'), findsOneWidget);
+    expect(find.textContaining('Which office handles student enrollment?'), findsOneWidget);
+    expect(find.text('Embedding · Hit'), findsWidgets);
+    expect(find.text('Embedding · Miss'), findsWidgets);
+    expect(find.text('Reranked · Miss'), findsOneWidget);
   });
 }
 

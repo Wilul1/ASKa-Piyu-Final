@@ -54,6 +54,7 @@ from app.services.evaluation.evaluation_service import (
     run_evaluation,
 )
 from app.services.evaluation.human_rag_overview import apply_human_rag_overview_to_run
+from app.services.evaluation.labeled_retrieval_overview import apply_labeled_retrieval_overview_to_run
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +288,7 @@ def _persist_result(
     for component_result in result.components:
         _persist_component(session, run=run, component_result=component_result)
     apply_human_rag_overview_to_run(session, run)
+    apply_labeled_retrieval_overview_to_run(session, run)
 
 
 def _evaluation_python() -> Path:
@@ -450,6 +452,14 @@ def get_run_with_components(session: Session, run_id: str) -> EvaluationRun | No
 
 
 def get_latest_run(session: Session) -> EvaluationRun | None:
+    completed = (
+        session.query(EvaluationRun)
+        .filter(EvaluationRun.status == "completed")
+        .order_by(EvaluationRun.completed_at.desc(), EvaluationRun.started_at.desc())
+        .first()
+    )
+    if completed is not None:
+        return completed
     return session.query(EvaluationRun).order_by(EvaluationRun.started_at.desc()).first()
 
 

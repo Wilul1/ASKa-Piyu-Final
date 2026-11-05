@@ -37,6 +37,8 @@ from app.models.schemas import (
 from app.routes.admin.knowledge_base import require_admin_only_key
 from app.services.evaluation import persistence
 from app.services.evaluation.evaluation_service import model_inventory
+from app.services.evaluation.human_rag_overview import overlay_case_breakdown
+from app.services.evaluation.labeled_retrieval_overview import overlay_retrieval_metrics_for_component
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +66,73 @@ def _component_schema(session: Session, component_row: EvaluationComponent) -> E
         )
         for r in results
     ]
+    if (
+        component_row.component == "answer_generation_llm"
+        and not any(m.metric_name == "per_case_breakdown" for m in metrics)
+    ):
+        cases = overlay_case_breakdown()
+        if cases:
+            metrics.append(
+                EvaluationMetricSchema(
+                    metric_name="per_case_breakdown",
+                    metric_value=None,
+                    extra=cases,
+                )
+            )
+    status = component_row.status
+    reason = component_row.reason
+    note = component_row.note
+    case_count = component_row.case_count
+    model_name = component_row.model_name
+    has_retrieval_hit = any(
+        m.metric_name in {"embedding_hit_at_k", "reranked_hit_at_k"} and m.metric_value is not None
+        for m in metrics
+    )
+    retrieval_overlay = overlay_retrieval_metrics_for_component(component_row.component)
+    if retrieval_overlay and not has_retrieval_hit:
+        status = retrieval_overlay["status"]
+        reason = None
+        note = retrieval_overlay["note"]
+        case_count = retrieval_overlay["case_count"]
+        model_name = retrieval_overlay["model_name"]
+        extra = {
+            "durable_overview_overlay": True,
+            "not_live_chroma": True,
+        }
+        metrics = [
+            EvaluationMetricSchema(
+                metric_name=name,
+                metric_value=value,
+                extra=extra,
+            )
+            for name, value in retrieval_overlay["metrics"].items()
+        ]
+        if retrieval_overlay["cases"]:
+            metrics.append(
+                EvaluationMetricSchema(
+                    metric_name="per_case_breakdown",
+                    metric_value=None,
+                    extra=retrieval_overlay["cases"],
+                )
+            )
+    elif retrieval_overlay and not any(m.metric_name == "per_case_breakdown" for m in metrics):
+        metrics.append(
+            EvaluationMetricSchema(
+                metric_name="per_case_breakdown",
+                metric_value=None,
+                extra=retrieval_overlay["cases"],
+            )
+        )
     return EvaluationComponentSchema(
         component_id=component_row.id,
         component=component_row.component,
-        status=component_row.status,
-        reason=component_row.reason,
-        note=component_row.note,
-        model_name=component_row.model_name,
+        status=status,
+        reason=reason,
+        note=note,
+        model_name=model_name,
         shares_model_with=component_row.shares_model_with,
         allow_llm_fallback=component_row.allow_llm_fallback,
-        case_count=component_row.case_count,
+        case_count=case_count,
         skipped_unlabeled_count=component_row.skipped_unlabeled_count,
         has_confusion_matrix=component_row.confusion_matrix is not None,
         metrics=metrics,

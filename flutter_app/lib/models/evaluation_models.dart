@@ -148,6 +148,126 @@ class EvaluationComponentResult {
     }
     return rows;
   }
+
+  /// Human overlay per-question scores. Empty when the overlay did not
+  /// include a `per_case_breakdown` extra — never synthesized here.
+  List<HumanRagCaseScore> humanRagCases() {
+    final extra = metricRow('per_case_breakdown')?.extra;
+    final raw = extra is List
+        ? extra
+        : extra is String
+            ? jsonDecode(extra)
+            : null;
+    if (raw is! List) return const [];
+    final rows = <HumanRagCaseScore>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      rows.add(HumanRagCaseScore.fromJson(Map<String, dynamic>.from(item)));
+    }
+    return rows;
+  }
+
+  /// Isolated-corpus retrieval overlay rows. Empty when that extra is
+  /// absent or is the human QA case list — never synthesized.
+  List<RetrievalCaseScore> retrievalCases() {
+    final extra = metricRow('per_case_breakdown')?.extra;
+    final raw = extra is List
+        ? extra
+        : extra is String
+            ? jsonDecode(extra)
+            : null;
+    if (raw is! List) return const [];
+    final rows = <RetrievalCaseScore>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      if (!map.containsKey('embedding_hit') && !map.containsKey('reranked_hit')) {
+        continue;
+      }
+      rows.add(RetrievalCaseScore.fromJson(map));
+    }
+    return rows;
+  }
+}
+
+class RetrievalCaseScore {
+  const RetrievalCaseScore({
+    required this.caseId,
+    required this.question,
+    this.embeddingHit,
+    this.rerankedHit,
+  });
+
+  final String caseId;
+  final String question;
+  final bool? embeddingHit;
+  final bool? rerankedHit;
+
+  factory RetrievalCaseScore.fromJson(Map<String, dynamic> json) {
+    return RetrievalCaseScore(
+      caseId: json['case_id']?.toString() ?? '',
+      question: json['question']?.toString() ?? '',
+      embeddingHit: json['embedding_hit'] as bool?,
+      rerankedHit: json['reranked_hit'] as bool?,
+    );
+  }
+}
+
+class HumanRagCaseScore {
+  const HumanRagCaseScore({
+    required this.caseId,
+    required this.question,
+    required this.included,
+    this.exclusionReason,
+    this.note,
+    this.correctness,
+    this.faithfulness,
+    this.relevance,
+    this.citation,
+  });
+
+  final String caseId;
+  final String question;
+  final bool included;
+  final String? exclusionReason;
+  final String? note;
+  final HumanRagDimensionScore? correctness;
+  final HumanRagDimensionScore? faithfulness;
+  final HumanRagDimensionScore? relevance;
+  final HumanRagDimensionScore? citation;
+
+  factory HumanRagCaseScore.fromJson(Map<String, dynamic> json) {
+    return HumanRagCaseScore(
+      caseId: json['case_id']?.toString() ?? '',
+      question: json['question']?.toString() ?? '',
+      included: json['included'] != false,
+      exclusionReason: json['exclusion_reason']?.toString(),
+      note: json['note']?.toString(),
+      correctness: HumanRagDimensionScore.tryParse(json['correctness']),
+      faithfulness: HumanRagDimensionScore.tryParse(json['faithfulness']),
+      relevance: HumanRagDimensionScore.tryParse(json['relevance']),
+      citation: HumanRagDimensionScore.tryParse(json['citation']),
+    );
+  }
+}
+
+class HumanRagDimensionScore {
+  const HumanRagDimensionScore({required this.label, this.score});
+
+  final String label;
+  final double? score;
+
+  static HumanRagDimensionScore? tryParse(dynamic raw) {
+    if (raw is! Map) return null;
+    final map = Map<String, dynamic>.from(raw);
+    final label = map['label']?.toString() ?? '';
+    if (label.isEmpty && map['score'] == null) return null;
+    final value = map['score'];
+    return HumanRagDimensionScore(
+      label: label,
+      score: value == null ? null : (value as num).toDouble(),
+    );
+  }
 }
 
 class ClassificationClassBreakdown {

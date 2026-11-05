@@ -46,6 +46,7 @@ backend/benchmarks/**
 !backend/benchmarks/evaluation/retrieval_relevance_dataset.json
 !backend/benchmarks/evaluation/rag_eval_dataset.json
 !backend/benchmarks/evaluation/human_answer_quality_overview.json
+!backend/benchmarks/evaluation/labeled_retrieval_overview.json
 backend/run_server.bat
 
 # Flutter: stage 1 runs its own `flutter pub get` + `flutter build web`

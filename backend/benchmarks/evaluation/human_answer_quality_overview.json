@@ -37,5 +37,161 @@
       "contributing_cases": 5,
       "note": "Document-title match only. Not gold chunk-id citation_set_precision. Cases: aq_03, aq_06, aq_07, aq_11, aq_12."
     }
-  }
+  },
+  "cases": [
+    {
+      "case_id": "aq_01_tor_fee",
+      "question": "How much does it cost to get a copy of my Transcript of Records?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Undergraduate P75.00/page and graduate P150.00/page match the pending Charter fee lines. Extra process/time not PDF-checked. No sources visible.",
+      "correctness": {"label": "pass", "score": 1.0},
+      "faithfulness": {"label": "faithful", "score": 1.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "no_sources_visible", "score": null}
+    },
+    {
+      "case_id": "aq_02_diploma_second_copy_fee",
+      "question": "How much is the fee for a second copy of my diploma?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "P100.00 matches the Charter second-copy-of-diploma line. Extra process/time not PDF-checked.",
+      "correctness": {"label": "pass", "score": 1.0},
+      "faithfulness": {"label": "faithful", "score": 1.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "no_sources_visible", "score": null}
+    },
+    {
+      "case_id": "aq_03_enrollment_office",
+      "question": "Which office handles student enrollment?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Office of the Registrar is correct. Four duplicate Citizen's Charter Enrollment source chips.",
+      "correctness": {"label": "pass", "score": 1.0},
+      "faithfulness": {"label": "faithful", "score": 1.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "matched", "score": 1.0}
+    },
+    {
+      "case_id": "aq_04_dropping_fee_multi_document",
+      "question": "How much does it cost to drop a subject?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Stated only Charter P30.00. Missed student-visible Handbook P20/unit conflict required by the pending multi-document case.",
+      "correctness": {"label": "fail", "score": 0.0},
+      "faithfulness": {"label": "faithful", "score": 1.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "no_sources_visible", "score": null}
+    },
+    {
+      "case_id": "aq_05_library_overdue_fee",
+      "question": "What is the fee for library circulation service if my book is overdue?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Invented unit 'per day'. Extraction only has '2 pesos per' with unit missing.",
+      "correctness": {"label": "fail", "score": 0.0},
+      "faithfulness": {"label": "invented_or_garbled", "score": 0.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "no_sources_visible", "score": null}
+    },
+    {
+      "case_id": "aq_06_entrance_exam_duration",
+      "question": "How long does the LSPU entrance examination take, including orientation?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "15 minutes + 1.5 hours match. Invented official total 1 hour 45 minutes; Charter total processing time is Not specified.",
+      "correctness": {"label": "partial", "score": 0.5},
+      "faithfulness": {"label": "invented_or_garbled", "score": 0.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "matched", "score": 1.0}
+    },
+    {
+      "case_id": "aq_07_id_validation_process",
+      "question": "What is the process for validating my student ID?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "COR, BAO student ID, OSAS steps, 4 minutes, no fee match the ID Validation card. Visible source title looks like neighboring Student ID Processing.",
+      "correctness": {"label": "pass", "score": 1.0},
+      "faithfulness": {"label": "faithful", "score": 1.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "partial", "score": 0.5}
+    },
+    {
+      "case_id": "aq_08_fail_more_than_75_percent",
+      "question": "What happens if I fail more than 75% of my units?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "OCR-garbled table dump. Did not state dismissal / nine-unit condition / 100% permanent disqualification.",
+      "correctness": {"label": "fail", "score": 0.0},
+      "faithfulness": {"label": "invented_or_garbled", "score": 0.0},
+      "relevance": {"label": "not_addressed", "score": 0.0},
+      "citation": {"label": "no_sources_visible", "score": null}
+    },
+    {
+      "case_id": "aq_09_faculty_teaching_load",
+      "question": "How is faculty teaching load determined?",
+      "included": false,
+      "exclusion_reason": "role_gated_faculty",
+      "note": "Student-role refusal. Faculty Manual is faculty-audience only. Not counted in the 12-case averages.",
+      "correctness": {"label": "role_gated", "score": null},
+      "faithfulness": {"label": "role_gated", "score": null},
+      "relevance": {"label": "role_gated", "score": null},
+      "citation": {"label": "role_gated", "score": null}
+    },
+    {
+      "case_id": "aq_10_faculty_responsibilities",
+      "question": "What are the responsibilities of an LSPU faculty member?",
+      "included": false,
+      "exclusion_reason": "role_gated_faculty",
+      "note": "Same student-role gate as aq_09. Faculty Manual Section III.A is not student-visible.",
+      "correctness": {"label": "role_gated", "score": null},
+      "faithfulness": {"label": "role_gated", "score": null},
+      "relevance": {"label": "role_gated", "score": null},
+      "citation": {"label": "role_gated", "score": null}
+    },
+    {
+      "case_id": "aq_11_honorable_dismissal",
+      "question": "What is honorable dismissal for a student?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Voluntary withdrawal + Registrar is correct. Missed parent petition, debts, no readmission, and disciplinary exclusion. Mixed in withdrawal guidelines.",
+      "correctness": {"label": "partial", "score": 0.5},
+      "faithfulness": {"label": "mixed", "score": 0.5},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "matched", "score": 1.0}
+    },
+    {
+      "case_id": "aq_12_university_president",
+      "question": "Who is the current LSPU president?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Named Dr. Mario R. Briones as in dated manuals, but asserted current and added unsourced 2019 / Flexible Learning / ISO biography.",
+      "correctness": {"label": "partial", "score": 0.5},
+      "faithfulness": {"label": "invented_or_garbled", "score": 0.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "matched", "score": 1.0}
+    },
+    {
+      "case_id": "aq_13_out_of_scope_weather_mars",
+      "question": "What is the weather on Mars tomorrow?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Refused. Did not invent weather. Stock student insufficient-information / OOS message.",
+      "correctness": {"label": "pass", "score": 1.0},
+      "faithfulness": {"label": "faithful", "score": 1.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "no_sources_visible", "score": null}
+    },
+    {
+      "case_id": "aq_14_insufficient_wifi_password",
+      "question": "What is the LSPU student Wi-Fi password?",
+      "included": true,
+      "exclusion_reason": null,
+      "note": "Did not invent a password. Added Portal URL and IT Support instructions not present in the evaluation corpus.",
+      "correctness": {"label": "partial", "score": 0.5},
+      "faithfulness": {"label": "invented_or_garbled", "score": 0.0},
+      "relevance": {"label": "addressed", "score": 1.0},
+      "citation": {"label": "no_sources_visible", "score": null}
+    }
+  ]
 }

@@ -1,0 +1,95 @@
+{
+  "source_run_id": "131ba7a4-2fa2-475d-8d6e-ccc36044733c",
+  "corpus": "chroma_evaluation/aska_evaluation",
+  "chunk_count": 691,
+  "case_count": 12,
+  "k": 5,
+  "not_live_chroma": true,
+  "note": "Scored once against the isolated 691-chunk evaluation corpus that the 12 human retrieval labels refer to. Re-applied when a host cannot open that index (Heroku web image has no local chroma_evaluation / torch). Not a live student-Chroma score.",
+  "metrics": {
+    "embedding_hit_at_k": 0.8333,
+    "embedding_mrr": 0.6875,
+    "embedding_ndcg_at_k": 0.6871,
+    "embedding_precision_at_k": 0.25,
+    "embedding_recall_at_k": 0.8056,
+    "reranked_hit_at_k": 0.9167,
+    "reranked_mrr": 0.8125,
+    "reranked_ndcg_at_k": 0.7812,
+    "reranked_precision_at_k": 0.2333,
+    "reranked_recall_at_k": 0.8056
+  },
+  "cases": [
+    {
+      "case_id": "rag_benchmark_01",
+      "question": "How much does it cost to get a copy of my Transcript of Records?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_02",
+      "question": "How much is the fee for a second copy of my diploma?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_03",
+      "question": "Which office handles student enrollment?",
+      "embedding_hit": false,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_04",
+      "question": "How much does it cost to drop a subject?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_05",
+      "question": "What is the fee for library circulation service if my book is overdue?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_06",
+      "question": "How long does the LSPU entrance examination take, including orientation?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_07",
+      "question": "What is the process for validating my student ID?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_08",
+      "question": "What happens if I fail more than 75% of my units?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_09",
+      "question": "How is faculty teaching load determined?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_10",
+      "question": "What are the responsibilities of an LSPU faculty member?",
+      "embedding_hit": false,
+      "reranked_hit": false
+    },
+    {
+      "case_id": "rag_benchmark_11",
+      "question": "What is honorable dismissal for a student?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    },
+    {
+      "case_id": "rag_benchmark_12",
+      "question": "Who is the current LSPU president?",
+      "embedding_hit": true,
+      "reranked_hit": true
+    }
+  ]
+}

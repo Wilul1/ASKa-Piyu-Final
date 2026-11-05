@@ -302,8 +302,29 @@ def test_human_rag_overview_is_reapplied_after_empty_rag_run(db_session, monkeyp
         assert values["faithfulness"] == pytest.approx(0.5417)
         assert values["answer_relevancy"] == pytest.approx(0.9167)
         assert values["citation_set_precision"] == pytest.approx(0.9)
+        assert values["per_case_breakdown"] is None
+        breakdown = json.loads(
+            fresh.query(EvaluationResult)
+            .filter_by(component_id=component.id, metric_name="per_case_breakdown")
+            .one()
+            .extra_json
+        )
+        assert len(breakdown) == 14
+        assert breakdown[0]["question"].startswith("How much does it cost to get a copy")
+        retrieval = fresh.query(EvaluationComponent).filter_by(
+            run_id=run.id, component="reranker"
+        ).one()
+        assert retrieval.status == "evaluated"
+        assert retrieval.case_count == 12
+        retrieval_values = {
+            row.metric_name: row.metric_value
+            for row in fresh.query(EvaluationResult).filter_by(component_id=retrieval.id).all()
+        }
+        assert retrieval_values["reranked_hit_at_k"] == pytest.approx(0.9167)
+        assert retrieval_values["embedding_hit_at_k"] == pytest.approx(0.8333)
         config = json.loads(fresh.get(EvaluationRun, run.id).config_json)
         assert config["human_answer_quality_overview"] == "aq_live_student_chat_20261105T023200Z"
+        assert config["labeled_retrieval_overview"] == "131ba7a4-2fa2-475d-8d6e-ccc36044733c"
     finally:
         fresh.close()
 

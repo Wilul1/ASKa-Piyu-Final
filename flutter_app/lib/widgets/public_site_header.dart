@@ -5,13 +5,14 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../navigation/soft_page_route.dart';
 import '../screens/chatbot_page.dart';
-import '../screens/incoming_transfers_page.dart';
 import '../screens/knowledge_base_page.dart';
 import '../screens/login_page.dart';
 import '../screens/my_tickets_page.dart';
 import '../screens/settings_page.dart';
 import '../screens/signup_page.dart';
 import '../screens/student_home.dart';
+import '../screens/student_mailbox_page.dart';
+import '../services/eye_comfort.dart';
 import 'phone_layout.dart';
 
 /// Shared top navigation for public landing / Knowledge Base (no sidebar).
@@ -19,6 +20,7 @@ class PublicSiteHeader extends StatelessWidget {
   final bool knowledgeBaseActive;
   final bool askAssistantActive;
   final bool myTicketsActive;
+  final bool mailboxActive;
   final bool accountActive;
   final bool slim;
 
@@ -34,6 +36,7 @@ class PublicSiteHeader extends StatelessWidget {
     this.knowledgeBaseActive = false,
     this.askAssistantActive = false,
     this.myTicketsActive = false,
+    this.mailboxActive = false,
     this.accountActive = false,
     this.slim = false,
     this.transparentBackground = false,
@@ -43,32 +46,17 @@ class PublicSiteHeader extends StatelessWidget {
       knowledgeBaseActive ||
       askAssistantActive ||
       myTicketsActive ||
+      mailboxActive ||
       accountActive;
 
   Future<void> _goHome(BuildContext context) =>
       softPushAndClear(context, const StudentHomePage());
 
-  /// Staff mailbox is the existing transfer inbox. Students and guests land
-  /// on My Tickets, which is the inbox they already have.
-  void _openMailbox(BuildContext context) {
-    final role = AuthScope.of(context).role;
-    if (role == 'admin') {
-      openAdminPage(
-        context,
-        builder: (_) => const IncomingTransfersPage(),
-      );
-      return;
-    }
-    if (role == 'office') {
-      openOfficePage(
-        context,
-        builder: (_) => const IncomingTransfersPage(),
-      );
-      return;
-    }
+  void _openStudentMailbox(BuildContext context) {
+    if (mailboxActive) return;
     openProtectedPage(
       context,
-      builder: (_) => const MyTicketsPage(),
+      builder: (_) => const StudentMailboxPage(),
       replace: _onPublicPeerPage,
       requireVerifiedEmail: true,
       message: emailVerifyRequiredMessage,
@@ -85,14 +73,18 @@ class PublicSiteHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final isNarrow = width < kPhoneLayoutBreakpoint;
     final auth = AuthScope.of(context);
     final isAuthed = auth.isAuthenticated;
     final role = auth.role;
+    // Authenticated students/faculty get one extra desktop link (Mailbox).
+    final showsMailboxLink = isAuthed && role != 'office' && role != 'admin';
+    final isNarrow = width < (showsMailboxLink ? 1140 : kPhoneLayoutBreakpoint);
+    final eyeComfort = EyeComfortScope.isEnabled(context);
 
     final matchedChrome = knowledgeBaseActive ||
         myTicketsActive ||
         askAssistantActive ||
+        mailboxActive ||
         accountActive;
     final matchedNav = matchedChrome && !isNarrow;
     // Same side inset as the Knowledge Base column, so the logo lines up
@@ -103,7 +95,7 @@ class PublicSiteHeader extends StatelessWidget {
     return Material(
       color: transparentBackground || matchedChrome
           ? Colors.transparent
-          : Colors.white,
+          : (eyeComfort ? EyeComfortColors.headerBg : Colors.white),
       child: Container(
         decoration: transparentBackground || matchedChrome
             ? null
@@ -166,9 +158,10 @@ class PublicSiteHeader extends StatelessWidget {
                     ),
                   ),
                 ),
-                const Spacer(),
-                if (matchedNav)
-                  Flexible(
+                if (isNarrow)
+                  const Spacer()
+                else if (matchedNav)
+                  Expanded(
                     child: Align(
                       alignment: Alignment.centerRight,
                       child: SingleChildScrollView(
@@ -211,11 +204,13 @@ class PublicSiteHeader extends StatelessWidget {
                                 );
                               },
                             ),
-                            _MatchedNavLink(
-                              label: 'Mailbox',
-                              icon: Icons.inbox_outlined,
-                              onTap: () => _openMailbox(context),
-                            ),
+                            if (showsMailboxLink)
+                              _MatchedNavLink(
+                                label: 'Mailbox',
+                                icon: Icons.inbox_outlined,
+                                active: mailboxActive,
+                                onTap: () => _openStudentMailbox(context),
+                              ),
                             _MatchedNavLink(
                               label: !isAuthed
                                   ? 'Login'
@@ -252,7 +247,15 @@ class PublicSiteHeader extends StatelessWidget {
                       ),
                     ),
                   )
-                else if (!isNarrow) ...[
+                else
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
                   _NavLink(
                     label: 'Knowledge Base',
                     active: knowledgeBaseActive,
@@ -283,6 +286,12 @@ class PublicSiteHeader extends StatelessWidget {
                       );
                     },
                   ),
+                  if (showsMailboxLink)
+                    _NavLink(
+                      label: 'Mailbox',
+                      active: mailboxActive,
+                      onTap: () => _openStudentMailbox(context),
+                    ),
                   if (!isAuthed)
                     _NavLink(
                       label: 'Login',
@@ -313,7 +322,11 @@ class PublicSiteHeader extends StatelessWidget {
                       },
                     ),
                   const SizedBox(width: 10),
-                ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 if (!matchedChrome && !isAuthed && !isNarrow)
                   ElevatedButton(
                     onPressed: () => softPush(context, const SignupPage()),
@@ -331,20 +344,6 @@ class PublicSiteHeader extends StatelessWidget {
                       'Sign up',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
-                  )
-                else if (!matchedChrome && !isNarrow && isAuthed)
-                  OutlinedButton(
-                    onPressed: () => signOutToHome(context),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: DesignTokens.maroon,
-                      side: const BorderSide(color: DesignTokens.maroon),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      shape: const StadiumBorder(),
-                    ),
-                    child: const Text('Sign out'),
                   ),
                 if (isNarrow)
                   IconButton(
@@ -515,11 +514,14 @@ class PublicSiteHeader extends StatelessWidget {
                           );
                         },
                       ),
-                      item(
-                        label: 'Mailbox',
-                        active: false,
-                        onTap: () => _openMailbox(context),
-                      ),
+                      if (auth.isAuthenticated &&
+                          auth.role != 'office' &&
+                          auth.role != 'admin')
+                        item(
+                          label: 'Mailbox',
+                          active: mailboxActive,
+                          onTap: () => _openStudentMailbox(context),
+                        ),
                       const SizedBox(height: 12),
                       Text(
                         'Account',
@@ -585,22 +587,6 @@ class PublicSiteHeader extends StatelessWidget {
                           },
                         ),
                         const Spacer(),
-                        OutlinedButton(
-                          onPressed: () async {
-                            Navigator.pop(dialogContext);
-                            await signOutToHome(context);
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: DesignTokens.maroon,
-                            side: const BorderSide(color: DesignTokens.maroon),
-                            minimumSize: const Size.fromHeight(48),
-                            shape: const StadiumBorder(),
-                          ),
-                          child: const Text(
-                            'Sign out',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
                       ],
                     ],
                   ),
@@ -709,33 +695,38 @@ class _MatchedNavLink extends StatelessWidget {
       ],
     );
 
+    final iconButton = icon == null
+        ? null
+        : _NavIconButton(
+            icon: icon!,
+            color: const Color(0xFF000000),
+            size: 16,
+            tooltip: onIconTap == null ? label : (iconTooltip ?? label),
+            onTap: onIconTap ?? onTap,
+          );
+
     return Padding(
-      padding: const EdgeInsets.only(left: 14),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          if (icon != null) ...[
-            _NavIconButton(
-              icon: icon!,
-              color: const Color(0xFF000000),
-              size: 16,
-              tooltip: onIconTap == null ? label : (iconTooltip ?? label),
-              onTap: onIconTap ?? onTap,
+      padding: const EdgeInsets.only(left: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (iconButton != null) ...[
+                  iconButton,
+                  const SizedBox(width: 6),
+                ],
+                labelWidget,
+              ],
             ),
-            const SizedBox(width: 6),
-          ],
-          TextButton(
-            onPressed: onTap,
-            style: TextButton.styleFrom(
-              foregroundColor: color,
-              padding: EdgeInsets.zero,
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: labelWidget,
           ),
-        ],
+        ),
       ),
     );
   }

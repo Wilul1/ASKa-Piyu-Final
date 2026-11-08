@@ -38,7 +38,7 @@ void main() {
     expect(find.widgetWithText(ElevatedButton, 'Search'), findsOneWidget);
     expect(find.text('Ask Assistant'), findsOneWidget);
     expect(find.text('My Tickets'), findsOneWidget);
-    expect(find.text('Mailbox'), findsOneWidget);
+    expect(find.text('Mailbox'), findsNothing);
     expect(find.text('Login'), findsOneWidget);
     expect(find.byIcon(Icons.home), findsOneWidget);
 

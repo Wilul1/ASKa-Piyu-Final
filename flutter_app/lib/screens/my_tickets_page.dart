@@ -1288,6 +1288,11 @@ class TicketCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Accent color follows the ticket's own status (same palette as the
+    // status chip/stat tiles), so a glance down a scrolled list already
+    // shows which tickets are open/in progress/closed without reading
+    // each chip -- replaces the previous fixed maroon-only bar.
+    final accent = _statusStyle(ticket.status).color;
     return StudentInkCard(
       onTap: onTap,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -1295,14 +1300,10 @@ class TicketCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // A slim rose/burgundy accent bar -- color and shape, not
-            // an icon -- in place of the removed ticket-icon badge.
-            // Stretches to the row's own content height, so it never
-            // adds vertical space on its own.
             Container(
               width: 4,
               decoration: BoxDecoration(
-                color: DesignTokens.maroon.withValues(alpha: 0.35),
+                color: accent.withValues(alpha: 0.55),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),

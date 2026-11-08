@@ -313,6 +313,8 @@ class _KnowledgeBaseBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final browsingCategory =
         activeCategory != null && activeCategory!.trim().isNotEmpty;
+    final isNarrow = MediaQuery.sizeOf(context).width < 720;
+    final isFaculty = AuthScope.of(context).role == 'faculty';
 
     return Center(
       child: ConstrainedBox(
@@ -326,6 +328,8 @@ class _KnowledgeBaseBody extends StatelessWidget {
                 padding: EdgeInsets.only(bottom: 10),
               ),
               if (!browsingCategory || activeQuery.isNotEmpty) ...[
+                _KbPageHeading(isFaculty: isFaculty, isNarrow: isNarrow),
+                SizedBox(height: isNarrow ? 18 : 22),
                 _HeroSearch(
                   controller: searchController,
                   activeQuery: activeQuery,
@@ -369,6 +373,78 @@ class _KnowledgeBaseBody extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Page-level title block shown above the search card. Moving the
+/// eyebrow/heading/subtitle out of the search card (where they used to
+/// live inside a gradient hero panel) onto the plain page background
+/// matches the approved target's flatter, less "banner-y" treatment --
+/// the search card below becomes a simple utility, not a decorated hero.
+class _KbPageHeading extends StatelessWidget {
+  final bool isFaculty;
+  final bool isNarrow;
+
+  const _KbPageHeading({required this.isFaculty, required this.isNarrow});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: DesignTokens.maroon.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            isFaculty
+                ? 'ASKa-Piyu Faculty Knowledge Base'
+                : 'ASKa-Piyu Knowledge Base',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.maroon,
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          isFaculty ? 'Find faculty support topics' : 'Find student support topics',
+          style: TextStyle(
+            fontSize: isNarrow ? 28 : 38,
+            height: 1.12,
+            fontWeight: FontWeight.w900,
+            color: DesignTokens.ink,
+            letterSpacing: -0.4,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          isFaculty
+              ? 'Browse published faculty articles by category, or search titles and summaries.'
+              : 'Browse published articles by category, or search titles and summaries.',
+          style: const TextStyle(
+            fontSize: 15.5,
+            height: 1.45,
+            color: DesignTokens.muted,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: 72,
+          height: 3,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: DesignTokens.maroon,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -541,28 +617,33 @@ class _HelpCenterArticleTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFF5C0A0F),
-      borderRadius: BorderRadius.circular(14),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Row(
             children: [
               Expanded(
                 child: Text(
                   title,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
+                    color: DesignTokens.ink,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14.5,
                     height: 1.3,
                   ),
                 ),
               ),
               const SizedBox(width: 10),
-              const Icon(Icons.expand_more_rounded, color: Colors.white),
+              const Icon(Icons.chevron_right_rounded,
+                  color: DesignTokens.maroon, size: 20),
             ],
           ),
         ),
@@ -586,129 +667,124 @@ class _HeroSearch extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+      padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.white, Color(0xFFFFFBF0)],
-        ),
-        border: Border.all(color: const Color(0xFFF1E4C8)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: DesignTokens.border),
         boxShadow: DesignTokens.softShadow(0.07),
       ),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stacked = constraints.maxWidth < 560;
+          final field = Container(
+            constraints: const BoxConstraints(minHeight: 54),
+            alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: DesignTokens.maroon.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(999),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
             ),
-            child: Text(
-              AuthScope.of(context).role == 'faculty'
-                  ? 'ASKa-Piyu Faculty Knowledge Base'
-                  : 'ASKa-Piyu Knowledge Base',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: DesignTokens.maroon,
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            AuthScope.of(context).role == 'faculty'
-                ? 'Find faculty support topics'
-                : 'Find student support topics',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 34,
-              height: 1.12,
-              fontWeight: FontWeight.w900,
-              color: DesignTokens.ink,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            AuthScope.of(context).role == 'faculty'
-                ? 'Browse published faculty articles by category, or search titles and summaries.'
-                : 'Browse published articles by category, or search titles and summaries.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 16, height: 1.45, color: DesignTokens.muted),
-          ),
-          const SizedBox(height: 24),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-                boxShadow: DesignTokens.softShadow(0.08),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 10),
-                  const Icon(Icons.search_rounded, color: DesignTokens.muted),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      onSubmitted: onSearch,
-                      decoration: const InputDecoration(
-                        hintText: 'Search articles, policies, offices...',
-                        border: InputBorder.none,
-                        isDense: true,
+            child: Row(
+              children: [
+                const SizedBox(width: 14),
+                const Icon(Icons.search_rounded, color: DesignTokens.muted),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    onSubmitted: onSearch,
+                    textAlignVertical: TextAlignVertical.center,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: DesignTokens.ink,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: 'Search articles, policies, offices...',
+                      hintStyle: TextStyle(
+                        color: Color(0xFF9AA3B2),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
                       ),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 4, vertical: 16),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  if (activeQuery.isNotEmpty)
-                    IconButton(
-                      tooltip: 'Clear search',
-                      onPressed: () {
-                        controller.clear();
-                        onSearch('');
-                      },
-                      icon: const Icon(
-                        Icons.close_rounded,
-                        color: DesignTokens.muted,
-                      ),
-                    ),
-                  SizedBox(
-                    height: 46,
-                    child: ElevatedButton(
-                      onPressed: () => onSearch(null),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: DesignTokens.maroon,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      child: const Text('Search'),
+                ),
+                if (activeQuery.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Clear search',
+                    onPressed: () {
+                      controller.clear();
+                      onSearch('');
+                    },
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: DesignTokens.muted,
+                      size: 18,
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
-          ),
-          if (activeQuery.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Text(
-              'Showing results for "$activeQuery"',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: DesignTokens.maroon,
+          );
+          final button = SizedBox(
+            height: 54,
+            width: stacked ? double.infinity : null,
+            child: ElevatedButton(
+              onPressed: () => onSearch(null),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: DesignTokens.maroon,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 36),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
+              child: const Text('Search'),
             ),
-          ],
-        ],
+          );
+          final searchRow = stacked
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [field, const SizedBox(height: 10), button],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: field),
+                    const SizedBox(width: 16),
+                    button,
+                  ],
+                );
+          if (activeQuery.isEmpty) {
+            return searchRow;
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              searchRow,
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Text(
+                  'Showing results for "$activeQuery"',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: DesignTokens.maroon,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -819,16 +895,38 @@ class _CategorySectionsState extends State<_CategorySections> {
       ..sort((left, right) =>
           _categorySortKey(left.name).compareTo(_categorySortKey(right.name)));
 
-    return StudentPanel(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: DesignTokens.border),
+        boxShadow: DesignTokens.softShadow(0.07),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const StudentSectionTitle(
-            title: 'Browse by Category',
-            subtitle: 'Start with student-friendly sections, then open the focused articles you need.',
+          const Text(
+            'Browse by Category',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.ink,
+              height: 1.2,
+            ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 6),
+          const Text(
+            'Start with student-friendly sections, then open the focused articles you need.',
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.4,
+              color: DesignTokens.muted,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 18),
           if (widget.loading)
             const _LoadingState()
           else if (widget.error != null)
@@ -892,65 +990,67 @@ class _CategoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topics = category.visibleSubcategories;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Material(
-          color: const Color(0xFF5C0A0F),
-          borderRadius: BorderRadius.circular(14),
-          child: InkWell(
-            onTap: onOpen,
-            borderRadius: BorderRadius.circular(14),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      category.name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                        height: 1.3,
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        category.name,
+                        style: const TextStyle(
+                          color: DesignTokens.maroon,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                          height: 1.25,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  IconButton(
-                    tooltip: expanded ? 'Collapse' : 'Preview topics',
-                    onPressed: onToggle,
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 28,
-                      minHeight: 28,
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: expanded ? 'Collapse' : 'Preview topics',
+                      onPressed: onToggle,
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      icon: Icon(
+                        expanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        color: DesignTokens.maroon,
+                        size: 22,
+                      ),
                     ),
-                    icon: Icon(
-                      expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        if (expanded) ...[
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: DesignTokens.border),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          if (expanded) ...[
+            const Divider(height: 1, color: Color(0xFFE5E7EB)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 Text(
                   '${category.articleCount} focused ${category.articleCount == 1 ? 'article' : 'articles'}',
                   style: const TextStyle(
@@ -995,6 +1095,7 @@ class _CategoryCard extends StatelessWidget {
           ),
         ],
       ],
+      ),
     );
   }
 }

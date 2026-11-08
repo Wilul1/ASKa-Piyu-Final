@@ -4005,8 +4005,6 @@ Future<List<_AdminTicketEntry>> _loadAdminTickets(BuildContext context) async {
 }
 
 Future<List<_AdminTicketEntry>> _loadOfficeTickets(BuildContext context) async {
-  final officeName =
-      AuthScope.of(context).currentUser?.officeName?.trim() ?? '';
   final result = await ApiClient.send(
     method: 'GET',
     url: '${AppConfig.resolvedApiBase}/tickets',
@@ -4018,10 +4016,20 @@ Future<List<_AdminTicketEntry>> _loadOfficeTickets(BuildContext context) async {
     throw StateError(_extractError(data, 'Could not load assigned tickets.'));
   }
   final items = data['items'] is List ? data['items'] as List : const [];
+  return mapOfficeTicketsResponseItems(items);
+}
+
+/// The exact `GET /tickets` item-mapping `_loadOfficeTickets` applies to a
+/// response body. The backend already scopes this response to the caller's
+/// office (by office id, with a name fallback) -- no further client-side
+/// office-name filtering happens here. Exposed so regression tests can
+/// exercise the real mapping without needing an HTTP-mocking seam, which
+/// this codebase's widget tests don't otherwise have.
+@visibleForTesting
+List<_AdminTicketEntry> mapOfficeTicketsResponseItems(List<dynamic> items) {
   return items
       .whereType<Map>()
       .map((item) => _AdminTicketEntry.fromJson(Map<String, dynamic>.from(item)))
-      .where((ticket) => _adminSame(ticket.assignedOffice, officeName))
       .toList();
 }
 
@@ -4133,10 +4141,6 @@ String _adminTitleCase(String value) {
       .where((part) => part.isNotEmpty)
       .map((part) => part[0].toUpperCase() + part.substring(1).toLowerCase())
       .join(' ');
-}
-
-bool _adminSame(String left, String right) {
-  return left.trim().toLowerCase() == right.trim().toLowerCase();
 }
 
 Color _adminStatusColor(String status) {

@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
@@ -13,19 +15,15 @@ import '../services/local_store.dart';
 import '../widgets/phone_layout.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
-import 'knowledge_base_page.dart';
 import 'login_page.dart';
 import 'my_tickets_page.dart';
 
 const _chatSessionsKey = 'aska_chat_sessions_v1';
 const _maxStoredSessions = 20;
-
-const _suggestionPrompts = <String>[
-  'How do I apply for a Leave of Absence?',
-  'What are the enrollment requirements?',
-  'Where do I request a Transcript of Records?',
-  'What is the attendance policy?',
-];
+const _kSidebarWidth = 248.0;
+const _kConversationMaxWidth = 900.0;
+const _kComposerDesktopHeight = 58.0;
+const _kChatPageBg = Color(0xFFF7F5F6);
 
 /// The set of citation-verification statuses that end polling once seen in
 /// a successful (200) poll response.
@@ -324,8 +322,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
       }
       _activeSessionId = created.id;
       _hydrated = true;
-      _historyOpen = canUseHistory &&
-          MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
+      _historyOpen = false;
     });
   }
 
@@ -557,7 +554,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
     final canUseHistory = _canUseHistory;
     if (!_hydrated) {
       return const Scaffold(
-        backgroundColor: Color(0xFFF7F2F2),
+        backgroundColor: _kChatPageBg,
         body: Column(
           children: [
             PublicSiteHeader(askAssistantActive: true),
@@ -567,17 +564,17 @@ class _ChatbotPageState extends State<ChatbotPage> {
       );
     }
 
+    final historySessions =
+        _sessions.where((session) => session.turns.isNotEmpty).toList();
     final historyPane = canUseHistory
         ? _ChatHistoryPane(
-            sessions: _sessions
-                .where((session) => session.turns.isNotEmpty)
-                .toList(),
+            sessions: historySessions,
             activeId: _activeSessionId,
             onSelect: _selectSession,
             onNewChat: _startNewChat,
             onDelete: _deleteSession,
-            onClose: wide ? null : () => setState(() => _historyOpen = false),
-            compactHeader: wide,
+            onClose: () => setState(() => _historyOpen = false),
+            compactHeader: false,
           )
         : null;
 
@@ -591,7 +588,6 @@ class _ChatbotPageState extends State<ChatbotPage> {
       isDesktop: wide,
       isGuest: !AuthScope.of(context).isAuthenticated,
       onSend: _sendQuestion,
-      onSuggestion: _sendQuestion,
       onSubmitTicket: _submitTicketForQuestion,
       onToggleHistory: canUseHistory
           ? () => setState(() => _historyOpen = !_historyOpen)
@@ -603,56 +599,65 @@ class _ChatbotPageState extends State<ChatbotPage> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F2F2),
+      backgroundColor: _kChatPageBg,
       resizeToAvoidBottomInset: true,
-      body: Column(
+      body: Stack(
         children: [
-          const PublicSiteHeader(
-            askAssistantActive: true,
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(painter: _ChatWavePainter()),
+            ),
           ),
-          Expanded(
-            child: wide
-                ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _DesktopIconRail(
-                        historyOpen: canUseHistory && _historyOpen,
-                        canUseHistory: canUseHistory,
-                        onToggleHistory: canUseHistory
-                            ? () =>
-                                setState(() => _historyOpen = !_historyOpen)
-                            : null,
-                        onNewChat: _startNewChat,
+          Column(
+            children: [
+              const PublicSiteHeader(
+                askAssistantActive: true,
+              ),
+              Expanded(
+                child: wide
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _ChatWorkspaceSidebar(
+                            sessions: historySessions,
+                            activeId: _activeSessionId,
+                            canUseHistory: canUseHistory,
+                            onSelect: _selectSession,
+                            onNewChat: _startNewChat,
+                            onDelete: _deleteSession,
+                          ),
+                          Expanded(child: chatColumn),
+                        ],
+                      )
+                    : Stack(
+                        children: [
+                          chatColumn,
+                          if (canUseHistory &&
+                              _historyOpen &&
+                              historyPane != null) ...[
+                            Positioned.fill(
+                              child: GestureDetector(
+                                onTap: () =>
+                                    setState(() => _historyOpen = false),
+                                child: Container(color: Colors.black26),
+                              ),
+                            ),
+                            Positioned(
+                              left: 0,
+                              top: 0,
+                              bottom: 0,
+                              width: 300,
+                              child: Material(
+                                elevation: 8,
+                                color: Colors.white,
+                                child: historyPane,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                      if (canUseHistory && _historyOpen && historyPane != null)
-                        SizedBox(width: 280, child: historyPane),
-                      Expanded(child: chatColumn),
-                    ],
-                  )
-                : Stack(
-                    children: [
-                      chatColumn,
-                      if (canUseHistory && _historyOpen && historyPane != null) ...[
-                        Positioned.fill(
-                          child: GestureDetector(
-                            onTap: () => setState(() => _historyOpen = false),
-                            child: Container(color: Colors.black26),
-                          ),
-                        ),
-                        Positioned(
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: 300,
-                          child: Material(
-                            elevation: 8,
-                            color: Colors.white,
-                            child: historyPane,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
+              ),
+            ],
           ),
         ],
       ),
@@ -660,104 +665,155 @@ class _ChatbotPageState extends State<ChatbotPage> {
   }
 }
 
-class _DesktopIconRail extends StatelessWidget {
-  final bool historyOpen;
+class _ChatWorkspaceSidebar extends StatelessWidget {
+  final List<_ChatSession> sessions;
+  final String? activeId;
   final bool canUseHistory;
-  final VoidCallback? onToggleHistory;
+  final ValueChanged<String> onSelect;
   final VoidCallback onNewChat;
+  final ValueChanged<String> onDelete;
 
-  const _DesktopIconRail({
-    required this.historyOpen,
+  const _ChatWorkspaceSidebar({
+    required this.sessions,
+    required this.activeId,
     required this.canUseHistory,
-    required this.onToggleHistory,
+    required this.onSelect,
     required this.onNewChat,
+    required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 64,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F2F2),
+      width: _kSidebarWidth,
+      decoration: const BoxDecoration(
         border: Border(
-          right: BorderSide(
-            color: DesignTokens.maroon.withValues(alpha: 0.12),
-          ),
+          right: BorderSide(color: Color(0xFFE6E1E3), width: 1),
         ),
       ),
       child: SafeArea(
         right: false,
-        child: Column(
-          children: [
-            const SizedBox(height: 10),
-            if (canUseHistory) ...[
-              _RailIconButton(
-                tooltip: historyOpen ? 'Hide recent chats' : 'Recent chats',
-                icon: Icons.view_sidebar_outlined,
-                selected: historyOpen,
-                onPressed: onToggleHistory!,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 14, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const PublicBackToHomeButton(
+                foreground: DesignTokens.maroon,
+                labelColor: Color(0xFF1B2333),
+                padding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
               ),
-              const SizedBox(height: 6),
-            ],
-            _RailIconButton(
-              tooltip: 'New chat',
-              icon: Icons.add_rounded,
-              onPressed: onNewChat,
-            ),
-            if (canUseHistory) ...[
-              const SizedBox(height: 6),
-              _RailIconButton(
-                tooltip: 'Recent chats',
-                icon: Icons.chat_bubble_outline_rounded,
-                selected: historyOpen,
-                onPressed: onToggleHistory!,
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: onNewChat,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('New Chat'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: DesignTokens.maroon,
+                  side: const BorderSide(
+                    color: DesignTokens.maroon,
+                    width: 1.4,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 12,
+                  ),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                  shape: const StadiumBorder(),
+                ),
+              ),
+              const SizedBox(height: 28),
+              const Row(
+                children: [
+                  Icon(
+                    Icons.chat_bubble_outline_rounded,
+                    size: 16,
+                    color: Color(0xFF1B2333),
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Recent Chats',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      color: Color(0xFF1B2333),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: !canUseHistory || sessions.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.only(left: 24),
+                        child: Text(
+                          'Your conversations\nwill appear here',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.45,
+                            color: Color(0xFF9CA3AF),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: sessions.length,
+                        itemBuilder: (context, index) {
+                          final session = sessions[index];
+                          final selected = session.id == activeId;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Material(
+                              color: selected
+                                  ? DesignTokens.maroon.withValues(alpha: 0.08)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () => onSelect(session.id),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(8, 8, 0, 8),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          session.title,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            color: selected
+                                                ? DesignTokens.maroon
+                                                : const Color(0xFF1B2333),
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Delete chat',
+                                        onPressed: () => onDelete(session.id),
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                          size: 16,
+                                        ),
+                                        color: DesignTokens.muted,
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
               ),
             ],
-            const Spacer(),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 14),
-              child: _UserAvatarButton(size: 34),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RailIconButton extends StatelessWidget {
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onPressed;
-  final bool selected;
-
-  const _RailIconButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-    this.selected = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: selected
-            ? DesignTokens.maroon.withValues(alpha: 0.10)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onPressed,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(
-              icon,
-              size: 22,
-              color: selected ? DesignTokens.maroon : DesignTokens.ink,
-            ),
           ),
         ),
       ),
@@ -784,21 +840,15 @@ class _UserAvatarButton extends StatelessWidget {
         width: size,
         height: size,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           shape: BoxShape.circle,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: loggedIn
-                ? const [Color(0xFF7A1F1F), DesignTokens.maroon]
-                : const [Color(0xFFD4D4D8), Color(0xFFA1A1AA)],
-          ),
+          color: Color(0xFFE5E7EB),
         ),
         child: Text(
           initial,
           style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
+            color: const Color(0xFF3F3F46),
+            fontWeight: FontWeight.w700,
             fontSize: size * 0.38,
           ),
         ),
@@ -875,10 +925,14 @@ class _ChatHistoryPane extends StatelessWidget {
           const Divider(height: 1),
           Expanded(
             child: sessions.isEmpty
-                ? const Center(
+                ? const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: Text(
-                      'No chats yet',
-                      style: TextStyle(color: DesignTokens.muted),
+                      'Your conversations will appear here',
+                      style: TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   )
                 : ListView.builder(
@@ -952,196 +1006,6 @@ class _ChatHistoryPane extends StatelessWidget {
   }
 }
 
-class _ChatBody extends StatelessWidget {
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final ScrollController scrollController;
-  final List<_ChatTurn> turns;
-  final bool isLoading;
-  final String? error;
-  final bool isDesktop;
-  final bool isGuest;
-  final bool showMobileChrome;
-  final bool historyOpen;
-  final bool canUseHistory;
-  final VoidCallback onSend;
-  final ValueChanged<String> onSuggestion;
-  final ValueChanged<String> onSubmitTicket;
-  final VoidCallback? onToggleHistory;
-  final VoidCallback onNewChat;
-
-  const _ChatBody({
-    required this.controller,
-    required this.focusNode,
-    required this.scrollController,
-    required this.turns,
-    required this.isLoading,
-    required this.error,
-    required this.isDesktop,
-    required this.isGuest,
-    required this.showMobileChrome,
-    required this.historyOpen,
-    required this.canUseHistory,
-    required this.onSend,
-    required this.onSuggestion,
-    required this.onSubmitTicket,
-    required this.onToggleHistory,
-    required this.onNewChat,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final empty = turns.isEmpty && error == null;
-
-    if (isDesktop && empty) {
-      return Column(
-        children: [
-          _DesktopTopBar(onNewChat: onNewChat),
-          Expanded(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const _ChatGreeting(),
-                      const SizedBox(height: 28),
-                      _Composer(
-                        controller: controller,
-                        focusNode: focusNode,
-                        isLoading: isLoading,
-                        onSend: onSend,
-                        elevated: true,
-                        showDisclaimer: true,
-                        flush: true,
-                        isGuest: isGuest,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-
-    final composer = _Composer(
-      controller: controller,
-      focusNode: focusNode,
-      isLoading: isLoading,
-      onSend: onSend,
-      elevated: true,
-      showDisclaimer: true,
-      isGuest: isGuest,
-    );
-
-    if (showMobileChrome) {
-      return Column(
-        children: [
-          _MobileTopBar(
-            historyOpen: historyOpen,
-            canUseHistory: canUseHistory,
-            onToggleHistory: onToggleHistory,
-            onNewChat: onNewChat,
-          ),
-          Expanded(
-            child: empty
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 28),
-                      child: _ChatGreeting(compact: true),
-                    ),
-                  )
-                : ListView(
-                    controller: scrollController,
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                    children: [
-                      ...turns.map((turn) {
-                        if (turn.question != null) {
-                          return _UserBubble(text: turn.question!);
-                        }
-                        return _AnswerBubble(
-                          answer: turn.answer!,
-                          onSubmitTicket: onSubmitTicket,
-                        );
-                      }),
-                      if (isLoading) const _LoadingBubble(),
-                      if (error != null) _ErrorBanner(message: error!),
-                    ],
-                  ),
-          ),
-          if (empty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-              child: _SuggestionRow(
-                enabled: !isLoading,
-                onSuggestion: onSuggestion,
-              ),
-            ),
-          composer,
-        ],
-      );
-    }
-
-    return Column(
-      children: [
-        _DesktopTopBar(onNewChat: onNewChat),
-        Expanded(
-          child: empty
-              ? Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
-                    child: Text(
-                      'What can I help with?',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: isDesktop ? 32 : 26,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.black,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                  ),
-                )
-              : Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 820),
-                    child: ListView(
-                      controller: scrollController,
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                      children: [
-                        ...turns.map((turn) {
-                          if (turn.question != null) {
-                            return _UserBubble(text: turn.question!);
-                          }
-                          return _AnswerBubble(
-                            answer: turn.answer!,
-                            onSubmitTicket: onSubmitTicket,
-                          );
-                        }),
-                        if (isLoading) const _LoadingBubble(),
-                        if (error != null) _ErrorBanner(message: error!),
-                      ],
-                    ),
-                  ),
-                ),
-        ),
-        composer,
-      ],
-    );
-  }
-}
-
-/// Purely decorative empty-state greeting shown above the composer when a
-/// conversation has no turns yet. Uses the shared [BrandMark] so the mark
-/// stays solid black / cropped identically to the header, and never
-/// touches send/retry/history/citation logic below it.
 class _ChatGreeting extends StatelessWidget {
   final bool compact;
 
@@ -1213,6 +1077,144 @@ class _ChatGreeting extends StatelessWidget {
   }
 }
 
+class _ChatBody extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final ScrollController scrollController;
+  final List<_ChatTurn> turns;
+  final bool isLoading;
+  final String? error;
+  final bool isDesktop;
+  final bool isGuest;
+  final bool showMobileChrome;
+  final bool historyOpen;
+  final bool canUseHistory;
+  final VoidCallback onSend;
+  final ValueChanged<String> onSubmitTicket;
+  final VoidCallback? onToggleHistory;
+  final VoidCallback onNewChat;
+
+  const _ChatBody({
+    required this.controller,
+    required this.focusNode,
+    required this.scrollController,
+    required this.turns,
+    required this.isLoading,
+    required this.error,
+    required this.isDesktop,
+    required this.isGuest,
+    required this.showMobileChrome,
+    required this.historyOpen,
+    required this.canUseHistory,
+    required this.onSend,
+    required this.onSubmitTicket,
+    required this.onToggleHistory,
+    required this.onNewChat,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final empty = turns.isEmpty && error == null;
+
+    final composer = _Composer(
+      controller: controller,
+      focusNode: focusNode,
+      isLoading: isLoading,
+      onSend: onSend,
+      elevated: true,
+      showDisclaimer: true,
+      isGuest: isGuest,
+    );
+
+    if (showMobileChrome) {
+      return Column(
+        children: [
+          _MobileTopBar(
+            historyOpen: historyOpen,
+            canUseHistory: canUseHistory,
+            onToggleHistory: onToggleHistory,
+            onNewChat: onNewChat,
+          ),
+          Expanded(
+            child: empty
+                ? const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 28, 20, 12),
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: _ChatGreeting(compact: true),
+                    ),
+                  )
+                : ListView(
+                    controller: scrollController,
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    children: [
+                      ...turns.map((turn) {
+                        if (turn.question != null) {
+                          return _UserBubble(text: turn.question!);
+                        }
+                        return _AnswerBubble(
+                          answer: turn.answer!,
+                          onSubmitTicket: onSubmitTicket,
+                        );
+                      }),
+                      if (isLoading) const _LoadingBubble(),
+                      if (error != null) _ErrorBanner(message: error!),
+                    ],
+                  ),
+          ),
+          composer,
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        _DesktopTopBar(onNewChat: onNewChat),
+        Expanded(
+          child: empty
+              ? Padding(
+                  padding: const EdgeInsets.fromLTRB(48, 8, 48, 12),
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 720),
+                      child: _ChatGreeting(compact: !isDesktop),
+                    ),
+                  ),
+                )
+              : Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: _kConversationMaxWidth,
+                    ),
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(0, 12, 0, 24),
+                      children: [
+                        ...turns.map((turn) {
+                          if (turn.question != null) {
+                            return _UserBubble(text: turn.question!);
+                          }
+                          return _AnswerBubble(
+                            answer: turn.answer!,
+                            onSubmitTicket: onSubmitTicket,
+                          );
+                        }),
+                        if (isLoading) const _LoadingBubble(),
+                        if (error != null) _ErrorBanner(message: error!),
+                      ],
+                    ),
+                  ),
+                ),
+        ),
+        composer,
+      ],
+    );
+  }
+}
+
 class _MobileTopBar extends StatelessWidget {
   final bool historyOpen;
   final bool canUseHistory;
@@ -1232,6 +1234,11 @@ class _MobileTopBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(8, 8, 12, 4),
       child: Row(
         children: [
+          const PublicBackToHomeButton(
+            foreground: DesignTokens.maroon,
+            labelColor: Color(0xFF1B2333),
+            padding: EdgeInsets.symmetric(horizontal: 4),
+          ),
           if (canUseHistory)
             IconButton(
               tooltip: historyOpen ? 'Hide recent chats' : 'Recent chats',
@@ -1266,64 +1273,30 @@ class _DesktopTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 20, 4),
+      padding: const EdgeInsets.fromLTRB(20, 16, 36, 4),
       child: Row(
         children: [
-          const PublicBackToHomeButton(
-            foreground: DesignTokens.ink,
-            padding: EdgeInsets.symmetric(horizontal: 4),
-          ),
           const Spacer(),
-          TextButton.icon(
+          OutlinedButton.icon(
             onPressed: onNewChat,
-            icon: const Icon(Icons.edit_square, size: 18),
+            icon: const Icon(Icons.edit_square, size: 16),
             label: const Text('New chat'),
-            style: TextButton.styleFrom(
+            style: OutlinedButton.styleFrom(
               foregroundColor: DesignTokens.maroon,
-              textStyle: const TextStyle(fontWeight: FontWeight.w800),
+              side: BorderSide(
+                color: DesignTokens.maroon.withValues(alpha: 0.45),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13.5,
+              ),
+              shape: const StadiumBorder(),
+              visualDensity: VisualDensity.compact,
             ),
           ),
-          const SizedBox(width: 8),
-          const _UserAvatarButton(size: 36),
-        ],
-      ),
-    );
-  }
-}
-
-class _SuggestionRow extends StatelessWidget {
-  final bool enabled;
-  final ValueChanged<String> onSuggestion;
-
-  const _SuggestionRow({
-    required this.enabled,
-    required this.onSuggestion,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final prompts = _suggestionPrompts.take(2).toList();
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (var i = 0; i < prompts.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            ActionChip(
-              label: Text(prompts[i]),
-              onPressed: enabled ? () => onSuggestion(prompts[i]) : null,
-              backgroundColor: const Color(0xFFECECEE),
-              side: BorderSide.none,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              labelStyle: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 12.5,
-                color: DesignTokens.ink,
-              ),
-            ),
-          ],
+          const SizedBox(width: 12),
+          const _UserAvatarButton(size: 38),
         ],
       ),
     );
@@ -1407,6 +1380,8 @@ class _AnswerBubble extends StatelessWidget {
                     color: DesignTokens.ink,
                   ),
                 ),
+                const Spacer(),
+                _ConfidenceChip(confidence: answer.confidence),
               ],
             ),
             const SizedBox(height: 10),
@@ -1414,10 +1389,10 @@ class _AnswerBubble extends StatelessWidget {
             // bubble) so drag-to-select/right-click-copy/Ctrl+C work across
             // the complete multi-paragraph/bullet response in one
             // continuous selection, like a normal chat answer -- while
-            // leaving the Sources links and Submit ticket button (all
-            // outside this wrapper) exactly as tappable as before, and
-            // without this small selection region competing with the
-            // enclosing ListView's own vertical drag-to-scroll.
+            // leaving the Sources links, confidence chip, and Submit
+            // ticket button (all outside this wrapper) exactly as tappable
+            // as before, and without this small selection region competing
+            // with the enclosing ListView's own vertical drag-to-scroll.
             SelectionArea(
               child: _ChatMarkdown(
                 text: answer.text,
@@ -1431,6 +1406,9 @@ class _AnswerBubble extends StatelessWidget {
             if (answer.sources.isNotEmpty) ...[
               const SizedBox(height: 14),
               _CollapsibleSources(sources: answer.sources),
+            ] else if (answer.citationStatus != null) ...[
+              const SizedBox(height: 14),
+              _CitationStatusNote(status: answer.citationStatus!),
             ],
             if (isLowConfidence) ...[
               const SizedBox(height: 14),
@@ -1609,6 +1587,57 @@ CitationStatusPresentation? citationStatusPresentationFor(String status) {
   }
 }
 
+/// Inline note for the async citation verification lifecycle -- shown only
+/// when there are no sources to display yet (or at all) for a turn whose
+/// citation_verification_mode is async_shadow/async_llm. `verifying` keeps
+/// the original minimal muted-caption treatment; the three terminal
+/// unverified statuses (see [citationStatusPresentationFor]) use a visibly
+/// distinct warning treatment -- reusing this file's own existing "low
+/// confidence" color (see _ConfidenceChip) rather than introducing a new
+/// color or any new dependency -- so an unverified answer can never look
+/// like a quiet, successful aside.
+class _CitationStatusNote extends StatelessWidget {
+  final String status;
+
+  const _CitationStatusNote({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final presentation = citationStatusPresentationFor(status);
+    if (presentation == null) {
+      return const SizedBox.shrink();
+    }
+    if (!presentation.isUnverifiedWarning) {
+      return Text(
+        presentation.message,
+        style: const TextStyle(
+          fontSize: 12.5,
+          color: DesignTokens.muted,
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
+    const warningColor = Color(0xFFB91C1C); // same red as the low-confidence chip
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.error_outline, size: 15, color: warningColor),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            presentation.message,
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: warningColor,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _CollapsibleSources extends StatefulWidget {
   final List<_QaSource> sources;
 
@@ -1695,28 +1724,18 @@ class _CompactSourceRow extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        // A Knowledge Base article link (when the backend has confirmed
-        // one is safe to show) always wins over the PDF viewer -- it's
-        // the actual public page this citation is about, not just its
-        // source document. The PDF viewer remains the fallback for every
-        // other citation, unchanged.
-        onTap: source.canOpenKbArticle
-            ? () => softPush(
+        onTap: source.canOpenSource
+            ? () => showSourcePdfViewer(
                   context,
-                  KnowledgeBasePage(initialArticleId: source.kbArticleId),
+                  title: source.title,
+                  sourceLabel: source.sourceLabel ?? source.sourceFilename,
+                  sourceSection: source.sourceSection ?? source.path,
+                  page: source.pageNumber ?? source.page,
+                  pageEnd: source.pageEnd,
+                  viewUrl: source.sourceViewUrl,
+                  pageUrl: source.sourcePageUrl,
                 )
-            : source.canOpenSource
-                ? () => showSourcePdfViewer(
-                      context,
-                      title: source.title,
-                      sourceLabel: source.sourceLabel ?? source.sourceFilename,
-                      sourceSection: source.sourceSection ?? source.path,
-                      page: source.pageNumber ?? source.page,
-                      pageEnd: source.pageEnd,
-                      viewUrl: source.sourceViewUrl,
-                      pageUrl: source.sourcePageUrl,
-                    )
-                : null,
+            : null,
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1868,20 +1887,25 @@ class _Composer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final keyboardOpen = phoneKeyboardInset(context) > 48;
+    final viewWidth = MediaQuery.sizeOf(context).width;
+    final isDesktop = viewWidth >= 900;
+    final composerWidth = isDesktop
+        ? math.min(_kConversationMaxWidth, viewWidth * 0.58)
+        : math.max(0.0, viewWidth - 32);
     return Container(
-      color: flush ? Colors.transparent : const Color(0xFFF7F2F2),
+      color: Colors.transparent,
       padding: EdgeInsets.fromLTRB(
-        flush ? 0 : 16,
+        flush ? 0 : (isDesktop ? 24 : 16),
         flush ? 0 : 8,
-        flush ? 0 : 16,
-        keyboardOpen ? 6 : 14,
+        flush ? 0 : (isDesktop ? 24 : 16),
+        keyboardOpen ? 8 : 18,
       ),
       child: SafeArea(
         top: false,
-        bottom: MediaQuery.sizeOf(context).width >= 900,
+        bottom: isDesktop,
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 820),
+            constraints: BoxConstraints(maxWidth: composerWidth),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1890,94 +1914,113 @@ class _Composer extends StatelessWidget {
                   builder: (context, _) {
                     final canSend =
                         !isLoading && controller.text.trim().isNotEmpty;
-                    return Container(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 10, 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(26),
-                        border: Border.all(
-                          color: DesignTokens.maroon.withValues(alpha: 0.18),
+                    return Focus(
+                      onKeyEvent: (node, event) {
+                        if (event is! KeyDownEvent) {
+                          return KeyEventResult.ignored;
+                        }
+                        final isEnter =
+                            event.logicalKey == LogicalKeyboardKey.enter ||
+                            event.logicalKey == LogicalKeyboardKey.numpadEnter;
+                        if (!isEnter) return KeyEventResult.ignored;
+                        if (HardwareKeyboard.instance.isShiftPressed) {
+                          return KeyEventResult.ignored;
+                        }
+                        if (canSend) onSend();
+                        return KeyEventResult.handled;
+                      },
+                      child: Container(
+                        height: isDesktop ? _kComposerDesktopHeight : null,
+                        padding: EdgeInsets.fromLTRB(
+                          isDesktop ? 22 : 16,
+                          isDesktop ? 6 : 6,
+                          isDesktop ? 8 : 8,
+                          isDesktop ? 6 : 6,
                         ),
-                        boxShadow: elevated
-                            ? [
-                                BoxShadow(
-                                  color: DesignTokens.maroon
-                                      .withValues(alpha: 0.08),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ]
-                            : null,
-                      ),
-                      child: Column(
-                        children: [
-                          TextField(
-                            controller: controller,
-                            focusNode: focusNode,
-                            minLines: 1,
-                            maxLines: 5,
-                            enabled: !isLoading,
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) {
-                              if (canSend) onSend();
-                            },
-                            style: const TextStyle(
-                              fontSize: 15.5,
-                              height: 1.4,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.black,
-                            ),
-                            cursorColor: DesignTokens.maroon,
-                            decoration: const InputDecoration(
-                              hintText: 'Ask anything',
-                              hintStyle: TextStyle(
-                                color: Color(0xFFA1A1AA),
-                                fontWeight: FontWeight.w500,
-                              ),
-                              border: InputBorder.none,
-                              isDense: true,
-                              contentPadding: EdgeInsets.fromLTRB(2, 4, 2, 10),
-                            ),
-                          ),
-                          Row(
-                            children: [
-                              const Spacer(),
-                              Material(
-                                color: canSend
-                                    ? DesignTokens.maroon
-                                    : const Color(0xFFD4D4D8),
-                                shape: const CircleBorder(),
-                                child: InkWell(
-                                  customBorder: const CircleBorder(),
-                                  onTap: canSend ? onSend : null,
-                                  child: SizedBox(
-                                    width: 42,
-                                    height: 42,
-                                    child: isLoading
-                                        ? const Padding(
-                                            padding: EdgeInsets.all(11),
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2.2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : const Icon(
-                                            Icons.arrow_upward_rounded,
-                                            color: Colors.white,
-                                            size: 20,
-                                          ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius:
+                              BorderRadius.circular(isDesktop ? 36 : 28),
+                          border: Border.all(color: const Color(0xFFE4E0E2)),
+                          boxShadow: elevated
+                              ? const [
+                                  BoxShadow(
+                                    color: Color(0x14000000),
+                                    blurRadius: 18,
+                                    offset: Offset(0, 8),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: TextField(
+                                  controller: controller,
+                                  focusNode: focusNode,
+                                  minLines: 1,
+                                  maxLines: isDesktop ? 4 : 5,
+                                  enabled: !isLoading,
+                                  keyboardType: TextInputType.multiline,
+                                  textInputAction: TextInputAction.newline,
+                                  style: const TextStyle(
+                                    fontSize: 15.5,
+                                    height: 1.4,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black,
+                                  ),
+                                  cursorColor: DesignTokens.maroon,
+                                  decoration: const InputDecoration(
+                                    hintText: 'Ask anything...',
+                                    hintStyle: TextStyle(
+                                      color: Color(0xFF9CA3AF),
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 15.5,
+                                    ),
+                                    border: InputBorder.none,
+                                    isDense: true,
+                                    contentPadding:
+                                        EdgeInsets.fromLTRB(2, 8, 8, 8),
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
-                        ],
+                            ),
+                            Material(
+                              color: DesignTokens.maroon,
+                              shape: const CircleBorder(),
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: canSend ? onSend : null,
+                                child: SizedBox(
+                                  width: isDesktop ? 42 : 40,
+                                  height: isDesktop ? 42 : 40,
+                                  child: isLoading
+                                      ? const Padding(
+                                          padding: EdgeInsets.all(11),
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.arrow_upward_rounded,
+                                          color: Colors.white,
+                                          size: 22,
+                                        ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
                 ),
                 if (isGuest && !keyboardOpen) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Wrap(
                     alignment: WrapAlignment.center,
                     crossAxisAlignment: WrapCrossAlignment.center,
@@ -1985,9 +2028,9 @@ class _Composer extends StatelessWidget {
                       const Text(
                         'Guests can ask a few questions. ',
                         style: TextStyle(
-                          fontSize: 11.5,
-                          color: DesignTokens.muted,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          color: Color(0xFF6B7280),
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       GestureDetector(
@@ -2004,9 +2047,9 @@ class _Composer extends StatelessWidget {
                         child: const Text(
                           'Sign in for more.',
                           style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 12,
                             color: DesignTokens.maroon,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
@@ -2019,15 +2062,46 @@ class _Composer extends StatelessWidget {
                     'AI can make mistakes. Please double-check responses.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 11.5,
-                      color: DesignTokens.muted,
-                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                      color: Color(0xFF9CA3AF),
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfidenceChip extends StatelessWidget {
+  final String confidence;
+
+  const _ConfidenceChip({required this.confidence});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = confidence == 'high'
+        ? const Color(0xFF15803D)
+        : confidence == 'medium'
+            ? const Color(0xFFD97706)
+            : const Color(0xFFB91C1C);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        confidence,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: color,
         ),
       ),
     );
@@ -2243,7 +2317,6 @@ class _QaSource {
   final String? sourceLabel;
   final bool? pdfAvailable;
   final String? citationNote;
-  final String? kbArticleId;
 
   const _QaSource({
     required this.title,
@@ -2262,15 +2335,7 @@ class _QaSource {
     this.sourceLabel,
     this.pdfAvailable,
     this.citationNote,
-    this.kbArticleId,
   });
-
-  // Preferred over the PDF viewer below when present -- the backend only
-  // ever sets kb_article_id for a citation it has independently confirmed
-  // (at answer time) is a published, role-visible Knowledge Base article
-  // (see gate_kb_article_citations), so no extra client-side check is
-  // needed here beyond "is it a non-empty string".
-  bool get canOpenKbArticle => (kbArticleId ?? '').trim().isNotEmpty;
 
   bool get canOpenSource =>
       ((sourceViewUrl ?? '').trim().isNotEmpty ||
@@ -2335,7 +2400,6 @@ class _QaSource {
         'source_label': sourceLabel,
         'pdf_available': pdfAvailable,
         'citation_note': citationNote,
-        'kb_article_id': kbArticleId,
       };
 
   factory _QaSource.fromJson(Map<String, dynamic> json) {
@@ -2372,9 +2436,50 @@ class _QaSource {
       sourceLabel: json['source_label']?.toString(),
       pdfAvailable: pdfAvailable,
       citationNote: json['citation_note']?.toString(),
-      kbArticleId: json['kb_article_id']?.toString(),
     );
   }
+}
+
+class _ChatWavePainter extends CustomPainter {
+  const _ChatWavePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    void band(Path path, Color color) {
+      canvas.drawPath(path, Paint()..color = color);
+    }
+
+    band(
+      Path()
+        ..moveTo(0, h * 0.62)
+        ..cubicTo(w * 0.08, h * 0.48, w * 0.22, h * 0.78, w * 0.36, h * 0.70)
+        ..cubicTo(w * 0.24, h * 0.92, w * 0.10, h * 1.02, 0, h)
+        ..close(),
+      const Color(0xFFF6E4E8).withValues(alpha: 0.95),
+    );
+    band(
+      Path()
+        ..moveTo(0, h * 0.74)
+        ..cubicTo(w * 0.10, h * 0.60, w * 0.28, h * 0.88, w * 0.42, h * 0.80)
+        ..cubicTo(w * 0.30, h * 0.98, w * 0.12, h * 1.05, 0, h * 0.96)
+        ..close(),
+      const Color(0xFFF3D4DB).withValues(alpha: 0.72),
+    );
+    band(
+      Path()
+        ..moveTo(0, h * 0.84)
+        ..cubicTo(w * 0.06, h * 0.76, w * 0.16, h * 0.96, w * 0.28, h * 0.90)
+        ..cubicTo(w * 0.18, h * 1.02, w * 0.08, h * 1.04, 0, h)
+        ..close(),
+      const Color(0xFFE8C2CB).withValues(alpha: 0.45),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ChatWavePainter oldDelegate) => false;
 }
 
 String _formatRelative(DateTime value) {

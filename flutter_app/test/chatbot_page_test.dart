@@ -19,7 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/chatbot_page.dart';
-import 'package:aska_piyu/screens/knowledge_base_page.dart';
+import 'package:aska_piyu/screens/student_home.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/services/local_store.dart';
 
@@ -36,7 +36,6 @@ Map<String, dynamic> _sourceJson({
   int? page,
   String? sourceViewUrl,
   bool pdfAvailable = true,
-  String? kbArticleId,
 }) {
   return {
     'title': title,
@@ -50,7 +49,6 @@ Map<String, dynamic> _sourceJson({
     'document_id': 'doc-${title.hashCode}',
     'pdf_available': pdfAvailable,
     'citation_id': 'cit-${title.hashCode}',
-    'kb_article_id': kbArticleId,
   };
 }
 
@@ -100,7 +98,7 @@ Future<void> _pumpChatbotWithSeededAnswer(
   required String answerText,
   required String confidence,
   required List<Map<String, dynamic>> sources,
-  Size size = const Size(1200, 900),
+  Size size = const Size(1648, 928),
 }) async {
   LocalStore.resetForTest();
   SharedPreferences.setMockInitialValues({
@@ -231,10 +229,7 @@ void main() {
       );
     });
 
-    testWidgets(
-        'confidence indicator (Low/Medium/High badge) is no longer rendered '
-        '-- removed for the 2026-10-20 UI cleanup; backend confidence is '
-        'unaffected, only this visible badge is gone', (tester) async {
+    testWidgets('confidence indicator still renders', (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
         question: 'What is the passing grade?',
@@ -249,7 +244,7 @@ void main() {
         ],
       );
 
-      expect(find.text('medium'), findsNothing);
+      expect(find.text('medium'), findsOneWidget);
     });
 
     testWidgets(
@@ -357,10 +352,8 @@ void main() {
       expect(answerY, lessThan(sourcesY));
     });
 
-    testWidgets(
-        'a low-confidence answer with zero sources renders no Sources '
-        'section and no confidence badge, but the answer text is '
-        'preserved as-is', (tester) async {
+    testWidgets('a low-confidence answer with zero sources renders no Sources section',
+        (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
         question: 'What is the deadline for filing an appeal?',
@@ -376,134 +369,7 @@ void main() {
         find.textContaining('I do not have enough information'),
         findsOneWidget,
       );
-      // Confidence badge removed for the UI cleanup -- the literal word
-      // "low" must not appear anywhere as a standalone badge label.
-      expect(find.text('low'), findsNothing);
-    });
-
-    testWidgets(
-        'the two citation-verification warning notices never render, even '
-        'for a zero-source answer where the old note would have shown',
-        (tester) async {
-      await _pumpChatbotWithSeededAnswer(
-        tester,
-        question: 'What is the deadline for filing an appeal?',
-        answerText: 'I do not have enough information in the knowledge base '
-            'to answer that question. Please contact the relevant office.',
-        confidence: 'low',
-        sources: const [],
-      );
-
-      expect(
-        find.textContaining("No official source was found to support"),
-        findsNothing,
-      );
-      expect(
-        find.textContaining('Source verification could not be completed'),
-        findsNothing,
-      );
-      expect(find.byIcon(Icons.error_outline), findsNothing);
-    });
-  });
-
-  group('Chatbot citation -> public Knowledge Base article link', () {
-    testWidgets(
-        'a citation with kb_article_id opens the Knowledge Base article, '
-        'not the PDF viewer', (tester) async {
-      await _pumpChatbotWithSeededAnswer(
-        tester,
-        question: 'How do I validate my ID?',
-        answerText: 'Present your school ID at the registrar\'s window.',
-        confidence: 'high',
-        sources: [
-          _sourceJson(
-            title: 'ID Validation FAQ',
-            path: 'Knowledge Base > ID Validation FAQ',
-            kbArticleId: 'article-abc-123',
-            // Deliberately also has PDF fields -- the article link must
-            // still win when both are present.
-            sourceViewUrl: '/documents/doc-1/source',
-          ),
-        ],
-      );
-
-      await tester.tap(find.text('Sources (1)'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(find.byType(KnowledgeBasePage), findsNothing);
-      await tester.tap(find.textContaining('ID Validation FAQ').first);
-      await tester.pumpAndSettle();
-
-      expect(find.byType(KnowledgeBasePage), findsOneWidget);
-    });
-
-    testWidgets(
-        'a citation without kb_article_id still falls back to the PDF '
-        'viewer, unchanged', (tester) async {
-      await _pumpChatbotWithSeededAnswer(
-        tester,
-        question: 'What are the grade ranges for latin honors?',
-        answerText: 'Summa cum laude requires 1.20-1.45.',
-        confidence: 'high',
-        sources: [
-          _sourceJson(
-            title: 'Latin Honors',
-            path: 'Student Handbook > Graduation > Latin Honors',
-            page: 88,
-            sourceViewUrl: '/documents/doc-2/source',
-          ),
-        ],
-      );
-
-      await tester.tap(find.text('Sources (1)'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      await tester.tap(find.textContaining('Latin Honors').first);
-      await tester.pumpAndSettle();
-
-      // showSourcePdfViewer's own fetch has no backend to reach in this
-      // sandbox, so it fails gracefully with its own existing snackbar
-      // (a deterministic proof the PDF path -- never the Knowledge Base
-      // page -- was the one taken) rather than opening a real dialog.
-      expect(find.byType(KnowledgeBasePage), findsNothing);
-      expect(
-        find.text(
-          'PDF source unavailable. Re-index this document to enable PDF viewing.',
-        ),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets(
-        'a citation with neither kb_article_id nor a PDF source is not '
-        'tappable, and opens nothing', (tester) async {
-      await _pumpChatbotWithSeededAnswer(
-        tester,
-        question: 'How do I validate my ID?',
-        answerText: 'Present your school ID at the registrar\'s window.',
-        confidence: 'high',
-        sources: [
-          _sourceJson(
-            title: 'ID Validation FAQ',
-            path: 'Knowledge Base > ID Validation FAQ',
-            sourceViewUrl: null,
-            pdfAvailable: false,
-          ),
-        ],
-      );
-
-      await tester.tap(find.text('Sources (1)'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      final rowInkWell = find.ancestor(
-        of: find.textContaining('ID Validation FAQ').first,
-        matching: find.byType(InkWell),
-      );
-      expect(tester.widget<InkWell>(rowInkWell.first).onTap, isNull);
+      expect(find.text('low'), findsOneWidget);
     });
   });
 
@@ -649,6 +515,80 @@ void main() {
       expect(controllerAfter.offset, greaterThan(0));
     });
   });
+
+  group('Ask Assistant workspace chrome', () {
+    testWidgets('guest empty chat matches the workspace layout', (tester) async {
+      await _pumpGuestChatbot(tester);
+
+      expect(find.text('Ask Assistant'), findsWidgets);
+      expect(find.text('Hello! How can I assist you today?'), findsOneWidget);
+      expect(find.text('Back to home'), findsOneWidget);
+      expect(find.text('New Chat'), findsOneWidget);
+      expect(find.text('New chat'), findsOneWidget);
+      expect(find.text('Recent Chats'), findsOneWidget);
+      expect(
+        find.textContaining('Your conversations'),
+        findsOneWidget,
+      );
+      expect(find.text('Ask anything...'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Ask questions about university services, policies, requirements, and student concerns.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Guests can ask a few questions.'),
+        findsOneWidget,
+      );
+      expect(find.text('Sign in for more.'), findsOneWidget);
+      expect(
+        find.text('AI can make mistakes. Please double-check responses.'),
+        findsOneWidget,
+      );
+      expect(find.bySemanticsLabel('ASKa-Piyu home'), findsOneWidget);
+      expect(find.text('Admissions and Enrollment'), findsNothing);
+
+      final greetingLeft =
+          tester.getTopLeft(find.text('Hello! How can I assist you today?')).dx;
+      expect(greetingLeft, lessThan(1648 * 0.40));
+      expect(greetingLeft, greaterThan(248));
+    });
+
+    testWidgets('Back to home opens the public homepage', (tester) async {
+      await _pumpGuestChatbot(tester);
+
+      await tester.tap(find.text('Back to home'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(StudentHomePage), findsOneWidget);
+    });
+  });
+}
+
+Future<void> _pumpGuestChatbot(
+  WidgetTester tester, {
+  Size size = const Size(1648, 928),
+}) async {
+  LocalStore.resetForTest();
+  SharedPreferences.setMockInitialValues(const {});
+
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+
+  await tester.pumpWidget(
+    AuthScope(
+      controller: AuthController(service: _FakeAuthService(_studentUser())),
+      child: const MaterialApp(home: ChatbotPage()),
+    ),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 50));
+  await tester.pump(const Duration(milliseconds: 50));
 }
 
 class _FakeAuthService extends AuthService {

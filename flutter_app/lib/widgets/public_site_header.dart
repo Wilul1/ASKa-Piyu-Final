@@ -5,14 +5,13 @@ import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../navigation/soft_page_route.dart';
 import '../screens/chatbot_page.dart';
+import '../screens/incoming_transfers_page.dart';
 import '../screens/knowledge_base_page.dart';
 import '../screens/login_page.dart';
 import '../screens/my_tickets_page.dart';
 import '../screens/settings_page.dart';
 import '../screens/signup_page.dart';
 import '../screens/student_home.dart';
-import '../screens/student_mailbox_page.dart';
-import '../services/eye_comfort.dart';
 import 'phone_layout.dart';
 
 /// Shared top navigation for public landing / Knowledge Base (no sidebar).
@@ -20,7 +19,6 @@ class PublicSiteHeader extends StatelessWidget {
   final bool knowledgeBaseActive;
   final bool askAssistantActive;
   final bool myTicketsActive;
-  final bool mailboxActive;
   final bool accountActive;
   final bool slim;
 
@@ -36,7 +34,6 @@ class PublicSiteHeader extends StatelessWidget {
     this.knowledgeBaseActive = false,
     this.askAssistantActive = false,
     this.myTicketsActive = false,
-    this.mailboxActive = false,
     this.accountActive = false,
     this.slim = false,
     this.transparentBackground = false,
@@ -46,11 +43,37 @@ class PublicSiteHeader extends StatelessWidget {
       knowledgeBaseActive ||
       askAssistantActive ||
       myTicketsActive ||
-      mailboxActive ||
       accountActive;
 
   Future<void> _goHome(BuildContext context) =>
       softPushAndClear(context, const StudentHomePage());
+
+  /// Staff mailbox is the existing transfer inbox. Students and guests land
+  /// on My Tickets, which is the inbox they already have.
+  void _openMailbox(BuildContext context) {
+    final role = AuthScope.of(context).role;
+    if (role == 'admin') {
+      openAdminPage(
+        context,
+        builder: (_) => const IncomingTransfersPage(),
+      );
+      return;
+    }
+    if (role == 'office') {
+      openOfficePage(
+        context,
+        builder: (_) => const IncomingTransfersPage(),
+      );
+      return;
+    }
+    openProtectedPage(
+      context,
+      builder: (_) => const MyTicketsPage(),
+      replace: _onPublicPeerPage,
+      requireVerifiedEmail: true,
+      message: emailVerifyRequiredMessage,
+    );
+  }
 
   Future<void> _goPeer(BuildContext context, Widget page) {
     if (_onPublicPeerPage) {
@@ -62,41 +85,25 @@ class PublicSiteHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
+    final isNarrow = width < kPhoneLayoutBreakpoint;
     final auth = AuthScope.of(context);
     final isAuthed = auth.isAuthenticated;
     final role = auth.role;
-    // An authenticated student/faculty desktop nav has one more link
-    // (Mailbox) than every other case (logged out, or office/admin, who
-    // never see it) -- confirmed by direct measurement that the full row
-    // then needs ~1101px of content width (page width minus the 32px*2
-    // horizontal padding) before it stops overflowing. Only widen the
-    // breakpoint for the case that actually needs it, so a logged-out
-    // visitor or office/admin user isn't pushed into mobile mode any
-    // earlier than before.
-    final showsMailboxLink = isAuthed && role != 'office' && role != 'admin';
-    final isNarrow = width < (showsMailboxLink ? 1140 : kPhoneLayoutBreakpoint);
 
-    final eyeComfort = EyeComfortScope.isEnabled(context);
-
-    // Matched chrome: the compact icon+label nav used on the inner app
-    // pages (KB / My Tickets / Ask Assistant / Mailbox / Account), which
-    // share the Knowledge Base column's side inset and let the page's own
-    // (possibly eye-comfort) background show through instead of painting
-    // a separate header color. The plain homepage nav below is unchanged.
     final matchedChrome = knowledgeBaseActive ||
         myTicketsActive ||
         askAssistantActive ||
-        mailboxActive ||
         accountActive;
     final matchedNav = matchedChrome && !isNarrow;
+    // Same side inset as the Knowledge Base column, so the logo lines up
+    // with the heading and Account sits the same distance from the right edge.
     final kbSide = width * DesignTokens.kbDesktopSideInset;
     final kbLeft = matchedNav ? kbSide : (isNarrow ? 12.0 : 32.0);
     final kbRight = matchedNav ? kbSide : kbLeft;
-
     return Material(
       color: transparentBackground || matchedChrome
           ? Colors.transparent
-          : (eyeComfort ? EyeComfortColors.headerBg : Colors.white),
+          : Colors.white,
       child: Container(
         decoration: transparentBackground || matchedChrome
             ? null
@@ -105,10 +112,7 @@ class PublicSiteHeader extends StatelessWidget {
               ),
         padding: EdgeInsets.fromLTRB(
           kbLeft,
-          // Desktop-only bump so the homepage's larger hero doesn't sit
-          // under a comparatively tiny navbar -- narrow/slim values are
-          // untouched since other public pages rely on them as-is.
-          isNarrow ? (slim ? 8 : 14) : 18,
+          isNarrow ? (slim ? 8 : 14) : (matchedChrome ? 18 : 18),
           kbRight,
           isNarrow ? (slim ? 8 : 14) : (matchedChrome ? 14 : 18),
         ),
@@ -119,43 +123,47 @@ class PublicSiteHeader extends StatelessWidget {
             ),
             child: Row(
               children: [
-                // Static branding, not a navigation control: previously an
-                // InkWell that pushed the homepage, which made the brand
-                // behave (and look, via its click cursor/ink splash) like a
-                // link. Product decision is that the brand mark is purely
-                // decorative, so it's now a plain, non-interactive Row --
-                // `excludeSemantics` presents it as a single labeled
-                // branding node rather than a tappable control.
-                Semantics(
-                  label: 'ASKa-Piyu',
-                  container: true,
-                  excludeSemantics: true,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      BrandMark(
-                        height: isNarrow
-                            ? (slim ? 28 : 36)
-                            : (matchedChrome ? 34 : 42),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        slim && isNarrow && askAssistantActive
-                            ? 'Ask Assistant'
-                            : 'ASKa-Piyu',
-                        style: TextStyle(
-                          color: DesignTokens.maroon,
-                          fontWeight: matchedChrome
-                              ? FontWeight.w800
-                              : FontWeight.w900,
-                          fontSize: isNarrow
-                              ? (slim ? 15 : 18)
-                              : (matchedChrome ? 18 : 20),
-                          letterSpacing: -0.2,
-                          height: 1,
+                Tooltip(
+                  message: 'Home',
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () => _goHome(context),
+                      behavior: HitTestBehavior.opaque,
+                      child: Semantics(
+                        button: true,
+                        label: 'ASKa-Piyu home',
+                        excludeSemantics: true,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            BrandMark(
+                              height: isNarrow
+                                  ? (slim ? 28 : 36)
+                                  : (matchedChrome ? 34 : 42),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              slim && isNarrow && askAssistantActive
+                                  ? 'Ask Assistant'
+                                  : 'ASKa-Piyu',
+                              style: TextStyle(
+                                color: DesignTokens.maroon,
+                                fontWeight: matchedChrome
+                                    ? FontWeight.w800
+                                    : FontWeight.w900,
+                                fontSize: isNarrow
+                                    ? (slim ? 15 : 18)
+                                    : (matchedChrome ? 18 : 20),
+                                letterSpacing: -0.2,
+                                height: 1,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
                 const Spacer(),
@@ -203,22 +211,11 @@ class PublicSiteHeader extends StatelessWidget {
                                 );
                               },
                             ),
-                            if (showsMailboxLink)
-                              _MatchedNavLink(
-                                label: 'Mailbox',
-                                icon: Icons.inbox_outlined,
-                                active: mailboxActive,
-                                onTap: () {
-                                  if (mailboxActive) return;
-                                  openProtectedPage(
-                                    context,
-                                    builder: (_) => const StudentMailboxPage(),
-                                    replace: _onPublicPeerPage,
-                                    requireVerifiedEmail: true,
-                                    message: emailVerifyRequiredMessage,
-                                  );
-                                },
-                              ),
+                            _MatchedNavLink(
+                              label: 'Mailbox',
+                              icon: Icons.inbox_outlined,
+                              onTap: () => _openMailbox(context),
+                            ),
                             _MatchedNavLink(
                               label: !isAuthed
                                   ? 'Login'
@@ -241,8 +238,6 @@ class PublicSiteHeader extends StatelessWidget {
                                     role ?? 'student',
                                     null,
                                   );
-                                } else if (accountActive) {
-                                  return;
                                 } else {
                                   openProtectedPage(
                                     context,
@@ -288,21 +283,6 @@ class PublicSiteHeader extends StatelessWidget {
                       );
                     },
                   ),
-                  if (showsMailboxLink)
-                    _NavLink(
-                      label: 'Mailbox',
-                      active: mailboxActive,
-                      onTap: () {
-                        if (mailboxActive) return;
-                        openProtectedPage(
-                          context,
-                          builder: (_) => const StudentMailboxPage(),
-                          replace: _onPublicPeerPage,
-                          requireVerifiedEmail: true,
-                          message: emailVerifyRequiredMessage,
-                        );
-                      },
-                    ),
                   if (!isAuthed)
                     _NavLink(
                       label: 'Login',
@@ -351,13 +331,21 @@ class PublicSiteHeader extends StatelessWidget {
                       'Sign up',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
+                  )
+                else if (!matchedChrome && !isNarrow && isAuthed)
+                  OutlinedButton(
+                    onPressed: () => signOutToHome(context),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: DesignTokens.maroon,
+                      side: const BorderSide(color: DesignTokens.maroon),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      shape: const StadiumBorder(),
+                    ),
+                    child: const Text('Sign out'),
                   ),
-                // No "Sign out" button here -- Account already has one
-                // (SettingsPage's own Sign out row), and showing a second,
-                // independent control for the same action in every shared
-                // public/student header was redundant. Office/admin keep
-                // their own, separate sign-out on their sidebar shell,
-                // untouched by this.
                 if (isNarrow)
                   IconButton(
                     tooltip: 'Menu',
@@ -527,22 +515,11 @@ class PublicSiteHeader extends StatelessWidget {
                           );
                         },
                       ),
-                      if (auth.isAuthenticated &&
-                          auth.role != 'office' &&
-                          auth.role != 'admin')
-                        item(
-                          label: 'Mailbox',
-                          active: mailboxActive,
-                          onTap: () {
-                            openProtectedPage(
-                              context,
-                              builder: (_) => const StudentMailboxPage(),
-                              replace: _onPublicPeerPage,
-                              requireVerifiedEmail: true,
-                              message: emailVerifyRequiredMessage,
-                            );
-                          },
-                        ),
+                      item(
+                        label: 'Mailbox',
+                        active: false,
+                        onTap: () => _openMailbox(context),
+                      ),
                       const SizedBox(height: 12),
                       Text(
                         'Account',
@@ -607,8 +584,23 @@ class PublicSiteHeader extends StatelessWidget {
                             }
                           },
                         ),
-                        // No "Sign out" here either -- same reasoning as
-                        // the desktop nav above: Account already has one.
+                        const Spacer(),
+                        OutlinedButton(
+                          onPressed: () async {
+                            Navigator.pop(dialogContext);
+                            await signOutToHome(context);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: DesignTokens.maroon,
+                            side: const BorderSide(color: DesignTokens.maroon),
+                            minimumSize: const Size.fromHeight(48),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: const Text(
+                            'Sign out',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
                       ],
                     ],
                   ),
@@ -636,8 +628,8 @@ class PublicSiteHeader extends StatelessWidget {
 /// solid black, always cropped -- there is no second "uncropped, full
 /// color" variant.
 ///
-/// `brandmark.png` is 777x457. The mark itself is about x=218-487,
-/// y=122-330. Faint full-width hairlines sit on y=0-4 and y=448-456 and
+/// `brandmark.png` is 777×457. The mark itself is about x=218–487,
+/// y=122–330. Faint full-width hairlines sit on y=0–4 and y=448–456 and
 /// read as a box and an underline once the file is scaled into the header,
 /// so every caller clips them via the same window below, which keeps a few
 /// pixels of padding around the mark and leaves its proportions unchanged.
@@ -668,7 +660,7 @@ class BrandMark extends StatelessWidget {
   }
 }
 
-/// Matched-chrome header item: icon and label sit on one line, and the
+/// Knowledge Base header item: icon and label sit on one line, and the
 /// active underline matches the label width only.
 class _MatchedNavLink extends StatelessWidget {
   final String label;
@@ -726,6 +718,7 @@ class _MatchedNavLink extends StatelessWidget {
           if (icon != null) ...[
             _NavIconButton(
               icon: icon!,
+              color: const Color(0xFF000000),
               size: 16,
               tooltip: onIconTap == null ? label : (iconTooltip ?? label),
               onTap: onIconTap ?? onTap,
@@ -750,12 +743,14 @@ class _MatchedNavLink extends StatelessWidget {
 
 class _NavIconButton extends StatelessWidget {
   final IconData icon;
+  final Color color;
   final String tooltip;
   final VoidCallback onTap;
   final double size;
 
   const _NavIconButton({
     required this.icon,
+    required this.color,
     required this.tooltip,
     required this.onTap,
     this.size = 17,

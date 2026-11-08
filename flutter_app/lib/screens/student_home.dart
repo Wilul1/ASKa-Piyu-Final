@@ -20,6 +20,7 @@ import 'my_tickets_page.dart';
 /// of a narrow column floating in unused whitespace. A max-width cap, not a
 /// fixed width, so it still shrinks naturally on narrower viewports.
 const double kHomeContentMaxWidth = 1320;
+const String _kHeroBuildingAsset = 'assets/images/lspu_admin_building.jpg';
 
 /// Public ASKa-Piyu landing page (no sidebar) — matches the branded site mock.
 class StudentHomePage extends StatefulWidget {
@@ -38,10 +39,15 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
   String _quickTab = 'Common topics';
   String? _lastAuthKey;
   ModalRoute<dynamic>? _route;
+  bool _buildingPrecached = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (!_buildingPrecached) {
+      _buildingPrecached = true;
+      precacheImage(const AssetImage(_kHeroBuildingAsset), context);
+    }
     final route = ModalRoute.of(context);
     if (route != _route) {
       appRouteObserver.unsubscribe(this);
@@ -748,12 +754,7 @@ class _HeroSectionState extends State<_HeroSection> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.asset(
-                            'assets/images/lspu_admin_building.png',
-                            fit: BoxFit.cover,
-                            alignment: Alignment.center,
-                            filterQuality: FilterQuality.high,
-                          ),
+                          const _HeroBuildingImage(),
                           // Left-to-right fade only -- the building reads
                           // as almost fully blended at the left edge, then
                           // grows steadily clearer, so the LSPU lettering,
@@ -803,12 +804,7 @@ class _HeroSectionState extends State<_HeroSection> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.asset(
-                            'assets/images/lspu_admin_building.png',
-                            fit: BoxFit.cover,
-                            alignment: Alignment.center,
-                            filterQuality: FilterQuality.high,
-                          ),
+                          const _HeroBuildingImage(),
                           // Fade pushed further right than the desktop
                           // panel's own stops -- at mobile widths the
                           // "LAGUNA STATE POLYTECHNIC UNIVERSITY" label
@@ -1091,6 +1087,31 @@ class _HeroWaveFullPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _HeroWaveFullPainter oldDelegate) => false;
+}
+
+/// Compressed hero photo with a short fade-in so a cache miss never pops.
+class _HeroBuildingImage extends StatelessWidget {
+  const _HeroBuildingImage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      _kHeroBuildingAsset,
+      fit: BoxFit.cover,
+      alignment: Alignment.center,
+      filterQuality: FilterQuality.medium,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded) return child;
+        return AnimatedOpacity(
+          opacity: frame == null ? 0 : 1,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOut,
+          child: child,
+        );
+      },
+    );
+  }
 }
 
 /// Pale-blush pill button used for the Resources section's "See all

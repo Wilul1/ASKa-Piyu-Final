@@ -1289,7 +1289,7 @@ class _ResourcesGrid extends StatelessWidget {
                     isNarrow: isNarrow,
                     onTap: () => softPush(
                       context,
-                      KnowledgeBasePage(initialCategory: category.name),
+                      KnowledgeBasePage(initialCategory: category.id),
                     ),
                   ),
                 );
@@ -1332,7 +1332,7 @@ class _QuickLinksSection extends StatelessWidget {
         _QuickLinkGroup(
           title: category.name,
           articleCount: category.articleCount,
-          category: category.name,
+          category: category.id,
         ),
     ];
   }
@@ -1653,11 +1653,13 @@ class _FloatingChatButton extends StatelessWidget {
 }
 
 class _LandingCategory {
+  final String id;
   final String name;
   final int articleCount;
   final String description;
 
   const _LandingCategory({
+    required this.id,
     required this.name,
     required this.articleCount,
     required this.description,
@@ -1665,6 +1667,7 @@ class _LandingCategory {
 
   factory _LandingCategory.fromJson(Map<String, dynamic> json) {
     final name = (json['name'] ?? '').toString().trim();
+    final rawId = (json['id'] ?? '').toString().trim();
     final count =
         json['article_count'] is int
             ? json['article_count'] as int
@@ -1680,6 +1683,7 @@ class _LandingCategory {
       description = 'Browse published support articles in this category.';
     }
     return _LandingCategory(
+      id: rawId.isNotEmpty ? rawId : name,
       name: name,
       articleCount: count,
       description: description,

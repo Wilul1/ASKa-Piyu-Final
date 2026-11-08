@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/settings_page.dart';
+import 'package:aska_piyu/screens/student_mailbox_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/services/eye_comfort.dart';
 import 'package:aska_piyu/services/local_store.dart';
@@ -92,10 +93,10 @@ void main() {
       (tester) async {
     await pumpSettings(tester);
 
-    await tester.tap(find.text('Change password'));
+    await tester.tap(find.text('Change Password'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Change password'), findsWidgets);
+    expect(find.text('Change password'), findsOneWidget);
     expect(find.text('Current password'), findsOneWidget);
     expect(find.text('New password'), findsOneWidget);
     expect(find.text('Confirm new password'), findsOneWidget);
@@ -105,7 +106,7 @@ void main() {
       (tester) async {
     await pumpSettings(tester);
 
-    await tester.tap(find.text('Change password'));
+    await tester.tap(find.text('Change Password'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.widgetWithText(TextFormField, 'Current password'), 'oldpass123');
@@ -127,7 +128,7 @@ void main() {
       '(no backend reachable), never crashes', (tester) async {
     await pumpSettings(tester);
 
-    await tester.tap(find.text('Change password'));
+    await tester.tap(find.text('Change Password'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.widgetWithText(TextFormField, 'Current password'), 'oldpass123');
@@ -149,8 +150,8 @@ void main() {
       (tester) async {
     await pumpSettings(tester);
 
-    expect(find.text('Sign out'), findsOneWidget);
-    await tester.tap(find.text('Sign out'));
+    expect(find.text('Sign out'), findsWidgets);
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Sign out'));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
@@ -164,11 +165,16 @@ void main() {
       SharedPreferences.setMockInitialValues(const {});
     });
 
-    testWidgets('no Notifications section exists -- notifications stay in '
-        'Mailbox only', (tester) async {
+    testWidgets('Notifications Manage opens the existing student Mailbox',
+        (tester) async {
       await pumpSettings(tester);
 
-      expect(find.textContaining('Notification'), findsNothing);
+      expect(find.text('Notifications'), findsOneWidget);
+      await tester.tap(find.text('Manage'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+
+      expect(find.byType(StudentMailboxPage), findsOneWidget);
     });
 
     testWidgets('the Preferences toggle is present, labeled "Eye Comfort", '
@@ -193,7 +199,7 @@ void main() {
           tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor!;
 
       // Existing default appearance, unchanged while off.
-      expect(scaffoldBg(), const Color(0xFFF3F4F6));
+      expect(scaffoldBg(), const Color(0xFFF7F5F6));
 
       await tester.tap(find.byType(Switch));
       await tester.pump();
@@ -254,19 +260,46 @@ void main() {
       );
       expect(
         tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
-        const Color(0xFFF3F4F6),
+        const Color(0xFFF7F5F6),
       );
       expect(LocalStore.getEyeComfortPreference(), isFalse);
     });
   });
 
-  testWidgets(
-      'no redundant side nav remains -- Account is the only section and the '
-      'old single-item nav was removed', (tester) async {
+  testWidgets('Help & Support and About switch the account main column',
+      (tester) async {
     await pumpSettings(tester, size: const Size(1200, 900));
 
-    // The old side nav's own "Settings" section label is gone.
-    expect(find.text('Settings'), findsNothing);
+    await tester.tap(find.text('Help & Support'));
+    await tester.pump();
+    expect(
+      find.text('Find guides, ask the assistant, or send a support ticket.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('About ASKa-Piyu'));
+    await tester.pump();
+    expect(
+      find.text('Laguna State Polytechnic University student support.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'the Account page shows the screenshot side nav and settings cards',
+      (tester) async {
+    await pumpSettings(tester, size: const Size(1200, 900));
+
+    expect(find.text('Account Settings'), findsOneWidget);
+    expect(find.text('Help & Support'), findsOneWidget);
+    expect(find.text('About ASKa-Piyu'), findsOneWidget);
+    expect(find.text('Edit Profile'), findsOneWidget);
+    expect(find.text('Security'), findsOneWidget);
+    expect(find.text('Preferences'), findsOneWidget);
+    expect(find.text('Theme'), findsOneWidget);
+    expect(find.text('Language'), findsOneWidget);
+    expect(find.text('Light'), findsOneWidget);
+    expect(find.text('English'), findsOneWidget);
   });
 
   // --- Responsive layout at required widths --------------------------------
@@ -287,8 +320,8 @@ void main() {
       expect(unexpectedErrors, isEmpty);
       expect(find.text('Account'), findsWidgets);
       expect(find.text('Juan Dela Cruz'), findsOneWidget);
-      expect(find.text('Change password'), findsOneWidget);
-      expect(find.text('Sign out'), findsOneWidget);
+      expect(find.text('Change Password'), findsOneWidget);
+      expect(find.text('Sign out'), findsWidgets);
     });
   }
 }

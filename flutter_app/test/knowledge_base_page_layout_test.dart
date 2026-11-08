@@ -75,6 +75,67 @@ void main() {
     expect(find.byIcon(Icons.menu_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'Resources Admissions card opens only published Admissions articles',
+      (tester) async {
+    await _expectFocusedCategory(tester, 'Admissions');
+  });
+
+  testWidgets(
+      'Resources Student Records card opens only published Student Records articles',
+      (tester) async {
+    await _expectFocusedCategory(tester, 'Student Records');
+  });
+
+  testWidgets(
+      'Resources Student Services card opens only published Student Services articles',
+      (tester) async {
+    await _expectFocusedCategory(tester, 'Student Services');
+  });
+
+  testWidgets(
+      'Back to Categories restores the full Knowledge Base listing',
+      (tester) async {
+    await _pumpKb(
+      tester,
+      const Size(1440, 1000),
+      initialCategory: 'Admissions',
+    );
+
+    await tester.tap(find.text('Back to Categories'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Browse by Category'), findsOneWidget);
+    for (final name in _categoryNames) {
+      expect(find.text(name), findsOneWidget);
+    }
+    expect(find.text('Admissions guide'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'opening an article from a focused category keeps that category on back',
+      (tester) async {
+    await _pumpKb(
+      tester,
+      const Size(1440, 1000),
+      initialCategory: 'Student Records',
+    );
+
+    await tester.tap(find.text('Student Records guide'));
+    await tester.pumpAndSettle();
+    expect(find.text('← Back'), findsOneWidget);
+
+    await tester.tap(find.text('← Back'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Student Records guide'), findsOneWidget);
+    expect(find.text('Back to Categories'), findsOneWidget);
+    expect(find.text('Browse by Category'), findsNothing);
+    expect(find.text('ICT Services'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 const _categoryNames = [
@@ -86,7 +147,36 @@ const _categoryNames = [
   'ICT Services',
 ];
 
-Future<void> _pumpKb(WidgetTester tester, Size size) async {
+Future<void> _expectFocusedCategory(WidgetTester tester, String name) async {
+  await _pumpKb(
+    tester,
+    const Size(1440, 1000),
+    initialCategory: name,
+  );
+
+  expect(find.text('Browse by Category'), findsNothing);
+  expect(find.text('$name guide'), findsOneWidget);
+  expect(
+    find.text('Published articles under this category.'),
+    findsOneWidget,
+  );
+  expect(find.text('Back to Categories'), findsOneWidget);
+  for (final other in _categoryNames) {
+    if (other == name) continue;
+    expect(
+      find.text(other),
+      findsNothing,
+      reason: '$other should not appear when viewing $name',
+    );
+  }
+  expect(tester.takeException(), isNull);
+}
+
+Future<void> _pumpKb(
+  WidgetTester tester,
+  Size size, {
+  String? initialCategory,
+}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -95,7 +185,9 @@ Future<void> _pumpKb(WidgetTester tester, Size size) async {
   await tester.pumpWidget(
     AuthScope(
       controller: AuthController(),
-      child: const MaterialApp(home: KnowledgeBasePage()),
+      child: MaterialApp(
+        home: KnowledgeBasePage(initialCategory: initialCategory),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -216,6 +308,18 @@ class _KbHeaders implements HttpHeaders {
 
 List<int> _bytesFor(Uri url) {
   final path = url.path;
+  final articleIdMatch = RegExp(r'/kb/articles/([^/]+)$').firstMatch(path);
+  if (articleIdMatch != null) {
+    return utf8.encode(
+      jsonEncode({
+        'id': articleIdMatch.group(1),
+        'title': 'Published article detail',
+        'category': 'Admissions',
+        'summary': 'Published article summary',
+        'content': 'Full published article body',
+      }),
+    );
+  }
   if (path.endsWith('/kb/categories')) {
     return utf8.encode(
       jsonEncode({

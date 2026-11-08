@@ -101,15 +101,15 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
         if (_activeQuery.isEmpty) {
           _articles = [];
           _suggestions = [];
-          if (pendingCategory != null && pendingCategory.isNotEmpty) {
-            _expandedCategories.add(pendingCategory);
-          }
+        }
+        if (pendingCategory != null && pendingCategory.isNotEmpty) {
+          _activeCategory = _resolveCategory(pendingCategory);
         }
       });
       if (_activeQuery.isNotEmpty) {
         await _loadArticles(query: _activeQuery, category: _activeCategory);
-      } else if (pendingCategory != null && pendingCategory.isNotEmpty) {
-        await _loadCategoryArticles(pendingCategory);
+      } else if ((_activeCategory ?? '').isNotEmpty) {
+        await _loadArticles(query: '', category: _activeCategory);
       }
     } catch (error) {
       if (!mounted) {
@@ -173,6 +173,28 @@ class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
       throw StateError('Request failed with status ${result.statusCode}');
     }
     return result.jsonObject;
+  }
+
+  /// Map a Resources / deep-link identifier onto a loaded `/kb/categories`
+  /// entry. Categories have no separate UUID in the public API -- `name`
+  /// (and optional `id`) from that payload is the identifier -- so this
+  /// never hardcodes display labels like "Admissions".
+  String? _resolveCategory(String? raw) {
+    final needle = (raw ?? '').trim();
+    if (needle.isEmpty) return null;
+    for (final category in _categories) {
+      if (category.id == needle || category.name == needle) {
+        return category.name;
+      }
+    }
+    final lower = needle.toLowerCase();
+    for (final category in _categories) {
+      if (category.id.toLowerCase() == lower ||
+          category.name.toLowerCase() == lower) {
+        return category.name;
+      }
+    }
+    return needle;
   }
 
   Future<void> _loadCategoryArticles(String category) async {
@@ -404,7 +426,7 @@ class _KnowledgeBaseBody extends StatelessWidget {
                 onSearch: onSearch,
               ),
               SizedBox(height: isNarrow ? 18 : 22),
-              if (activeQuery.isEmpty)
+              if (activeQuery.isEmpty && (activeCategory ?? '').isEmpty)
                 _CategorySections(
                   categories: categories,
                   loading: loading,
@@ -649,8 +671,8 @@ class _ArticleResults extends StatelessWidget {
               ),
               TextButton.icon(
                 onPressed: onShowCategories,
-                icon: const Icon(Icons.grid_view_rounded, size: 18),
-                label: const Text('Categories'),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text('Back to Categories'),
                 style: TextButton.styleFrom(
                   foregroundColor: DesignTokens.maroon,
                 ),
@@ -2395,11 +2417,13 @@ int _categorySortKey(String name) {
 }
 
 class _KbCategory {
+  final String id;
   final String name;
   final int articleCount;
   final List<_KbSubcategory> subcategories;
 
   const _KbCategory({
+    required this.id,
     required this.name,
     required this.articleCount,
     required this.subcategories,
@@ -2415,8 +2439,11 @@ class _KbCategory {
             .where((item) => item.name.trim().isNotEmpty)
             .toList()
         : <_KbSubcategory>[];
+    final name = (json['name'] ?? 'General').toString();
+    final rawId = (json['id'] ?? '').toString().trim();
     return _KbCategory(
-      name: (json['name'] ?? 'General').toString(),
+      id: rawId.isNotEmpty ? rawId : name,
+      name: name,
       articleCount: _intOrNull(json['article_count']) ??
           subcategories.fold<int>(
             0,

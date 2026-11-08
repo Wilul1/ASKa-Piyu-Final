@@ -109,6 +109,10 @@ void main() {
     // At this default wide width the header's own "Mailbox" nav link
     // (now active) legitimately matches too, alongside this page's title.
     expect(find.text('Mailbox'), findsWidgets);
+    expect(
+      find.text('Stay up to date on your support tickets.'),
+      findsOneWidget,
+    );
     // One unread of the two seeded.
     expect(find.text('1'), findsOneWidget);
     expect(find.text('New reply on TK-20261013-07BA4C'), findsOneWidget);
@@ -121,6 +125,10 @@ void main() {
     await pumpMailbox(tester, notifications: const []);
 
     expect(find.text('Mailbox is empty'), findsOneWidget);
+    expect(
+      find.text('Stay up to date on your support tickets.'),
+      findsOneWidget,
+    );
     expect(
       find.textContaining('new replies, status changes, and reassignments'),
       findsOneWidget,
@@ -221,7 +229,7 @@ void main() {
   // header color, so leaving this Scaffold's own background un-themed
   // produced a jarring half-themed look (cream header over grey body).
 
-  testWidgets('defaults to the existing grey background when Eye Comfort is off',
+  testWidgets('defaults to the shared student page background when Eye Comfort is off',
       (tester) async {
     await pumpMailbox(
       tester,
@@ -229,7 +237,7 @@ void main() {
       eyeComfort: EyeComfortController(),
     );
 
-    expect(mailboxScaffoldColor(tester), const Color(0xFFF3F4F6));
+    expect(mailboxScaffoldColor(tester), const Color(0xFFF7F5F6));
   });
 
   testWidgets('switches to the warm background when Eye Comfort is on',

@@ -7,6 +7,12 @@ import 'package:aska_piyu/screens/student_mailbox_page.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/widgets/public_site_header.dart';
 
+Finder get _navSeparators => find.byWidgetPredicate((widget) {
+      final key = widget.key;
+      return key is ValueKey<String> &&
+          key.value.startsWith('header-nav-separator');
+    });
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -42,6 +48,7 @@ void main() {
     WidgetTester tester, {
     AuthUser? user,
     Size size = const Size(1200, 900),
+    bool accountActive = false,
   }) async {
     // PublicSiteHeader reads MediaQuery.sizeOf directly (not via a
     // LayoutBuilder), and tester.binding.setSurfaceSize alone does not
@@ -66,7 +73,11 @@ void main() {
     await tester.pumpWidget(
       AuthScope(
         controller: controller,
-        child: const MaterialApp(home: Scaffold(body: PublicSiteHeader())),
+        child: MaterialApp(
+          home: Scaffold(
+            body: PublicSiteHeader(accountActive: accountActive),
+          ),
+        ),
       ),
     );
     await tester.pump();
@@ -119,6 +130,72 @@ void main() {
     // The authenticated identity link (labeled "Account" for a student) is
     // still there -- only the separate, redundant sign-out control is gone.
     expect(find.text('Account'), findsOneWidget);
+  });
+
+  testWidgets('desktop header paints a full-width bottom hairline',
+      (tester) async {
+    await pumpHeader(tester, user: studentUser(), accountActive: true);
+
+    final container = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byType(PublicSiteHeader),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final decoration = container.decoration as BoxDecoration?;
+    expect(decoration?.border, isA<Border>());
+    final border = decoration!.border as Border;
+    expect(border.bottom.width, 1);
+  });
+
+  testWidgets(
+      'unmatched desktop nav also separates Knowledge Base through Account',
+      (tester) async {
+    await pumpHeader(tester, user: studentUser());
+
+    expect(_navSeparators, findsNWidgets(4));
+  });
+
+  testWidgets(
+      'matched desktop nav draws separators between Knowledge Base, Ask '
+      'Assistant, My Tickets, Mailbox, and Account', (tester) async {
+    await pumpHeader(
+      tester,
+      user: studentUser(),
+      accountActive: true,
+    );
+
+    expect(_navSeparators, findsNWidgets(4));
+    expect(find.text('Knowledge Base'), findsOneWidget);
+    expect(find.text('Ask Assistant'), findsOneWidget);
+    expect(find.text('My Tickets'), findsOneWidget);
+    expect(find.text('Mailbox'), findsOneWidget);
+    expect(find.text('Account'), findsOneWidget);
+  });
+
+  testWidgets('matched desktop nav omits the Mailbox separator for office staff',
+      (tester) async {
+    await pumpHeader(
+      tester,
+      user: officeUser(),
+      accountActive: true,
+    );
+
+    expect(_navSeparators, findsNWidgets(3));
+    expect(find.text('Mailbox'), findsNothing);
+  });
+
+  testWidgets('narrow layout has no desktop nav separators', (tester) async {
+    await pumpHeader(
+      tester,
+      user: studentUser(),
+      size: const Size(390, 844),
+      accountActive: true,
+    );
+
+    expect(_navSeparators, findsNothing);
   });
 
   // --- Mobile slide-out menu -------------------------------------------

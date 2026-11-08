@@ -92,15 +92,18 @@ class PublicSiteHeader extends StatelessWidget {
     final kbSide = width * DesignTokens.kbDesktopSideInset;
     final kbLeft = matchedNav ? kbSide : (isNarrow ? 12.0 : 32.0);
     final kbRight = matchedNav ? kbSide : kbLeft;
+    final hairline = eyeComfort
+        ? EyeComfortColors.border
+        : const Color(0xFFEEF1F5);
     return Material(
-      color: transparentBackground || matchedChrome
+      color: transparentBackground
           ? Colors.transparent
           : (eyeComfort ? EyeComfortColors.headerBg : Colors.white),
       child: Container(
-        decoration: transparentBackground || matchedChrome
+        decoration: transparentBackground
             ? null
-            : const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFFEEF1F5))),
+            : BoxDecoration(
+                border: Border(bottom: BorderSide(color: hairline)),
               ),
         padding: EdgeInsets.fromLTRB(
           kbLeft,
@@ -168,7 +171,7 @@ class PublicSiteHeader extends StatelessWidget {
                         scrollDirection: Axis.horizontal,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
-                          children: [
+                          children: _withNavSeparators([
                             _MatchedNavLink(
                               label: 'Knowledge Base',
                               icon: Icons.home,
@@ -242,7 +245,7 @@ class PublicSiteHeader extends StatelessWidget {
                                 }
                               },
                             ),
-                          ],
+                          ]),
                         ),
                       ),
                     ),
@@ -256,72 +259,79 @@ class PublicSiteHeader extends StatelessWidget {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                  _NavLink(
-                    label: 'Knowledge Base',
-                    active: knowledgeBaseActive,
-                    onTap: () {
-                      if (knowledgeBaseActive) return;
-                      _goPeer(context, const KnowledgeBasePage());
-                    },
-                  ),
-                  _NavLink(
-                    label: 'Ask Assistant',
-                    active: askAssistantActive,
-                    onTap: () {
-                      if (askAssistantActive) return;
-                      _goPeer(context, const ChatbotPage());
-                    },
-                  ),
-                  _NavLink(
-                    label: 'My Tickets',
-                    active: myTicketsActive,
-                    onTap: () {
-                      if (myTicketsActive) return;
-                      openProtectedPage(
-                        context,
-                        builder: (_) => const MyTicketsPage(),
-                        replace: _onPublicPeerPage,
-                        requireVerifiedEmail: true,
-                        message: emailVerifyRequiredMessage,
-                      );
-                    },
-                  ),
-                  if (showsMailboxLink)
-                    _NavLink(
-                      label: 'Mailbox',
-                      active: mailboxActive,
-                      onTap: () => _openStudentMailbox(context),
-                    ),
-                  if (!isAuthed)
-                    _NavLink(
-                      label: 'Login',
-                      onTap: () => softPush(context, const LoginPage()),
-                    )
-                  else
-                    _NavLink(
-                      label:
-                          role == 'office'
-                              ? 'Office'
-                              : role == 'admin'
-                              ? 'Admin'
-                              : 'Account',
-                      active:
-                          accountActive && role != 'office' && role != 'admin',
-                      onTap: () {
-                        if (role == 'office' || role == 'admin') {
-                          redirectAfterAuth(context, role ?? 'student', null);
-                        } else if (accountActive) {
-                          return;
-                        } else {
-                          openProtectedPage(
-                            context,
-                            builder: (_) => const SettingsPage(),
-                            replace: _onPublicPeerPage,
-                          );
-                        }
-                      },
-                    ),
-                  const SizedBox(width: 10),
+                            ..._withNavSeparators([
+                              _NavLink(
+                                label: 'Knowledge Base',
+                                active: knowledgeBaseActive,
+                                onTap: () {
+                                  if (knowledgeBaseActive) return;
+                                  _goPeer(context, const KnowledgeBasePage());
+                                },
+                              ),
+                              _NavLink(
+                                label: 'Ask Assistant',
+                                active: askAssistantActive,
+                                onTap: () {
+                                  if (askAssistantActive) return;
+                                  _goPeer(context, const ChatbotPage());
+                                },
+                              ),
+                              _NavLink(
+                                label: 'My Tickets',
+                                active: myTicketsActive,
+                                onTap: () {
+                                  if (myTicketsActive) return;
+                                  openProtectedPage(
+                                    context,
+                                    builder: (_) => const MyTicketsPage(),
+                                    replace: _onPublicPeerPage,
+                                    requireVerifiedEmail: true,
+                                    message: emailVerifyRequiredMessage,
+                                  );
+                                },
+                              ),
+                              if (showsMailboxLink)
+                                _NavLink(
+                                  label: 'Mailbox',
+                                  active: mailboxActive,
+                                  onTap: () => _openStudentMailbox(context),
+                                ),
+                              if (!isAuthed)
+                                _NavLink(
+                                  label: 'Login',
+                                  onTap: () =>
+                                      softPush(context, const LoginPage()),
+                                )
+                              else
+                                _NavLink(
+                                  label: role == 'office'
+                                      ? 'Office'
+                                      : role == 'admin'
+                                      ? 'Admin'
+                                      : 'Account',
+                                  active: accountActive &&
+                                      role != 'office' &&
+                                      role != 'admin',
+                                  onTap: () {
+                                    if (role == 'office' || role == 'admin') {
+                                      redirectAfterAuth(
+                                        context,
+                                        role ?? 'student',
+                                        null,
+                                      );
+                                    } else if (accountActive) {
+                                      return;
+                                    } else {
+                                      openProtectedPage(
+                                        context,
+                                        builder: (_) => const SettingsPage(),
+                                        replace: _onPublicPeerPage,
+                                      );
+                                    }
+                                  },
+                                ),
+                            ]),
+                            const SizedBox(width: 10),
                           ],
                         ),
                       ),
@@ -609,6 +619,33 @@ class PublicSiteHeader extends StatelessWidget {
   }
 }
 
+List<Widget> _withNavSeparators(List<Widget> items) {
+  final out = <Widget>[];
+  for (var i = 0; i < items.length; i++) {
+    if (i > 0) {
+      out.add(
+        _MatchedNavSeparator(key: ValueKey('header-nav-separator-$i')),
+      );
+    }
+    out.add(items[i]);
+  }
+  return out;
+}
+
+class _MatchedNavSeparator extends StatelessWidget {
+  const _MatchedNavSeparator({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 16,
+      margin: const EdgeInsets.symmetric(horizontal: 6),
+      color: const Color(0xFFD8DCE3),
+    );
+  }
+}
+
 /// Shared ASKa-Piyu brand mark: the one logo rendering used on every page
 /// that shows it (public header, chatbot empty-state greeting). Always
 /// solid black, always cropped -- there is no second "uncropped, full
@@ -706,7 +743,7 @@ class _MatchedNavLink extends StatelessWidget {
           );
 
     return Padding(
-      padding: const EdgeInsets.only(left: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 2),
       child: Material(
         color: Colors.transparent,
         child: InkWell(

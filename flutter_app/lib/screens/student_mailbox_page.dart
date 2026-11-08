@@ -6,9 +6,15 @@ import '../design_tokens.dart';
 import '../models/ticket_notification_models.dart';
 import '../services/api_client.dart';
 import '../services/eye_comfort.dart';
+import '../widgets/phone_layout.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/student_ui.dart';
 import 'my_tickets_page.dart';
+
+const _mailboxNavy = Color(0xFF1B2333);
+const _mailboxMuted = Color(0xFF6B7280);
+const _mailboxPageBg = Color(0xFFF7F5F6);
+const _mailboxCardBorder = Color(0xFFE8EAEE);
 
 /// A student's own inbox of ticket notifications: new office replies,
 /// status changes, and reassignments (see TicketNotification's own doc
@@ -220,57 +226,106 @@ class _StudentMailboxPageState extends State<StudentMailboxPage> {
   Widget build(BuildContext context) {
     final auth = AuthScope.of(context);
     final eyeComfort = EyeComfortScope.isEnabled(context);
-    if (!auth.isAuthenticated) {
-      return Scaffold(
-        backgroundColor: eyeComfort ? EyeComfortColors.bg : const Color(0xFFF3F4F6),
-        body: const Column(
-          children: [
-            PublicSiteHeader(mailboxActive: true),
-            Expanded(
-              child: Center(
-                child: Text(
-                  'Log in to view your mailbox.',
-                  style: TextStyle(color: DesignTokens.muted),
+    final pageBg = eyeComfort ? EyeComfortColors.bg : _mailboxPageBg;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final isWide = width >= kDesktopSplitBreakpoint;
+        final wideDesktop = width >= 1200;
+        final side = wideDesktop
+            ? width * DesignTokens.kbDesktopSideInset
+            : (isWide ? 28.0 : 16.0);
+        final pagePadding = EdgeInsets.fromLTRB(
+          side,
+          isWide ? 42 : 22,
+          side,
+          isWide ? 72 : 56,
+        );
+
+        final body = !auth.isAuthenticated
+            ? Padding(
+                padding: pagePadding,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _MailboxHeader(
+                      isWide: isWide,
+                      unreadCount: 0,
+                      marking: false,
+                      onMarkAllRead: null,
+                    ),
+                    SizedBox(height: isWide ? 22 : 18),
+                    const StudentPanel(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 42,
+                      ),
+                      shadow: false,
+                      child: Center(
+                        child: Text(
+                          'Log in to view your mailbox.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: DesignTokens.muted),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : RefreshIndicator(
+                onRefresh: _load,
+                color: DesignTokens.maroon,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: pagePadding,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _MailboxHeader(
+                        isWide: isWide,
+                        unreadCount: _unreadCount,
+                        marking: _markingAllRead,
+                        onMarkAllRead:
+                            _unreadCount > 0 ? _markAllRead : null,
+                      ),
+                      SizedBox(height: isWide ? 22 : 18),
+                      _buildBody(),
+                    ],
+                  ),
+                ),
+              );
+
+        return Scaffold(
+          backgroundColor: pageBg,
+          body: Stack(
+            children: [
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(painter: _MailboxWavePainter()),
                 ),
               ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: eyeComfort ? EyeComfortColors.bg : const Color(0xFFF3F4F6),
-      body: Column(
-        children: [
-          const PublicSiteHeader(mailboxActive: true),
-          Expanded(
-            child: StudentPage(
-              maxWidth: 760,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              Column(
                 children: [
-                  _MailboxHeader(
-                    unreadCount: _unreadCount,
-                    marking: _markingAllRead,
-                    onMarkAllRead: _unreadCount > 0 ? _markAllRead : null,
-                  ),
-                  const SizedBox(height: 18),
-                  _buildBody(),
+                  const PublicSiteHeader(mailboxActive: true),
+                  Expanded(child: body),
                 ],
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
   Widget _buildBody() {
     if (_loading && _notifications.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 48),
-        child: Center(child: CircularProgressIndicator(color: DesignTokens.maroon)),
+      return const StudentPanel(
+        padding: EdgeInsets.symmetric(vertical: 44),
+        shadow: false,
+        child: Center(
+          child: CircularProgressIndicator(color: DesignTokens.maroon),
+        ),
       );
     }
     if (_error != null) {
@@ -283,7 +338,7 @@ class _StudentMailboxPageState extends State<StudentMailboxPage> {
       children: [
         for (final notification in _notifications)
           Padding(
-            padding: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.only(bottom: 12),
             child: _NotificationCard(
               notification: notification,
               busy: _openingIds.contains(notification.id),
@@ -297,32 +352,38 @@ class _StudentMailboxPageState extends State<StudentMailboxPage> {
 
 class _MailboxHeader extends StatelessWidget {
   const _MailboxHeader({
+    required this.isWide,
     required this.unreadCount,
     required this.marking,
     required this.onMarkAllRead,
   });
 
+  final bool isWide;
   final int unreadCount;
   final bool marking;
   final VoidCallback? onMarkAllRead;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final titleRow = Row(
-          mainAxisSize: MainAxisSize.min,
+    final heading = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            const Text(
-              'Mailbox',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                color: DesignTokens.ink,
+            Flexible(
+              child: Text(
+                'Mailbox',
+                style: TextStyle(
+                  fontSize: isWide ? 40 : 30,
+                  height: 1.12,
+                  fontWeight: FontWeight.w800,
+                  color: _mailboxNavy,
+                  letterSpacing: -0.5,
+                ),
               ),
             ),
             if (unreadCount > 0) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
@@ -340,29 +401,65 @@ class _MailboxHeader extends StatelessWidget {
               ),
             ],
           ],
-        );
-        final markReadButton = TextButton(
-          onPressed: onMarkAllRead,
-          child: Text(marking ? 'Marking…' : 'Mark all read'),
-        );
-        if (constraints.maxWidth >= 420) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: titleRow),
-              markReadButton,
-            ],
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            titleRow,
-            const SizedBox(height: 4),
-            Align(alignment: Alignment.centerLeft, child: markReadButton),
-          ],
-        );
-      },
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Stay up to date on your support tickets.',
+          style: TextStyle(
+            fontSize: 15.5,
+            height: 1.4,
+            color: _mailboxMuted,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: 85,
+            height: 3,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: DesignTokens.maroon,
+                borderRadius: BorderRadius.all(Radius.circular(2)),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    final markReadButton = TextButton(
+      onPressed: onMarkAllRead,
+      style: TextButton.styleFrom(
+        foregroundColor: DesignTokens.maroon,
+        disabledForegroundColor: const Color(0xFF9AA3B2),
+        textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+      ),
+      child: Text(marking ? 'Marking…' : 'Mark all read'),
+    );
+
+    if (!isWide) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          heading,
+          const SizedBox(height: 8),
+          Align(alignment: Alignment.centerLeft, child: markReadButton),
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: heading),
+        const SizedBox(width: 16),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: markReadButton,
+        ),
+      ],
     );
   }
 }
@@ -384,94 +481,127 @@ class _NotificationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final unread = !notification.isRead;
+    final eyeComfort = EyeComfortScope.isEnabled(context);
+    final cardBg = eyeComfort ? EyeComfortColors.cardBg : Colors.white;
+    final border = eyeComfort ? EyeComfortColors.border : _mailboxCardBorder;
+    final ticketId = notification.ticketId ?? '';
     return Opacity(
       opacity: busy ? 0.6 : 1,
       child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: cardBg,
+        borderRadius: BorderRadius.circular(18),
         child: InkWell(
           onTap: busy ? null : onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          borderRadius: BorderRadius.circular(18),
+          child: Ink(
             decoration: BoxDecoration(
+              color: cardBg,
+              borderRadius: BorderRadius.circular(18),
               border: Border.all(
-                color: unread ? DesignTokens.maroon.withValues(alpha: 0.3) : DesignTokens.border,
+                color: unread
+                    ? DesignTokens.maroon.withValues(alpha: 0.28)
+                    : border,
               ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  margin: const EdgeInsets.only(top: 5, right: 10),
-                  decoration: BoxDecoration(
-                    color: unread ? DesignTokens.maroon : Colors.transparent,
-                    shape: BoxShape.circle,
-                  ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.035),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
                 ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+              ],
+            ),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    width: 5,
+                    decoration: BoxDecoration(
+                      color: unread
+                          ? DesignTokens.maroon
+                          : const Color(0xFFE8EAEE),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(18),
+                        bottomLeft: Radius.circular(18),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Text(
-                              notification.title,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: unread ? FontWeight.w800 : FontWeight.w600,
-                                color: DesignTokens.ink,
-                              ),
+                          Text(
+                            notification.title,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15.5,
+                              height: 1.25,
+                              fontWeight:
+                                  unread ? FontWeight.w800 : FontWeight.w600,
+                              color: _mailboxNavy,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              _formatNotificationDate(notification.createdAt),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: DesignTokens.muted,
-                              ),
+                          const SizedBox(height: 6),
+                          Text(
+                            notification.body,
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              height: 1.4,
+                              color: _mailboxMuted,
                             ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                _formatNotificationDate(notification.createdAt),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: _mailboxMuted,
+                                ),
+                              ),
+                              if (ticketId.isNotEmpty)
+                                Text(
+                                  'Ticket #$ticketId',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: DesignTokens.maroon,
+                                  ),
+                                ),
+                            ],
                           ),
                         ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        notification.body,
-                        style: const TextStyle(fontSize: 13, color: DesignTokens.muted),
-                      ),
-                      if ((notification.ticketId ?? '').isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          'Ticket #${notification.ticketId}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: DesignTokens.muted,
-                          ),
+                    ),
+                  ),
+                  if (busy)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 14),
+                      child: Center(
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (busy) ...[
-                  const SizedBox(width: 8),
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                      ),
+                    )
+                  else
+                    const Padding(
+                      padding: EdgeInsets.only(right: 10),
+                      child: Icon(
+                        Icons.chevron_right_rounded,
+                        color: Color(0xFF9AA3B2),
+                        size: 22,
+                      ),
+                    ),
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -485,29 +615,27 @@ class _MailboxEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 48, horizontal: 24),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Mailbox is empty',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                color: DesignTokens.ink,
-              ),
+    return const StudentPanel(
+      padding: EdgeInsets.symmetric(horizontal: 22, vertical: 42),
+      shadow: false,
+      child: Column(
+        children: [
+          Text(
+            'Mailbox is empty',
+            style: TextStyle(
+              color: DesignTokens.ink,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
             ),
-            SizedBox(height: 6),
-            Text(
-              'Updates on your tickets -- new replies, status changes, and '
-              'reassignments -- will appear here.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: DesignTokens.muted),
-            ),
-          ],
-        ),
+          ),
+          SizedBox(height: 6),
+          Text(
+            'Updates on your tickets -- new replies, status changes, and '
+            'reassignments -- will appear here.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: DesignTokens.muted, height: 1.35),
+          ),
+        ],
       ),
     );
   }
@@ -524,19 +652,67 @@ class _MailboxErrorBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFDECEA),
-        borderRadius: BorderRadius.circular(10),
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFED7AA)),
       ),
       child: Row(
         children: [
+          const Icon(Icons.error_outline_rounded, color: Color(0xFFC2410C)),
+          const SizedBox(width: 10),
           Expanded(
-            child: Text(message, style: const TextStyle(color: Color(0xFFB3261E))),
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF9A3412)),
+            ),
           ),
           TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
     );
   }
+}
+
+class _MailboxWavePainter extends CustomPainter {
+  const _MailboxWavePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    void band(Path path, Color color) {
+      canvas.drawPath(path, Paint()..color = color);
+    }
+
+    band(
+      Path()
+        ..moveTo(0, h * 0.62)
+        ..cubicTo(w * 0.08, h * 0.48, w * 0.22, h * 0.78, w * 0.36, h * 0.70)
+        ..cubicTo(w * 0.24, h * 0.92, w * 0.10, h * 1.02, 0, h)
+        ..close(),
+      const Color(0xFFF6E4E8).withValues(alpha: 0.95),
+    );
+    band(
+      Path()
+        ..moveTo(0, h * 0.74)
+        ..cubicTo(w * 0.10, h * 0.60, w * 0.28, h * 0.88, w * 0.42, h * 0.80)
+        ..cubicTo(w * 0.30, h * 0.98, w * 0.12, h * 1.05, 0, h * 0.96)
+        ..close(),
+      const Color(0xFFF3D4DB).withValues(alpha: 0.72),
+    );
+    band(
+      Path()
+        ..moveTo(0, h * 0.84)
+        ..cubicTo(w * 0.06, h * 0.76, w * 0.16, h * 0.96, w * 0.28, h * 0.90)
+        ..cubicTo(w * 0.18, h * 1.02, w * 0.08, h * 1.04, 0, h)
+        ..close(),
+      const Color(0xFFE8C2CB).withValues(alpha: 0.45),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MailboxWavePainter oldDelegate) => false;
 }
 
 int _readInt(Object? value) {

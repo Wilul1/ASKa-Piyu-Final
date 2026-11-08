@@ -118,6 +118,106 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
+  // --- office-ticket-visibility regression (mapOfficeTicketsResponseItems) -
+  //
+  // _loadOfficeTickets() used to re-filter the backend's already
+  // office-scoped GET /tickets response by comparing ticket.assignedOffice
+  // (a name string) against the session's cached currentUser.officeName,
+  // silently dropping tickets whenever that cached name didn't exactly
+  // match (e.g. a stale session or an office rename) -- even though the
+  // backend had already correctly scoped the response. That filter has
+  // been removed; the function now trusts the backend's response as-is.
+  //
+  // debugTickets (used by every test above) bypasses _loadOfficeTickets()
+  // entirely (see initState's _requestedInitialLoad short-circuit), so it
+  // never exercised this filter, bug or no bug. This codebase's widget
+  // tests also have no HTTP-mocking seam for ApiClient (no MockClient /
+  // dependency-injection point -- see admin_kb_extract_index_jobs_test.dart
+  // for the same documented limitation), so the real `GET /tickets` fetch
+  // itself cannot be mocked here. mapOfficeTicketsResponseItems is the
+  // exact item-mapping _loadOfficeTickets applies to a response body
+  // (extracted verbatim, not reimplemented), so testing it directly proves
+  // real post-fetch behavior without needing the network seam.
+  group('mapOfficeTicketsResponseItems (office-ticket-visibility fix)', () {
+    test(
+        'a ticket whose assigned office matches the office user\'s own '
+        'office name remains visible', () {
+      final result = mapOfficeTicketsResponseItems([
+        ticketJson(
+          id: 'TK-MATCH-1',
+          subject: 'Request for OSA',
+          status: 'Open',
+        ), // assigned_office defaults to 'Office of Student Affairs (OSA)',
+        // same as _officeUser().officeName.
+      ]);
+
+      expect(result, hasLength(1));
+      expect(result.single.id, 'TK-MATCH-1');
+      expect(result.single.assignedOffice, 'Office of Student Affairs (OSA)');
+    });
+
+    test(
+        'a ticket whose assigned office does NOT match the session\'s '
+        'cached office name remains visible (the actual bug fix)', () {
+      final mismatched = {
+        ...ticketJson(
+          id: 'TK-STALE-NAME-1',
+          subject: 'Needs ICT support',
+          status: 'Open',
+        ),
+        // Simulates a stale cached officeName / an office rename: the
+        // backend already scoped this ticket to the viewing office by id,
+        // but the name on the record no longer string-matches the
+        // session's cached name. Before the fix, this ticket would have
+        // been silently dropped by the old _adminSame(...) filter.
+        'assigned_office': 'ICT Office (Renamed)',
+        'assigned_office_name': 'ICT Office (Renamed)',
+        'assigned_office_id': 'office-ict',
+      };
+
+      final result = mapOfficeTicketsResponseItems([mismatched]);
+
+      expect(result, hasLength(1));
+      expect(result.single.id, 'TK-STALE-NAME-1');
+      expect(result.single.assignedOffice, 'ICT Office (Renamed)');
+    });
+
+    test(
+        'multiple tickets in one response -- matching and non-matching '
+        'office names alike -- are all retained, nothing dropped or '
+        'duplicated', () {
+      final items = [
+        ticketJson(id: 'TK-MULTI-1', subject: 'OSA concern', status: 'Open'),
+        {
+          ...ticketJson(
+            id: 'TK-MULTI-2',
+            subject: 'Registrar concern',
+            status: 'In Progress',
+          ),
+          'assigned_office': 'Registrar',
+          'assigned_office_name': 'Registrar',
+          'assigned_office_id': 'office-registrar',
+        },
+        {
+          ...ticketJson(
+            id: 'TK-MULTI-3',
+            subject: 'ICT concern',
+            status: 'Resolved',
+          ),
+          'assigned_office': 'ICT Office',
+          'assigned_office_name': 'ICT Office',
+          'assigned_office_id': 'office-ict',
+        },
+      ];
+
+      final result = mapOfficeTicketsResponseItems(items);
+
+      expect(result, hasLength(3));
+      expect(result.map((t) => t.id).toSet(),
+          {'TK-MULTI-1', 'TK-MULTI-2', 'TK-MULTI-3'});
+    });
+  });
+
   testWidgets('Assigned Tickets renders inline workspace without a dialog',
       (tester) async {
     await pumpWorkspace(tester);

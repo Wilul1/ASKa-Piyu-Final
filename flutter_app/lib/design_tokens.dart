@@ -13,6 +13,11 @@ class DesignTokens {
   static const Color cardBg = Color(0xFFFFFFFF);
   static const Color primaryBlue = maroon;
   static const double spacing = 16.0;
+
+  /// Equal left and right inset for the desktop Knowledge Base header
+  /// and page column, as a fraction of the viewport. Keeps that column
+  /// about 87% of the width and centered.
+  static const double kbDesktopSideInset = 0.065;
   static const double radius = 18.0;
 
   /// Admin shell surfaces (professional dashboard).

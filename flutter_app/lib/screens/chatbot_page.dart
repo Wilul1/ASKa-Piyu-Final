@@ -192,7 +192,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
   // this constant reactively.
   static const _maxCitationPollAttempts = 150;
 
-  static const _desktopBreakpoint = 900.0;
+  static const _desktopBreakpoint = kDesktopSplitBreakpoint;
 
   _ChatSession? get _active {
     final id = _activeSessionId;
@@ -1006,16 +1006,7 @@ class _ChatBody extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text(
-                        'What can I help with?',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 34,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.black,
-                          letterSpacing: -0.6,
-                        ),
-                      ),
+                      const _ChatGreeting(),
                       const SizedBox(height: 28),
                       _Composer(
                         controller: controller,
@@ -1061,16 +1052,7 @@ class _ChatBody extends StatelessWidget {
                 ? const Center(
                     child: Padding(
                       padding: EdgeInsets.symmetric(horizontal: 28),
-                      child: Text(
-                        'What can I help with?',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.black,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
+                      child: _ChatGreeting(compact: true),
                     ),
                   )
                 : ListView(
@@ -1151,6 +1133,81 @@ class _ChatBody extends StatelessWidget {
                 ),
         ),
         composer,
+      ],
+    );
+  }
+}
+
+/// Purely decorative empty-state greeting shown above the composer when a
+/// conversation has no turns yet. Uses the shared [BrandMark] so the mark
+/// stays solid black / cropped identically to the header, and never
+/// touches send/retry/history/citation logic below it.
+class _ChatGreeting extends StatelessWidget {
+  final bool compact;
+
+  const _ChatGreeting({this.compact = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE8E4E6)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              BrandMark(height: compact ? 20 : 22),
+              const SizedBox(width: 8),
+              const Text(
+                'ASKa-Piyu',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                  color: DesignTokens.maroon,
+                  height: 1,
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: compact ? 16 : 20),
+        Text(
+          'Hello! How can I assist you today?',
+          textAlign: TextAlign.left,
+          style: TextStyle(
+            fontSize: compact ? 22 : 28,
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF1B2333),
+            height: 1.25,
+          ),
+        ),
+        SizedBox(height: compact ? 8 : 10),
+        Text(
+          'Ask questions about university services, policies, requirements, and student concerns.',
+          textAlign: TextAlign.left,
+          style: TextStyle(
+            fontSize: compact ? 13.5 : 15,
+            fontWeight: FontWeight.w500,
+            color: const Color(0xFF3E4654),
+            height: 1.45,
+          ),
+        ),
+        SizedBox(height: compact ? 12 : 14),
+        Container(
+          width: 52,
+          height: 3,
+          decoration: BoxDecoration(
+            color: DesignTokens.maroon,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
       ],
     );
   }

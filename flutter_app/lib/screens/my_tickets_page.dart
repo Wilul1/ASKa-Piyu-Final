@@ -819,7 +819,7 @@ class _TicketStatsSummary extends StatelessWidget {
       (
         number: '$closedCount',
         label: 'Closed',
-        caption: 'Resolved tickets',
+        caption: 'No longer active',
         color: const Color(0xFF16A34A),
       ),
       (

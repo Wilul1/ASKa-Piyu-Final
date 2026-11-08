@@ -5,6 +5,12 @@ import 'phone_keyboard_inset.dart';
 /// Public-site phone layout (matches [PublicSiteHeader] narrow breakpoint).
 const double kPhoneLayoutBreakpoint = 880;
 
+/// Desktop two-pane / wide-chrome split shared by the chatbot composer and
+/// the My Tickets list+detail layout. Distinct from [kPhoneLayoutBreakpoint]:
+/// this is where those pages switch to a wider desktop arrangement, not
+/// where the top nav collapses to a hamburger menu.
+const double kDesktopSplitBreakpoint = 900;
+
 bool isPhoneLayout(BuildContext context) =>
     MediaQuery.sizeOf(context).width < kPhoneLayoutBreakpoint;
 

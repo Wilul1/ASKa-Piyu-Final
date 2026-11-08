@@ -13,6 +13,7 @@ import '../screens/signup_page.dart';
 import '../screens/student_home.dart';
 import '../screens/student_mailbox_page.dart';
 import '../services/eye_comfort.dart';
+import 'phone_layout.dart';
 
 /// Shared top navigation for public landing / Knowledge Base (no sidebar).
 class PublicSiteHeader extends StatelessWidget {
@@ -73,29 +74,49 @@ class PublicSiteHeader extends StatelessWidget {
     // visitor or office/admin user isn't pushed into mobile mode any
     // earlier than before.
     final showsMailboxLink = isAuthed && role != 'office' && role != 'admin';
-    final isNarrow = width < (showsMailboxLink ? 1140 : 880);
+    final isNarrow = width < (showsMailboxLink ? 1140 : kPhoneLayoutBreakpoint);
 
     final eyeComfort = EyeComfortScope.isEnabled(context);
+
+    // Matched chrome: the compact icon+label nav used on the inner app
+    // pages (KB / My Tickets / Ask Assistant / Mailbox / Account), which
+    // share the Knowledge Base column's side inset and let the page's own
+    // (possibly eye-comfort) background show through instead of painting
+    // a separate header color. The plain homepage nav below is unchanged.
+    final matchedChrome = knowledgeBaseActive ||
+        myTicketsActive ||
+        askAssistantActive ||
+        mailboxActive ||
+        accountActive;
+    final matchedNav = matchedChrome && !isNarrow;
+    final kbSide = width * DesignTokens.kbDesktopSideInset;
+    final kbLeft = matchedNav ? kbSide : (isNarrow ? 12.0 : 32.0);
+    final kbRight = matchedNav ? kbSide : kbLeft;
+
     return Material(
-      color: transparentBackground
+      color: transparentBackground || matchedChrome
           ? Colors.transparent
           : (eyeComfort ? EyeComfortColors.headerBg : Colors.white),
       child: Container(
-        decoration: transparentBackground
+        decoration: transparentBackground || matchedChrome
             ? null
             : const BoxDecoration(
                 border: Border(bottom: BorderSide(color: Color(0xFFEEF1F5))),
               ),
-        padding: EdgeInsets.symmetric(
-          horizontal: isNarrow ? 12 : 32,
+        padding: EdgeInsets.fromLTRB(
+          kbLeft,
           // Desktop-only bump so the homepage's larger hero doesn't sit
           // under a comparatively tiny navbar -- narrow/slim values are
           // untouched since other public pages rely on them as-is.
-          vertical: isNarrow ? (slim ? 8 : 14) : 18,
+          isNarrow ? (slim ? 8 : 14) : 18,
+          kbRight,
+          isNarrow ? (slim ? 8 : 14) : (matchedChrome ? 14 : 18),
         ),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: kHomeContentMaxWidth),
+            constraints: BoxConstraints(
+              maxWidth: matchedNav ? double.infinity : kHomeContentMaxWidth,
+            ),
             child: Row(
               children: [
                 // Static branding, not a navigation control: previously an
@@ -112,11 +133,10 @@ class PublicSiteHeader extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Image.asset(
-                        'assets/brandmark.png',
-                        height: isNarrow ? (slim ? 28 : 36) : 42,
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.high,
+                      BrandMark(
+                        height: isNarrow
+                            ? (slim ? 28 : 36)
+                            : (matchedChrome ? 34 : 42),
                       ),
                       const SizedBox(width: 10),
                       Text(
@@ -125,8 +145,12 @@ class PublicSiteHeader extends StatelessWidget {
                             : 'ASKa-Piyu',
                         style: TextStyle(
                           color: DesignTokens.maroon,
-                          fontWeight: FontWeight.w900,
-                          fontSize: isNarrow ? (slim ? 15 : 18) : 20,
+                          fontWeight: matchedChrome
+                              ? FontWeight.w800
+                              : FontWeight.w900,
+                          fontSize: isNarrow
+                              ? (slim ? 15 : 18)
+                              : (matchedChrome ? 18 : 20),
                           letterSpacing: -0.2,
                           height: 1,
                         ),
@@ -135,7 +159,105 @@ class PublicSiteHeader extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                if (!isNarrow) ...[
+                if (matchedNav)
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _MatchedNavLink(
+                              label: 'Knowledge Base',
+                              icon: Icons.home,
+                              active: knowledgeBaseActive,
+                              iconTooltip: 'Home',
+                              onIconTap: () => _goHome(context),
+                              onTap: () {
+                                if (knowledgeBaseActive) return;
+                                _goPeer(context, const KnowledgeBasePage());
+                              },
+                            ),
+                            _MatchedNavLink(
+                              label: 'Ask Assistant',
+                              icon: Icons.support_agent_outlined,
+                              active: askAssistantActive,
+                              onTap: () {
+                                if (askAssistantActive) return;
+                                _goPeer(context, const ChatbotPage());
+                              },
+                            ),
+                            _MatchedNavLink(
+                              label: 'My Tickets',
+                              icon: Icons.mail_outline_rounded,
+                              active: myTicketsActive,
+                              onTap: () {
+                                if (myTicketsActive) return;
+                                openProtectedPage(
+                                  context,
+                                  builder: (_) => const MyTicketsPage(),
+                                  replace: _onPublicPeerPage,
+                                  requireVerifiedEmail: true,
+                                  message: emailVerifyRequiredMessage,
+                                );
+                              },
+                            ),
+                            if (showsMailboxLink)
+                              _MatchedNavLink(
+                                label: 'Mailbox',
+                                icon: Icons.inbox_outlined,
+                                active: mailboxActive,
+                                onTap: () {
+                                  if (mailboxActive) return;
+                                  openProtectedPage(
+                                    context,
+                                    builder: (_) => const StudentMailboxPage(),
+                                    replace: _onPublicPeerPage,
+                                    requireVerifiedEmail: true,
+                                    message: emailVerifyRequiredMessage,
+                                  );
+                                },
+                              ),
+                            _MatchedNavLink(
+                              label: !isAuthed
+                                  ? 'Login'
+                                  : role == 'office'
+                                  ? 'Office'
+                                  : role == 'admin'
+                                  ? 'Admin'
+                                  : 'Account',
+                              icon: Icons.account_circle_outlined,
+                              active: accountActive &&
+                                  role != 'office' &&
+                                  role != 'admin',
+                              onTap: () {
+                                if (!isAuthed) {
+                                  softPush(context, const LoginPage());
+                                } else if (role == 'office' ||
+                                    role == 'admin') {
+                                  redirectAfterAuth(
+                                    context,
+                                    role ?? 'student',
+                                    null,
+                                  );
+                                } else if (accountActive) {
+                                  return;
+                                } else {
+                                  openProtectedPage(
+                                    context,
+                                    builder: (_) => const SettingsPage(),
+                                    replace: _onPublicPeerPage,
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+                else if (!isNarrow) ...[
                   _NavLink(
                     label: 'Knowledge Base',
                     active: knowledgeBaseActive,
@@ -212,7 +334,7 @@ class PublicSiteHeader extends StatelessWidget {
                     ),
                   const SizedBox(width: 10),
                 ],
-                if (!isAuthed && !isNarrow)
+                if (!matchedChrome && !isAuthed && !isNarrow)
                   ElevatedButton(
                     onPressed: () => softPush(context, const SignupPage()),
                     style: ElevatedButton.styleFrom(
@@ -509,6 +631,153 @@ class PublicSiteHeader extends StatelessWidget {
   }
 }
 
+/// Shared ASKa-Piyu brand mark: the one logo rendering used on every page
+/// that shows it (public header, chatbot empty-state greeting). Always
+/// solid black, always cropped -- there is no second "uncropped, full
+/// color" variant.
+///
+/// `brandmark.png` is 777x457. The mark itself is about x=218-487,
+/// y=122-330. Faint full-width hairlines sit on y=0-4 and y=448-456 and
+/// read as a box and an underline once the file is scaled into the header,
+/// so every caller clips them via the same window below, which keeps a few
+/// pixels of padding around the mark and leaves its proportions unchanged.
+class BrandMark extends StatelessWidget {
+  final double height;
+
+  const BrandMark({super.key, required this.height});
+
+  @override
+  Widget build(BuildContext context) {
+    return ColorFiltered(
+      colorFilter: const ColorFilter.mode(Colors.black, BlendMode.srcIn),
+      child: ClipRect(
+        child: Align(
+          alignment: const Alignment(-0.0927, -0.0109),
+          widthFactor: 282 / 777,
+          heightFactor: 221 / 457,
+          child: Image.asset(
+            'assets/brandmark.png',
+            height: height,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+            gaplessPlayback: true,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Matched-chrome header item: icon and label sit on one line, and the
+/// active underline matches the label width only.
+class _MatchedNavLink extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  final bool active;
+  final IconData? icon;
+  final String? iconTooltip;
+  final VoidCallback? onIconTap;
+
+  const _MatchedNavLink({
+    required this.label,
+    required this.onTap,
+    this.active = false,
+    this.icon,
+    this.iconTooltip,
+    this.onIconTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? DesignTokens.maroon : const Color(0xFF3E4654);
+    final labelStyle = TextStyle(
+      color: color,
+      fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+      fontSize: 14.5,
+      height: 1.1,
+    );
+
+    final labelWidget = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Text(label, style: labelStyle),
+        if (active)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: -8,
+            child: Container(
+              height: 2.5,
+              decoration: BoxDecoration(
+                color: DesignTokens.maroon,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 14),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (icon != null) ...[
+            _NavIconButton(
+              icon: icon!,
+              size: 16,
+              tooltip: onIconTap == null ? label : (iconTooltip ?? label),
+              onTap: onIconTap ?? onTap,
+            ),
+            const SizedBox(width: 6),
+          ],
+          TextButton(
+            onPressed: onTap,
+            style: TextButton.styleFrom(
+              foregroundColor: color,
+              padding: EdgeInsets.zero,
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: labelWidget,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavIconButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final double size;
+
+  const _NavIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.size = 17,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Icon(
+          icon,
+          size: size,
+          color: const Color(0xFF000000),
+        ),
+      ),
+    );
+  }
+}
+
 class _NavLink extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
@@ -558,30 +827,37 @@ class _NavLink extends StatelessWidget {
 /// Shared control to return to the public homepage from KB / Ask / Tickets.
 class PublicBackToHomeButton extends StatelessWidget {
   final Color foreground;
+  final Color? labelColor;
   final EdgeInsetsGeometry padding;
 
   const PublicBackToHomeButton({
     super.key,
     this.foreground = DesignTokens.maroon,
+    this.labelColor,
     this.padding = EdgeInsets.zero,
   });
 
   @override
   Widget build(BuildContext context) {
+    final textColor = labelColor ?? foreground;
     return Align(
       alignment: Alignment.centerLeft,
       child: TextButton.icon(
         onPressed: () => softPushAndClear(context, const StudentHomePage()),
         style: TextButton.styleFrom(
-          foregroundColor: foreground,
+          foregroundColor: textColor,
           padding: padding,
           visualDensity: VisualDensity.compact,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
         icon: Icon(Icons.arrow_back_rounded, size: 18, color: foreground),
-        label: const Text(
+        label: Text(
           'Back to home',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 13.5,
+            color: textColor,
+          ),
         ),
       ),
     );

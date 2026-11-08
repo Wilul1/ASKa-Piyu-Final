@@ -81,45 +81,68 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
     });
     try {
       final authHeaders = AuthScope.of(context).ticketHeaders();
-      final categoriesData = await _getJson(
+      // Start both requests together. Resources only needs categories, so
+      // paint that grid as soon as `/kb/categories` returns instead of
+      // waiting on the heavier `/kb/articles` payload.
+      final categoriesFuture = _getJson(
         '/kb/categories',
         headers: authHeaders,
       );
-      final articlesData = await _getJson(
+      final articlesFuture = _getJson(
         '/kb/articles?limit=100',
         headers: authHeaders,
       );
-      final categoryItems =
-          categoriesData['items'] is List
-              ? categoriesData['items'] as List
-              : const [];
-      final articleItems =
-          articlesData['items'] is List
-              ? articlesData['items'] as List
-              : const [];
-      if (!mounted) return;
-      setState(() {
-        _categories =
-            categoryItems
-                .whereType<Map>()
-                .map(
-                  (item) => _LandingCategory.fromJson(
-                    Map<String, dynamic>.from(item),
-                  ),
-                )
-                .where((item) => item.name.isNotEmpty)
-                .toList();
-        _articles =
-            articleItems
-                .whereType<Map>()
-                .map(
-                  (item) => _LandingArticle.fromJson(
-                    Map<String, dynamic>.from(item),
-                  ),
-                )
-                .toList();
-        _loading = false;
-      });
+
+      try {
+        final categoriesData = await categoriesFuture;
+        if (!mounted) return;
+        final categoryItems =
+            categoriesData['items'] is List
+                ? categoriesData['items'] as List
+                : const [];
+        setState(() {
+          _categories =
+              categoryItems
+                  .whereType<Map>()
+                  .map(
+                    (item) => _LandingCategory.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ),
+                  )
+                  .where((item) => item.name.isNotEmpty)
+                  .toList();
+          _loading = false;
+          _error = null;
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _error = 'Could not load published Knowledge Base content.';
+          _loading = false;
+        });
+      }
+
+      try {
+        final articlesData = await articlesFuture;
+        if (!mounted) return;
+        final articleItems =
+            articlesData['items'] is List
+                ? articlesData['items'] as List
+                : const [];
+        setState(() {
+          _articles =
+              articleItems
+                  .whereType<Map>()
+                  .map(
+                    (item) => _LandingArticle.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ),
+                  )
+                  .toList();
+        });
+      } catch (_) {
+        // Role-based Quick links can stay empty; Resources already rendered.
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {

@@ -91,6 +91,34 @@ _TAXONOMY_OFFICE_CANDIDATES: dict[str, tuple[str, ...]] = {
         "office of the university president (oup)",
         "office of the university president",
     ),
+    # Substring matching fails here because extra words sit *between* the
+    # shared tokens: "scholarship office" is not a substring of
+    # "scholarship and financial assistance office", and the reverse is
+    # not a substring either. office_aliases.Scholarship also misses:
+    # match_office_from_text scores short taxonomy labels below its
+    # confidence floor.
+    "scholarship office": (
+        "scholarship and financial assistance office",
+        "scholarship office",
+        "scholarships and financial assistance",
+    ),
+    "scholarships": (
+        "scholarship and financial assistance office",
+        "scholarships and financial assistance",
+    ),
+    # Same trap: "admissions office" vs "admission and testing services".
+    "admissions office": (
+        "admission and testing services",
+        "admissions office",
+        "office of admissions",
+        "admission office",
+    ),
+    "admission office": (
+        "admission and testing services",
+        "admissions office",
+        "office of admissions",
+        "admission office",
+    ),
 }
 
 
@@ -198,3 +226,33 @@ def _default_office(session: Session) -> tuple[str, str]:
     if offices:
         return offices[0].id, offices[0].name
     raise LookupError("No offices are configured. Seed offices before creating tickets.")
+
+
+def backfill_unresolved_ticket_offices(session: Session) -> list[tuple[str, str, str]]:
+    """Attach office ids to tickets whose taxonomy label now resolves.
+
+    Only tickets with ``assigned_office_id IS NULL`` are considered. The OSA
+    default fallback is never used, so labels that still have no seeded
+    office stay in Needs Routing for admin review.
+
+    Returns ``[(ticket_id, previous_label, resolved_office_name), ...]``.
+    """
+    from app.models.db_models import Ticket
+
+    updated: list[tuple[str, str, str]] = []
+    tickets = session.query(Ticket).filter(Ticket.assigned_office_id.is_(None)).all()
+    for ticket in tickets:
+        label = (ticket.assigned_office or "").strip()
+        if not label:
+            continue
+        try:
+            office_id, office_name = resolve_office_for_ticket(
+                session, label, allow_default_fallback=False
+            )
+        except (UnresolvedOfficeLabelError, LookupError):
+            continue
+        previous = ticket.assigned_office
+        ticket.assigned_office_id = office_id
+        ticket.assigned_office = office_name
+        updated.append((ticket.id, previous, office_name))
+    return updated

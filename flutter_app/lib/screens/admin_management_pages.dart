@@ -2813,6 +2813,56 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
     }
   }
 
+  Future<void> _postTicketKbAction(
+    String path, {
+    Map<String, dynamic>? jsonBody,
+  }) async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}$path',
+        headers: {...AuthScope.of(context).ticketHeaders()},
+        jsonBody: jsonBody,
+      );
+      final data = _decodeObject(result.body);
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        throw StateError(
+          _extractError(data, 'Could not update the knowledge article.'),
+        );
+      }
+      final refresh = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      final refreshed = _decodeObject(refresh.body);
+      if (refresh.statusCode >= 200 && refresh.statusCode < 300) {
+        setState(() => _ticket = _AdminTicketEntry.fromJson(refreshed));
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              path.endsWith('/approve')
+                  ? 'Article approved and published to the Knowledge Base.'
+                  : path.endsWith('/reject')
+                      ? 'Generated article draft rejected.'
+                      : 'Article generation retried.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _convertToKnowledge() async {
     final latestStaff = _ticket.messages.reversed
         .where((m) =>
@@ -4099,6 +4149,23 @@ String _extractError(Map<String, dynamic> data, String fallback) {
     return detail.map((item) => item.toString()).join('\n');
   }
   return fallback;
+}
+
+String _kbConversionHelpText(String status) {
+  switch (status) {
+    case 'published':
+      return 'This ticket already has a published knowledge article. Admins can unpublish it from Knowledge Article if it needs revision.';
+    case 'needs_review':
+      return 'A generated FAQ draft needs staff review. Edit any missing steps, then approve it to make it searchable or reject it.';
+    case 'draft':
+      return 'A draft FAQ already exists for this ticket. Review, edit, approve, or reject it before it becomes searchable.';
+    case 'failed':
+      return 'Automatic article generation failed. Retry generation or write the FAQ manually. Ticket resolution is unchanged.';
+    case 'rejected':
+      return 'The generated FAQ draft was rejected. Retry generation or write a new draft if the answer should still be published.';
+    default:
+      return 'Convert the approved office answer into a draft FAQ so future users can get this answer from ASKa-Piyu.';
+  }
 }
 
 String _friendlyError(Object error) {

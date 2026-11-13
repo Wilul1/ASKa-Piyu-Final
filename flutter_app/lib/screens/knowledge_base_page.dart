@@ -1194,7 +1194,9 @@ class _MetaChip extends StatelessWidget {
   }
 }
 
-class _ArticleReaderPage extends StatelessWidget {
+const double _articleDesktopMaxWidth = 1240;
+
+class _ArticleReaderPage extends StatefulWidget {
   final String apiBase;
   final _KbArticle article;
 
@@ -1203,10 +1205,25 @@ class _ArticleReaderPage extends StatelessWidget {
     required this.article,
   });
 
-  Future<_KbArticleDetail> _loadDetail(BuildContext context) async {
+  @override
+  State<_ArticleReaderPage> createState() => _ArticleReaderPageState();
+}
+
+class _ArticleReaderPageState extends State<_ArticleReaderPage> {
+  bool _printing = false;
+  Future<_KbArticleDetail>? _detailFuture;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _detailFuture ??= _loadDetail();
+  }
+
+  Future<_KbArticleDetail> _loadDetail() async {
     final result = await ApiClient.send(
       method: 'GET',
-      url: '$apiBase/kb/articles/${Uri.encodeComponent(article.id)}',
+      url:
+          '${widget.apiBase}/kb/articles/${Uri.encodeComponent(widget.article.id)}',
       headers: AuthScope.of(context).ticketHeaders(),
     );
     if (result.statusCode != 200) {
@@ -1215,27 +1232,51 @@ class _ArticleReaderPage extends StatelessWidget {
     return _KbArticleDetail.fromJson(result.jsonObject);
   }
 
+  Future<void> _printArticle() async {
+    if (_printing) return;
+    setState(() => _printing = true);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    printCurrentDocument();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (mounted) {
+      setState(() => _printing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Column(
+      backgroundColor: _kbPageBg,
+      body: Stack(
         children: [
-          const PublicSiteHeader(knowledgeBaseActive: true),
-          Expanded(
-            child: FutureBuilder<_KbArticleDetail>(
-              future: _loadDetail(context),
-              builder: (context, snapshot) {
-                return SingleChildScrollView(
-                  child: _ArticleReaderBody(
-                    article: article,
-                    detail: snapshot.data,
-                    loading: snapshot.connectionState != ConnectionState.done,
-                    error: snapshot.hasError,
-                  ),
-                );
-              },
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(painter: _KbWavePainter()),
             ),
+          ),
+          Column(
+            children: [
+              if (!_printing)
+                const PublicSiteHeader(knowledgeBaseActive: true),
+              Expanded(
+                child: FutureBuilder<_KbArticleDetail>(
+                  future: _detailFuture!,
+                  builder: (context, snapshot) {
+                    return SingleChildScrollView(
+                      child: _ArticleReaderBody(
+                        article: widget.article,
+                        detail: snapshot.data,
+                        loading:
+                            snapshot.connectionState != ConnectionState.done,
+                        error: snapshot.hasError,
+                        printing: _printing,
+                        onPrint: _printArticle,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1248,60 +1289,92 @@ class _ArticleReaderBody extends StatelessWidget {
   final _KbArticleDetail? detail;
   final bool loading;
   final bool error;
+  final bool printing;
+  final VoidCallback onPrint;
 
   const _ArticleReaderBody({
     required this.article,
     required this.detail,
     required this.loading,
     required this.error,
+    required this.printing,
+    required this.onPrint,
   });
 
   @override
   Widget build(BuildContext context) {
     final loaded = detail;
-    final displayArticle = loaded?.article ?? article;
+    final width = MediaQuery.sizeOf(context).width;
+    final isNarrow = width < 720;
+    final horizontal = width >= 1200
+        ? (width * 0.055).clamp(28.0, 72.0)
+        : (isNarrow ? 16.0 : 28.0);
 
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 820),
+        constraints: const BoxConstraints(maxWidth: _articleDesktopMaxWidth),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 56),
+          padding: EdgeInsets.fromLTRB(
+            horizontal,
+            printing ? 20 : (isNarrow ? 18 : 28),
+            horizontal,
+            printing ? 24 : 56,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                style: TextButton.styleFrom(
-                  foregroundColor: DesignTokens.maroon,
-                  padding: EdgeInsets.zero,
+              if (!printing) ...[
+                TextButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: TextButton.styleFrom(
+                    foregroundColor: DesignTokens.maroon,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                  label: const Text(
+                    'Back to Knowledge Base',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
                 ),
-                child: const Text(
-                  '← Back',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                displayArticle.category,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: DesignTokens.muted,
-                ),
-              ),
-              const SizedBox(height: 18),
+                const SizedBox(height: 14),
+              ],
               if (loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 80),
                   child: _LoadingState(),
                 )
               else if (error || loaded == null)
-                _ErrorState(
-                  message: 'Could not load this article.',
-                  onRetry: () => Navigator.of(context).pop(),
+                StudentPanel(
+                  padding: EdgeInsets.fromLTRB(
+                    isNarrow ? 18 : 28,
+                    isNarrow ? 22 : 30,
+                    isNarrow ? 18 : 28,
+                    isNarrow ? 22 : 30,
+                  ),
+                  child: _ErrorState(
+                    message: 'Could not load this article.',
+                    onRetry: () => Navigator.of(context).pop(),
+                  ),
                 )
               else
-                _ArticleDocument(detail: loaded),
+                StudentPanel(
+                  padding: EdgeInsets.fromLTRB(
+                    isNarrow ? 18 : 36,
+                    isNarrow ? 22 : 32,
+                    isNarrow ? 18 : 36,
+                    isNarrow ? 22 : 36,
+                  ),
+                  child: _ArticleDocument(
+                    detail: loaded,
+                    printing: printing,
+                    onPrint: onPrint,
+                  ),
+                ),
             ],
           ),
         ),
@@ -1312,67 +1385,113 @@ class _ArticleReaderBody extends StatelessWidget {
 
 class _ArticleDocument extends StatelessWidget {
   final _KbArticleDetail detail;
+  final bool printing;
+  final VoidCallback onPrint;
 
-  const _ArticleDocument({required this.detail});
+  const _ArticleDocument({
+    required this.detail,
+    required this.printing,
+    required this.onPrint,
+  });
 
   @override
   Widget build(BuildContext context) {
     final blocks = _formatArticleBlocks(detail.content);
     final modified = _formatModifiedOn(detail.updatedAt ?? detail.publishedAt);
+    final width = MediaQuery.sizeOf(context).width;
+    final titleSize = width < 720 ? 28.0 : 34.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(
-                detail.title,
-                style: const TextStyle(
-                  fontFamily: _articleFontFamily,
-                  fontSize: 34,
-                  height: 1.2,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF5C0A0F),
-                ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stackHeader = constraints.maxWidth < 640;
+            final title = Text(
+              detail.title,
+              style: TextStyle(
+                fontFamily: _articleFontFamily,
+                fontSize: titleSize,
+                height: 1.2,
+                fontWeight: FontWeight.w800,
+                color: _kbNavy,
+                letterSpacing: -0.3,
               ),
-            ),
-            if (kIsWeb) ...[
-              const SizedBox(width: 12),
-              TextButton.icon(
-                onPressed: () => printCurrentDocument(),
-                icon: const Icon(Icons.print_outlined, size: 18),
-                label: const Text('Print'),
-                style: TextButton.styleFrom(
-                  foregroundColor: DesignTokens.maroon,
-                ),
-              ),
-            ],
-          ],
+            );
+            final printButton = (!printing && kIsWeb)
+                ? OutlinedButton.icon(
+                    onPressed: onPrint,
+                    icon: const Icon(Icons.print_outlined, size: 18),
+                    label: const Text(
+                      'Print',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: DesignTokens.maroon,
+                      side: const BorderSide(
+                        color: DesignTokens.maroon,
+                        width: 1.2,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      shape: const StadiumBorder(),
+                    ),
+                  )
+                : null;
+
+            if (stackHeader || printButton == null) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  title,
+                  if (printButton != null) ...[
+                    const SizedBox(height: 14),
+                    printButton,
+                  ],
+                ],
+              );
+            }
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: title),
+                const SizedBox(width: 16),
+                printButton,
+              ],
+            );
+          },
         ),
         if (modified != null) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Text(
-            'Modified on: $modified',
+            'Modified on $modified',
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: 13.5,
+              height: 1.35,
               color: DesignTokens.muted,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
-        const SizedBox(height: 16),
-        const Divider(height: 1, color: Color(0xFFE5E7EB)),
-        const SizedBox(height: 26),
+        const SizedBox(height: 18),
+        Container(
+          height: 1.5,
+          width: double.infinity,
+          color: DesignTokens.maroon.withValues(alpha: 0.55),
+        ),
+        const SizedBox(height: 24),
         if (detail.summary.trim().isNotEmpty) ...[
           Text(
             detail.summary.trim(),
             style: const TextStyle(
               fontFamily: _articleFontFamily,
-              fontSize: 16,
+              fontSize: 16.5,
               height: 1.65,
               fontStyle: FontStyle.italic,
-              color: Color(0xFF475569),
+              color: Color(0xFF334155),
             ),
           ),
           const SizedBox(height: 28),
@@ -1398,12 +1517,18 @@ class _ArticleDocument extends StatelessWidget {
           const SizedBox(height: 20),
           ArticleAttachmentsPublicList(attachments: detail.attachments),
         ],
-        const SizedBox(height: 36),
-        const Divider(height: 1, color: Color(0xFFE5E7EB)),
-        const SizedBox(height: 20),
-        _ArticleSourceFooter(article: detail.article),
-        const SizedBox(height: 24),
-        const _AskPanel(),
+        if (!printing) ...[
+          const SizedBox(height: 36),
+          Container(
+            height: 1,
+            width: double.infinity,
+            color: const Color(0xFFE5E7EB),
+          ),
+          const SizedBox(height: 20),
+          _ArticleSourceFooter(article: detail.article),
+          const SizedBox(height: 24),
+          const _AskPanel(),
+        ],
       ],
     );
   }
@@ -1603,8 +1728,9 @@ class _ArticleBlockView extends StatelessWidget {
             style: const TextStyle(
               fontFamily: _articleFontFamily,
               fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: DesignTokens.muted,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+              color: _kbNavy,
             ),
           ),
         );
@@ -1615,10 +1741,10 @@ class _ArticleBlockView extends StatelessWidget {
             block.text,
             style: const TextStyle(
               fontFamily: _articleFontFamily,
-              fontSize: 22,
+              fontSize: 20,
               height: 1.35,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF5C0A0F),
+              color: DesignTokens.maroon,
             ),
           ),
         );

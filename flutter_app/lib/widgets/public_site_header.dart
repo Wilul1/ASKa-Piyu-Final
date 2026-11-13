@@ -174,7 +174,7 @@ class PublicSiteHeader extends StatelessWidget {
                           children: _withNavSeparators([
                             _MatchedNavLink(
                               label: 'Knowledge Base',
-                              icon: Icons.home,
+                              icon: Icons.home_rounded,
                               active: knowledgeBaseActive,
                               iconTooltip: 'Home',
                               onIconTap: () => _goHome(context),
@@ -185,7 +185,7 @@ class PublicSiteHeader extends StatelessWidget {
                             ),
                             _MatchedNavLink(
                               label: 'Ask Assistant',
-                              icon: Icons.support_agent_outlined,
+                              icon: Icons.help_outline_rounded,
                               active: askAssistantActive,
                               onTap: () {
                                 if (askAssistantActive) return;
@@ -222,7 +222,7 @@ class PublicSiteHeader extends StatelessWidget {
                                   : role == 'admin'
                                   ? 'Admin'
                                   : 'Account',
-                              icon: Icons.account_circle_outlined,
+                              icon: Icons.lock_outline_rounded,
                               active: accountActive &&
                                   role != 'office' &&
                                   role != 'admin',
@@ -262,6 +262,7 @@ class PublicSiteHeader extends StatelessWidget {
                             ..._withNavSeparators([
                               _NavLink(
                                 label: 'Knowledge Base',
+                                icon: Icons.home_rounded,
                                 active: knowledgeBaseActive,
                                 onTap: () {
                                   if (knowledgeBaseActive) return;
@@ -270,6 +271,7 @@ class PublicSiteHeader extends StatelessWidget {
                               ),
                               _NavLink(
                                 label: 'Ask Assistant',
+                                icon: Icons.help_outline_rounded,
                                 active: askAssistantActive,
                                 onTap: () {
                                   if (askAssistantActive) return;
@@ -278,6 +280,7 @@ class PublicSiteHeader extends StatelessWidget {
                               ),
                               _NavLink(
                                 label: 'My Tickets',
+                                icon: Icons.mail_outline_rounded,
                                 active: myTicketsActive,
                                 onTap: () {
                                   if (myTicketsActive) return;
@@ -293,12 +296,14 @@ class PublicSiteHeader extends StatelessWidget {
                               if (showsMailboxLink)
                                 _NavLink(
                                   label: 'Mailbox',
+                                  icon: Icons.inbox_outlined,
                                   active: mailboxActive,
                                   onTap: () => _openStudentMailbox(context),
                                 ),
                               if (!isAuthed)
                                 _NavLink(
                                   label: 'Login',
+                                  icon: Icons.lock_outline_rounded,
                                   onTap: () =>
                                       softPush(context, const LoginPage()),
                                 )
@@ -309,6 +314,7 @@ class PublicSiteHeader extends StatelessWidget {
                                       : role == 'admin'
                                       ? 'Admin'
                                       : 'Account',
+                                  icon: Icons.lock_outline_rounded,
                                   active: accountActive &&
                                       role != 'office' &&
                                       role != 'admin',
@@ -338,19 +344,20 @@ class PublicSiteHeader extends StatelessWidget {
                     ),
                   ),
                 if (!matchedChrome && !isAuthed && !isNarrow)
-                  ElevatedButton(
+                  ElevatedButton.icon(
                     onPressed: () => softPush(context, const SignupPage()),
+                    icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF5C0A0F),
                       foregroundColor: Colors.white,
                       elevation: 0,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
+                        horizontal: 18,
                         vertical: 14,
                       ),
                       shape: const StadiumBorder(),
                     ),
-                    child: const Text(
+                    label: const Text(
                       'Sign up',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
@@ -736,8 +743,8 @@ class _MatchedNavLink extends StatelessWidget {
         ? null
         : _NavIconButton(
             icon: icon!,
-            color: const Color(0xFF000000),
-            size: 16,
+            color: active ? DesignTokens.maroon : const Color(0xFF1B2333),
+            size: 18,
             tooltip: onIconTap == null ? label : (iconTooltip ?? label),
             onTap: onIconTap ?? onTap,
           );
@@ -794,7 +801,7 @@ class _NavIconButton extends StatelessWidget {
         child: Icon(
           icon,
           size: size,
-          color: const Color(0xFF000000),
+          color: color,
         ),
       ),
     );
@@ -805,22 +812,25 @@ class _NavLink extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final bool active;
+  final IconData? icon;
 
   const _NavLink({
     required this.label,
     required this.onTap,
     this.active = false,
+    this.icon,
   });
 
   @override
   Widget build(BuildContext context) {
+    final color = active ? DesignTokens.maroon : const Color(0xFF1B2333);
     return TextButton(
       onPressed: onTap,
       style: TextButton.styleFrom(
-        foregroundColor: active ? DesignTokens.maroon : const Color(0xFF4B5563),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        foregroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       ),
-      // IntrinsicWidth so the active underline matches the text's own
+      // IntrinsicWidth so the active underline matches the label's own
       // width rather than the button's full hit-target width; a fixed-
       // height SizedBox in the inactive case keeps every nav item the
       // same height regardless of active state.
@@ -828,18 +838,34 @@ class _NavLink extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: active ? FontWeight.w900 : FontWeight.w700,
-                fontSize: 14,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 18, color: color),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontWeight: active ? FontWeight.w800 : FontWeight.w700,
+                    fontSize: 14,
+                    height: 1.1,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             if (active)
-              Container(height: 2, color: DesignTokens.maroon)
+              Container(
+                height: 2.5,
+                decoration: BoxDecoration(
+                  color: DesignTokens.maroon,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              )
             else
-              const SizedBox(height: 2),
+              const SizedBox(height: 2.5),
           ],
         ),
       ),

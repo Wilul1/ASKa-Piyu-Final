@@ -47,7 +47,7 @@ void main() {
     expect(find.text('Ask Assistant'), findsOneWidget);
     expect(find.text('Mailbox'), findsOneWidget);
     expect(find.text('Account'), findsOneWidget);
-    expect(find.byIcon(Icons.home), findsOneWidget);
+    expect(find.byIcon(Icons.home_rounded), findsOneWidget);
     expect(find.text('6'), findsOneWidget);
     expect(find.text('8'), findsOneWidget);
 

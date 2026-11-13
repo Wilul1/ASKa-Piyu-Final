@@ -159,6 +159,31 @@ void main() {
   });
 
   testWidgets(
+      'homepage-style unmatched desktop nav shows icons beside every label',
+      (tester) async {
+    await pumpHeader(tester, user: null);
+
+    expect(find.byIcon(Icons.home_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.help_outline_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.mail_outline_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.person_add_alt_1_rounded), findsOneWidget);
+    expect(find.text('Sign up'), findsOneWidget);
+  });
+
+  testWidgets(
+      'authenticated unmatched desktop nav shows Mailbox and Account icons',
+      (tester) async {
+    await pumpHeader(tester, user: studentUser());
+
+    expect(find.byIcon(Icons.home_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.inbox_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
+    expect(find.text('Account'), findsOneWidget);
+    expect(find.text('Sign up'), findsNothing);
+  });
+
+  testWidgets(
       'matched desktop nav draws separators between Knowledge Base, Ask '
       'Assistant, My Tickets, Mailbox, and Account', (tester) async {
     await pumpHeader(

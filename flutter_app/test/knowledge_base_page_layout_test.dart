@@ -40,7 +40,7 @@ void main() {
     expect(find.text('My Tickets'), findsOneWidget);
     expect(find.text('Mailbox'), findsNothing);
     expect(find.text('Login'), findsOneWidget);
-    expect(find.byIcon(Icons.home), findsOneWidget);
+    expect(find.byIcon(Icons.home_rounded), findsOneWidget);
 
     for (final name in _categoryNames) {
       expect(find.text(name), findsOneWidget);
@@ -125,15 +125,43 @@ void main() {
 
     await tester.tap(find.text('Student Records guide'));
     await tester.pumpAndSettle();
-    expect(find.text('← Back'), findsOneWidget);
+    expect(find.text('Back to Knowledge Base'), findsOneWidget);
+    expect(find.text('Published article detail'), findsOneWidget);
+    expect(find.text('Published article summary'), findsOneWidget);
+    expect(find.textContaining('Modified on'), findsOneWidget);
+    expect(find.text('Print'), findsNothing); // Print is web-only
 
-    await tester.tap(find.text('← Back'));
+    await tester.tap(find.text('Back to Knowledge Base'));
     await tester.pumpAndSettle();
 
     expect(find.text('Student Records guide'), findsOneWidget);
     expect(find.text('Back to Categories'), findsOneWidget);
     expect(find.text('Browse by Category'), findsNothing);
     expect(find.text('ICT Services'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('article detail uses a wider desktop card layout', (tester) async {
+    await _pumpKb(
+      tester,
+      const Size(1440, 1000),
+      initialCategory: 'Admissions',
+    );
+
+    await tester.tap(find.text('Admissions guide'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Back to Knowledge Base'), findsOneWidget);
+    expect(find.text('Published article detail'), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_back_rounded), findsOneWidget);
+
+    final card = tester.widgetList<Container>(find.byType(Container)).where((c) {
+      final decoration = c.decoration;
+      return decoration is BoxDecoration &&
+          decoration.color == Colors.white &&
+          decoration.borderRadius != null;
+    });
+    expect(card.isNotEmpty, isTrue);
     expect(tester.takeException(), isNull);
   });
 }
@@ -317,6 +345,8 @@ List<int> _bytesFor(Uri url) {
         'category': 'Admissions',
         'summary': 'Published article summary',
         'content': 'Full published article body',
+        'updated_at': '2025-10-01T14:34:00Z',
+        'published_at': '2025-10-01T14:34:00Z',
       }),
     );
   }

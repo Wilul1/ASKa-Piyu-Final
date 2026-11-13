@@ -1221,12 +1221,17 @@ class _StaffTicketThreadPaneState extends State<_StaffTicketThreadPane> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                if (_ticket.kbConversionStatus == 'draft' ||
-                    _ticket.kbConversionStatus == 'published') ...[
+                if (_ticket.kbConversionStatus != 'none') ...[
                   Text(
                     _ticket.kbConversionStatus == 'published'
                         ? 'This ticket already has a published KB article.'
-                        : 'KB draft saved — review it in Knowledge Base.',
+                        : _ticket.kbConversionStatus == 'needs_review'
+                            ? 'Generated FAQ needs review before it is searchable.'
+                            : _ticket.kbConversionStatus == 'failed'
+                                ? 'KB article generation failed. Ticket remains resolved — retry from Add to KB.'
+                                : _ticket.kbConversionStatus == 'rejected'
+                                    ? 'Generated FAQ was rejected and is not searchable.'
+                                    : 'KB draft saved — review it before it becomes searchable.',
                     style: const TextStyle(
                       color: Color(0xFF166534),
                       fontWeight: FontWeight.w700,
@@ -1902,9 +1907,11 @@ class _StaffReplyToolbar extends StatelessWidget {
     final iconColor = const Color(0xFF475569);
     final kbLabel = kbStatus == 'published'
         ? 'KB published'
-        : kbStatus == 'draft'
+        : (kbStatus == 'draft' || kbStatus == 'needs_review')
             ? 'Update KB draft'
-            : 'Add to KB';
+            : kbStatus == 'failed'
+                ? 'Retry KB draft'
+                : 'Add to KB';
     return Wrap(
       spacing: 4,
       runSpacing: 8,

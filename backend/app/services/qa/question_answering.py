@@ -5788,6 +5788,50 @@ def _sources_from_chunks(
         source_filename = str(
             chunk.source_filename or metadata.get("source_filename") or ""
         ).strip() or None
+        is_ticket_faq = (
+            str(metadata.get("kb_origin") or metadata.get("doc_kb_origin") or "")
+            .strip()
+            .lower()
+            == "ticket_resolution"
+        )
+        if is_ticket_faq:
+            from app.services.ticket_knowledge import redact_ticket_pii
+
+            source_filename = "Knowledge Base article"
+            excerpt = redact_ticket_pii(
+                str(metadata.get("source_excerpt") or "").strip()
+                or _text_preview(chunk.text)
+            )
+            label = redact_ticket_pii(
+                str(
+                    metadata.get("source_section")
+                    or chunk.title
+                    or "Knowledge Base article"
+                )
+            )
+            kb_article_id = None
+            if str(metadata.get("article_type") or "").strip().lower() == "faq":
+                kb_article_id = str(metadata.get("article_id") or "").strip() or None
+            return {
+                "page": None,
+                "page_number": None,
+                "page_end": None,
+                "page_range": None,
+                "citation_id": str(
+                    metadata.get("chunk_id")
+                    or f"{document_id or 'faq'}::{chunk.chunk_index or index}"
+                ),
+                "document_id": document_id,
+                "source_filename": source_filename,
+                "source_section": label,
+                "source_excerpt": excerpt,
+                "source_label": label,
+                "source_view_url": None,
+                "source_page_url": None,
+                "pdf_available": False,
+                "citation_note": None,
+                "kb_article_id": kb_article_id,
+            }
         ready_row = resolve_citation_document(
             document_id,
             source_filename=source_filename,
@@ -6659,6 +6703,14 @@ def _has_disciplinary_penalty(chunk: RetrievedChunk) -> bool:
     return any(reason.startswith("penalty_disciplinary") for reason in (chunk.rerank_reasons or []))
 
 
+def _is_ticket_resolution_faq(chunk: RetrievedChunk) -> bool:
+    metadata = getattr(chunk, "metadata", None) or {}
+    origin = str(
+        metadata.get("kb_origin") or metadata.get("doc_kb_origin") or ""
+    ).strip().lower()
+    return origin == "ticket_resolution"
+
+
 def _has_strong_penalty(chunk: RetrievedChunk) -> bool:
     """True when the reranker judged this chunk to be off-domain noise.
 
@@ -6669,7 +6721,20 @@ def _has_strong_penalty(chunk: RetrievedChunk) -> bool:
     the correct TOR service card at rank 1, so treating it as noise pushed
     correctly-answered fee questions into the clarification template. It remains
     a ranking penalty inside the reranker.
+
+    Ticket-derived FAQs inherit the ticketing helpdesk category (often
+    ``Student Services``). On records/enrollment questions the reranker then
+    emits ``penalty_unrequested_student_services`` from that label, not from
+    off-topic body text. Treating it as strong noise withholds citations for
+    the correctly retrieved article.
     """
+    reasons = list(chunk.rerank_reasons or [])
+    if _is_ticket_resolution_faq(chunk):
+        reasons = [
+            reason
+            for reason in reasons
+            if reason != "penalty_unrequested_student_services"
+        ]
     strong_markers = (
         "penalty_unrequested_",
         "penalty_disciplinary",
@@ -6677,7 +6742,7 @@ def _has_strong_penalty(chunk: RetrievedChunk) -> bool:
         "penalty_retention_awards",
         "penalty_sample_document",
     )
-    return any(reason.startswith(strong_markers) for reason in (chunk.rerank_reasons or []))
+    return any(reason.startswith(strong_markers) for reason in reasons)
 
 
 def _detected_query_domain(normalized_query: str) -> str | None:

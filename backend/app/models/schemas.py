@@ -455,7 +455,8 @@ TicketStatus = Literal["Open", "In Progress", "Resolved", "Closed"]
 TicketPriority = Literal["Urgent", "High", "Medium", "Low"]
 TicketSenderRole = Literal["student", "faculty", "office", "admin"]
 KbAudience = Literal["student", "faculty", "both"]
-KbConversionStatus = Literal["none", "draft", "published"]
+KbConversionStatus = Literal["none", "draft", "needs_review", "published", "failed", "rejected"]
+KbReviewStatus = Literal["pending", "approved", "rejected"]
 KbOrigin = Literal["document", "ticket_resolution"]
 
 
@@ -573,6 +574,7 @@ class TicketSchema(BaseModel):
     attachments: list[TicketAttachmentSchema] = Field(default_factory=list)
     kb_article_id: str | None = None
     kb_conversion_status: KbConversionStatus = "none"
+    kb_needs_manual_completion: bool = False
 
 
 class ConvertTicketToArticleRequest(BaseModel):
@@ -603,6 +605,13 @@ class TicketKbArticleSchema(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     published_at: str | None = None
+    needs_manual_completion: bool = False
+    review_status: KbReviewStatus | None = None
+    generation_notes: str | None = None
+
+
+class RejectTicketKbArticleRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class TicketKbDuplicateCheckResponse(BaseModel):

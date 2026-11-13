@@ -111,7 +111,7 @@ class Ticket(Base):
         ),
         CheckConstraint("status IN ('Open', 'In Progress', 'Resolved', 'Closed')", name="ck_tickets_status"),
         CheckConstraint(
-            "kb_conversion_status IN ('none', 'draft', 'published')",
+            "kb_conversion_status IN ('none', 'draft', 'needs_review', 'published', 'failed', 'rejected')",
             name="ck_tickets_kb_conversion_status",
         ),
     )
@@ -315,6 +315,10 @@ class PublishedArticle(Base):
             "content_format IN ('plain', 'html')",
             name="ck_published_articles_content_format",
         ),
+        CheckConstraint(
+            "review_status IS NULL OR review_status IN ('pending', 'approved', 'rejected')",
+            name="ck_published_articles_review_status",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -342,6 +346,9 @@ class PublishedArticle(Base):
     chunk_count: Mapped[int | None] = mapped_column(CheckConstraint("chunk_count >= 0"), nullable=True)
     published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    needs_manual_completion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    generation_notes: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -543,6 +543,13 @@ def resolve_ticket(session: Session, ticket_id: str, actor: User) -> TicketSchem
 
     session.commit()
     session.refresh(ticket)
+    try:
+        from app.services.ticket_knowledge import try_auto_generate_ticket_article
+
+        try_auto_generate_ticket_article(session, ticket_id=ticket.id, actor=actor)
+        session.refresh(ticket)
+    except Exception:
+        pass
     return _ticket_schema(session, ticket, viewer=actor)
 
 
@@ -1117,6 +1124,7 @@ def _ticket_schema(session: Session, ticket: Ticket, viewer: User) -> TicketSche
         ],
         kb_article_id=ticket.kb_article_id,
         kb_conversion_status=(ticket.kb_conversion_status or "none"),  # type: ignore[arg-type]
+        kb_needs_manual_completion=(ticket.kb_conversion_status or "") == "needs_review",
     )
 
 

@@ -2411,6 +2411,21 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                             label: 'KB Draft',
                             color: Color(0xFFCA8A04),
                           ),
+                        if (_ticket.kbConversionStatus == 'needs_review')
+                          const _AdminKbBadge(
+                            label: 'KB Needs Review',
+                            color: Color(0xFFC2410C),
+                          ),
+                        if (_ticket.kbConversionStatus == 'failed')
+                          const _AdminKbBadge(
+                            label: 'KB Generation Failed',
+                            color: Color(0xFFB91C1C),
+                          ),
+                        if (_ticket.kbConversionStatus == 'rejected')
+                          const _AdminKbBadge(
+                            label: 'KB Rejected',
+                            color: Color(0xFF7C2D12),
+                          ),
                         if (_ticket.kbConversionStatus == 'published')
                           const _AdminKbBadge(
                             label: 'KB Published',
@@ -2476,11 +2491,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _ticket.kbConversionStatus == 'published'
-                                  ? 'This ticket already has a published knowledge article. Admins can unpublish it from Knowledge Article if it needs revision.'
-                                  : _ticket.kbConversionStatus == 'draft'
-                                      ? 'A draft FAQ already exists for this ticket. You can update it from the approved resolution.'
-                                      : 'Convert the approved office answer into a draft FAQ so future users can get this answer from ASKa-Piyu.',
+                              _kbConversionHelpText(_ticket.kbConversionStatus),
                               style: const TextStyle(
                                 color: DesignTokens.muted,
                                 height: 1.4,
@@ -2510,6 +2521,39 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                                         size: 18,
                                       ),
                                       label: const Text('Open in Knowledge Article'),
+                                    ),
+                                  if (_ticket.kbConversionStatus == 'draft' ||
+                                      _ticket.kbConversionStatus ==
+                                          'needs_review') ...[
+                                    OutlinedButton(
+                                      onPressed: _saving
+                                          ? null
+                                          : () => _postTicketKbAction(
+                                                '/kb-article/approve',
+                                              ),
+                                      child: const Text('Approve article'),
+                                    ),
+                                    OutlinedButton(
+                                      onPressed: _saving
+                                          ? null
+                                          : () => _postTicketKbAction(
+                                                '/kb-article/reject',
+                                                jsonBody: const {
+                                                  'reason': 'rejected by staff',
+                                                },
+                                              ),
+                                      child: const Text('Reject draft'),
+                                    ),
+                                  ],
+                                  if (_ticket.kbConversionStatus == 'failed' ||
+                                      _ticket.kbConversionStatus == 'rejected')
+                                    OutlinedButton(
+                                      onPressed: _saving
+                                          ? null
+                                          : () => _postTicketKbAction(
+                                                '/kb-article/retry',
+                                              ),
+                                      child: const Text('Retry generation'),
                                     ),
                                   if (_ticket.kbConversionStatus != 'published')
                                     ElevatedButton.icon(
@@ -2911,6 +2955,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
           messages: _ticket.messages,
           kbArticleId: articleId.isEmpty ? _ticket.kbArticleId : articleId,
           kbConversionStatus: status,
+          kbNeedsManualCompletion: data['needs_manual_completion'] == true,
         );
       });
       if (mounted) {
@@ -3382,6 +3427,7 @@ class _AdminTicketEntry {
   final List<_AdminTicketAttachment> attachments;
   final String? kbArticleId;
   final String kbConversionStatus;
+  final bool kbNeedsManualCompletion;
 
   const _AdminTicketEntry({
     required this.id,
@@ -3405,6 +3451,7 @@ class _AdminTicketEntry {
     this.attachments = const [],
     this.kbArticleId,
     this.kbConversionStatus = 'none',
+    this.kbNeedsManualCompletion = false,
   });
 
   /// True when the backend could not resolve this ticket's raw taxonomy
@@ -3452,6 +3499,7 @@ class _AdminTicketEntry {
       kbArticleId: _nullableAdminString(json['kb_article_id']),
       kbConversionStatus:
           (json['kb_conversion_status'] ?? 'none').toString().toLowerCase(),
+      kbNeedsManualCompletion: json['kb_needs_manual_completion'] == true,
     );
   }
 

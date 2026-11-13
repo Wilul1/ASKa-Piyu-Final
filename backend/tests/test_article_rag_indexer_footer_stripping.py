@@ -108,3 +108,27 @@ def test_build_faq_chunks_indexes_content_sections_from_extracted_metadata():
     assert "content_sections" not in blob
     assert "Academic Council Meeting" in blob
     assert "twenty-five percent" in blob
+
+
+def test_ticket_faq_chunks_omit_stale_summary_and_helpdesk_category():
+    article = SimpleNamespace(
+        id="article-ticket-faq",
+        title="How do I request a Certificate of Enrollment",
+        summary="Pay at the cashier and keep ORANGE-RECEIPT-TOKEN-A1.",
+        content=(
+            "Submit the Certificate of Enrollment request form at the Registrar. "
+            "The cashier now stamps BLUE-VALIDATION-TOKEN-B2 on the validated receipt."
+        ),
+        category="Student Services",
+        office="Office of the Registrar",
+        audience="student",
+        kb_origin="ticket_resolution",
+        source_ticket_id="TKT-1",
+        content_format="plain",
+    )
+    chunks = _build_faq_chunks(article)
+    blob = " ".join(chunk.text for chunk in chunks)
+    assert "BLUE-VALIDATION-TOKEN-B2" in blob
+    assert "ORANGE-RECEIPT-TOKEN-A1" not in blob
+    assert chunks[0].metadata["category"] == "Office of the Registrar"
+    assert chunks[0].metadata["kb_origin"] == "ticket_resolution"

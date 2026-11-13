@@ -441,3 +441,90 @@ def test_unpublish_fail_closed_when_chroma_delete_fails(e2e_client):
         assert art is not None
         assert art.published is False
         assert art.rag_indexed is False
+
+
+def test_resolve_autogenerates_unpublished_article_and_blocks_student_approve(e2e_client):
+    client, session_factory, _store = e2e_client
+    office_headers = _auth("user-office", session_factory)
+    student_headers = _auth("user-student", session_factory)
+    now = datetime.now(timezone.utc)
+    with session_factory() as session:
+        session.add(
+            Ticket(
+                id="TKT-E2E-AUTO",
+                user_id="user-student",
+                original_question="How do I request a certificate of enrollment?",
+                description="I need a certificate of enrollment for scholarship.",
+                category="Student Services",
+                assigned_office_id="office-reg",
+                assigned_office="Registrar",
+                priority="Medium",
+                status="Open",
+                kb_conversion_status="none",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            TicketReply(
+                ticket_id="TKT-E2E-AUTO",
+                sender_id="user-office",
+                sender_role="office",
+                sender_name="Office User",
+                message=(
+                    "Submit the certificate request form at the Registrar, pay the "
+                    "fee at the cashier, and present the receipt. Release is the next "
+                    "working day."
+                ),
+                created_at=now,
+            )
+        )
+        session.commit()
+
+    resolved = client.post("/tickets/TKT-E2E-AUTO/resolve", headers=office_headers)
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["status"] == "Resolved"
+    assert body["kb_conversion_status"] in {"draft", "needs_review"}
+    article_id = body["kb_article_id"]
+    assert article_id
+
+    public_id = f"pub:{article_id}"
+    listing = client.get("/kb/articles", headers=student_headers)
+    assert listing.status_code == 200
+    ids = {item["id"] for item in listing.json().get("items", [])}
+    assert public_id not in ids
+
+    denied = client.post(
+        "/tickets/TKT-E2E-AUTO/kb-article/approve",
+        headers=student_headers,
+    )
+    assert denied.status_code == 403
+
+    approved = client.post(
+        "/tickets/TKT-E2E-AUTO/kb-article/approve",
+        headers=office_headers,
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["published"] is True
+    assert approved.json()["kb_conversion_status"] == "published"
+
+    listing_after = client.get("/kb/articles", headers=student_headers)
+    assert listing_after.status_code == 200
+    ids_after = {item["id"] for item in listing_after.json().get("items", [])}
+    assert public_id in ids_after
+
+    retry = client.post(
+        "/tickets/TKT-E2E-AUTO/kb-article/retry",
+        headers=office_headers,
+    )
+    assert retry.status_code == 400
+    with session_factory() as session:
+        rows = (
+            session.query(PublishedArticle)
+            .filter(PublishedArticle.source_ticket_id == "TKT-E2E-AUTO")
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].published is True

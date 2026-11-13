@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../design_tokens.dart';
-import '../services/eye_comfort.dart';
 
 class StudentPage extends StatelessWidget {
   final Widget child;
@@ -49,17 +48,14 @@ class StudentPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Container(
       width: double.infinity,
       margin: margin,
       padding: padding,
       decoration: BoxDecoration(
-        color: eyeComfort ? EyeComfortColors.cardBg : DesignTokens.cardBg,
+        color: DesignTokens.cardBg,
         borderRadius: BorderRadius.circular(DesignTokens.radius),
-        border: Border.all(
-          color: eyeComfort ? EyeComfortColors.border : DesignTokens.border,
-        ),
+        border: Border.all(color: DesignTokens.border),
         boxShadow: shadow ? DesignTokens.softShadow() : null,
       ),
       child: child,
@@ -85,15 +81,12 @@ class StudentInkCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Container(
       margin: margin,
       decoration: BoxDecoration(
-        color: eyeComfort ? EyeComfortColors.cardBg : DesignTokens.cardBg,
+        color: DesignTokens.cardBg,
         borderRadius: BorderRadius.circular(DesignTokens.radius),
-        border: Border.all(
-          color: eyeComfort ? EyeComfortColors.border : DesignTokens.border,
-        ),
+        border: Border.all(color: DesignTokens.border),
         boxShadow: shadow ? DesignTokens.softShadow(0.045) : null,
       ),
       child: Material(
@@ -123,7 +116,6 @@ class StudentSectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final eyeComfort = EyeComfortScope.isEnabled(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -132,17 +124,17 @@ class StudentSectionTitle extends StatelessWidget {
           style: TextStyle(
             fontSize: compact ? 17 : 20,
             fontWeight: FontWeight.w900,
-            color: eyeComfort ? EyeComfortColors.ink : DesignTokens.ink,
+            color: DesignTokens.ink,
           ),
         ),
         if (subtitle != null) ...[
           const SizedBox(height: 4),
           Text(
             subtitle!,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 13,
               height: 1.35,
-              color: eyeComfort ? EyeComfortColors.muted : DesignTokens.muted,
+              color: DesignTokens.muted,
             ),
           ),
         ],
@@ -203,6 +195,90 @@ class StudentResponsiveWrap extends StatelessWidget {
               .toList(),
         );
       },
+    );
+  }
+}
+
+class StudentPrimaryButton extends StatelessWidget {
+  final String label;
+  final VoidCallback? onPressed;
+  final bool expand;
+
+  const StudentPrimaryButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    this.expand = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final button = ElevatedButton(
+      onPressed: onPressed,
+      style: DesignTokens.primaryButtonStyle(),
+      child: Text(label),
+    );
+    if (!expand) return button;
+    return SizedBox(width: double.infinity, child: button);
+  }
+}
+
+class StudentEmptyState extends StatelessWidget {
+  final String title;
+  final String message;
+  final IconData icon;
+  final Widget? action;
+
+  const StudentEmptyState({
+    super.key,
+    required this.title,
+    required this.message,
+    this.icon = Icons.inbox_outlined,
+    this.action,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StudentPanel(
+      shadow: false,
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+      child: Column(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: DesignTokens.maroonWash,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, color: DesignTokens.maroon, size: 26),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: DesignTokens.muted,
+            ),
+          ),
+          if (action != null) ...[
+            const SizedBox(height: 16),
+            action!,
+          ],
+        ],
+      ),
     );
   }
 }

@@ -18,6 +18,7 @@ from app.models.schemas import (
     NotificationSchema,
     OfficeListResponse,
     OfficeSummarySchema,
+    RejectTicketKbArticleRequest,
     RejectTicketTransferRequest,
     TicketAttachmentSchema,
     TicketAuditEventSchema,
@@ -40,9 +41,12 @@ from app.services.ticket_knowledge import (
     TicketKnowledgeAccessError,
     TicketKnowledgeError,
     TicketKnowledgeNotFoundError,
+    approve_ticket_kb_article,
     check_ticket_kb_duplicate,
     convert_ticket_to_draft_article,
     get_ticket_kb_article,
+    reject_ticket_kb_article,
+    retry_ticket_kb_generation,
     save_ticket_kb_image,
 )
 from app.services.ticket_notifications import (
@@ -356,8 +360,70 @@ async def convert_ticket_to_article_endpoint(
             title=body.title,
             content=body.content,
             summary=body.summary,
+            category=body.category,
             audience=body.audience,
+            publish=body.publish,
         )
+    except TicketKnowledgeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketKnowledgeAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TicketKnowledgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TicketKbArticleSchema(**result)
+
+
+
+
+@router.post("/{ticket_id}/kb-article/approve", response_model=TicketKbArticleSchema)
+async def approve_ticket_kb_article_endpoint(
+    ticket_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketKbArticleSchema:
+    try:
+        result = approve_ticket_kb_article(session, ticket_id=ticket_id, actor=actor)
+    except TicketKnowledgeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketKnowledgeAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TicketKnowledgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TicketKbArticleSchema(**result)
+
+
+@router.post("/{ticket_id}/kb-article/reject", response_model=TicketKbArticleSchema)
+async def reject_ticket_kb_article_endpoint(
+    ticket_id: str,
+    payload: RejectTicketKbArticleRequest | None = None,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketKbArticleSchema:
+    body = payload or RejectTicketKbArticleRequest()
+    try:
+        result = reject_ticket_kb_article(
+            session,
+            ticket_id=ticket_id,
+            actor=actor,
+            reason=body.reason,
+        )
+    except TicketKnowledgeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TicketKnowledgeAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TicketKnowledgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TicketKbArticleSchema(**result)
+
+
+@router.post("/{ticket_id}/kb-article/retry", response_model=TicketKbArticleSchema)
+async def retry_ticket_kb_generation_endpoint(
+    ticket_id: str,
+    actor: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> TicketKbArticleSchema:
+    try:
+        result = retry_ticket_kb_generation(session, ticket_id=ticket_id, actor=actor)
     except TicketKnowledgeNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TicketKnowledgeAccessError as exc:

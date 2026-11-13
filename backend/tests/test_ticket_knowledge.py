@@ -25,11 +25,19 @@ from app.services.article_rag_indexer import (
 from app.services.chroma_store import RetrievedChunk, select_role_visible_hits
 from app.services.passwords import hash_password
 from app.services.ticket_knowledge import (
+    TicketKnowledgeAccessError,
     TicketKnowledgeError,
+    approve_ticket_kb_article,
     convert_ticket_to_draft_article,
     ensure_unique_article_slug,
+    generate_article_from_resolved_ticket,
     infer_audience_from_text,
+    redact_ticket_pii,
+    reject_ticket_kb_article,
+    retry_ticket_kb_generation,
+    try_auto_generate_ticket_article,
 )
+from app.services.ticketing import resolve_ticket
 
 
 @pytest.fixture()
@@ -838,3 +846,368 @@ def test_reindex_marks_rag_stale_when_restore_fails(session: Session, monkeypatc
     assert stale is not None
     assert stale.rag_indexed is False
     assert stale.rag_document_id is None
+
+
+def _open_ticket_with_thread(
+    session: Session,
+    office: Office,
+    student: User,
+    staff: User,
+    *,
+    ticket_id: str,
+    question: str,
+    student_messages: list[str] | None = None,
+    staff_messages: list[str] | None = None,
+    internal_notes: list[str] | None = None,
+) -> Ticket:
+    now = datetime.now(timezone.utc)
+    ticket = Ticket(
+        id=ticket_id,
+        user_id=student.id,
+        original_question=question,
+        description=question,
+        category="Student Services",
+        assigned_office_id=office.id,
+        assigned_office=office.name,
+        priority="Medium",
+        status="Open",
+        kb_conversion_status="none",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(ticket)
+    session.flush()
+    for message in student_messages or []:
+        session.add(
+            TicketReply(
+                ticket_id=ticket.id,
+                sender_id=student.id,
+                sender_role="student",
+                sender_name=student.full_name,
+                message=message,
+                created_at=now,
+            )
+        )
+    for message in internal_notes or []:
+        session.add(
+            TicketReply(
+                ticket_id=ticket.id,
+                sender_id=staff.id,
+                sender_role=staff.role,
+                sender_name=staff.full_name,
+                message=message,
+                is_internal=True,
+                created_at=now,
+            )
+        )
+    for message in staff_messages or []:
+        session.add(
+            TicketReply(
+                ticket_id=ticket.id,
+                sender_id=staff.id,
+                sender_role=staff.role,
+                sender_name=staff.full_name,
+                message=message,
+                created_at=now,
+            )
+        )
+    session.commit()
+    session.refresh(ticket)
+    return ticket
+
+
+def test_redact_ticket_pii_strips_contact_and_identity_strings():
+    cleaned = redact_ticket_pii(
+        "Email maria.santos@lspu.edu.ph or call 09171234567. "
+        "Student number 2023-445566 lives at 12 Mabini Street, "
+        "ID no. 2023-445566. Ask for Maria Santos.",
+        identities=("Maria Santos", "2023-445566", "maria.santos@lspu.edu.ph"),
+    )
+    assert "maria.santos@lspu.edu.ph" not in cleaned.casefold()
+    assert "09171234567" not in cleaned
+    assert "2023-445566" not in cleaned
+    assert "Maria Santos" not in cleaned
+    assert "12 Mabini Street" not in cleaned
+    assert "[email redacted]" in cleaned
+    assert "[phone redacted]" in cleaned
+    assert "[student id redacted]" in cleaned
+    assert "[name redacted]" in cleaned
+    assert "[address redacted]" in cleaned
+
+
+def test_auto_generate_on_resolve_creates_unpublished_draft(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-AUTO-001",
+        question="How do I request a certificate of enrollment?",
+        student_messages=["Hi", "How do I request a certificate of enrollment?"],
+        staff_messages=[
+            "Go to the Registrar, fill out the certificate request form, "
+            "pay the fee at the cashier, and return the receipt. "
+            "Release is usually the next working day."
+        ],
+    )
+
+    payload = resolve_ticket(session, ticket.id, staff)
+    assert payload.status == "Resolved"
+    assert payload.kb_conversion_status == "draft"
+    assert payload.kb_article_id
+    assert payload.kb_needs_manual_completion is False
+
+    article = session.get(PublishedArticle, payload.kb_article_id)
+    assert article is not None
+    assert article.published is False
+    assert article.review_status == "pending"
+    assert article.source_ticket_id == ticket.id
+    assert "certificate request form" in (article.content or "").casefold()
+    assert "Hi" not in (article.content or "")
+    session.refresh(ticket)
+    assert ticket.status == "Resolved"
+    assert ticket.kb_conversion_status == "draft"
+
+
+def test_generation_redacts_pii_and_omits_internal_staff_notes(session: Session):
+    office = _office(session)
+    student = User(
+        id="user-pii-student",
+        email="maria.santos@lspu.test",
+        password_hash=hash_password("password123"),
+        full_name="Maria Santos",
+        role="student",
+        student_id="2023-445566",
+    )
+    session.add(student)
+    session.commit()
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-AUTO-PII",
+        question="How can Maria Santos with student number 2023-445566 get an excuse slip?",
+        student_messages=[
+            "Hi, I am Maria Santos, student number 2023-445566. "
+            "Email me at maria.santos@lspu.test or 09171234567. "
+            "I live at 12 Mabini Street."
+        ],
+        internal_notes=[
+            "Internal: Maria Santos phone 09171234567, do not publish this."
+        ],
+        staff_messages=[
+            "Submit the excuse slip form and a medical certificate to OSAS "
+            "within three working days of the absence. Keep a photocopy."
+        ],
+    )
+    ticket.status = "Resolved"
+    session.commit()
+
+    payload = generate_article_from_resolved_ticket(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    blob = " ".join(
+        [
+            payload["title"] or "",
+            payload["content"] or "",
+            payload["summary"] or "",
+            payload.get("resolution_summary") or "",
+            payload.get("generation_notes") or "",
+            payload.get("slug") or "",
+        ]
+    )
+    assert "Maria Santos" not in blob
+    assert "maria.santos@lspu.test" not in blob.casefold()
+    assert "09171234567" not in blob
+    assert "2023-445566" not in blob
+    assert "12 Mabini Street" not in blob
+    assert "do not publish this" not in blob.casefold()
+    assert "excuse slip form" in (payload["content"] or "").casefold()
+    assert payload["published"] is False
+
+
+def test_incomplete_answer_is_flagged_for_manual_completion(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-AUTO-INC",
+        question="What is the deadline for adding a subject?",
+        staff_messages=["Hi", "I will check and get back to you."],
+    )
+    ticket.status = "Resolved"
+    session.commit()
+
+    payload = generate_article_from_resolved_ticket(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    assert payload["needs_manual_completion"] is True
+    assert payload["kb_conversion_status"] == "needs_review"
+    assert payload["published"] is False
+    session.refresh(ticket)
+    assert ticket.kb_conversion_status == "needs_review"
+
+    with pytest.raises(TicketKnowledgeError, match="complete"):
+        approve_ticket_kb_article(session, ticket_id=ticket.id, actor=staff)
+
+
+def test_generation_retry_does_not_create_duplicate_article(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _resolved_ticket(session, office, student, staff)
+
+    first = generate_article_from_resolved_ticket(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    second = generate_article_from_resolved_ticket(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    third = try_auto_generate_ticket_article(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    assert first["article_id"] == second["article_id"]
+    assert third is not None
+    assert third["article_id"] == first["article_id"]
+    rows = (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .all()
+    )
+    assert len(rows) == 1
+
+
+def test_student_cannot_generate_or_approve_ticket_article(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _resolved_ticket(session, office, student, staff)
+    generate_article_from_resolved_ticket(session, ticket_id=ticket.id, actor=staff)
+
+    with pytest.raises(TicketKnowledgeAccessError):
+        generate_article_from_resolved_ticket(
+            session, ticket_id=ticket.id, actor=student, replace_draft=True
+        )
+    with pytest.raises(TicketKnowledgeAccessError):
+        approve_ticket_kb_article(session, ticket_id=ticket.id, actor=student)
+    with pytest.raises(TicketKnowledgeAccessError):
+        reject_ticket_kb_article(session, ticket_id=ticket.id, actor=student)
+
+
+def test_approved_article_is_searchable_and_rejected_is_not(
+    session: Session, monkeypatch
+):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _resolved_ticket(session, office, student, staff)
+    payload = generate_article_from_resolved_ticket(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    article_id = payload["article_id"]
+
+    factory = sessionmaker(bind=session.get_bind(), autoflush=False, autocommit=False)
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.get_session_factory",
+        lambda: factory,
+    )
+
+    draft_chunk = RetrievedChunk(
+        document_id=f"faq:{article_id}",
+        title="Draft FAQ",
+        source_filename="ticket",
+        chunk_index=0,
+        text="draft",
+        relevance_score=0.9,
+        metadata={"article_id": article_id, "article_type": "faq", "audience": "student"},
+    )
+    kept = filter_unpublished_faq_chunks([draft_chunk])
+    assert kept == []
+
+    def _fake_index(db, article):
+        article.rag_indexed = True
+        article.rag_document_id = f"faq:{article.id}"
+        article.chunk_count = 1
+        db.add(article)
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.index_published_article",
+        _fake_index,
+    )
+    monkeypatch.setattr(
+        "app.services.article_rag_indexer.remove_published_article_index",
+        lambda db, article: None,
+    )
+    approved = approve_ticket_kb_article(session, ticket_id=ticket.id, actor=staff)
+    assert approved["published"] is True
+    assert approved["kb_conversion_status"] == "published"
+    assert approved["review_status"] == "approved"
+    session.refresh(ticket)
+    assert ticket.kb_conversion_status == "published"
+
+    kept_published = filter_unpublished_faq_chunks([draft_chunk])
+    assert [chunk.document_id for chunk in kept_published] == [f"faq:{article_id}"]
+
+    rejected = reject_ticket_kb_article(session, ticket_id=ticket.id, actor=staff)
+    assert rejected["published"] is False
+    assert rejected["kb_conversion_status"] == "rejected"
+    session.refresh(ticket)
+    assert ticket.kb_conversion_status == "rejected"
+    kept_rejected = filter_unpublished_faq_chunks([draft_chunk])
+    assert kept_rejected == []
+
+
+def test_generation_failure_does_not_block_resolve(session: Session, monkeypatch):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-AUTO-FAIL",
+        question="How do I pay my tuition balance?",
+        staff_messages=[
+            "Pay at the cashier with your assessment form. Keep the official receipt."
+        ],
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("generation backend unavailable")
+
+    monkeypatch.setattr(
+        "app.services.ticket_knowledge.generate_article_from_resolved_ticket",
+        _boom,
+    )
+    payload = resolve_ticket(session, ticket.id, staff)
+    assert payload.status == "Resolved"
+    assert payload.resolved_at is not None
+    assert payload.kb_conversion_status == "failed"
+    session.refresh(ticket)
+    assert ticket.status == "Resolved"
+    assert ticket.kb_conversion_status == "failed"
+    assert (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .one_or_none()
+        is None
+    )
+
+    monkeypatch.undo()
+    retried = retry_ticket_kb_generation(session, ticket_id=ticket.id, actor=staff)
+    assert retried["article_id"]
+    assert retried["published"] is False
+    session.refresh(ticket)
+    assert ticket.kb_conversion_status in {"draft", "needs_review"}
+

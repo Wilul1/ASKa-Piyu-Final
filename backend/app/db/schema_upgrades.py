@@ -54,7 +54,13 @@ ADDITIVE_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CHECK (priority IN ('Urgent', 'High', 'Medium', 'Low'))",
     "ALTER TABLE tickets DROP CONSTRAINT IF EXISTS ck_tickets_kb_conversion_status",
     "ALTER TABLE tickets ADD CONSTRAINT ck_tickets_kb_conversion_status "
-    "CHECK (kb_conversion_status IN ('none', 'draft', 'published'))",
+    "CHECK (kb_conversion_status IN ('none', 'draft', 'needs_review', 'published', 'failed', 'rejected'))",
+    "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS needs_manual_completion BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS review_status VARCHAR(20)",
+    "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS generation_notes VARCHAR(80)",
+    "ALTER TABLE published_articles DROP CONSTRAINT IF EXISTS ck_published_articles_review_status",
+    "ALTER TABLE published_articles ADD CONSTRAINT ck_published_articles_review_status "
+    "CHECK (review_status IS NULL OR review_status IN ('pending', 'approved', 'rejected'))",
     "ALTER TABLE users DROP CONSTRAINT IF EXISTS ck_users_role",
     "ALTER TABLE users ADD CONSTRAINT ck_users_role "
     "CHECK (role IN ('student', 'faculty', 'office', 'admin'))",

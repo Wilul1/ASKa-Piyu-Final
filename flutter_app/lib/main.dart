@@ -6,7 +6,6 @@ import 'auth/session_expiry.dart';
 import 'screens/student_home.dart';
 import 'design_tokens.dart';
 import 'navigation/soft_page_route.dart';
-import 'services/eye_comfort.dart';
 import 'services/kb_workspace_session.dart';
 
 Future<void> main() async {
@@ -25,7 +24,6 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   final AuthController _authController = AuthController();
   final KbWorkspaceSession _kbWorkspaceSession = KbWorkspaceSession();
-  final EyeComfortController _eyeComfortController = EyeComfortController();
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
@@ -37,9 +35,6 @@ class _MyAppState extends State<MyApp> {
     );
     _authController.addListener(_onAuthChanged);
     _authController.loadCurrentUser();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _eyeComfortController.load();
-    });
   }
 
   void _onAuthChanged() {
@@ -54,7 +49,6 @@ class _MyAppState extends State<MyApp> {
     _authController.removeListener(_onAuthChanged);
     _authController.dispose();
     _kbWorkspaceSession.dispose();
-    _eyeComfortController.dispose();
     super.dispose();
   }
 
@@ -62,36 +56,76 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return AuthScope(
       controller: _authController,
-      child: EyeComfortScope(
-        controller: _eyeComfortController,
-        child: KbWorkspaceScope(
-          session: _kbWorkspaceSession,
-          child: MaterialApp(
-            navigatorKey: _navigatorKey,
-            navigatorObservers: [appRouteObserver],
-            title: 'ASKa-Piyu',
-            theme: ThemeData(
-              primaryColor: DesignTokens.maroon,
-              scaffoldBackgroundColor: DesignTokens.bgGrey,
-              pageTransitionsTheme: softPageTransitionsTheme,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: DesignTokens.maroon,
-                primary: DesignTokens.maroon,
-                secondary: DesignTokens.gold,
-                surface: Colors.white,
+      child: KbWorkspaceScope(
+        session: _kbWorkspaceSession,
+        child: MaterialApp(
+          navigatorKey: _navigatorKey,
+          navigatorObservers: [appRouteObserver],
+          title: 'ASKa-Piyu',
+          theme: ThemeData(
+            useMaterial3: true,
+            primaryColor: DesignTokens.maroon,
+            scaffoldBackgroundColor: DesignTokens.pageBg,
+            pageTransitionsTheme: softPageTransitionsTheme,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: DesignTokens.maroon,
+              primary: DesignTokens.maroon,
+              secondary: DesignTokens.gold,
+              surface: Colors.white,
+            ),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Colors.white,
+              foregroundColor: DesignTokens.maroon,
+              elevation: 0,
+              scrolledUnderElevation: 0.5,
+              centerTitle: false,
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: DesignTokens.primaryButtonStyle(),
+            ),
+            outlinedButtonTheme: OutlinedButtonThemeData(
+              style: DesignTokens.secondaryButtonStyle(),
+            ),
+            filledButtonTheme: FilledButtonThemeData(
+              style: DesignTokens.primaryButtonStyle(),
+            ),
+            inputDecorationTheme: DesignTokens.inputDecorationTheme(),
+            chipTheme: ChipThemeData(
+              backgroundColor: DesignTokens.maroonWash,
+              selectedColor: DesignTokens.maroonWash,
+              disabledColor: DesignTokens.bgGrey,
+              labelStyle: const TextStyle(
+                color: DesignTokens.maroon,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
               ),
-              appBarTheme: const AppBarTheme(
-                backgroundColor: Colors.white,
-                foregroundColor: DesignTokens.maroon,
-                elevation: 0.5,
+              side: BorderSide.none,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
               ),
-              textTheme: const TextTheme(
-                headlineLarge: DesignTokens.h1,
-                bodyMedium: DesignTokens.body,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+            ),
+            cardTheme: CardThemeData(
+              color: DesignTokens.cardBg,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(DesignTokens.radius),
+                side: const BorderSide(color: DesignTokens.border),
               ),
             ),
-            home: const StudentHomePage(),
+            dividerTheme: const DividerThemeData(
+              color: DesignTokens.border,
+              thickness: 1,
+              space: 1,
+            ),
+            textTheme: const TextTheme(
+              headlineLarge: DesignTokens.h1,
+              headlineMedium: DesignTokens.h2,
+              titleMedium: DesignTokens.subtitle,
+              bodyMedium: DesignTokens.body,
+            ),
           ),
+          home: const StudentHomePage(),
         ),
       ),
     );

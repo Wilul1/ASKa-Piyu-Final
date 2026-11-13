@@ -8,13 +8,19 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_session_factory
 from app.models.db_models import PublishedArticle, utc_now
 from app.services.chroma_store import get_knowledge_base_store
 from app.services.text_cleaner import split_into_chunks
-from app.services.ticket_knowledge import strip_ticket_faq_scaffolding, sync_ticket_kb_status
+from app.services.ticket_knowledge import (
+    identities_for_ticket_article,
+    redact_ticket_pii,
+    strip_ticket_faq_scaffolding,
+    sync_ticket_kb_status,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -209,7 +215,11 @@ def stamp_chunks_with_audience(chunks: list, audience: str) -> list:
     return stamped
 
 
-def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
+def _build_faq_chunks(
+    article: PublishedArticle,
+    *,
+    identities: tuple[str, ...] = (),
+) -> list[_FaqChunk]:
     raw_content = article.content or ""
     if (article.kb_origin or "") == "ticket_resolution":
         raw_content = strip_ticket_faq_scaffolding(raw_content, title=article.title)
@@ -219,11 +229,21 @@ def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
 
         visible = html_to_plain(visible)
     appendix = _policy_appendix_from_extracted_metadata(article.content or "", visible)
+    title = redact_ticket_pii(article.title or "", identities=identities)
+    summary = redact_ticket_pii(article.summary or "", identities=identities)
+    visible = redact_ticket_pii(visible, identities=identities)
+    appendix = redact_ticket_pii(appendix, identities=identities)
+    ticket_faq = (article.kb_origin or "") == "ticket_resolution"
+    # Ticket FAQs auto-fill summary from the original answer. Staff later
+    # edit content without refreshing summary; embedding the stale summary
+    # keeps superseded wording retrievable.
+    if ticket_faq:
+        summary = ""
     body = "\n\n".join(
         part
         for part in (
-            article.title or "",
-            article.summary or "",
+            title,
+            summary,
             visible,
             appendix,
         )
@@ -232,6 +252,9 @@ def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
     if not body:
         raise ValueError("Published article has no content to index.")
 
+    provenance_ticket_id = ""
+    if ticket_faq:
+        provenance_ticket_id = str(article.source_ticket_id or "").strip()
     raw_chunks = split_into_chunks(body, max_chars=1200, overlap=150)
     chunks = [
         _FaqChunk(
@@ -239,13 +262,17 @@ def _build_faq_chunks(article: PublishedArticle) -> list[_FaqChunk]:
             chunk_index=int(item["chunk_index"]),
             char_start=int(item["char_start"]),
             metadata={
-                "source_section": article.title,
-                "canonical_topic": article.title,
-                "category": article.category or "",
+                "source_section": title,
+                "canonical_topic": title,
+                "category": (
+                    (article.office or "")
+                    if ticket_faq
+                    else (article.category or "")
+                ),
                 "office": article.office or "",
                 "audience": article.audience or "student",
                 "kb_origin": article.kb_origin or "ticket_resolution",
-                "source_ticket_id": article.source_ticket_id or "",
+                "source_ticket_id": provenance_ticket_id,
                 "article_id": article.id,
                 "article_type": "faq",
             },
@@ -266,7 +293,8 @@ def index_published_article(session: Session, article: PublishedArticle) -> int:
     """
     store = get_knowledge_base_store()
     document_id = faq_document_id(article.id)
-    chunks = _build_faq_chunks(article)
+    identities = identities_for_ticket_article(session, article)
+    chunks = _build_faq_chunks(article, identities=identities)
     # Never delete existing vectors unless we successfully snapshotted them (or confirmed none).
     try:
         backup = store.export_document(document_id)
@@ -285,13 +313,22 @@ def index_published_article(session: Session, article: PublishedArticle) -> int:
         count = store.add_document_chunks(
             document_id=document_id,
             title=article.title,
-            source_filename=article.source_filename or f"Ticket FAQ ({article.id})",
+            source_filename=(
+                article.source_filename
+                if (article.source_filename or "").strip()
+                and "TKT-" not in (article.source_filename or "").upper()
+                else "Knowledge Base article"
+            ),
             document_type="faq",
             chunks=chunks,
             document_metadata={
                 "audience": article.audience or "student",
                 "kb_origin": article.kb_origin or "ticket_resolution",
-                "source_ticket_id": article.source_ticket_id or "",
+                "source_ticket_id": (
+                    article.source_ticket_id or ""
+                    if (article.kb_origin or "") == "ticket_resolution"
+                    else ""
+                ),
                 "category": article.category or "",
                 "office": article.office or "",
             },
@@ -535,6 +572,11 @@ def filter_unpublished_faq_chunks(chunks: list) -> list:
             .filter(
                 PublishedArticle.id.in_(list(faq_ids)),
                 PublishedArticle.published.is_(True),
+                PublishedArticle.rag_indexed.is_(True),
+                or_(
+                    PublishedArticle.review_status.is_(None),
+                    PublishedArticle.review_status == "approved",
+                ),
             )
             .all()
         )

@@ -139,7 +139,7 @@ _REFERRAL_ANSWER_RE = re.compile(
 # Actionable reusable facts (not merely mentioning that a form/requirement exists).
 _CONCRETE_FACT_RE = re.compile(
     r"\b(?:"
-    r"submit|bring|pay(?:\s+the|\s+at)?|fill\s+out|go\s+to|return\s+with|"
+    r"submit|file(?:\s+the)?|bring|pay(?:\s+the|\s+at)?|fill\s+out|go\s+to|return\s+with|"
     r"present(?:\s+the)?|proceed\s+to|claim(?:\s+stub)?|"
     r"within\s+\d+\s+(?:working\s+)?days?|"
     r"(?:next|\d+)\s+working\s+days?|working\s+days?|"
@@ -155,6 +155,74 @@ _REQUIREMENT_EVIDENCE_RE = re.compile(
     r"requirements?\s+(?:are|include)|"
     r"valid\s+(?:government\s+)?id|"
     r"enrollment\s+form|application\s+form|payment\s+receipt"
+    r")\b",
+    re.IGNORECASE,
+)
+# Courtesy / boilerplate that must never count as a reusable FAQ answer.
+_COURTESY_ONLY_RE = re.compile(
+    r"^(?:"
+    r"thank\s+you(?:\s+for\s+contacting(?:\s+the)?[^.!?]{0,80})?|"
+    r"you(?:'re| are)\s+welcome|"
+    r"good\s+day(?:\s+and\s+welcome)?|"
+    r"if\s+you\s+have\s+any\s+questions(?:\s+or\s+need\s+further\s+assistance)?[^.!?]{0,80}|"
+    r"feel\s+free\s+to\s+(?:reply|reach\s+out|contact\s+us)[^.!?]{0,80}|"
+    r"for\s+further\s+assistance[^.!?]{0,60}"
+    r")[\s.!?]*$",
+    re.IGNORECASE,
+)
+# Staff asking the student to clarify missing information — not reusable FAQ.
+# Deliberately omits bare "provide" so instructional "could you please provide
+# the … form at Window N" remains eligible as actionable guidance.
+_STAFF_CLARIFYING_QUESTION_RE = re.compile(
+    r"\b(?:"
+    r"please\s+(?:also\s+)?confirm\s+whether|"
+    r"kindly\s+(?:confirm|advise)\s+whether|"
+    r"could\s+you\s+(?:please\s+)?(?:confirm|clarify)|"
+    r"may\s+(?:i|we)\s+know(?:\s+(?:whether|your))?|"
+    r"let\s+us\s+know\s+(?:if|whether|what)"
+    r")\b",
+    re.IGNORECASE,
+)
+# Personal identity fields. Bare "program" alone is not enough (avoids
+# "enroll in the nursing program"); require year-level pairing or "your program".
+_IDENTITY_FIELD_RE = re.compile(
+    r"\b(?:"
+    r"complete\s+name|full\s+name|"
+    r"student\s+number|student\s+id|"
+    r"year\s+level|"
+    r"(?:your\s+)?program\s+and\s+(?:current\s+)?year\s+level|"
+    r"your\s+program\b"
+    r")\b",
+    re.IGNORECASE,
+)
+# Language that requests the student's personal details (intake), not instructions
+# to present/bring an ID as part of a procedure.
+_IDENTITY_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"(?:kindly|please)\s+provide(?:\s+your)?|"
+    r"provide\s+your|"
+    r"may\s+(?:i|we)\s+know(?:\s+your)?|"
+    r"so\s+we\s+can\s+(?:check|verify|locate|review)\s+your|"
+    r"need\s+(?:your|the\s+following)\s+"
+    r"(?:complete\s+name|full\s+name|student\s+number|student\s+id|details)"
+    r")\b",
+    re.IGNORECASE,
+)
+# Soft clause often attached to intake prompts; not a reusable procedure step.
+_SOFT_WHEN_SUBMITTING_RE = re.compile(
+    r"\bwhen\s+submitting\s+your\s+request\b",
+    re.IGNORECASE,
+)
+# Backward-compatible alias used by older call sites / tests.
+_IDENTITY_INTAKE_ONLY_RE = _IDENTITY_FIELD_RE
+# Hedge that keeps "submit/bring" from turning a confirm/check referral into a fact.
+_REFERRAL_HEDGE_RE = re.compile(
+    r"\b(?:"
+    r"recommend\s+confirming|please\s+(?:check|confirm|verify|coordinate|inquire)|"
+    r"confirm(?:ing)?\s+(?:the\s+)?(?:current|latest|specific)|"
+    r"check\s+(?:the\s+)?(?:university(?:'s)?|current|latest)|"
+    r"coordinate\s+with|"
+    r"to\s+avoid\s+using\s+an\s+outdated"
     r")\b",
     re.IGNORECASE,
 )
@@ -330,6 +398,11 @@ def convert_ticket_to_draft_article(
             f"Article content must be at least {_MIN_RESOLUTION_CHARS} characters "
             "to save as reusable knowledge."
         )
+    elif generated.needs_manual_completion and not _staff_supplied_content_completes_draft(
+        resolved_body
+    ):
+        # Staff pasted/edited body still lacks a reusable answer — keep the marker.
+        resolved_body = _ensure_completion_placeholder(resolved_body)
     existing = (
         session.query(PublishedArticle)
         .filter(PublishedArticle.source_ticket_id == ticket.id)
@@ -1483,9 +1556,123 @@ def _strip_filler(text: str) -> str:
     return joined
 
 
+def _is_courtesy_or_boilerplate(text: str) -> bool:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return True
+    if _COURTESY_ONLY_RE.match(cleaned) or _FILLER_RE.match(cleaned):
+        return True
+    return False
+
+
+def _is_staff_clarifying_question(text: str) -> bool:
+    return bool(_STAFF_CLARIFYING_QUESTION_RE.search(text or ""))
+
+
+def _has_actionable_procedure_cue(text: str) -> bool:
+    """True when the sentence gives form/office/payment/procedure guidance.
+
+    Used to keep instructional phrasing (including polite "could you please
+    provide the … form") from being discarded as a clarifying question.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned or _referral_hedge_overrides_action(cleaned):
+        return False
+    if _CONCRETE_FACT_RE.search(cleaned) or _REQUIREMENT_EVIDENCE_RE.search(cleaned):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:"
+            r"request\s+form|application\s+form|"
+            r"window\s*\d+|at\s+window|"
+            r"cashier|payment|pay(?:\s+at|\s+the)?|"
+            r"procedure|osas|dean(?:'s)?\s+office"
+            r")\b",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _is_clarifying_only(text: str) -> bool:
+    """Clarifying ask with no actionable procedure/form/payment guidance."""
+    cleaned = (text or "").strip()
+    if not cleaned or not _is_staff_clarifying_question(cleaned):
+        return False
+    return not _has_actionable_procedure_cue(cleaned)
+
+
+def _is_identity_intake_only(text: str) -> bool:
+    """True when staff only requests the student's personal identity details.
+
+    Mentions of student ID / student number / program inside procedural
+    instructions (present, bring, enroll, pay, window, form, etc.) are not
+    identity intake.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    if not _IDENTITY_REQUEST_RE.search(cleaned):
+        return False
+    if not _IDENTITY_FIELD_RE.search(cleaned):
+        return False
+    # Ignore the soft "when submitting your request" tail common on intake prompts.
+    procedural = _SOFT_WHEN_SUBMITTING_RE.sub(" ", cleaned)
+    if _REQUIREMENT_EVIDENCE_RE.search(procedural):
+        return False
+    if re.search(
+        r"\b(?:application\s+form|request\s+form|fee|cashier|window|working\s+days?)\b",
+        procedural,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    # Present/bring/enroll/pay/go-to instructions are actionable, not intake.
+    if re.search(
+        r"\b(?:"
+        r"present(?:\s+your)?|bring(?:\s+your)?|enroll(?:\s+in)?|"
+        r"pay(?:\s+at|\s+the)?|go\s+to|proceed\s+to|claim(?:\s+stub)?|"
+        r"fill\s+out|file(?:\s+the)?"
+        r")\b",
+        procedural,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    # Remaining "submit" after stripping the soft clause still means procedure.
+    if re.search(r"\bsubmit\b", procedural, flags=re.IGNORECASE):
+        return False
+    return True
+
+
+def _referral_hedge_overrides_action(text: str) -> bool:
+    """True when submit/bring verbs are only inside a confirm/check hedge."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    if not _REFERRAL_HEDGE_RE.search(cleaned):
+        return False
+    # Affirmative requirement lists stay substantive; "confirm the current
+    # application form before submitting" remains a referral despite form nouns.
+    if re.search(
+        r"\b(?:requirements?\s+(?:are|include)|required\s+documents?|"
+        r"documents?\s+required)\b",
+        cleaned,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    return True
+
+
 def _has_substantive_evidence(text: str) -> bool:
     cleaned = (text or "").strip()
     if not cleaned:
+        return False
+    if _is_courtesy_or_boilerplate(cleaned):
+        return False
+    if _is_clarifying_only(cleaned):
+        return False
+    if _is_identity_intake_only(cleaned):
+        return False
+    if _referral_hedge_overrides_action(cleaned):
         return False
     return bool(_CONCRETE_FACT_RE.search(cleaned) or _REQUIREMENT_EVIDENCE_RE.search(cleaned))
 
@@ -1495,16 +1682,31 @@ def _classify_sentence(text: str) -> str:
     cleaned = (text or "").strip()
     if not cleaned:
         return "deferred"
+    if _is_courtesy_or_boilerplate(cleaned):
+        return "deferred"
+    # Clarifying asks defer unless the same sentence also gives actionable
+    # form/office/payment/procedure guidance.
+    if _is_clarifying_only(cleaned):
+        return "deferred"
     has_deferred = bool(_DEFERRED_ANSWER_RE.search(cleaned))
-    has_referral = bool(_REFERRAL_ANSWER_RE.search(cleaned))
-    has_action = bool(_CONCRETE_FACT_RE.search(cleaned))
+    has_referral = bool(_REFERRAL_ANSWER_RE.search(cleaned)) or _referral_hedge_overrides_action(
+        cleaned
+    )
+    has_action = bool(_CONCRETE_FACT_RE.search(cleaned)) and not _referral_hedge_overrides_action(
+        cleaned
+    )
     has_evidence = _has_substantive_evidence(cleaned)
     # Pure status / wait updates are never reusable FAQ answers.
     if has_deferred and not has_evidence and not has_referral:
         return "deferred"
     # "Contact X to obtain the application form" remains a referral, not a fact.
+    # Also keep "confirm current form before submitting" as referral despite "submit".
     if has_referral and not has_action:
         return "referral"
+    if has_referral and _referral_hedge_overrides_action(cleaned):
+        return "referral"
+    if _is_identity_intake_only(cleaned):
+        return "deferred"
     if has_evidence:
         return "substantive"
     if has_deferred:
@@ -2119,20 +2321,35 @@ def _format_structured_article(
                 f"{index}. {item}" for index, item in enumerate(procedures, start=1)
             )
             sections.append(f"## Procedure\n\n{steps}")
+    where_lines: list[str] = []
     if office_name:
-        sections.append(f"## Responsible office\n\n{office_name}")
-    if notes:
-        note_lines = "\n".join(f"- {item}" for item in notes)
-        sections.append(f"## Important notes\n\n{note_lines}")
+        where_lines.append(office_name)
     referral_lines = _unique_referrals_not_in_answers(referrals or [], usable)
-    if referral_lines:
-        bullets = "\n".join(f"- {item}" for item in referral_lines)
-        sections.append(
-            "## Confirm with the office\n\n"
-            "The conversation directs students to verify the following details. "
-            "Do not treat them as confirmed Knowledge Base facts yet.\n\n"
-            f"{bullets}"
+    for item in referral_lines:
+        if item not in where_lines:
+            where_lines.append(item)
+    # Hedged confirm/check sentences classified as notes are still office directions.
+    for item in notes:
+        if (_REFERRAL_ANSWER_RE.search(item) or _referral_hedge_overrides_action(item)) and (
+            item not in where_lines
+        ):
+            where_lines.append(item)
+    retained_notes = [
+        item
+        for item in notes
+        if not (
+            _REFERRAL_ANSWER_RE.search(item) or _referral_hedge_overrides_action(item)
         )
+    ]
+    if where_lines:
+        if len(where_lines) == 1 and where_lines[0] == office_name:
+            sections.append(f"## Where to go\n\n{office_name}")
+        else:
+            bullets = "\n".join(f"- {item}" for item in where_lines)
+            sections.append(f"## Where to go\n\n{bullets}")
+    if retained_notes:
+        note_lines = "\n".join(f"- {item}" for item in retained_notes)
+        sections.append(f"## Important notes\n\n{note_lines}")
     status_lines = [
         item
         for item in _dedupe_texts(status_updates or [])
@@ -2165,7 +2382,7 @@ def _format_incomplete_article(
         parts.append(f"## What we know\n\n{known_text}")
     if office_name:
         parts.append(
-            f"## Responsible office\n\n{office_name}\n\n"
+            f"## Where to go\n\n{office_name}\n\n"
             "Confirm the current official process with this office before publishing."
         )
     return _append_incomplete_notes("\n\n".join(parts).strip(), missing)
@@ -2242,6 +2459,24 @@ def _article_summary(
     )
 
 
+def _staff_supplied_content_completes_draft(content: str) -> bool:
+    """True when staff-edited body removes incompleteness markers and states facts.
+
+    Acknowledgements, generic office referrals, and identity-intake prompts alone
+    never complete a ticket-derived draft. Staff-authored FAQ prose classified as
+    substantive (including non-imperative policy text) does complete it.
+    """
+    text = (content or "").strip()
+    if not text:
+        return False
+    if _COMPLETION_MARKER in text or _INCOMPLETE_NOTES_HEADING in text:
+        return False
+    units = _split_staff_evidence_units(text)
+    if not units:
+        units = [text]
+    return any(_classify_sentence(unit) == "substantive" for unit in units)
+
+
 def _needs_manual_flag(
     generated: GeneratedTicketArticle,
     content: str | None,
@@ -2249,7 +2484,16 @@ def _needs_manual_flag(
 ) -> bool:
     if keep_generation_flags:
         return bool(generated.needs_manual_completion)
-    return bool(generated.needs_manual_completion) and not (content or "").strip()
+    text = (content or "").strip()
+    if not text:
+        return bool(generated.needs_manual_completion)
+    # Staff-supplied bodies only clear incompleteness when they actually complete
+    # the reusable answer. Pasting the incomplete ticket chat must not publish.
+    if _COMPLETION_MARKER in text:
+        return True
+    if generated.needs_manual_completion:
+        return not _staff_supplied_content_completes_draft(text)
+    return False
 
 
 def _generation_notes_flag(
@@ -2262,14 +2506,18 @@ def _generation_notes_flag(
         notes = notes[:_GENERATION_NOTES_MAX]
     if keep_generation_flags:
         return notes
-    return notes if not (content or "").strip() else None
+    text = (content or "").strip()
+    if not text:
+        return notes
+    if generated.needs_manual_completion and not _staff_supplied_content_completes_draft(text):
+        return notes
+    return None
 
 
 def _ensure_completion_placeholder(content: str) -> str:
+    """Always attach the completion marker when an incomplete draft is persisted."""
     text = (content or "").strip()
     if _COMPLETION_MARKER in text:
-        return text
-    if len(text) >= _MIN_RESOLUTION_CHARS:
         return text
     return f"{text}\n\n{_COMPLETION_MARKER}".strip() if text else _COMPLETION_MARKER
 

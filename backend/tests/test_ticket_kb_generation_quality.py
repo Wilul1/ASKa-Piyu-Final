@@ -13,8 +13,11 @@ from app.db.base import Base
 from app.models.db_models import Office, PublishedArticle, Ticket, TicketReply, User
 from app.services.passwords import hash_password
 from app.services.ticket_knowledge import (
+    _COMPLETION_MARKER,
+    _classify_sentence,
     _classify_staff_answer,
     build_generated_article_from_ticket,
+    convert_ticket_to_draft_article,
     generate_article_from_resolved_ticket,
     retry_ticket_kb_generation,
 )
@@ -29,6 +32,25 @@ _ADVERSARIAL_STAFF_REPLIES = {
     "E": "You must submit your application within five working days.",
     "F": "Your request is being processed. We will update you once it is ready.",
     "G": "The required documents are your valid ID, enrollment form, and payment receipt.",
+    # Acknowledgements / hedges must not become substantive FAQ answers.
+    "H": "Thank you for contacting the Registrar's Office.",
+    "I": "You're welcome!",
+    "J": (
+        "We recommend confirming the current application form before submitting "
+        "your request to avoid using an outdated document."
+    ),
+    "K": (
+        "Please also confirm whether the certificate is needed for employment, "
+        "scholarship, or another purpose."
+    ),
+    "L": (
+        "If you have any questions or need further assistance, feel free to "
+        "reply to this ticket."
+    ),
+    "M": (
+        "Kindly provide your complete name, student number, program, and "
+        "current year level when submitting your request."
+    ),
 }
 
 
@@ -534,10 +556,247 @@ def test_coe_reference_scenario_stays_incomplete_and_title_clean(session: Sessio
         ("E", "substantive"),
         ("F", "deferred"),
         ("G", "substantive"),
+        ("H", "deferred"),
+        ("I", "deferred"),
+        ("J", "referral"),
+        ("K", "deferred"),
+        ("L", "deferred"),
+        ("M", "deferred"),
     ],
 )
 def test_adversarial_staff_reply_classification(label: str, expected: str):
     assert _classify_staff_answer(_ADVERSARIAL_STAFF_REPLIES[label]) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Present your student ID at OSAS for validation.",
+        "Bring your student number printout to the dean.",
+        "Enroll in the nursing program after advising.",
+        "Could you please provide the TOR request form at Window 3 and pay at the cashier?",
+    ],
+)
+def test_actionable_id_program_and_provide_form_stay_substantive(text: str):
+    """Identity tokens / polite 'provide' must not false-negative actionable guidance."""
+    assert _classify_sentence(text) == "substantive"
+    assert _classify_staff_answer(text) == "substantive"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Kindly provide your complete name and student number so we can check your record.",
+        "Could you please clarify which semester you are applying for?",
+        "May we know your program and year level?",
+    ],
+)
+def test_true_identity_intake_and_clarifying_asks_stay_deferred(text: str):
+    assert _classify_sentence(text) == "deferred"
+    assert _classify_staff_answer(text) == "deferred"
+
+
+def test_mixed_substantive_with_referral_and_identity_ask(session: Session):
+    """Genuine steps stay complete-eligible evidence; referral + intake stay non-inventing."""
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-GQ-MIX-ID-REF",
+        question="How do I request a good moral certificate?",
+        staff_messages=[
+            "Present your student ID at OSAS for validation. "
+            "Please confirm the current processing fee with the office. "
+            "Kindly provide your complete name and student number so we can check your record.",
+        ],
+    )
+    assert (
+        _classify_sentence("Present your student ID at OSAS for validation.")
+        == "substantive"
+    )
+    assert (
+        _classify_sentence(
+            "Kindly provide your complete name and student number so we can check your record."
+        )
+        == "deferred"
+    )
+    generated = build_generated_article_from_ticket(ticket)
+    body = generated.content.casefold()
+    assert "student id" in body or "osas" in body
+    assert "where to go" in body or "confirm" in body
+    assert generated.needs_manual_completion is True
+    assert "php" not in body
+
+
+def test_prod_coe_conversation_stays_incomplete_draft(session: Session):
+    """Exact sanitized shape of TK-20261113-6F6603 / article e18a7ad9…"""
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-GQ-COE-PROD",
+        question="Request for Certificate of Enrollment",
+        student_messages=[
+            "Thank you! I need the COE for a scholarship application. "
+            "Is there a specific form i need to accomplish?"
+        ],
+        staff_messages=[
+            (
+                "Good day!\n\n"
+                "Thank you for contacting the Registrar's Office.\n\n"
+                "For your request for a Certificate of Enrollment (COE), please "
+                "check the university's current requirements and application "
+                "procedure with the Registrar's Office.\n\n"
+                "Kindly provide your complete name, student number, program, and "
+                "current year level when submitting your request. Please also "
+                "confirm whether the certificate is needed for employment, "
+                "scholarship, or another purpose.\n\n"
+                "If you have any questions or need further assistance, feel free "
+                "to reply to this ticket.\n\n"
+                "Thank you!"
+            ),
+            (
+                "You're welcome!\n\n"
+                "For the specific form and latest requirements, please coordinate "
+                "with the Registrar's Office. We recommend confirming the current "
+                "application form before submitting your request to avoid using an "
+                "outdated document.\n\n"
+                "Thank you!"
+            ),
+        ],
+    )
+    # Patch description to match production ticket text used for context.
+    ticket.description = (
+        "Good day! i would like to request a Certificate of Enrollment (COE) for "
+        "the current semester. May I know the requirements and procedure for "
+        "requesting one? Also, where should i submit the requirement? Thank you!"
+    )
+    session.add(ticket)
+    session.commit()
+
+    assert _classify_sentence("Thank you for contacting the Registrar's Office.") == "deferred"
+    assert _classify_sentence("You're welcome!") == "deferred"
+    assert (
+        _classify_sentence(
+            "We recommend confirming the current application form before submitting "
+            "your request to avoid using an outdated document."
+        )
+        == "referral"
+    )
+
+    generated = build_generated_article_from_ticket(ticket)
+    assert generated.needs_manual_completion is True
+    assert generated.generation_notes in {
+        "incomplete_referral",
+        "unanswered_followup",
+        "deferred_answer",
+        "unconfirmed_referral",
+    }
+    body = generated.content.casefold()
+    assert "needs staff completion" in body
+    assert _COMPLETION_MARKER.casefold() in body
+    assert "where to go" in body
+    assert "you're welcome" not in body
+    assert "form 138" not in body
+    assert "php" not in body
+
+    payload = generate_article_from_resolved_ticket(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    assert payload["published"] is False
+    assert payload["needs_manual_completion"] is True
+    assert payload["kb_conversion_status"] == "needs_review"
+    assert payload["generation_notes"] in {
+        "incomplete_referral",
+        "unanswered_followup",
+        "deferred_answer",
+        "unconfirmed_referral",
+    }
+
+    # Convert-with-content using the incomplete chat must NOT clear the gate.
+    pasted = (
+        "1. Thank you for contacting the Registrar's Office. For your request for "
+        "a Certificate of Enrollment (COE), please check the university's current "
+        "requirements and application procedure with the Registrar's Office.\n"
+        "2. You're welcome! For the specific form and latest requirements, please "
+        "coordinate with the Registrar's Office."
+    )
+    converted = convert_ticket_to_draft_article(
+        session,
+        ticket_id=ticket.id,
+        actor=staff,
+        content=pasted,
+    )
+    assert converted["needs_manual_completion"] is True
+    assert converted["published"] is False
+    assert converted["kb_conversion_status"] == "needs_review"
+    assert _COMPLETION_MARKER in (converted.get("content") or "")
+
+
+def test_ack_plus_referral_never_counts_as_complete_answer(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-GQ-ACK-REF",
+        question="How do I request a good moral certificate?",
+        staff_messages=[
+            "You're welcome! Please coordinate with the Office of Student Affairs "
+            "for the latest requirements and application form."
+        ],
+    )
+    generated = build_generated_article_from_ticket(ticket)
+    assert generated.needs_manual_completion is True
+    assert generated.generation_notes == "incomplete_referral"
+    body = generated.content.casefold()
+    assert "you're welcome" not in body
+    assert "where to go" in body
+    assert "do not invent" in body
+
+
+def test_genuine_complete_coe_answer_still_publishes_as_ready(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-GQ-COE-COMPLETE",
+        question="How do I request a Certificate of Enrollment?",
+        student_messages=[
+            "Is there a specific form I need, and where do I submit it?"
+        ],
+        staff_messages=[
+            "Submit the Certificate of Enrollment request form at the Registrar "
+            "window, bring a valid ID, and pay the assessment fee at the cashier. "
+            "Release is the next working day."
+        ],
+    )
+    generated = build_generated_article_from_ticket(ticket)
+    assert generated.needs_manual_completion is False
+    assert generated.generation_notes is None
+    body = generated.content.casefold()
+    assert "certificate of enrollment request form" in body
+    assert "needs staff completion" not in body
+    payload = generate_article_from_resolved_ticket(
+        session, ticket_id=ticket.id, actor=staff
+    )
+    assert payload["needs_manual_completion"] is False
+    assert payload["kb_conversion_status"] == "draft"
 
 
 def test_review_message_f_is_deferred_and_incomplete(session: Session):
@@ -627,7 +886,7 @@ def test_substantive_then_separate_referral_is_preserved(session: Session):
     assert "processing fee" in body
     assert "php" not in body
     assert "₱" not in generated.content
-    assert "confirm with the office" in body
+    assert "where to go" in body
     assert generated.needs_manual_completion is True
     assert generated.generation_notes == "unconfirmed_referral"
 
@@ -656,7 +915,7 @@ def test_referral_then_substantive_preserves_both(session: Session):
     assert "medical certificate" in body
     assert "cashier" in body
     assert "processing fee" in body
-    assert "confirm with the office" in body
+    assert "where to go" in body
     assert generated.needs_manual_completion is True
     assert generated.generation_notes == "unconfirmed_referral"
     assert "php 50" not in body
@@ -861,7 +1120,7 @@ def test_duplicate_relevant_referrals_appear_once(session: Session):
     )
 
     generated = build_generated_article_from_ticket(ticket)
-    confirm = generated.content.casefold().split("confirm with the office", 1)[-1]
+    confirm = generated.content.casefold().split("where to go", 1)[-1]
     confirm = confirm.split("needs staff completion", 1)[0]
     assert confirm.count("please confirm the current processing fee") == 1
 
@@ -1021,8 +1280,8 @@ def test_generic_office_requirements_referral_not_confirmed(session: Session):
     generated = build_generated_article_from_ticket(ticket)
     body = generated.content.casefold()
     assert "excuse slip form" in body
-    if "confirm with the office" in body:
-        confirm = body.split("confirm with the office", 1)[1]
+    if "where to go" in body:
+        confirm = body.split("where to go", 1)[1]
         assert "latest requirements" not in confirm
     assert "ambiguous" in body or generated.needs_manual_completion is True
 
@@ -1098,8 +1357,8 @@ def test_ambiguous_referral_not_confirmed_guidance(session: Session):
     body = generated.content.casefold()
     assert "tor request form" in body
     assert generated.needs_manual_completion is True
-    if "confirm with the office" in body:
-        confirm = body.split("confirm with the office", 1)[1].split("needs staff", 1)[0]
+    if "where to go" in body:
+        confirm = body.split("where to go", 1)[1].split("needs staff", 1)[0]
         assert "window assignment" not in confirm
     assert "ambiguous" in body
 

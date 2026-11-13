@@ -658,7 +658,8 @@ def test_convert_publish_b_marker_present_flag_false_blocked():
             .one()
         )
         assert art.published is False
-        assert art.needs_manual_completion is False
+        # Marker in the supplied body keeps the draft incomplete.
+        assert art.needs_manual_completion is True
         assert _COMPLETION_MARKER in (art.content or "")
     finally:
         session.close()

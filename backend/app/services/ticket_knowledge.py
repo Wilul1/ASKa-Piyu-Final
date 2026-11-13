@@ -77,6 +77,7 @@ _FILLER_RE = re.compile(
     r"^(?:"
     r"hi|hello|hey|good\s+(?:day|morning|afternoon|evening)|"
     r"thanks?(?:\s+you)?|thank\s+you|ok(?:ay)?|noted|"
+    r"you(?:'re| are)\s+welcome|"
     r"please\s+wait|any\s+updates?|"
     r"will\s+(?:follow\s+up|check)|for\s+follow[\s-]?up"
     r")[\s.!?]*$",
@@ -105,14 +106,128 @@ _IDENTITY_STOPWORDS = frozenset(
     }
 )
 _DEFERRED_ANSWER_RE = re.compile(
-    r"\b(?:i(?:'ll| will)\s+check|we\s+will\s+get\s+back|no\s+idea|"
-    r"not\s+sure|please\s+wait|follow\s+up\s+later)\b",
+    r"\b(?:"
+    r"i(?:'ll| will)\s+check|"
+    r"we\s+will\s+get\s+back|"
+    r"we\s+will\s+(?:update|notify|contact)\s+you|"
+    r"no\s+idea|not\s+sure|"
+    r"please\s+wait(?:\s+while)?|"
+    r"follow\s+up\s+later|"
+    # Status-only ticket updates (not reusable FAQ answers).
+    r"(?:your\s+)?(?:request|application)\s+is\s+"
+    r"(?:being\s+processed|currently\s+under\s+review|under\s+review)|"
+    r"is\s+being\s+processed|"
+    r"currently\s+under\s+review|"
+    r"under\s+review|"
+    r"once\s+(?:it\s+is\s+ready|it\s+is\s+available|processing\s+is\s+complete)"
+    r")\b",
     re.IGNORECASE,
+)
+# Staff redirects the student to verify/confirm elsewhere without stating facts.
+_REFERRAL_ANSWER_RE = re.compile(
+    r"\b(?:"
+    r"please\s+(?:check|confirm|verify|inquire|ask|coordinate)|"
+    r"(?:check|confirm|verify|inquire)\s+(?:with|at|the\s+current|current)|"
+    r"contact\s+(?:the\s+)?(?:registrar|osas|office|cashier|dean)|"
+    r"for\s+the\s+(?:specific|latest|current|exact)\s+"
+    r"(?:form|forms|requirements?|fee|fees|process|procedure)|"
+    r"requirements?\s+(?:may\s+)?(?:vary|change)|"
+    r"subject\s+to\s+(?:change|the\s+office)"
+    r")\b",
+    re.IGNORECASE,
+)
+# Actionable reusable facts (not merely mentioning that a form/requirement exists).
+_CONCRETE_FACT_RE = re.compile(
+    r"\b(?:"
+    r"submit|bring|pay(?:\s+the|\s+at)?|fill\s+out|go\s+to|return\s+with|"
+    r"present(?:\s+the)?|proceed\s+to|claim(?:\s+stub)?|"
+    r"within\s+\d+\s+(?:working\s+)?days?|"
+    r"(?:next|\d+)\s+working\s+days?|working\s+days?|"
+    r"official\s+receipt|assessment\s+form|"
+    r"medical\s+certificate|excuse\s+slip\s+form"
+    r")\b",
+    re.IGNORECASE,
+)
+# Requirement lists that are reusable even without an imperative verb.
+_REQUIREMENT_EVIDENCE_RE = re.compile(
+    r"\b(?:"
+    r"required\s+documents?|documents?\s+required|"
+    r"requirements?\s+(?:are|include)|"
+    r"valid\s+(?:government\s+)?id|"
+    r"enrollment\s+form|application\s+form|payment\s+receipt"
+    r")\b",
+    re.IGNORECASE,
+)
+_REFERRAL_BOILERPLATE_TOKENS = frozenset(
+    {
+        "please",
+        "confirm",
+        "check",
+        "verify",
+        "inquire",
+        "ask",
+        "coordinate",
+        "contact",
+        "current",
+        "latest",
+        "specific",
+        "exact",
+        "office",
+        "with",
+        "the",
+        "for",
+        "and",
+        "your",
+        "you",
+        "from",
+        "this",
+        "that",
+        "about",
+        "their",
+        "them",
+        "also",
+        "still",
+        "need",
+        "needed",
+        "requirements",
+        "requirement",
+        "process",
+        "procedure",
+        "details",
+        "detail",
+        "information",
+    }
+)
+_COURTESY_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"thank\s+you(?:\s+for\s+contacting(?:\s+the)?[^.!?]{0,60})?|"
+    r"you(?:'re| are)\s+welcome|"
+    r"good\s+day(?:\s+and\s+welcome)?"
+    r")[,!.\s]+",
+    re.IGNORECASE,
+)
+_CONVERSATIONAL_PAREN_RE = re.compile(
+    r"\s*\((?:[^)]*(?:thank\s+you|i\s+need|is\s+there|can\s+you|"
+    r"please|scholarship|follow[\s-]?up)[^)]*)\)\s*$",
+    re.IGNORECASE,
+)
+_FOLLOWUP_TOPIC_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("form", re.compile(r"\bforms?\b", re.IGNORECASE)),
+    ("fee", re.compile(r"\b(?:fee|fees|payment|cost|how much|php|₱)\b", re.IGNORECASE)),
+    (
+        "timeline",
+        re.compile(r"\b(?:how long|processing|deadline|working days?|release)\b", re.IGNORECASE),
+    ),
+    (
+        "location",
+        re.compile(r"\b(?:where|which office|location|window|counter)\b", re.IGNORECASE),
+    ),
 )
 _COMPLETION_MARKER = (
     "[Needs staff completion: the ticket conversation does not contain "
     "a complete reusable answer.]"
 )
+_INCOMPLETE_NOTES_HEADING = "## Needs staff completion"
 _PUBLIC_FAQ_SOURCE_FILENAME = "Knowledge Base article"
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(
@@ -540,11 +655,23 @@ def retry_ticket_kb_generation(
 
 
 def build_generated_article_from_ticket(ticket: Ticket) -> GeneratedTicketArticle:
-    """Consolidate the public conversation into one question and one answer."""
+    """Synthesize a reusable FAQ draft from the public ticket conversation.
+
+    Titles come only from the original question (never student follow-ups).
+    Staff replies are classified into substantive answers vs referrals /
+    deferred replies. Incomplete conversations stay unpublished via
+    ``needs_manual_completion`` and never invent missing official details.
+    Internal notes are ignored.
+    """
     identities = _identities_from_ticket(ticket)
-    question = redact_ticket_pii((ticket.original_question or "").strip(), identities=identities)
+    original_question = redact_ticket_pii(
+        (ticket.original_question or "").strip(), identities=identities
+    )
     student_followups: list[str] = []
-    staff_answers: list[str] = []
+    staff_substantive: list[str] = []
+    staff_referrals: list[str] = []
+    staff_deferred: list[str] = []
+
     for reply in sorted(ticket.replies or [], key=lambda item: item.created_at):
         if bool(getattr(reply, "is_internal", False)):
             continue
@@ -553,42 +680,170 @@ def build_generated_article_from_ticket(ticket: Ticket) -> GeneratedTicketArticl
         if not cleaned:
             continue
         if reply.sender_role in {"student", "faculty"}:
-            if cleaned.casefold() != question.casefold() and cleaned not in student_followups:
+            if (
+                cleaned.casefold() != original_question.casefold()
+                and cleaned not in student_followups
+            ):
                 student_followups.append(cleaned)
             continue
-        if reply.sender_role in {"office", "admin"}:
-            if cleaned not in staff_answers:
-                staff_answers.append(cleaned)
+        if reply.sender_role not in {"office", "admin"}:
+            continue
+        # Partition at clause level so status language cannot erase requirements,
+        # including when status is joined with "and" or lacks terminal punctuation.
+        for sentence in _split_staff_evidence_units(cleaned):
+            _bucket_staff_evidence_unit(
+                sentence,
+                staff_substantive=staff_substantive,
+                staff_referrals=staff_referrals,
+                staff_deferred=staff_deferred,
+            )
 
-    if student_followups:
-        extra = student_followups[0]
-        if extra.casefold() not in question.casefold() and len(extra.split()) >= 4:
-            question = f"{question.rstrip('?')} ({extra})".strip()
-
-    answer = _format_answer_steps(staff_answers)
-    notes = None
+    office_name = (getattr(ticket, "assigned_office", None) or "").strip()
+    notes: str | None = None
     needs_completion = False
-    if not answer:
+    context_parts = [original_question, *student_followups, *staff_substantive]
+    if office_name:
+        context_parts.append(office_name)
+    relevant_referrals, ambiguous_referrals = _partition_referrals_by_relevance(
+        staff_referrals,
+        context_parts=context_parts,
+    )
+
+    if staff_substantive and _staff_answers_contradict(staff_substantive):
         needs_completion = True
-        notes = "no_staff_answer"
-        answer = ""
-    elif len(answer) < _MIN_AUTO_ANSWER_CHARS:
+        notes = "contradictory_answers"
+        known = list(staff_substantive)
+        known.extend(
+            referral
+            for referral in relevant_referrals
+            if referral not in known
+        )
+        content = _format_incomplete_article(
+            known=known,
+            missing=[
+                "Staff replies give conflicting instructions. "
+                "Reconcile the official process before publishing.",
+            ],
+            office_name=office_name,
+        )
+    elif staff_substantive:
+        unanswered = _unanswered_followup_topics(student_followups, staff_substantive)
+        preserved_referrals = _unique_referrals_not_in_answers(
+            relevant_referrals, staff_substantive
+        )
+        embedded_referrals = _filter_referrals_by_relevance(
+            _embedded_referral_sentences(staff_substantive),
+            context_parts=context_parts,
+            keep="relevant",
+        )
+        unconfirmed_referrals = _dedupe_texts(
+            [*preserved_referrals, *embedded_referrals]
+        )
+        content = _format_structured_article(
+            staff_substantive,
+            office_name=office_name,
+            followups=student_followups,
+            referrals=preserved_referrals,
+            status_updates=staff_deferred,
+        )
+        completion_notes: list[str] = []
+        if unanswered:
+            completion_notes.extend(
+                f"Student follow-up about {topic} was not answered with "
+                "reusable official details."
+                for topic in unanswered
+            )
+        if unconfirmed_referrals:
+            completion_notes.extend(
+                _referral_completion_notes(
+                    unconfirmed_referrals,
+                    question=original_question,
+                    followups=student_followups,
+                )
+            )
+        if ambiguous_referrals:
+            completion_notes.append(
+                "At least one staff referral was too ambiguous to include as "
+                "confirmed guidance and needs manual review."
+            )
+        if staff_deferred:
+            completion_notes.append(
+                "Staff recorded a status update that does not complete the "
+                "reusable Knowledge Base answer."
+            )
+        if completion_notes:
+            needs_completion = True
+            if unanswered:
+                notes = "unanswered_followup"
+            elif unconfirmed_referrals or ambiguous_referrals:
+                notes = "unconfirmed_referral"
+            elif staff_deferred:
+                notes = "unresolved_status"
+            else:
+                notes = "unconfirmed_referral"
+            content = _append_incomplete_notes(content, completion_notes)
+        elif len(" ".join(staff_substantive)) < _MIN_AUTO_ANSWER_CHARS:
+            needs_completion = True
+            notes = "answer_too_short"
+            content = _ensure_completion_placeholder(content)
+    elif relevant_referrals or ambiguous_referrals or staff_referrals:
         needs_completion = True
-        notes = "answer_too_short"
-    elif _DEFERRED_ANSWER_RE.search(answer) and len(answer) < _MIN_RESOLUTION_CHARS:
+        notes = "incomplete_referral"
+        known = list(relevant_referrals) if relevant_referrals else []
+        missing = _missing_detail_notes(original_question, student_followups)
+        if ambiguous_referrals and not relevant_referrals:
+            missing = [
+                "Staff only provided ambiguous referral guidance that is not "
+                "safe to publish as confirmed Knowledge Base facts.",
+                *missing,
+            ]
+        elif not relevant_referrals and not ambiguous_referrals and staff_referrals:
+            missing = [
+                "Staff replies did not provide on-topic reusable guidance for "
+                "this question.",
+                *missing,
+            ]
+        elif ambiguous_referrals:
+            missing.append(
+                "An ambiguous staff referral was omitted from confirmed guidance "
+                "and needs manual review."
+            )
+        if staff_deferred:
+            known.extend(
+                item for item in staff_deferred if item not in known
+            )
+        content = _format_incomplete_article(
+            known=known,
+            missing=missing,
+            office_name=office_name,
+        )
+    elif staff_deferred:
         needs_completion = True
         notes = "deferred_answer"
-
-    if needs_completion and not answer:
-        content = _COMPLETION_MARKER
+        content = _format_incomplete_article(
+            known=staff_deferred,
+            missing=[
+                "Staff indicated a follow-up is still needed; no reusable "
+                "answer was recorded."
+            ],
+            office_name=office_name,
+        )
     else:
-        content = answer
-    title_source = question or (ticket.original_question or "Support question")
+        needs_completion = True
+        notes = "no_staff_answer"
+        content = _COMPLETION_MARKER
+
+    title_source = original_question or "Support question"
     try:
         title = _clean_title(title_source)
     except TicketKnowledgeError:
         title = "Support question"
-    summary = _short_summary(content or question)
+    summary = _article_summary(
+        title=title,
+        content=content,
+        incomplete=needs_completion,
+        notes=notes,
+    )
     return GeneratedTicketArticle(
         title=redact_ticket_pii(title, identities=identities),
         content=content,
@@ -1170,12 +1425,121 @@ def _strip_filler(text: str) -> str:
         if not stripped or _FILLER_RE.match(stripped):
             continue
         stripped = _LEADING_GREETING_RE.sub("", stripped).strip()
-        if stripped:
+        stripped = _COURTESY_PREFIX_RE.sub("", stripped).strip()
+        if stripped and not _FILLER_RE.match(stripped):
             kept.append(stripped)
     joined = " ".join(kept).strip()
     if not joined or _FILLER_RE.match(joined):
         return ""
     return joined
+
+
+def _has_substantive_evidence(text: str) -> bool:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    return bool(_CONCRETE_FACT_RE.search(cleaned) or _REQUIREMENT_EVIDENCE_RE.search(cleaned))
+
+
+def _classify_sentence(text: str) -> str:
+    """Classify one staff sentence as substantive, referral, or deferred."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return "deferred"
+    has_deferred = bool(_DEFERRED_ANSWER_RE.search(cleaned))
+    has_referral = bool(_REFERRAL_ANSWER_RE.search(cleaned))
+    has_action = bool(_CONCRETE_FACT_RE.search(cleaned))
+    has_evidence = _has_substantive_evidence(cleaned)
+    # Pure status / wait updates are never reusable FAQ answers.
+    if has_deferred and not has_evidence and not has_referral:
+        return "deferred"
+    # "Contact X to obtain the application form" remains a referral, not a fact.
+    if has_referral and not has_action:
+        return "referral"
+    if has_evidence:
+        return "substantive"
+    if has_deferred:
+        return "deferred"
+    if len(cleaned) < _MIN_AUTO_ANSWER_CHARS:
+        return "deferred"
+    if has_referral:
+        return "referral"
+    return "substantive"
+
+
+def _classify_staff_answer(text: str) -> str:
+    """Return ``substantive``, ``referral``, or ``deferred`` for a full reply.
+
+    Classification is aggregated from clauses so a status phrase cannot erase
+    actionable requirements in the same message, even without punctuation.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return "deferred"
+    units = _split_staff_evidence_units(cleaned)
+    kinds = {_classify_sentence(unit) for unit in units}
+    if "substantive" in kinds:
+        return "substantive"
+    if "referral" in kinds:
+        return "referral"
+    return "deferred"
+
+
+def _staff_answers_contradict(answers: list[str]) -> bool:
+    blob = " ".join(answers)
+    day_values = {
+        match.group(1)
+        for match in re.finditer(
+            r"\b(\d+)\s*(?:working\s+)?days?\b", blob, flags=re.IGNORECASE
+        )
+    }
+    if len(day_values) >= 2:
+        return True
+    fee_values = {
+        re.sub(r"[^\d]", "", match.group(0))
+        for match in re.finditer(
+            r"(?:php|₱)\s*[\d,]+|\b\d{2,6}\s*pesos?\b", blob, flags=re.IGNORECASE
+        )
+    }
+    fee_values.discard("")
+    return len(fee_values) >= 2
+
+
+def _unanswered_followup_topics(
+    followups: list[str], staff_answers: list[str]
+) -> list[str]:
+    """Topics raised by the student that lack an actionable staff answer."""
+    if not followups:
+        return []
+    follow_blob = " ".join(followups)
+    missing: list[str] = []
+    for topic, pattern in _FOLLOWUP_TOPIC_PATTERNS:
+        if not pattern.search(follow_blob):
+            continue
+        answered = any(
+            pattern.search(answer) and _CONCRETE_FACT_RE.search(answer)
+            for answer in staff_answers
+        )
+        if not answered:
+            missing.append(topic)
+    return missing
+
+
+def _missing_detail_notes(question: str, followups: list[str]) -> list[str]:
+    blob = " ".join([question, *followups]).casefold()
+    notes = [
+        "Official requirements were not confirmed in this conversation.",
+        "Do not invent forms, fees, processing times, or submission locations.",
+    ]
+    if "form" in blob:
+        notes.append("The specific form/document required was not identified.")
+    if any(token in blob for token in ("fee", "payment", "cost", "how much")):
+        notes.append("Fees or payment details were not provided.")
+    if any(token in blob for token in ("how long", "processing", "deadline", "release")):
+        notes.append("Processing time or release schedule was not provided.")
+    if any(token in blob for token in ("where", "office", "location")):
+        notes.append("Exact submission location/window was not confirmed.")
+    return notes
 
 
 def _format_answer_steps(answers: list[str]) -> str:
@@ -1185,6 +1549,648 @@ def _format_answer_steps(answers: list[str]) -> str:
     if len(usable) == 1:
         return usable[0]
     return "\n".join(f"{index}. {item}" for index, item in enumerate(usable, start=1))
+
+
+def _split_requirement_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!;])\s+|\n+", text)
+    return [part.strip(" -•\t") for part in parts if part and part.strip(" -•\t")]
+
+
+_STATUS_CLAUSE_SPLIT_RE = re.compile(
+    r"(?i)(?<=\w)(?:\s+and\s+|\s+)"
+    r"(?="
+    r"we\s+will\s+(?:update|notify|contact)\s+you|"
+    r"your\s+(?:request|application)\s+is\s+"
+    r"(?:being\s+processed|currently\s+under\s+review|under\s+review)|"
+    r"please\s+wait"
+    r")"
+)
+_SUBSTANTIVE_CLAUSE_START_RE = re.compile(
+    r"(?i)\b(?:"
+    r"submit|bring|pay(?:\s+the|\s+at)?|fill\s+out|go\s+to|return\s+with|"
+    r"present(?:\s+the)?|proceed\s+to|keep|"
+    r"required\s+documents?|documents?\s+required|"
+    r"requirements?\s+(?:are|include)|"
+    r"the\s+required\s+documents?"
+    r")\b"
+)
+# Status update followed by an actionable tail ("so please keep your claim stub").
+_STATUS_THEN_ACTION_SPLIT_RE = re.compile(
+    r"(?i)^(?P<status>.*?\b(?:"
+    r"we\s+will\s+(?:update|notify|contact)\s+you\b.*?"
+    r"(?:complete|ready|available)|"
+    r"your\s+(?:request|application)\s+is\s+"
+    r"(?:being\s+processed|currently\s+under\s+review|under\s+review)"
+    r"))\s*(?:so\s+(?:please\s+)?|and\s+then\s+|then\s+|,\s*)?"
+    r"(?P<action>(?:please\s+)?(?:keep|bring|submit|present|pay|return|go\s+to|claim)\b.+)$"
+)
+
+
+def _unit_has_unresolved_status(text: str) -> bool:
+    """True when text still carries a ticket-status update signal."""
+    return bool(_DEFERRED_ANSWER_RE.search(text or ""))
+
+
+def _bucket_staff_evidence_unit(
+    sentence: str,
+    *,
+    staff_substantive: list[str],
+    staff_referrals: list[str],
+    staff_deferred: list[str],
+) -> None:
+    """Route one evidence unit without letting concrete nouns cancel status."""
+    text = (sentence or "").strip()
+    if not text:
+        return
+    kind = _classify_sentence(text)
+    if kind == "deferred":
+        if text not in staff_deferred:
+            staff_deferred.append(text)
+        return
+    if kind == "referral":
+        if text not in staff_referrals:
+            staff_referrals.append(text)
+        return
+
+    # Substantive unit that still embeds unresolved status (inseparable residue).
+    if _unit_has_unresolved_status(text) and _has_substantive_evidence(text):
+        action = _actionable_remainder_without_status(text)
+        status = _status_remainder_without_action(text)
+        if action and action not in staff_substantive:
+            staff_substantive.append(action)
+        if status and status not in staff_deferred:
+            staff_deferred.append(status)
+        elif text not in staff_deferred:
+            # Separation failed: keep evidence, but force unresolved-status review.
+            staff_deferred.append(text)
+            if action is None and text not in staff_substantive:
+                staff_substantive.append(text)
+        return
+
+    if text not in staff_substantive:
+        staff_substantive.append(text)
+
+
+def _actionable_remainder_without_status(text: str) -> str | None:
+    """Return actionable text with unresolved status phrasing removed when possible."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    match = _STATUS_THEN_ACTION_SPLIT_RE.match(cleaned)
+    if match:
+        action = (match.group("action") or "").strip(" \t-•,;")
+        return action or None
+    # Action-then-status already split elsewhere; drop trailing status markers.
+    parts = [
+        part.strip(" \t-•,;")
+        for part in _STATUS_CLAUSE_SPLIT_RE.split(cleaned)
+        if part and part.strip(" \t-•,;")
+    ]
+    actionable = [
+        part
+        for part in parts
+        if _has_substantive_evidence(part) and not _unit_has_unresolved_status(part)
+    ]
+    if actionable:
+        return " ".join(actionable).strip() or None
+    # Fall back: remove deferred phrases, keep remaining evidence tokens/sentences.
+    remainder = _DEFERRED_ANSWER_RE.sub(" ", cleaned)
+    remainder = re.sub(r"\s+", " ", remainder).strip(" \t-•,;")
+    if remainder and _has_substantive_evidence(remainder):
+        return remainder
+    return None
+
+
+def _status_remainder_without_action(text: str) -> str | None:
+    """Return unresolved status phrasing without the actionable tail when possible."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    match = _STATUS_THEN_ACTION_SPLIT_RE.match(cleaned)
+    if match:
+        status = (match.group("status") or "").strip(" \t-•,;")
+        return status or None
+    parts = [
+        part.strip(" \t-•,;")
+        for part in _STATUS_CLAUSE_SPLIT_RE.split(cleaned)
+        if part and part.strip(" \t-•,;")
+    ]
+    statuses = [
+        part
+        for part in parts
+        if _unit_has_unresolved_status(part) and not _has_substantive_evidence(part)
+    ]
+    if statuses:
+        return " ".join(statuses).strip() or None
+    match = _DEFERRED_ANSWER_RE.search(cleaned)
+    if not match:
+        return None
+    # Best-effort: keep from deferred match through the status endpoint words.
+    snippet = cleaned[match.start() :].strip()
+    endpoint = re.search(
+        r"(?i)\b(?:complete|ready|available|under\s+review|being\s+processed)\b",
+        snippet,
+    )
+    if endpoint:
+        return snippet[: endpoint.end()].strip(" \t-•,;") or None
+    return match.group(0).strip() or None
+
+
+def _partition_mixed_status_clause(text: str) -> list[str]:
+    """Split one clause that mixes actionable evidence with unresolved status.
+
+    Concrete nouns such as ``claim stub`` must not cancel an unresolved status
+    signal: both portions are preserved as separate units when possible.
+    """
+    cleaned = (text or "").strip(" \t-•,;")
+    if not cleaned:
+        return []
+    has_deferred = _unit_has_unresolved_status(cleaned)
+    has_evidence = _has_substantive_evidence(cleaned)
+    if not (has_deferred and has_evidence):
+        return [cleaned]
+
+    pieces = [
+        part.strip(" \t-•,;")
+        for part in _STATUS_CLAUSE_SPLIT_RE.split(cleaned)
+        if part and part.strip(" \t-•,;")
+    ]
+    if len(pieces) >= 2:
+        return _refine_mixed_units(pieces)
+
+    # Status then action: "... once processing is complete so please keep ..."
+    match = _STATUS_THEN_ACTION_SPLIT_RE.match(cleaned)
+    if match:
+        status = (match.group("status") or "").strip(" \t-•,;")
+        action = (match.group("action") or "").strip(" \t-•,;")
+        if status and action:
+            return _refine_mixed_units([status, action])
+
+    # Status-first / run-on: cut before the actionable requirement clause.
+    match = _SUBSTANTIVE_CLAUSE_START_RE.search(cleaned)
+    if match and match.start() > 0:
+        left = cleaned[: match.start()].strip(" \t-•,;and")
+        right = cleaned[match.start() :].strip(" \t-•,;")
+        if left and right and _unit_has_unresolved_status(left):
+            return _refine_mixed_units([left, right])
+    # Could not separate reliably: keep the text once; callers must still flag
+    # unresolved status when deferred language remains beside evidence.
+    return [cleaned]
+
+
+def _refine_mixed_units(parts: list[str]) -> list[str]:
+    """Re-run mixed partitioning on pieces that still combine status + evidence."""
+    refined: list[str] = []
+    for part in parts:
+        text = (part or "").strip(" \t-•,;")
+        if not text:
+            continue
+        if _unit_has_unresolved_status(text) and _has_substantive_evidence(text):
+            # Avoid infinite recursion when a piece cannot be split further.
+            nested = _partition_mixed_status_clause(text)
+            if nested == [text]:
+                refined.append(text)
+            else:
+                refined.extend(nested)
+        else:
+            refined.append(text)
+    return refined
+
+
+def _split_staff_evidence_units(text: str) -> list[str]:
+    """Split staff text into classify-able evidence units (sentence + status-aware)."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+    units: list[str] = []
+    for sentence in _split_requirement_sentences(cleaned) or [cleaned]:
+        units.extend(_partition_mixed_status_clause(sentence))
+    return _dedupe_texts(units)
+
+
+def _dedupe_texts(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = (value or "").strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(text)
+    return unique
+
+
+def _unique_referrals_not_in_answers(
+    referrals: list[str], answers: list[str]
+) -> list[str]:
+    """Keep referral guidance that is not already copied inside substantive replies."""
+    answer_blob = " ".join(answers).casefold()
+    unique: list[str] = []
+    for referral in _dedupe_texts(referrals):
+        if referral.casefold() in answer_blob:
+            continue
+        unique.append(referral)
+    return unique
+
+
+_RELEVANCE_STOPWORDS = frozenset(
+    token
+    for token in (_IDENTITY_STOPWORDS | _REFERRAL_BOILERPLATE_TOKENS)
+    if token
+    not in {
+        "registrar",
+        "student",
+        "faculty",
+    }
+)
+# Generic terms that must not independently establish referral relevance.
+_GENERIC_RELEVANCE_TOKENS = frozenset(
+    {
+        "form",
+        "forms",
+        "office",
+        "requirements",
+        "requirement",
+        "processing",
+        "schedule",
+        "procedure",
+        "procedures",
+        "latest",
+        "information",
+        "info",
+        "details",
+        "detail",
+        "current",
+        "process",
+        "request",
+        "requests",
+        "documents",
+        "document",
+        "application",
+        "applications",
+        "working",
+        "days",
+        "day",
+        "steps",
+        "step",
+        "window",
+        "assignment",
+    }
+)
+_FEE_TOPIC_RE = re.compile(
+    r"\b(?:fee|fees|payment|cashier|how\s+much|cost)\b",
+    re.IGNORECASE,
+)
+_RELATED_TOKEN_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"claim", "release", "releasing", "claiming"}),
+    frozenset({"tor", "transcript"}),
+    frozenset({"coe", "enrollment", "enrolment", "certificate"}),
+    frozenset({"excuse", "absence"}),
+)
+
+
+def _significant_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", (text or "").casefold())
+        if len(token) >= 3 and token not in _RELEVANCE_STOPWORDS
+    }
+
+
+def _distinctive_tokens(text: str) -> set[str]:
+    """Content tokens strong enough to support referral relevance."""
+    return _significant_tokens(text) - _GENERIC_RELEVANCE_TOKENS
+
+
+def _expand_related_tokens(tokens: set[str]) -> set[str]:
+    expanded = set(tokens)
+    for group in _RELATED_TOKEN_GROUPS:
+        if tokens & group:
+            expanded |= group
+    return expanded
+
+
+def _referral_relevance(
+    referral: str, *, context_parts: list[str]
+) -> str:
+    """Return ``relevant``, ``unrelated``, or ``ambiguous`` for a referral sentence.
+
+    Generic words such as form/office/requirements/processing alone never make a
+    referral relevant. Distinctive topic evidence from the ticket context is required.
+    """
+    text = (referral or "").strip()
+    if not text:
+        return "unrelated"
+
+    ref_distinct = _distinctive_tokens(text)
+    ctx_distinct: set[str] = set()
+    for part in context_parts:
+        ctx_distinct |= _distinctive_tokens(part or "")
+    ref_expanded = _expand_related_tokens(ref_distinct)
+    ctx_expanded = _expand_related_tokens(ctx_distinct)
+
+    # Fee/payment is distinctive when both referral and ticket discuss it.
+    if _FEE_TOPIC_RE.search(text) and any(
+        _FEE_TOPIC_RE.search(part or "") for part in context_parts
+    ):
+        return "relevant"
+
+    # Light synonym bridges on distinctive tokens only (claim/release, COE, etc.).
+    for group in _RELATED_TOKEN_GROUPS:
+        if (ref_distinct & group) and (ctx_distinct & group):
+            return "relevant"
+
+    overlap = ref_expanded & ctx_expanded
+    if len(overlap) >= 2:
+        return "relevant"
+    if len(overlap) == 1:
+        return "ambiguous"
+
+    # No distinctive evidence left in the referral (generic office/requirements only).
+    if not ref_distinct:
+        return "ambiguous"
+    return "unrelated"
+
+
+def _partition_referrals_by_relevance(
+    referrals: list[str],
+    *,
+    context_parts: list[str],
+) -> tuple[list[str], list[str]]:
+    """Split referrals into (relevant, ambiguous). Unrelated referrals are dropped."""
+    relevant: list[str] = []
+    ambiguous: list[str] = []
+    for referral in _dedupe_texts(referrals):
+        verdict = _referral_relevance(referral, context_parts=context_parts)
+        if verdict == "relevant":
+            relevant.append(referral)
+        elif verdict == "ambiguous":
+            ambiguous.append(referral)
+    return relevant, ambiguous
+
+
+def _filter_referrals_by_relevance(
+    referrals: list[str],
+    *,
+    context_parts: list[str],
+    keep: str,
+) -> list[str]:
+    kept: list[str] = []
+    for referral in _dedupe_texts(referrals):
+        if _referral_relevance(referral, context_parts=context_parts) == keep:
+            kept.append(referral)
+    return kept
+
+
+def _embedded_referral_sentences(answers: list[str]) -> list[str]:
+    """Referral-only sentences embedded inside otherwise substantive staff replies."""
+    found: list[str] = []
+    for answer in answers:
+        for sentence in _split_staff_evidence_units(answer):
+            if _classify_sentence(sentence) == "referral":
+                found.append(sentence)
+    return _dedupe_texts(found)
+
+
+def _referral_completion_notes(
+    referrals: list[str],
+    *,
+    question: str = "",
+    followups: list[str] | None = None,
+) -> list[str]:
+    """Staff-facing notes when referrals leave official details unconfirmed."""
+    notes = [
+        "Some details still require office confirmation and must not be published "
+        "as verified facts.",
+        "Do not invent forms, fees, processing times, or submission locations.",
+    ]
+    blob = " ".join([question, *(followups or []), *referrals]).casefold()
+    if any(token in blob for token in ("fee", "payment", "cost", "how much", "cashier")):
+        notes.append("Processing fee / payment amount was not confirmed.")
+    if "form" in blob:
+        notes.append("Any form or document still marked for confirmation needs an official name.")
+    if re.search(
+        r"\b(?:how long|processing time|deadline|release schedule|working days?)\b",
+        blob,
+    ):
+        notes.append("Processing time or release schedule still needs confirmation.")
+    if any(token in blob for token in ("where", "location", "window", "counter")):
+        notes.append("Exact submission location/window still needs confirmation.")
+    return notes
+
+
+def _format_structured_article(
+    answers: list[str],
+    *,
+    office_name: str = "",
+    followups: list[str] | None = None,
+    referrals: list[str] | None = None,
+    status_updates: list[str] | None = None,
+) -> str:
+    """Build a concise structured FAQ body from substantive staff answers."""
+    _ = followups  # Follow-ups inform incompleteness checks, not body copy.
+    usable = [item.strip() for item in answers if item and item.strip()]
+    if not usable:
+        return ""
+
+    requirements: list[str] = []
+    procedures: list[str] = []
+    overview: list[str] = []
+    notes: list[str] = []
+
+    for answer in usable:
+        for sentence in _split_staff_evidence_units(answer):
+            kind = _classify_sentence(sentence)
+            if kind == "deferred" or (
+                _unit_has_unresolved_status(sentence)
+                and not _has_substantive_evidence(sentence)
+            ):
+                # Status language never becomes the FAQ overview/answer.
+                continue
+            if kind == "referral":
+                notes.append(sentence)
+                continue
+            # Concrete nouns must not smuggle unresolved status into Procedure.
+            if _unit_has_unresolved_status(sentence):
+                scrubbed = _actionable_remainder_without_status(sentence)
+                if not scrubbed:
+                    continue
+                sentence = scrubbed
+            lower = sentence.casefold()
+            if any(
+                token in lower
+                for token in (
+                    "bring",
+                    "submit",
+                    "requirement",
+                    "required document",
+                    "documents are",
+                    "form",
+                    "tor",
+                    "id ",
+                    "valid id",
+                )
+            ) and not lower.startswith(("go to", "pay at", "return", "keep")):
+                requirements.append(sentence)
+            elif any(
+                token in lower
+                for token in (
+                    "go to",
+                    "fill out",
+                    "pay",
+                    "return",
+                    "claim",
+                    "present",
+                    "proceed",
+                    "keep",
+                )
+            ):
+                procedures.append(sentence)
+            elif "working day" in lower or (
+                "within" in lower and "day" in lower
+            ):
+                notes.append(sentence)
+            else:
+                overview.append(sentence)
+
+    sections: list[str] = []
+    if overview:
+        sections.append("## Overview\n\n" + " ".join(overview).strip())
+    if requirements:
+        bullets = "\n".join(f"- {item}" for item in requirements)
+        sections.append(f"## Requirements\n\n{bullets}")
+    if procedures:
+        if len(procedures) == 1:
+            sections.append(f"## Procedure\n\n{procedures[0]}")
+        else:
+            steps = "\n".join(
+                f"{index}. {item}" for index, item in enumerate(procedures, start=1)
+            )
+            sections.append(f"## Procedure\n\n{steps}")
+    if office_name:
+        sections.append(f"## Responsible office\n\n{office_name}")
+    if notes:
+        note_lines = "\n".join(f"- {item}" for item in notes)
+        sections.append(f"## Important notes\n\n{note_lines}")
+    referral_lines = _unique_referrals_not_in_answers(referrals or [], usable)
+    if referral_lines:
+        bullets = "\n".join(f"- {item}" for item in referral_lines)
+        sections.append(
+            "## Confirm with the office\n\n"
+            "The conversation directs students to verify the following details. "
+            "Do not treat them as confirmed Knowledge Base facts yet.\n\n"
+            f"{bullets}"
+        )
+    status_lines = [
+        item
+        for item in _dedupe_texts(status_updates or [])
+        if item.casefold() not in " ".join(usable).casefold()
+    ]
+    if status_lines:
+        bullets = "\n".join(f"- {item}" for item in status_lines)
+        sections.append(
+            "## Request status\n\n"
+            "These updates describe ticket progress only and are not a complete "
+            "reusable Knowledge Base answer.\n\n"
+            f"{bullets}"
+        )
+
+    if sections:
+        return "\n\n".join(sections).strip()
+    # Fallback: keep a coherent multi-reply answer without conversational scaffolding.
+    return _format_answer_steps(usable)
+
+
+def _format_incomplete_article(
+    *,
+    known: list[str],
+    missing: list[str],
+    office_name: str = "",
+) -> str:
+    parts: list[str] = []
+    known_text = _format_answer_steps(known).strip()
+    if known_text:
+        parts.append(f"## What we know\n\n{known_text}")
+    if office_name:
+        parts.append(
+            f"## Responsible office\n\n{office_name}\n\n"
+            "Confirm the current official process with this office before publishing."
+        )
+    return _append_incomplete_notes("\n\n".join(parts).strip(), missing)
+
+
+def _append_incomplete_notes(content: str, missing: list[str]) -> str:
+    notes = [item.strip() for item in missing if item and item.strip()]
+    if not notes:
+        notes = [
+            "The conversation does not establish a complete reusable answer.",
+        ]
+    bullet = "\n".join(f"- {item}" for item in notes)
+    block = f"{_INCOMPLETE_NOTES_HEADING}\n\n{bullet}\n\n{_COMPLETION_MARKER}"
+    text = (content or "").strip()
+    if not text:
+        return block
+    if _INCOMPLETE_NOTES_HEADING in text and _COMPLETION_MARKER in text:
+        return text
+    return f"{text}\n\n{block}".strip()
+
+
+def _article_summary(
+    *,
+    title: str,
+    content: str,
+    incomplete: bool,
+    notes: str | None,
+) -> str:
+    topic = re.sub(r"\s+", " ", (title or "").strip()).rstrip("?")
+    if incomplete:
+        if notes == "incomplete_referral":
+            return (
+                f"Partial guidance about {topic} from a support conversation. "
+                "Official requirements still need staff confirmation before publishing."
+            )
+        if notes == "contradictory_answers":
+            return (
+                f"Draft notes about {topic} contain conflicting staff instructions "
+                "and need reconciliation before publishing."
+            )
+        if notes == "unanswered_followup":
+            return (
+                f"Draft answer about {topic} is missing details raised in the "
+                "student follow-up and needs staff completion."
+            )
+        if notes == "unconfirmed_referral":
+            return (
+                f"Draft answer about {topic} includes confirmed steps plus details "
+                "that still need office confirmation before publishing."
+            )
+        if notes == "unresolved_status":
+            return (
+                f"Draft answer about {topic} still includes an unresolved status "
+                "update and needs staff completion before publishing."
+            )
+        if notes == "deferred_answer":
+            return (
+                f"Incomplete draft about {topic}. Staff only recorded a status "
+                "update; a reusable answer is still missing."
+            )
+        return (
+            f"Incomplete draft about {topic}. Staff must supply the missing "
+            "official details before this can be published."
+        )
+    # Prefer a short overview sentence from the generated body.
+    overview_match = re.search(
+        r"##\s*Overview\s*\n+(.+?)(?:\n\n|\Z)", content or "", flags=re.IGNORECASE | re.DOTALL
+    )
+    if overview_match:
+        return _short_summary(overview_match.group(1), limit=220)
+    return _short_summary(
+        f"How to handle {topic}, based on an approved office support answer.",
+        limit=220,
+    )
 
 
 def _needs_manual_flag(
@@ -1290,6 +2296,8 @@ def strip_ticket_faq_scaffolding(content: str, *, title: str | None = None) -> s
 
 def _clean_title(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", (value or "").strip())
+    # Drop conversational parentheticals accidentally appended from follow-ups.
+    cleaned = _CONVERSATIONAL_PAREN_RE.sub("", cleaned).strip()
     cleaned = cleaned[:240].strip()
     if len(cleaned) < 3:
         raise TicketKnowledgeError("Article title is too short.")

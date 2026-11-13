@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import get_args
 
 import pytest
 from sqlalchemy import create_engine
@@ -10,7 +11,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
-from app.models.db_models import Office, PublishedArticle, Ticket, TicketReply, User
+from app.models.db_models import (
+    Office,
+    PublishedArticle,
+    Ticket,
+    TicketAuditEvent,
+    TicketReply,
+    User,
+)
+from app.models.schemas import KbConversionStatus, TicketKbArticleSchema, TicketSchema
 from app.services.article_rag_indexer import (
     FaqIndexWriteError,
     RagIndexOrphanError,
@@ -27,9 +36,11 @@ from app.services.passwords import hash_password
 from app.services.ticket_knowledge import (
     TicketKnowledgeAccessError,
     TicketKnowledgeError,
+    _titles_are_duplicate_topics,
     approve_ticket_kb_article,
     convert_ticket_to_draft_article,
     ensure_unique_article_slug,
+    find_duplicate_published_topic,
     generate_article_from_resolved_ticket,
     infer_audience_from_text,
     redact_ticket_pii,
@@ -1210,4 +1221,403 @@ def test_generation_failure_does_not_block_resolve(session: Session, monkeypatch
     assert retried["published"] is False
     session.refresh(ticket)
     assert ticket.kb_conversion_status in {"draft", "needs_review"}
+
+
+def test_titles_are_duplicate_topics_rejects_generic_single_word_containment():
+    assert _titles_are_duplicate_topics("enrollment", "enrollment") is True
+    assert (
+        _titles_are_duplicate_topics(
+            "enrollment",
+            "request for certificate of enrollment",
+        )
+        is False
+    )
+    assert (
+        _titles_are_duplicate_topics(
+            "certificate of enrollment",
+            "request for certificate of enrollment",
+        )
+        is True
+    )
+    assert (
+        _titles_are_duplicate_topics(
+            "certificate of enrollment",
+            "Certificate of Enrollment!",
+        )
+        is True
+    )
+    assert (
+        _titles_are_duplicate_topics(
+            "id validation",
+            "completely different topic",
+        )
+        is False
+    )
+
+
+def test_generic_enrollment_article_does_not_block_coe_ticket_draft(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    now = datetime.now(timezone.utc)
+    session.add(
+        PublishedArticle(
+            id="art-enrollment-generic",
+            title="Enrollment",
+            slug="enrollment",
+            category="Academic Policies",
+            summary="Generic enrollment overview from a source document.",
+            content="## Enrollment\n\nGeneral enrollment overview from the handbook.",
+            office="Registrar",
+            source_filename="handbook.pdf",
+            audience="student",
+            kb_origin="document",
+            published=True,
+            published_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.commit()
+
+    assert (
+        find_duplicate_published_topic(
+            session, title="Request for Certificate of Enrollment"
+        )
+        is None
+    )
+
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-COE-DUP-SAFE",
+        question="Request for Certificate of Enrollment",
+        student_messages=[
+            "Thank you! I need the COE for a scholarship application."
+        ],
+        staff_messages=[
+            "Go to the Registrar, fill out the certificate request form, "
+            "pay the fee at the cashier, and return with the official receipt. "
+            "Release is usually the next working day."
+        ],
+    )
+    payload = resolve_ticket(session, ticket.id, staff)
+    assert payload.status == "Resolved"
+    assert payload.kb_conversion_status == "draft"
+    assert payload.kb_article_id
+    article = session.get(PublishedArticle, payload.kb_article_id)
+    assert article is not None
+    assert article.published is False
+    assert "certificate request form" in (article.content or "").casefold()
+
+
+def test_specific_coe_article_still_blocks_same_topic_duplicate(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    now = datetime.now(timezone.utc)
+    session.add(
+        PublishedArticle(
+            id="art-coe-specific",
+            title="Certificate of Enrollment",
+            slug="certificate-of-enrollment",
+            category="Academic Policies",
+            summary="How to request a Certificate of Enrollment.",
+            content="## Certificate of Enrollment\n\nRequest steps at the Registrar.",
+            office="Registrar",
+            source_filename="charter.pdf",
+            audience="student",
+            kb_origin="document",
+            published=True,
+            published_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.commit()
+
+    match = find_duplicate_published_topic(
+        session, title="Request for Certificate of Enrollment"
+    )
+    assert match is not None
+    assert match.title == "Certificate of Enrollment"
+
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-COE-DUP-BLOCK",
+        question="Request for Certificate of Enrollment",
+        staff_messages=[
+            "Go to the Registrar, fill out the certificate request form, "
+            "pay the fee at the cashier, and return with the official receipt."
+        ],
+    )
+    payload = resolve_ticket(session, ticket.id, staff)
+    assert payload.status == "Resolved"
+    assert payload.kb_conversion_status == "failed"
+    session.refresh(ticket)
+    assert ticket.kb_conversion_status == "failed"
+    assert (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .one_or_none()
+        is None
+    )
+
+    from app.models.db_models import TicketAuditEvent
+
+    audit = (
+        session.query(TicketAuditEvent)
+        .filter(
+            TicketAuditEvent.ticket_id == ticket.id,
+            TicketAuditEvent.action == "kb_generate_failed",
+        )
+        .order_by(TicketAuditEvent.created_at.desc())
+        .first()
+    )
+    assert audit is not None
+    assert "duplicate_topic" in (audit.new_value or "")
+
+
+def test_unrelated_published_article_allows_auto_generation(session: Session):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    now = datetime.now(timezone.utc)
+    session.add(
+        PublishedArticle(
+            id="art-unrelated",
+            title="Lost ID Replacement",
+            slug="lost-id-replacement",
+            category="Student Services",
+            summary="Replace a lost school ID.",
+            content="## Lost ID\n\nReport to OSAS and pay the replacement fee.",
+            office="Office of Student Affairs",
+            source_filename="osas.pdf",
+            audience="student",
+            kb_origin="document",
+            published=True,
+            published_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.commit()
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-UNRELATED-OK",
+        question="How do I request a good moral certificate?",
+        staff_messages=[
+            "Submit the good moral request form at OSA with a valid ID. "
+            "Release is typically within three working days."
+        ],
+    )
+    payload = resolve_ticket(session, ticket.id, staff)
+    assert payload.status == "Resolved"
+    assert payload.kb_conversion_status == "draft"
+    assert payload.kb_article_id
+
+
+def test_retry_after_failed_generation_reuses_single_draft(session: Session, monkeypatch):
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-RETRY-FAIL",
+        question="How do I claim my TOR?",
+        staff_messages=[
+            "Bring a valid ID and claim stub to the Registrar releasing window. "
+            "Pay any outstanding balance first."
+        ],
+    )
+
+    calls = {"n": 0}
+
+    real_generate = generate_article_from_resolved_ticket
+
+    def _flaky(session_arg, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TicketKnowledgeError(
+                'A published article already covers this topic: "Enrollment". '
+                "Point the student to the Knowledge Base instead of publishing a duplicate."
+            )
+        return real_generate(session_arg, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.ticket_knowledge.generate_article_from_resolved_ticket",
+        _flaky,
+    )
+    payload = resolve_ticket(session, ticket.id, staff)
+    assert payload.status == "Resolved"
+    assert payload.kb_conversion_status == "failed"
+
+    monkeypatch.undo()
+    first = retry_ticket_kb_generation(session, ticket_id=ticket.id, actor=staff)
+    second = retry_ticket_kb_generation(session, ticket_id=ticket.id, actor=staff)
+    assert first["article_id"] == second["article_id"]
+    rows = (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].published is False
+
+
+def test_retry_after_failed_auto_generation_without_article_creates_draft(
+    session: Session,
+):
+    """Staff retry after failed auto-gen (no article) must not require re-resolve."""
+    office = _office(session)
+    student = _user(session, role="student")
+    staff = _user(session, role="office", office_id=office.id)
+    now = datetime.now(timezone.utc)
+    blocker = PublishedArticle(
+        id="art-coe-blocker-retry",
+        title="Certificate of Enrollment",
+        slug="certificate-of-enrollment-blocker",
+        category="Academic Policies",
+        summary="How to request a Certificate of Enrollment.",
+        content="## Certificate of Enrollment\n\nRequest steps at the Registrar.",
+        office="Registrar",
+        source_filename="charter.pdf",
+        audience="student",
+        kb_origin="document",
+        published=True,
+        published_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(blocker)
+    session.commit()
+
+    ticket = _open_ticket_with_thread(
+        session,
+        office,
+        student,
+        staff,
+        ticket_id="TKT-RETRY-NO-ART",
+        question="Request for Certificate of Enrollment",
+        staff_messages=[
+            "Go to the Registrar, fill out the certificate request form, "
+            "pay the fee at the cashier, and return with the official receipt. "
+            "Release is usually the next working day."
+        ],
+    )
+    failed = resolve_ticket(session, ticket.id, staff)
+    assert failed.status == "Resolved"
+    assert failed.kb_conversion_status == "failed"
+    assert failed.kb_article_id is None
+    session.refresh(ticket)
+    assert ticket.status == "Resolved"
+    assert ticket.kb_conversion_status == "failed"
+    assert ticket.kb_article_id is None
+    assert (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .one_or_none()
+        is None
+    )
+
+    fail_audit = (
+        session.query(TicketAuditEvent)
+        .filter(
+            TicketAuditEvent.ticket_id == ticket.id,
+            TicketAuditEvent.action == "kb_generate_failed",
+        )
+        .order_by(TicketAuditEvent.created_at.desc())
+        .first()
+    )
+    assert fail_audit is not None
+    assert fail_audit.new_value == "failed:duplicate_topic"
+
+    # Duplicate condition no longer applies (blocker unpublished).
+    blocker.published = False
+    blocker.published_at = None
+    session.add(blocker)
+    session.commit()
+
+    resolved_at_before = ticket.resolved_at
+    retried = retry_ticket_kb_generation(session, ticket_id=ticket.id, actor=staff)
+    assert retried["article_id"]
+    assert retried["published"] is False
+    assert retried["kb_conversion_status"] in {"draft", "needs_review"}
+    assert TicketKbArticleSchema(**retried).kb_conversion_status in {
+        "draft",
+        "needs_review",
+    }
+
+    session.refresh(ticket)
+    assert ticket.status == "Resolved"
+    assert ticket.resolved_at == resolved_at_before
+    assert ticket.kb_conversion_status in {"draft", "needs_review"}
+    assert ticket.kb_article_id == retried["article_id"]
+
+    success_audit = (
+        session.query(TicketAuditEvent)
+        .filter(
+            TicketAuditEvent.ticket_id == ticket.id,
+            TicketAuditEvent.action == "kb_convert",
+        )
+        .order_by(TicketAuditEvent.created_at.desc())
+        .first()
+    )
+    assert success_audit is not None
+    assert success_audit.new_value == retried["article_id"]
+
+    actions = [
+        row.action
+        for row in session.query(TicketAuditEvent)
+        .filter(TicketAuditEvent.ticket_id == ticket.id)
+        .order_by(TicketAuditEvent.created_at.asc())
+        .all()
+    ]
+    assert "kb_generate_failed" in actions
+    assert "kb_convert" in actions
+    assert actions.index("kb_generate_failed") < actions.index("kb_convert")
+
+    again = retry_ticket_kb_generation(session, ticket_id=ticket.id, actor=staff)
+    assert again["article_id"] == retried["article_id"]
+    rows = (
+        session.query(PublishedArticle)
+        .filter(PublishedArticle.source_ticket_id == ticket.id)
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].published is False
+
+
+def test_kb_conversion_status_contract_distinguishes_staff_visible_states():
+    """API schema values must match the staff UI conversion states."""
+    allowed = set(get_args(KbConversionStatus))
+    assert allowed == {
+        "none",
+        "draft",
+        "needs_review",
+        "published",
+        "failed",
+        "rejected",
+    }
+    # Ticket detail and KB article payloads both expose the conversion status.
+    assert "kb_conversion_status" in TicketSchema.model_fields
+    assert "kb_conversion_status" in TicketKbArticleSchema.model_fields
+    assert "kb_needs_manual_completion" in TicketSchema.model_fields
+    # Staff UI maps these independently: failed → retry, draft/needs_review →
+    # approve/reject, published → no regenerate.
+    assert "failed" in allowed
+    assert "needs_review" in allowed
+    assert "draft" in allowed
+    assert "published" in allowed
 

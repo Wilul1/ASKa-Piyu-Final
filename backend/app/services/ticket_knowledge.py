@@ -364,15 +364,37 @@ def try_auto_generate_ticket_article(
         return generate_article_from_resolved_ticket(
             session, ticket_id=ticket_id, actor=actor
         )
-    except TicketKnowledgeError:
-        logger.error("ticket article auto-generation skipped ticket_id=%s", ticket_id)
+    except TicketKnowledgeError as exc:
+        reason = _auto_generation_failure_reason(exc)
+        logger.error(
+            "ticket article auto-generation skipped ticket_id=%s reason=%s",
+            ticket_id,
+            reason,
+        )
+        try:
+            _mark_generation_failed(
+                session, ticket_id=ticket_id, actor=actor, reason=reason
+            )
+        except Exception:
+            logger.error(
+                "ticket article failure status could not be recorded ticket_id=%s",
+                ticket_id,
+            )
         return None
     except Exception:
         logger.error("ticket article auto-generation failed ticket_id=%s", ticket_id)
         try:
-            _mark_generation_failed(session, ticket_id=ticket_id, actor=actor)
+            _mark_generation_failed(
+                session,
+                ticket_id=ticket_id,
+                actor=actor,
+                reason="unexpected_error",
+            )
         except Exception:
-            logger.error("ticket article failure status could not be recorded ticket_id=%s", ticket_id)
+            logger.error(
+                "ticket article failure status could not be recorded ticket_id=%s",
+                ticket_id,
+            )
         return None
 
 
@@ -616,7 +638,13 @@ def _reindex_ticket_article(session: Session, *, article: PublishedArticle) -> d
     return article_link_payload(article)
 
 
-def _mark_generation_failed(session: Session, *, ticket_id: str, actor: User) -> None:
+def _mark_generation_failed(
+    session: Session,
+    *,
+    ticket_id: str,
+    actor: User,
+    reason: str | None = None,
+) -> None:
     ticket = session.get(Ticket, ticket_id)
     if ticket is None:
         return
@@ -627,19 +655,52 @@ def _mark_generation_failed(session: Session, *, ticket_id: str, actor: User) ->
     )
     if existing is not None and bool(existing.published):
         return
+    note = (reason or "generation_failed").strip()[:_GENERATION_NOTES_MAX] or "generation_failed"
+    previous_status = ticket.kb_conversion_status or "none"
     ticket.kb_conversion_status = "failed"
     ticket.updated_at = utc_now()
     session.add(ticket)
+    if existing is not None:
+        existing.generation_notes = note
+        existing.needs_manual_completion = False
+        # Keep an unpublished draft linked, but surface the failure reason.
+        if (existing.review_status or "").strip().lower() != "rejected":
+            existing.review_status = "pending"
+        session.add(existing)
+        ticket.kb_article_id = existing.id
+        session.add(ticket)
     record_ticket_audit(
         session,
         ticket_id=ticket.id,
         actor=actor,
         action="kb_generate_failed",
         field_name="kb_conversion_status",
-        old_value="none",
-        new_value="failed",
+        old_value=previous_status,
+        new_value=f"failed:{note}",
     )
     session.commit()
+
+
+def _auto_generation_failure_reason(exc: TicketKnowledgeError) -> str:
+    """Map a TicketKnowledgeError to a short staff-visible note (no PII)."""
+    message = str(exc or "").strip()
+    lowered = message.casefold()
+    if "already covers this topic" in lowered:
+        return "duplicate_topic"
+    if "only resolved or closed" in lowered:
+        return "invalid_status"
+    if "at least" in lowered and "characters" in lowered:
+        return "answer_too_short"
+    if "add an office or admin reply" in lowered:
+        return "missing_staff_answer"
+    if "incomplete" in lowered:
+        return "incomplete_answer"
+    # Keep a sanitized, truncated remnant for unexpected TicketKnowledgeError.
+    cleaned = redact_ticket_pii(message)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return "generation_blocked"
+    return cleaned[:_GENERATION_NOTES_MAX]
 
 
 def _require_ticket_article(session: Session, ticket: Ticket) -> PublishedArticle:
@@ -697,7 +758,7 @@ def find_duplicate_published_topic(
         find_matching_published_article,
     )
 
-    want = _normalize_match_title(title)
+    want = _canonical_topic_title(_normalize_match_title(title))
     if len(want) < 3:
         return None
 
@@ -707,11 +768,13 @@ def find_duplicate_published_topic(
         match is not None
         and bool(match.published)
         and (not exclude_article_id or match.id != exclude_article_id)
-        and _titles_are_duplicate_topics(want, _normalize_match_title(match.title))
+        and _titles_are_duplicate_topics(
+            want, _canonical_topic_title(_normalize_match_title(match.title))
+        )
     ):
         return match
 
-    # Fallback: only published rows, exact or containment match.
+    # Fallback: only published rows with the tightened topic comparator.
     rows = (
         session.query(PublishedArticle)
         .filter(PublishedArticle.published.is_(True))
@@ -720,22 +783,77 @@ def find_duplicate_published_topic(
     for row in rows:
         if exclude_article_id and row.id == exclude_article_id:
             continue
-        other = _normalize_match_title(row.title)
+        other = _canonical_topic_title(_normalize_match_title(row.title))
         if _titles_are_duplicate_topics(want, other):
             return row
     return None
 
 
+def _canonical_topic_title(normalized: str) -> str:
+    """Drop trailing parenthetical asides from already-normalized titles."""
+    text = (normalized or "").strip()
+    text = re.sub(r"\s*\([^)]*\)\s*$", "", text).strip()
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _topic_tokens(normalized: str) -> list[str]:
+    """Split a normalized title into alphanumeric tokens."""
+    return [
+        token
+        for token in re.findall(r"[a-z0-9]+", (normalized or "").casefold())
+        if token
+    ]
+
+
+def _is_contiguous_subsequence(shorter: list[str], longer: list[str]) -> bool:
+    if not shorter or len(shorter) > len(longer):
+        return False
+    span = len(shorter)
+    for start in range(0, len(longer) - span + 1):
+        if longer[start : start + span] == shorter:
+            return True
+    return False
+
+
 def _titles_are_duplicate_topics(left: str, right: str) -> bool:
+    """True when two FAQ titles describe the same topic.
+
+    Exact normalized equality always matches. Single-token / generic titles
+    (e.g. ``Enrollment``) never block a longer specific title via substring
+    containment — that was the v87 production false positive. Multi-token
+    phrases may still match when the shorter phrase appears as a contiguous
+    token sequence inside the longer title.
+    """
     if not left or not right:
         return False
     if left == right:
         return True
-    # Containment only when both sides are long enough to avoid accidental hits.
-    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
-    if len(shorter) < 8:
+
+    left_tokens = _topic_tokens(left)
+    right_tokens = _topic_tokens(right)
+    if not left_tokens or not right_tokens:
         return False
-    return shorter in longer
+    if left_tokens == right_tokens:
+        return True
+
+    shorter, longer = (
+        (left_tokens, right_tokens)
+        if len(left_tokens) <= len(right_tokens)
+        else (right_tokens, left_tokens)
+    )
+    # One generic word is never enough evidence of duplication.
+    if len(shorter) < 2:
+        return False
+    if not _is_contiguous_subsequence(shorter, longer):
+        return False
+    # Specific 3+ token phrases (e.g. "certificate of enrollment") may block
+    # a longer title that contains them. Two-token phrases only when they are
+    # a large share of the longer title (avoids "student id" blocking
+    # unrelated student-id-adjacent topics that merely share those words
+    # non-specifically — still require contiguity above).
+    if len(shorter) >= 3:
+        return True
+    return (len(shorter) / max(len(longer), 1)) >= 0.6
 
 
 def _publish_converted_ticket_article(

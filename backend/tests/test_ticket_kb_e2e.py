@@ -528,3 +528,150 @@ def test_resolve_autogenerates_unpublished_article_and_blocks_student_approve(e2
         )
         assert len(rows) == 1
         assert rows[0].published is True
+
+
+def test_retry_after_failed_auto_generation_http_creates_draft(e2e_client):
+    """POST /kb-article/retry after failed auto-gen (no article) creates a draft."""
+    client, session_factory, _store = e2e_client
+    office_headers = _auth("user-office", session_factory)
+    now = datetime.now(timezone.utc)
+
+    with session_factory() as session:
+        session.add(
+            PublishedArticle(
+                id="art-e2e-coe-blocker",
+                title="Certificate of Enrollment",
+                slug="certificate-of-enrollment-e2e-blocker",
+                category="Academic Policies",
+                summary="How to request a Certificate of Enrollment.",
+                content="## Certificate of Enrollment\n\nRequest steps at the Registrar.",
+                office="Registrar",
+                source_filename="charter.pdf",
+                audience="student",
+                kb_origin="document",
+                published=True,
+                published_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            Ticket(
+                id="TKT-E2E-RETRY-FAIL",
+                user_id="user-student",
+                original_question="Request for Certificate of Enrollment",
+                description="I need a COE for scholarship.",
+                category="Student Services",
+                assigned_office_id="office-reg",
+                assigned_office="Registrar",
+                priority="Medium",
+                status="Open",
+                kb_conversion_status="none",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            TicketReply(
+                ticket_id="TKT-E2E-RETRY-FAIL",
+                sender_id="user-office",
+                sender_role="office",
+                sender_name="Office User",
+                message=(
+                    "Submit the certificate request form at the Registrar, pay the "
+                    "fee at the cashier, and present the receipt. Release is the next "
+                    "working day."
+                ),
+                created_at=now,
+            )
+        )
+        session.commit()
+
+    resolved = client.post("/tickets/TKT-E2E-RETRY-FAIL/resolve", headers=office_headers)
+    assert resolved.status_code == 200, resolved.text
+    failed_body = resolved.json()
+    assert failed_body["status"] == "Resolved"
+    assert failed_body["kb_conversion_status"] == "failed"
+    assert failed_body.get("kb_article_id") in (None, "")
+
+    audit_failed = client.get(
+        "/tickets/TKT-E2E-RETRY-FAIL/audit",
+        headers=office_headers,
+    )
+    assert audit_failed.status_code == 200, audit_failed.text
+    fail_events = [
+        event
+        for event in audit_failed.json()
+        if event["action"] == "kb_generate_failed"
+    ]
+    assert fail_events
+    assert "duplicate_topic" in (fail_events[-1].get("new_value") or "")
+
+    with session_factory() as session:
+        blocker = session.get(PublishedArticle, "art-e2e-coe-blocker")
+        assert blocker is not None
+        blocker.published = False
+        blocker.published_at = None
+        session.add(blocker)
+        session.commit()
+
+    detail_before = client.get(
+        "/tickets/TKT-E2E-RETRY-FAIL",
+        headers=office_headers,
+    )
+    assert detail_before.status_code == 200
+    assert detail_before.json()["status"] == "Resolved"
+    assert detail_before.json()["kb_conversion_status"] == "failed"
+    resolved_at = detail_before.json().get("resolved_at")
+
+    retry = client.post(
+        "/tickets/TKT-E2E-RETRY-FAIL/kb-article/retry",
+        headers=office_headers,
+    )
+    assert retry.status_code == 200, retry.text
+    retry_body = retry.json()
+    assert retry_body["article_id"]
+    assert retry_body["published"] is False
+    assert retry_body["kb_conversion_status"] in {"draft", "needs_review"}
+
+    detail_after = client.get(
+        "/tickets/TKT-E2E-RETRY-FAIL",
+        headers=office_headers,
+    )
+    assert detail_after.status_code == 200
+    after = detail_after.json()
+    assert after["status"] == "Resolved"
+    assert after.get("resolved_at") == resolved_at
+    assert after["kb_conversion_status"] in {"draft", "needs_review"}
+    assert after["kb_article_id"] == retry_body["article_id"]
+    # Staff can distinguish pending/review from failed via the same field.
+    assert after["kb_conversion_status"] != "failed"
+    if after["kb_conversion_status"] == "needs_review":
+        assert after.get("kb_needs_manual_completion") is True
+
+    audit_after = client.get(
+        "/tickets/TKT-E2E-RETRY-FAIL/audit",
+        headers=office_headers,
+    )
+    assert audit_after.status_code == 200
+    actions = [event["action"] for event in audit_after.json()]
+    assert "kb_generate_failed" in actions
+    assert "kb_convert" in actions
+    assert actions.index("kb_generate_failed") < actions.index("kb_convert")
+
+    retry_again = client.post(
+        "/tickets/TKT-E2E-RETRY-FAIL/kb-article/retry",
+        headers=office_headers,
+    )
+    assert retry_again.status_code == 200, retry_again.text
+    assert retry_again.json()["article_id"] == retry_body["article_id"]
+
+    with session_factory() as session:
+        rows = (
+            session.query(PublishedArticle)
+            .filter(PublishedArticle.source_ticket_id == "TKT-E2E-RETRY-FAIL")
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].published is False

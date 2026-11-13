@@ -330,11 +330,6 @@ def convert_ticket_to_draft_article(
             f"Article content must be at least {_MIN_RESOLUTION_CHARS} characters "
             "to save as reusable knowledge."
         )
-    if publish and keep_generation_flags and generated.needs_manual_completion:
-        raise TicketKnowledgeError(
-            "The generated answer is incomplete. Edit and approve it before publishing."
-        )
-
     existing = (
         session.query(PublishedArticle)
         .filter(PublishedArticle.source_ticket_id == ticket.id)
@@ -465,6 +460,18 @@ def convert_ticket_to_draft_article(
     if not publish:
         return article_link_payload(article)
 
+    blocked = ticket_article_publication_blocked(
+        content=article.content,
+        needs_manual_completion=bool(
+            getattr(article, "needs_manual_completion", False)
+        ),
+        source_ticket_id=article.source_ticket_id,
+        kb_origin=article.kb_origin,
+    )
+    if blocked:
+        # Draft is already saved; do not publish or clear completion signals.
+        raise TicketKnowledgeError(blocked)
+
     return _publish_converted_ticket_article(session, article=article, actor=actor)
 
 
@@ -567,11 +574,15 @@ def approve_ticket_kb_article(
         return article_link_payload(article)
     identities = _identities_from_ticket(ticket)
     body = redact_ticket_pii(article.content or "", identities=identities)
-    if (
-        bool(article.needs_manual_completion)
-        or _COMPLETION_MARKER in body
-        or len(body.strip()) < _MIN_RESOLUTION_CHARS
-    ):
+    blocked = ticket_article_publication_blocked(
+        content=body,
+        needs_manual_completion=bool(
+            getattr(article, "needs_manual_completion", False)
+        ),
+        source_ticket_id=article.source_ticket_id,
+        kb_origin=article.kb_origin,
+    )
+    if blocked or len(body.strip()) < _MIN_RESOLUTION_CHARS:
         raise TicketKnowledgeError(
             "Edit the draft so the answer is complete before approving it for the Knowledge Base."
         )
@@ -979,6 +990,44 @@ def _ticket_status_for_article(article: PublishedArticle) -> str:
     if getattr(article, "needs_manual_completion", False):
         return "needs_review"
     return "draft"
+
+
+def is_ticket_derived_article(
+    *,
+    source_ticket_id: str | None = None,
+    kb_origin: str | None = None,
+) -> bool:
+    """True when persisted article fields identify a ticket-resolution draft."""
+    if (source_ticket_id or "").strip():
+        return True
+    return str(kb_origin or "").strip().lower() == "ticket_resolution"
+
+
+def ticket_article_publication_blocked(
+    *,
+    content: str | None,
+    needs_manual_completion: bool = False,
+    source_ticket_id: str | None = None,
+    kb_origin: str | None = None,
+) -> str | None:
+    """Return an HTTP 400 detail when a ticket-derived draft must not be published.
+
+    Staff must explicitly finish the draft and clear both ``needs_manual_completion``
+    and ``_COMPLETION_MARKER`` before either admin publish path may succeed.
+    Ordinary non-ticket articles are unaffected.
+    """
+    if not is_ticket_derived_article(
+        source_ticket_id=source_ticket_id,
+        kb_origin=kb_origin,
+    ):
+        return None
+    if bool(needs_manual_completion) or _COMPLETION_MARKER in (content or ""):
+        return (
+            "This ticket-derived Knowledge Base draft still requires staff completion "
+            "before it can be published. Finish editing the article, remove the "
+            "completion marker, and clear needs_manual_completion first."
+        )
+    return None
 
 
 def assert_no_duplicate_published_topic(

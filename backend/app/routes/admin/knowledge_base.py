@@ -178,7 +178,20 @@ def _publish_gate_error(
     *,
     content: str | None,
     planner_bucket: str | None = None,
+    source_ticket_id: str | None = None,
+    kb_origin: str | None = None,
+    needs_manual_completion: bool = False,
 ) -> str | None:
+    from app.services.ticket_knowledge import ticket_article_publication_blocked
+
+    ticket_blocked = ticket_article_publication_blocked(
+        content=content,
+        needs_manual_completion=needs_manual_completion,
+        source_ticket_id=source_ticket_id,
+        kb_origin=kb_origin,
+    )
+    if ticket_blocked:
+        return ticket_blocked
     blocked = _direct_bucket_publish_blocked(
         planner_bucket=planner_bucket,
         content=content,
@@ -1417,10 +1430,16 @@ def admin_create_article(
 
     from app.models.db_models import PublishedArticle
 
-    if bool(payload.publish_status):
+    # New creates only: payload has no persisted ticket completion state yet.
+    # update_existing_id publishes are gated after the row is loaded (below).
+    if bool(payload.publish_status) and not payload.update_existing_id:
         gate = _publish_gate_error(
             content=payload.content,
             planner_bucket=payload.planner_bucket,
+            source_ticket_id=payload.source_ticket_id,
+            kb_origin=(
+                "ticket_resolution" if payload.source_ticket_id else None
+            ),
         )
         if gate:
             raise HTTPException(status_code=400, detail=gate)
@@ -1443,6 +1462,20 @@ def admin_create_article(
                         "Use the Unpublish endpoint to remove it from the public Knowledge Base."
                     ),
                 )
+            # Gate on resulting content + persisted ticket identity/completion
+            # before mutating so a rejected publish leaves the draft unchanged.
+            if bool(payload.publish_status):
+                gate = _publish_gate_error(
+                    content=payload.content,
+                    planner_bucket=payload.planner_bucket,
+                    source_ticket_id=art.source_ticket_id,
+                    kb_origin=art.kb_origin,
+                    needs_manual_completion=bool(
+                        getattr(art, "needs_manual_completion", False)
+                    ),
+                )
+                if gate:
+                    raise HTTPException(status_code=400, detail=gate)
             from app.services.ticket_knowledge import ensure_unique_article_slug
 
             art.title = payload.title
@@ -1708,7 +1741,14 @@ def admin_update_article(
                 )
             if publish:
                 next_content = updates.get("content", art.content)
-                gate = _publish_gate_error(content=next_content)
+                gate = _publish_gate_error(
+                    content=next_content,
+                    source_ticket_id=art.source_ticket_id,
+                    kb_origin=art.kb_origin,
+                    needs_manual_completion=bool(
+                        getattr(art, "needs_manual_completion", False)
+                    ),
+                )
                 if gate:
                     raise HTTPException(status_code=400, detail=gate)
                 if admin_actor_id:
@@ -1788,7 +1828,14 @@ def admin_publish_article(
         if art is None:
             raise HTTPException(status_code=404, detail="Article not found")
         _assert_article_access(session, art, admin_actor_id)
-        gate = _publish_gate_error(content=art.content)
+        gate = _publish_gate_error(
+            content=art.content,
+            source_ticket_id=art.source_ticket_id,
+            kb_origin=art.kb_origin,
+            needs_manual_completion=bool(
+                getattr(art, "needs_manual_completion", False)
+            ),
+        )
         if gate:
             raise HTTPException(status_code=400, detail=gate)
         if art.source_ticket_id or str(art.kb_origin or "") == "ticket_resolution":
@@ -2315,22 +2362,25 @@ def _bulk_persist_articles(
                 )
                 continue
 
-            if publish:
-                content_gate = _content_blocks_publish(item.content)
-                if content_gate:
-                    results.append(
-                        AdminBulkArticleResultItem(
-                            preview_id=preview_id,
-                            success=False,
-                            title=item.title,
-                            error=content_gate,
-                            code="content_not_ready",
-                        )
-                    )
-                    continue
-
             try:
                 existing_id = (item.existing_article_id or item.update_existing_id or "").strip()
+                # New creates: run content/publish gates before insert (no ticket fields).
+                if publish and not existing_id:
+                    content_gate = _publish_gate_error(
+                        content=item.content,
+                        planner_bucket=bucket,
+                    )
+                    if content_gate:
+                        results.append(
+                            AdminBulkArticleResultItem(
+                                preview_id=preview_id,
+                                success=False,
+                                title=item.title,
+                                error=content_gate,
+                                code="content_not_ready",
+                            )
+                        )
+                        continue
                 if existing_id:
                     art = session.get(PublishedArticle, existing_id)
                     if art is None:
@@ -2399,6 +2449,31 @@ def _bulk_persist_articles(
                                     title=art.title,
                                     error="Article content must not be empty.",
                                     code="validation_error",
+                                )
+                            )
+                            continue
+                    if publish:
+                        next_content = (
+                            item.content if item.content is not None else art.content
+                        )
+                        content_gate = _publish_gate_error(
+                            content=next_content,
+                            planner_bucket=bucket,
+                            source_ticket_id=art.source_ticket_id,
+                            kb_origin=art.kb_origin,
+                            needs_manual_completion=bool(
+                                getattr(art, "needs_manual_completion", False)
+                            ),
+                        )
+                        if content_gate:
+                            results.append(
+                                AdminBulkArticleResultItem(
+                                    preview_id=preview_id,
+                                    success=False,
+                                    id=art.id,
+                                    title=art.title,
+                                    error=content_gate,
+                                    code="content_not_ready",
                                 )
                             )
                             continue

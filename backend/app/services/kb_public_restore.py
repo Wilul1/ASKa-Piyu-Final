@@ -15,11 +15,20 @@ from app.services.ticket_knowledge import sync_ticket_kb_status
 logger = logging.getLogger(__name__)
 
 
-def _publish_gate(content: str | None) -> str | None:
+def _publish_gate(article: PublishedArticle) -> str | None:
     # Keep gate rules aligned with admin KB publish (import lazily to avoid cycles).
+    # Pass persisted ticket identity/completion so incomplete ticket drafts cannot
+    # be restored to public status by this ops path.
     from app.routes.admin.knowledge_base import _publish_gate_error
 
-    return _publish_gate_error(content=content)
+    return _publish_gate_error(
+        content=article.content,
+        source_ticket_id=getattr(article, "source_ticket_id", None),
+        kb_origin=getattr(article, "kb_origin", None),
+        needs_manual_completion=bool(
+            getattr(article, "needs_manual_completion", False)
+        ),
+    )
 
 
 def restore_public_kb_articles(
@@ -84,7 +93,7 @@ def restore_public_kb_articles(
         report["draft_candidates"] = len(draft_rows)
         for art in draft_rows:
             item = {"id": art.id, "title": art.title}
-            gate = _publish_gate(art.content)
+            gate = _publish_gate(art)
             if gate:
                 report["draft_skipped"].append({**item, "reason": gate})
                 continue
@@ -93,6 +102,11 @@ def restore_public_kb_articles(
             try:
                 current = session.get(PublishedArticle, art.id)
                 if current is None:
+                    continue
+                # Re-check after reload so a concurrent edit cannot bypass the gate.
+                gate = _publish_gate(current)
+                if gate:
+                    report["draft_skipped"].append({**item, "reason": gate})
                     continue
                 current.published = True
                 current.published_at = datetime.now(timezone.utc)

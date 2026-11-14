@@ -1,6 +1,11 @@
 import pytest
 
-from app.services.knowledge_taxonomy import classify_chunk, knowledge_base_taxonomy
+from app.services.knowledge_taxonomy import (
+    classify_chunk,
+    classify_question,
+    knowledge_base_taxonomy,
+    load_taxonomy,
+)
 
 
 @pytest.mark.parametrize(
@@ -102,3 +107,27 @@ def test_taxonomy_exposes_student_friendly_categories_without_academic_services(
         "Requirements & Forms",
     ]
     assert "Academic Services" not in names
+
+
+def test_cashier_payment_methods_not_routed_to_cas_via_cas_substring():
+    """Regression: keyword 'cas' must not match inside 'cashier'."""
+    load_taxonomy.cache_clear()
+    result = classify_question(
+        "What payment methods does the Cashier Unit accept? "
+        "Good day. I would like to know which payment methods are accepted "
+        "at the Cashier Unit. Thank you."
+    )
+    assert result.office == "Cashier"
+    assert "Arts and Sciences" not in result.office
+    assert result.category == "Scholarships & Financial Policies"
+    assert result.subcategory == "Tuition Policies"
+
+
+def test_cas_acronym_still_routes_to_college_of_arts_and_sciences():
+    """Whole-word 'CAS' should still identify College of Arts and Sciences."""
+    load_taxonomy.cache_clear()
+    result = classify_question(
+        "What undergraduate programs does CAS offer under the College of Arts and Sciences?"
+    )
+    assert result.office == "College of Arts and Sciences"
+    assert result.category == "Programs & Curricular Offerings"

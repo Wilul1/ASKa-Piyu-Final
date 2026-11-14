@@ -575,8 +575,10 @@ def _rule_based_classification(text: str) -> ClassificationResult:
         for subcategory in category.subcategories:
             sub_hits = _matched_keywords(text, subcategory.keywords)
             score = (len(sub_hits) * 2.5) + len(category_hits)
-            exact_name_bonus = 3.0 if _normalize(subcategory.name) in text else 0.0
-            category_name_bonus = 1.0 if _normalize(category.name) in text else 0.0
+            # Phrase/word-boundary match only — never raw substring (e.g. "cas"
+            # must not hit inside "cashier").
+            exact_name_bonus = 3.0 if _keyword_in_text(text, subcategory.name) else 0.0
+            category_name_bonus = 1.0 if _keyword_in_text(text, category.name) else 0.0
             score += exact_name_bonus + category_name_bonus
             if score > best[0]:
                 best = (score, category, subcategory, [*subcategory.keywords[:3], *sub_hits, *category_hits])
@@ -732,8 +734,22 @@ def _classification_text(text: str, *, metadata: dict[str, Any] | None, title: s
     return _normalize(" ".join(values))
 
 
+def _keyword_in_text(text: str, keyword: str) -> bool:
+    """True when ``keyword`` appears in ``text`` as a whole word/phrase.
+
+    Uses word boundaries so short acronyms cannot match inside longer tokens
+    (e.g. taxonomy keyword ``cas`` must not match ``cashier``).
+    """
+    needle = _normalize(keyword)
+    if not needle:
+        return False
+    parts = needle.split()
+    pattern = r"\b" + r"\s+".join(re.escape(part) for part in parts) + r"\b"
+    return re.search(pattern, text) is not None
+
+
 def _matched_keywords(text: str, keywords: tuple[str, ...]) -> list[str]:
-    return [keyword for keyword in keywords if _normalize(keyword) in text]
+    return [keyword for keyword in keywords if _keyword_in_text(text, keyword)]
 
 
 def _term_vector(text: str) -> dict[str, int]:

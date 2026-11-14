@@ -145,6 +145,29 @@ def test_payment_posting_routes_to_cashier_or_finance():
         session.close()
 
 
+def test_cashier_unit_payment_methods_auto_routes_to_cashier_not_cas():
+    """Regression: 'Cashier Unit' must not auto-route to College of Arts and Sciences."""
+    from app.services.knowledge_taxonomy import load_taxonomy
+
+    load_taxonomy.cache_clear()
+    session = _session_with_offices(
+        "Accounting Unit",
+        "Cashier Unit",
+        "College of Arts and Sciences",
+        "Office of Student Affairs (OSA)",
+    )
+    try:
+        result = triage_ticket(
+            "What payment methods does the Cashier Unit accept?",
+            "Good day. I would like to know which payment methods are accepted at the Cashier Unit. Thank you.",
+            session=session,
+        )
+        assert result["assigned_office"] == "Cashier Unit", result
+        assert "Arts and Sciences" not in result["assigned_office"], result
+    finally:
+        session.close()
+
+
 def test_miscellaneous_billing_routes_to_finance_not_osa():
     """BUG-R3: generic fee/billing concerns must not fall to OSA."""
     from app.services.knowledge_taxonomy import load_taxonomy

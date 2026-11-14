@@ -125,7 +125,7 @@
         {
           "name": "Tuition Policies",
           "office": "Cashier",
-          "keywords": ["tuition", "tuition policies", "tuition policy", "tuition fee", "tuition fees", "assessment of fees", "miscellaneous fees", "miscellaneous fee", "payment of fees", "billing", "fee billing", "billing concern", "miscellaneous charge", "statement of account", "payment posting", "posted incorrectly", "or number", "assessment charge", "charged twice", "fee concern"]
+          "keywords": ["tuition", "tuition policies", "tuition policy", "tuition fee", "tuition fees", "assessment of fees", "miscellaneous fees", "miscellaneous fee", "payment of fees", "billing", "fee billing", "billing concern", "miscellaneous charge", "statement of account", "payment posting", "posted incorrectly", "or number", "assessment charge", "charged twice", "fee concern", "cashier", "cashier unit", "cashier office", "payment method", "payment methods", "payment channel", "payment channels", "accept payment", "accepted payment"]
         }
       ]
     },

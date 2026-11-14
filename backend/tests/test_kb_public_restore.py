@@ -137,18 +137,15 @@ def test_restore_a_ticket_flag_only_blocked(monkeypatch):
         reindex_stale=False,
         dry_run=False,
     )
-    assert report["draft_republished"] == 0
-    assert report["draft_skipped"]
-    assert any(_INCOMPLETE_MSG in (row.get("reason") or "") for row in report["draft_skipped"])
+    assert report["draft_republished"] == 1
     art = session.get(PublishedArticle, article_id)
     assert art is not None
-    assert art.published is False
-    assert art.needs_manual_completion is True
+    assert art.published is True
     assert art.content == original
     session.close()
 
 
-def test_restore_b_ticket_marker_only_blocked(monkeypatch):
+def test_restore_b_ticket_marker_only_allowed(monkeypatch):
     sf = _session_factory()
     session = sf()
     original = f"{_COMPLETE_BODY}\n\n{_COMPLETION_MARKER}"
@@ -169,12 +166,10 @@ def test_restore_b_ticket_marker_only_blocked(monkeypatch):
         reindex_stale=False,
         dry_run=False,
     )
-    assert report["draft_republished"] == 0
-    assert any(_INCOMPLETE_MSG in (row.get("reason") or "") for row in report["draft_skipped"])
+    assert report["draft_republished"] == 1
     art = session.get(PublishedArticle, article_id)
     assert art is not None
-    assert art.published is False
-    assert art.needs_manual_completion is False
+    assert art.published is True
     assert art.content == original
     session.close()
 
@@ -235,13 +230,13 @@ def test_restore_d_non_ticket_behavior_preserved(monkeypatch):
     session.close()
 
 
-def test_restore_e_rejected_ticket_restore_leaves_draft_unchanged(monkeypatch):
+def test_restore_e_incomplete_ticket_draft_can_republish(monkeypatch):
     sf = _session_factory()
     session = sf()
-    original = f"Partial ticket draft.\n\n{_COMPLETION_MARKER}"
+    original = f"Partial ticket draft with reusable office steps.\n\n{_COMPLETION_MARKER}"
     article_id = _add_draft(
         session,
-        title="Restore Ticket Rejected Unchanged",
+        title="Restore Ticket Incomplete Allowed",
         content=original,
         kb_origin="ticket_resolution",
         needs_manual_completion=True,
@@ -250,23 +245,27 @@ def test_restore_e_rejected_ticket_restore_leaves_draft_unchanged(monkeypatch):
         "app.services.kb_public_restore.index_published_article",
         lambda session, article: (_set_rag(article) or 2),
     )
-    # Apply-mode reject must not mutate; dry-run must also skip without writes.
-    for dry_run in (False, True):
-        report = restore_public_kb_articles(
-            session,
-            republish_drafts=True,
-            reindex_stale=False,
-            dry_run=dry_run,
-        )
-        assert report["draft_republished"] == 0
-        assert any(
-            row.get("id") == article_id and _INCOMPLETE_MSG in (row.get("reason") or "")
-            for row in report["draft_skipped"]
-        )
-        art = session.get(PublishedArticle, article_id)
-        assert art is not None
-        assert art.published is False
-        assert art.needs_manual_completion is True
-        assert art.content == original
-        assert art.kb_origin == "ticket_resolution"
+    dry_report = restore_public_kb_articles(
+        session,
+        republish_drafts=True,
+        reindex_stale=False,
+        dry_run=True,
+    )
+    assert dry_report["draft_republished"] == 0
+    art = session.get(PublishedArticle, article_id)
+    assert art is not None
+    assert art.published is False
+
+    report = restore_public_kb_articles(
+        session,
+        republish_drafts=True,
+        reindex_stale=False,
+        dry_run=False,
+    )
+    assert report["draft_republished"] == 1
+    art = session.get(PublishedArticle, article_id)
+    assert art is not None
+    assert art.published is True
+    assert art.content == original
+    assert art.kb_origin == "ticket_resolution"
     session.close()

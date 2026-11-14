@@ -2454,6 +2454,11 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
         content: _contentCtrl.text,
       );
 
+  bool get _incompleteWarning => ticketKbIncompleteWarning(
+        needsManualCompletion: _needsManualCompletion,
+        content: _contentCtrl.text,
+      );
+
   @override
   void initState() {
     super.initState();
@@ -2816,17 +2821,6 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
       setState(() => _error = 'Enter a category for the public Knowledge Base.');
       return;
     }
-    if (publish &&
-        ticketKbPublishBlocked(
-          needsManualCompletion: _needsManualCompletion,
-          content: content,
-        )) {
-      setState(() {
-        _error =
-            'This draft still needs staff completion before it can be published.';
-      });
-      return;
-    }
     await _checkDuplicate();
     if (!mounted) return;
     if (_duplicateWarning != null) {
@@ -2848,7 +2842,7 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
       );
       return;
     }
-    final wasIncomplete = _publishBlocked;
+    final wasIncomplete = _incompleteWarning;
     setState(() {
       _saving = true;
       _error = null;
@@ -2888,16 +2882,16 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
             _applyArticlePayload(data);
             _saving = false;
           });
-          final stillBlocked = ticketKbPublishBlocked(
+          final stillIncomplete = ticketKbIncompleteWarning(
             needsManualCompletion: _needsManualCompletion,
             content: _contentCtrl.text,
           );
-          if (wasIncomplete || stillBlocked) {
+          if (wasIncomplete || stillIncomplete) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  stillBlocked
-                      ? 'Draft saved. Finish the incomplete sections before publishing.'
+                  stillIncomplete
+                      ? 'Draft saved. Review the warning before publishing.'
                       : 'Draft completed and saved. You can publish when ready.',
                 ),
                 duration: const Duration(seconds: 5),
@@ -2953,7 +2947,7 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
     final blocked = _publishBlocked;
     return ElevatedButton(
       key: const Key('ticket-kb-publish'),
-      onPressed: busy || blocked ? null : () => _save(publish: true),
+      onPressed: busy ? null : () => _save(publish: true),
       style: ElevatedButton.styleFrom(
         backgroundColor: DesignTokens.maroon,
         foregroundColor: Colors.white,
@@ -2962,11 +2956,7 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
         elevation: 0,
       ),
       child: Text(
-        _saving && _publishNow
-            ? 'Publishing…'
-            : blocked
-                ? 'Publish (complete draft first)'
-                : 'Publish',
+        _saving && _publishNow ? 'Publishing…' : 'Publish',
       ),
     );
   }
@@ -3092,7 +3082,7 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
                   ],
                 ),
               ),
-              if (blocked) ...[
+              if (_incompleteWarning) ...[
                 const SizedBox(height: 16),
                 TicketKbIncompleteDraftBanner(
                   generationNotes: _generationNotes,
@@ -3426,8 +3416,7 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
                   const SizedBox(width: 10),
                   ElevatedButton(
                     key: const Key('ticket-kb-publish-footer'),
-                    onPressed:
-                        busy || blocked ? null : () => _save(publish: true),
+                    onPressed: busy ? null : () => _save(publish: true),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: DesignTokens.maroon,
                       foregroundColor: Colors.white,
@@ -3435,11 +3424,7 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
                       disabledForegroundColor: const Color(0xFF64748B),
                       elevation: 0,
                     ),
-                    child: Text(
-                      blocked
-                          ? 'Publish (complete draft first)'
-                          : 'Publish to public KB',
-                    ),
+                    child: const Text('Publish to public KB'),
                   ),
                 ],
               ),

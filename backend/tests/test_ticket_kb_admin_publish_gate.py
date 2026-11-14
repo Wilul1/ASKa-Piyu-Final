@@ -120,11 +120,11 @@ def _publish_via_update(article_id: str, **extra):
     )
 
 
-# --- A–C: incomplete ticket drafts blocked on both routes ---
+# --- A–C: incomplete ticket drafts stay publishable (warning-only) ---
 
 
 @pytest.mark.parametrize("via", ["update", "publish"])
-def test_a_flag_true_no_marker_blocks_publication(via: str):
+def test_a_flag_true_no_marker_allows_publication(via: str):
     article_id = _create_article(
         title="Ticket Draft Flag Only",
         content=_COMPLETE_BODY,
@@ -135,13 +135,14 @@ def test_a_flag_true_no_marker_blocks_publication(via: str):
         if via == "update"
         else _publish_dedicated(article_id)
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
-    assert _get_article(article_id).published is False
+    assert response.status_code == 200, response.text
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
 
 
 @pytest.mark.parametrize("via", ["update", "publish"])
-def test_b_marker_present_flag_false_blocks_publication(via: str):
+def test_b_marker_present_flag_false_allows_publication(via: str):
     article_id = _create_article(
         title="Ticket Draft Marker Only",
         content=f"{_COMPLETE_BODY}\n\n{_COMPLETION_MARKER}",
@@ -152,16 +153,17 @@ def test_b_marker_present_flag_false_blocks_publication(via: str):
         if via == "update"
         else _publish_dedicated(article_id)
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
-    assert _get_article(article_id).published is False
+    assert response.status_code == 200, response.text
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
 
 
 @pytest.mark.parametrize("via", ["update", "publish"])
-def test_c_flag_and_marker_block_publication(via: str):
+def test_c_flag_and_marker_allow_publication(via: str):
     article_id = _create_article(
         title="Ticket Draft Both Signals",
-        content=f"Partial answer.\n\n{_COMPLETION_MARKER}",
+        content=f"Partial answer with enough reusable text for staff review.\n\n{_COMPLETION_MARKER}",
         needs_manual_completion=True,
     )
     response = (
@@ -169,9 +171,10 @@ def test_c_flag_and_marker_block_publication(via: str):
         if via == "update"
         else _publish_dedicated(article_id)
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
-    assert _get_article(article_id).published is False
+    assert response.status_code == 200, response.text
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
 
 
 # --- D–E: completed ticket drafts publish successfully ---
@@ -390,7 +393,7 @@ def _bulk_publish_existing(article_id: str, *, content: str | None = None):
     )
 
 
-def test_bulk_flag_true_no_marker_blocks_publication():
+def test_bulk_flag_true_no_marker_allows_publication():
     article_id = _create_article(
         title="Bulk Ticket Flag Only",
         content=_COMPLETE_BODY,
@@ -399,13 +402,13 @@ def test_bulk_flag_true_no_marker_blocks_publication():
     response = _bulk_publish_existing(article_id, content=_COMPLETE_BODY)
     assert response.status_code == 200, response.text
     item = response.json()["results"][0]
-    assert item["success"] is False
-    assert item["code"] == "content_not_ready"
-    assert _INCOMPLETE_MSG in item["error"]
-    assert _get_article(article_id).published is False
+    assert item["success"] is True
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
 
 
-def test_bulk_marker_present_flag_false_blocks_publication():
+def test_bulk_marker_present_flag_false_allows_publication():
     article_id = _create_article(
         title="Bulk Ticket Marker Only",
         content=f"{_COMPLETE_BODY}\n\n{_COMPLETION_MARKER}",
@@ -417,10 +420,10 @@ def test_bulk_marker_present_flag_false_blocks_publication():
     )
     assert response.status_code == 200, response.text
     item = response.json()["results"][0]
-    assert item["success"] is False
-    assert item["code"] == "content_not_ready"
-    assert _INCOMPLETE_MSG in item["error"]
-    assert _get_article(article_id).published is False
+    assert item["success"] is True
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
 
 
 def test_bulk_completed_ticket_draft_publishes():
@@ -651,13 +654,10 @@ def _convert_publish(ticket_id: str, headers: dict[str, str], **json_body):
     )
 
 
-def test_convert_publish_a_flag_true_no_marker_blocked():
-    """keep_generation_flags path: incomplete generation + long body without marker."""
+def test_convert_publish_a_flag_true_no_marker_allowed():
+    """keep_generation_flags path: incomplete generation + long body can still publish."""
     from app.models.db_models import User
-    from app.services.ticket_knowledge import (
-        TicketKnowledgeError,
-        convert_ticket_to_draft_article,
-    )
+    from app.services.ticket_knowledge import convert_ticket_to_draft_article
 
     ticket_id, _headers, staff_id = _seed_convert_ticket(
         staff_message="I will check and get back to you later this week.",
@@ -666,29 +666,27 @@ def test_convert_publish_a_flag_true_no_marker_blocked():
     try:
         staff = session.get(User, staff_id)
         assert staff is not None
-        with pytest.raises(TicketKnowledgeError, match=_INCOMPLETE_MSG):
-            convert_ticket_to_draft_article(
-                session,
-                ticket_id=ticket_id,
-                actor=staff,
-                content=_COMPLETE_BODY,
-                publish=True,
-                keep_generation_flags=True,
-            )
+        payload = convert_ticket_to_draft_article(
+            session,
+            ticket_id=ticket_id,
+            actor=staff,
+            content=_COMPLETE_BODY,
+            publish=True,
+            keep_generation_flags=True,
+        )
+        assert payload["published"] is True
         art = (
             session.query(PublishedArticle)
             .filter(PublishedArticle.source_ticket_id == ticket_id)
-            .one_or_none()
+            .one()
         )
-        # Draft may be saved; must not be published.
-        if art is not None:
-            assert art.published is False
-            assert art.needs_manual_completion is True
+        assert art.published is True
+        assert art.needs_manual_completion is False
     finally:
         session.close()
 
 
-def test_convert_publish_b_marker_present_flag_false_blocked():
+def test_convert_publish_b_marker_present_flag_false_allowed():
     ticket_id, headers, _staff_id = _seed_convert_ticket(
         staff_message="I will check and get back to you later this week.",
     )
@@ -699,8 +697,7 @@ def test_convert_publish_b_marker_present_flag_false_blocked():
         content=f"{_COMPLETE_BODY}\n\n{_COMPLETION_MARKER}",
         publish=True,
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
+    assert response.status_code == 200, response.text
     session = get_session_factory()()
     try:
         art = (
@@ -708,15 +705,13 @@ def test_convert_publish_b_marker_present_flag_false_blocked():
             .filter(PublishedArticle.source_ticket_id == ticket_id)
             .one()
         )
-        assert art.published is False
-        # Marker in the supplied body keeps the draft incomplete.
-        assert art.needs_manual_completion is True
-        assert _COMPLETION_MARKER in (art.content or "")
+        assert art.published is True
+        assert art.needs_manual_completion is False
     finally:
         session.close()
 
 
-def test_convert_publish_c_flag_and_marker_blocked():
+def test_convert_publish_c_flag_and_marker_allowed():
     ticket_id, headers, _staff_id = _seed_convert_ticket(
         staff_message="I will check and get back to you later this week.",
     )
@@ -727,8 +722,7 @@ def test_convert_publish_c_flag_and_marker_blocked():
         title="Add/drop deadline incomplete",
         publish=True,
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
+    assert response.status_code == 200, response.text
     session = get_session_factory()()
     try:
         art = (
@@ -736,9 +730,8 @@ def test_convert_publish_c_flag_and_marker_blocked():
             .filter(PublishedArticle.source_ticket_id == ticket_id)
             .one()
         )
-        assert art.published is False
-        assert art.needs_manual_completion is True
-        assert _COMPLETION_MARKER in (art.content or "")
+        assert art.published is True
+        assert art.needs_manual_completion is False
     finally:
         session.close()
 
@@ -860,76 +853,61 @@ def _assert_draft_unchanged(
         assert art.title == title
 
 
-def test_create_update_existing_a_flag_true_no_marker_blocked():
-    original_title = "Create Update Flag Only"
-    original_content = _COMPLETE_BODY
+def test_create_update_existing_a_flag_true_no_marker_allowed():
     article_id = _create_article(
-        title=original_title,
-        content=original_content,
+        title="Create Update Flag Only",
+        content=_COMPLETE_BODY,
         needs_manual_completion=True,
     )
     response = _create_update_existing(
         article_id,
-        title="Should Not Persist Title",
+        title="Create Update Flag Only Published",
         content=_COMPLETE_BODY,
         publish_status=True,
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
-    _assert_draft_unchanged(
-        article_id,
-        content=original_content,
-        needs_manual_completion=True,
-        title=original_title,
-    )
+    assert response.status_code == 200, response.text
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
+    assert art.title == "Create Update Flag Only Published"
 
 
-def test_create_update_existing_b_marker_present_flag_false_blocked():
-    original_title = "Create Update Marker Only"
+def test_create_update_existing_b_marker_present_flag_false_allowed():
     original_content = f"{_COMPLETE_BODY}\n\n{_COMPLETION_MARKER}"
     article_id = _create_article(
-        title=original_title,
+        title="Create Update Marker Only",
         content=original_content,
         needs_manual_completion=False,
     )
     response = _create_update_existing(
         article_id,
-        title="Should Not Persist Title",
+        title="Create Update Marker Only Published",
         content=original_content,
         publish_status=True,
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
-    _assert_draft_unchanged(
-        article_id,
-        content=original_content,
-        needs_manual_completion=False,
-        title=original_title,
-    )
+    assert response.status_code == 200, response.text
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
 
 
-def test_create_update_existing_c_both_present_blocked():
-    original_title = "Create Update Both Signals"
-    original_content = f"Partial answer.\n\n{_COMPLETION_MARKER}"
+def test_create_update_existing_c_both_present_allowed():
+    original_content = f"Partial answer with reusable office steps for staff.\n\n{_COMPLETION_MARKER}"
     article_id = _create_article(
-        title=original_title,
+        title="Create Update Both Signals",
         content=original_content,
         needs_manual_completion=True,
     )
     response = _create_update_existing(
         article_id,
-        title="Should Not Persist Title",
+        title="Create Update Both Signals Published",
         content=original_content,
         publish_status=True,
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
-    _assert_draft_unchanged(
-        article_id,
-        content=original_content,
-        needs_manual_completion=True,
-        title=original_title,
-    )
+    assert response.status_code == 200, response.text
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
 
 
 def test_create_update_existing_d_both_cleared_publishes():
@@ -999,11 +977,9 @@ def test_create_update_existing_f_non_ticket_publish_unchanged():
 
 def test_create_update_existing_g_detects_persisted_ticket_identity_without_request_fields():
     """Ticket identity must come from the existing row, not the request body."""
-    original_title = "Create Update Persisted Identity"
-    original_content = _COMPLETE_BODY
     article_id = _create_article(
-        title=original_title,
-        content=original_content,
+        title="Create Update Persisted Identity",
+        content=_COMPLETE_BODY,
         kb_origin="ticket_resolution",
         source_ticket_id=None,
         needs_manual_completion=True,
@@ -1020,11 +996,8 @@ def test_create_update_existing_g_detects_persisted_ticket_identity_without_requ
             "update_existing_id": article_id,
         },
     )
-    assert response.status_code == 400, response.text
-    assert _INCOMPLETE_MSG in response.json()["detail"]
-    _assert_draft_unchanged(
-        article_id,
-        content=original_content,
-        needs_manual_completion=True,
-        title=original_title,
-    )
+    assert response.status_code == 200, response.text
+    art = _get_article(article_id)
+    assert art.published is True
+    assert art.needs_manual_completion is False
+    assert art.kb_origin == "ticket_resolution"

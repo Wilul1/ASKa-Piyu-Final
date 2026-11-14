@@ -16,12 +16,28 @@ bool contentHasTicketKbCompletionMarker(String? content) {
   ).hasMatch(text);
 }
 
-/// Publish must stay disabled while the persisted flag is set or the marker remains.
-bool ticketKbPublishBlocked({
+/// True when staff should see the incomplete-draft warning banner.
+bool ticketKbIncompleteWarning({
   required bool needsManualCompletion,
   String? content,
 }) {
   return needsManualCompletion || contentHasTicketKbCompletionMarker(content);
+}
+
+/// Soft incomplete warning only — staff may still publish after review.
+///
+/// Kept for call-site compatibility; always returns false so Publish stays
+/// enabled. Use [ticketKbIncompleteWarning] for the banner.
+bool ticketKbPublishBlocked({
+  required bool needsManualCompletion,
+  String? content,
+}) {
+  // Touch parameters for API compatibility with existing call sites.
+  ticketKbIncompleteWarning(
+    needsManualCompletion: needsManualCompletion,
+    content: content,
+  );
+  return false;
 }
 
 /// Human-readable copy for persisted ``generation_notes`` codes.

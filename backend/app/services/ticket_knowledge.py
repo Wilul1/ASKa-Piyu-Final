@@ -1080,24 +1080,31 @@ def ticket_article_publication_blocked(
     source_ticket_id: str | None = None,
     kb_origin: str | None = None,
 ) -> str | None:
-    """Return an HTTP 400 detail when a ticket-derived draft must not be published.
+    """Soft incomplete signals no longer hard-block publication.
 
-    Staff must explicitly finish the draft and clear both ``needs_manual_completion``
-    and ``_COMPLETION_MARKER`` before either admin publish path may succeed.
-    Ordinary non-ticket articles are unaffected.
+    Ticket-derived drafts may still show a staff-facing warning in the UI when
+    ``needs_manual_completion`` is set or the completion marker remains, but
+    office/admin reviewers decide whether to publish. Other content gates
+    (empty body, ``[NEEDS REVIEW]``, etc.) stay enforced elsewhere.
     """
-    if not is_ticket_derived_article(
-        source_ticket_id=source_ticket_id,
-        kb_origin=kb_origin,
-    ):
-        return None
-    if bool(needs_manual_completion) or _COMPLETION_MARKER in (content or ""):
-        return (
-            "This ticket-derived Knowledge Base draft still requires staff completion "
-            "before it can be published. Finish editing the article, remove the "
-            "completion marker, and clear needs_manual_completion first."
-        )
+    _ = (
+        content,
+        needs_manual_completion,
+        source_ticket_id,
+        kb_origin,
+    )
     return None
+
+
+def clear_incomplete_signals_on_publish(article: PublishedArticle) -> None:
+    """Drop stuck incomplete flags once staff publishes a ticket-derived draft."""
+    if not is_ticket_derived_article(
+        source_ticket_id=getattr(article, "source_ticket_id", None),
+        kb_origin=getattr(article, "kb_origin", None),
+    ):
+        return
+    article.needs_manual_completion = False
+    article.generation_notes = None
 
 
 def apply_staff_edit_completion_state(article: PublishedArticle) -> bool:

@@ -127,7 +127,7 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
     final content = (live != null && live.trim().isNotEmpty)
         ? live
         : (article.content ?? article.displayContent);
-    return ticketKbPublishBlocked(
+    return ticketKbIncompleteWarning(
       needsManualCompletion: _needsManualCompletion,
       content: content,
     );
@@ -454,13 +454,6 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
       setState(() {
         _error =
             'Article content is empty. Correct it and save before publishing.';
-      });
-      return;
-    }
-    if (_incompleteTicketDraft) {
-      setState(() {
-        _error =
-            'This ticket-derived draft still needs staff completion before it can be published.';
       });
       return;
     }
@@ -1115,9 +1108,7 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
                   )
                 : OutlinedButton(
                     key: const Key('knowledge-article-edit-publish'),
-                    onPressed: (_saving || _incompleteTicketDraft)
-                        ? null
-                        : _publish,
+                    onPressed: _saving ? null : _publish,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: DesignTokens.maroon,
                       side: const BorderSide(color: DesignTokens.maroon),
@@ -1135,11 +1126,9 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
                               color: DesignTokens.maroon,
                             ),
                           )
-                        : Text(
-                            _incompleteTicketDraft
-                                ? 'Publish (complete draft first)'
-                                : 'Publish',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
+                        : const Text(
+                            'Publish',
+                            style: TextStyle(fontWeight: FontWeight.w800),
                           ),
                   );
             final save = ElevatedButton(

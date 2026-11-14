@@ -41,7 +41,7 @@ class TicketKbIncompleteDraftBanner extends StatelessWidget {
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Needs staff completion — not ready to publish',
+                  'Needs staff review before publishing',
                   style: TextStyle(
                     color: Color(0xFF9A3412),
                     fontWeight: FontWeight.w800,
@@ -54,10 +54,9 @@ class TicketKbIncompleteDraftBanner extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'The original ticket conversation did not establish sufficient '
-            'actionable information for a public Knowledge Base article. '
-            'Edit the draft below, then save. Publish stays disabled until '
-            'completion is cleared.',
+            'The original ticket conversation may not have enough reusable '
+            'detail for a public Knowledge Base article. Review and edit the '
+            'draft below. Publish remains available when you decide it is ready.',
             style: TextStyle(
               color: Color(0xFF7C2D12),
               fontWeight: FontWeight.w600,
@@ -80,8 +79,7 @@ class TicketKbIncompleteDraftBanner extends StatelessWidget {
           ],
           const SizedBox(height: 6),
           const Text(
-            'Save Draft remains available. The server also blocks publish until '
-            'this draft is completed.',
+            'This is a warning only. Staff can still publish after review.',
             style: TextStyle(
               color: DesignTokens.muted,
               fontWeight: FontWeight.w600,

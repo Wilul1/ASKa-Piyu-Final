@@ -17,24 +17,31 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('ticket KB completion helpers', () {
-    test('detects completion marker and blocks publish', () {
+    test('detects completion marker and keeps publish unblocked', () {
       expect(
         contentHasTicketKbCompletionMarker(ticketKbCompletionMarker),
         isTrue,
       );
       expect(
-        ticketKbPublishBlocked(
+        ticketKbIncompleteWarning(
           needsManualCompletion: true,
           content: 'Enough reusable answer text for a draft body.',
         ),
         isTrue,
       );
       expect(
-        ticketKbPublishBlocked(
+        ticketKbIncompleteWarning(
           needsManualCompletion: false,
           content: 'Answer\n\n$ticketKbCompletionMarker',
         ),
         isTrue,
+      );
+      expect(
+        ticketKbPublishBlocked(
+          needsManualCompletion: true,
+          content: 'Answer\n\n$ticketKbCompletionMarker',
+        ),
+        isFalse,
       );
       expect(
         ticketKbPublishBlocked(
@@ -73,12 +80,12 @@ void main() {
 
       expect(find.byKey(const Key('ticket-kb-incomplete-banner')), findsOneWidget);
       expect(
-        find.text('Needs staff completion — not ready to publish'),
+        find.text('Needs staff review before publishing'),
         findsOneWidget,
       );
       expect(
         find.textContaining(
-          'did not establish sufficient actionable information',
+          'may not have enough reusable detail',
         ),
         findsOneWidget,
       );
@@ -147,7 +154,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('incomplete ticket draft shows banner and disables Publish',
+    testWidgets('incomplete ticket draft shows banner but keeps Publish enabled',
         (tester) async {
       final article = AdminArticle(
         id: 'inc-1',
@@ -167,12 +174,14 @@ void main() {
 
       expect(find.byKey(const Key('ticket-kb-incomplete-banner')), findsOneWidget);
       expect(find.textContaining('status update'), findsOneWidget);
+      expect(find.textContaining('warning only'), findsOneWidget);
 
       final publish = tester.widget<OutlinedButton>(
         find.byKey(const Key('knowledge-article-edit-publish')),
       );
-      expect(publish.onPressed, isNull);
-      expect(find.text('Publish (complete draft first)'), findsOneWidget);
+      expect(publish.onPressed, isNotNull);
+      expect(find.text('Publish'), findsOneWidget);
+      expect(find.text('Publish (complete draft first)'), findsNothing);
 
       final save = tester.widget<ElevatedButton>(
         find.byKey(const Key('knowledge-article-edit-save')),
@@ -281,7 +290,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    testWidgets('incomplete compose draft shows banner and disables Publish',
+    testWidgets('incomplete compose draft shows banner but keeps Publish enabled',
         (tester) async {
       await openCompose(
         tester,
@@ -323,8 +332,9 @@ void main() {
       final publish = tester.widget<ElevatedButton>(
         find.byKey(const Key('ticket-kb-publish')),
       );
-      expect(publish.onPressed, isNull);
-      expect(find.text('Publish (complete draft first)'), findsWidgets);
+      expect(publish.onPressed, isNotNull);
+      expect(find.text('Publish'), findsWidgets);
+      expect(find.text('Publish (complete draft first)'), findsNothing);
       // App bar Save draft stays enabled for incomplete drafts.
       final saveFinder = find.byKey(const Key('ticket-kb-save-draft'));
       expect(saveFinder, findsWidgets);

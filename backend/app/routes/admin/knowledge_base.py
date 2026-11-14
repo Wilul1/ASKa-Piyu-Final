@@ -1509,6 +1509,10 @@ def admin_create_article(
                 art.audience = payload.audience
             art.chunk_count = len(payload.chunk_ids or []) if payload.chunk_ids else art.chunk_count
             becoming_published = bool(payload.publish_status) and not bool(art.published)
+            if becoming_published:
+                from app.services.ticket_knowledge import clear_incomplete_signals_on_publish
+
+                clear_incomplete_signals_on_publish(art)
             art.published = bool(payload.publish_status)
             if art.published:
                 art.published_at = datetime.now(timezone.utc)
@@ -1682,6 +1686,7 @@ def admin_update_article(
     )
     from app.services.ticket_knowledge import (
         apply_staff_edit_completion_state,
+        clear_incomplete_signals_on_publish,
         ensure_unique_article_slug,
         sync_ticket_kb_status,
     )
@@ -1764,6 +1769,8 @@ def admin_update_article(
                 if admin_actor_id:
                     art.published_by_user_id = admin_actor_id
                 becoming_published = not bool(art.published)
+                if becoming_published:
+                    clear_incomplete_signals_on_publish(art)
             art.published = publish
             art.published_at = datetime.now(timezone.utc) if publish else None
             if becoming_published:
@@ -1828,6 +1835,7 @@ def admin_publish_article(
     from app.services.ticket_knowledge import (
         TicketKnowledgeError,
         assert_no_duplicate_published_topic,
+        clear_incomplete_signals_on_publish,
         sync_ticket_kb_status,
     )
 
@@ -1858,6 +1866,7 @@ def admin_publish_article(
             except TicketKnowledgeError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
         # Commit published first so a later Chroma write cannot outlive an unpublished row.
+        clear_incomplete_signals_on_publish(art)
         art.published = True
         art.published_at = datetime.now(timezone.utc)
         art.rag_indexed = False
@@ -2508,6 +2517,12 @@ def _bulk_persist_articles(
                         art.source_filename = item.source_document
                     if item.audience is not None or item.title or item.source_document:
                         art.audience = _resolve_bulk_article_audience(item)
+                    if publish:
+                        from app.services.ticket_knowledge import (
+                            clear_incomplete_signals_on_publish,
+                        )
+
+                        clear_incomplete_signals_on_publish(art)
                     art.published = publish
                     art.published_at = datetime.now(timezone.utc) if publish else None
                     if publish:

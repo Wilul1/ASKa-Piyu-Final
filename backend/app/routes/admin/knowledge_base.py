@@ -1680,7 +1680,11 @@ def admin_update_article(
         cleanup_failed_faq_index,
         index_published_article,
     )
-    from app.services.ticket_knowledge import ensure_unique_article_slug, sync_ticket_kb_status
+    from app.services.ticket_knowledge import (
+        apply_staff_edit_completion_state,
+        ensure_unique_article_slug,
+        sync_ticket_kb_status,
+    )
 
     session_factory = get_session_factory()
     session = session_factory()
@@ -1692,6 +1696,7 @@ def admin_update_article(
         updates = payload.model_dump(exclude_unset=True)
         media_ids = updates.pop("media_ids", None)
         content_format = updates.pop("content_format", None)
+        content_was_updated = "content" in updates
         if "source_document" in updates:
             updates["source_filename"] = updates.pop("source_document")
         if "content" in updates:
@@ -1726,6 +1731,11 @@ def admin_update_article(
             fmt = str(content_format).strip().lower()
             if fmt in {"plain", "html"}:
                 art.content_format = fmt
+
+        # Staff KB edits that remove the completion marker and leave a reusable
+        # answer must clear stuck incomplete flags before the publish gate runs.
+        if content_was_updated and apply_staff_edit_completion_state(art):
+            sync_ticket_kb_status(session, art)
 
         # Map API publish_status onto the DB published column.
         becoming_published = False

@@ -1100,6 +1100,35 @@ def ticket_article_publication_blocked(
     return None
 
 
+def apply_staff_edit_completion_state(article: PublishedArticle) -> bool:
+    """Clear incomplete flags when staff saved a completed ticket-derived body.
+
+    Knowledge Base article edits previously updated content only and left
+    ``needs_manual_completion`` stuck true, so publish stayed blocked even after
+    staff removed the completion warning. Returns True when flags were cleared.
+    """
+    if bool(getattr(article, "published", False)):
+        return False
+    if not is_ticket_derived_article(
+        source_ticket_id=getattr(article, "source_ticket_id", None),
+        kb_origin=getattr(article, "kb_origin", None),
+    ):
+        return False
+    content = getattr(article, "content", None) or ""
+    if _COMPLETION_MARKER in content or _INCOMPLETE_NOTES_HEADING in content:
+        article.needs_manual_completion = True
+        return False
+    if not _staff_supplied_content_completes_draft(content):
+        return False
+    if not bool(getattr(article, "needs_manual_completion", False)) and not getattr(
+        article, "generation_notes", None
+    ):
+        return False
+    article.needs_manual_completion = False
+    article.generation_notes = None
+    return True
+
+
 def assert_no_duplicate_published_topic(
     session: Session,
     *,

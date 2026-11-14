@@ -272,6 +272,57 @@ def test_g_ordinary_ticket_draft_update_without_publishing_allowed():
     assert "Edited incomplete draft" in (art.content or "")
 
 
+def test_g_staff_edit_clears_stuck_incomplete_flags_when_body_is_complete():
+    article_id = _create_article(
+        title="Good Moral Certificate Draft",
+        content=(
+            "## Needs staff completion\n\n"
+            "- Staff recorded a status update that does not complete the "
+            "reusable Knowledge Base answer.\n\n"
+            f"{_COMPLETION_MARKER}"
+        ),
+        needs_manual_completion=True,
+    )
+    session = get_session_factory()()
+    try:
+        art = session.get(PublishedArticle, article_id)
+        art.generation_notes = "unresolved_status"
+        session.add(art)
+        session.commit()
+    finally:
+        session.close()
+
+    completed_body = (
+        "## Overview\n\n"
+        "To request a Good Moral Certificate from OSAS, follow the steps below.\n\n"
+        "## Requirements\n\n"
+        "- Present your valid school ID and complete the OSAS request form.\n\n"
+        "## Procedure\n\n"
+        "1. Go to OSAS and request a Good Moral Certificate.\n"
+        "2. Pay the applicable fee at the Cashier if assessed, then return the receipt.\n"
+        "3. Claim the certificate on the release date given by OSAS staff.\n\n"
+        "## Where to go\n\n"
+        "Office of Student Affairs"
+    )
+    response = client.patch(
+        f"/admin/kb/articles/{article_id}",
+        headers=ADMIN_HEADERS,
+        json={
+            "content": completed_body,
+            "summary": "How to request a Good Moral Certificate from OSAS.",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["published"] is False
+    assert body["needs_manual_completion"] is False
+    assert body.get("generation_notes") in (None, "")
+    art = _get_article(article_id)
+    assert art.needs_manual_completion is False
+    assert art.generation_notes in (None, "")
+    assert _COMPLETION_MARKER not in (art.content or "")
+
+
 # --- H: existing publication validation still enforced ---
 
 

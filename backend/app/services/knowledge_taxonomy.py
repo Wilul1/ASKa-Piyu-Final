@@ -568,25 +568,71 @@ def load_taxonomy() -> tuple[CategoryConfig, ...]:
     return tuple(category for category in categories if category.name and category.subcategories)
 
 
+def _office_label_mentioned(text: str, office: str) -> bool:
+    """True when the ticket text names this taxonomy office (word/phrase safe)."""
+    office_norm = _normalize(office)
+    if not office_norm:
+        return False
+    if _keyword_in_text(text, office_norm):
+        return True
+    # "Cashier" should match text that says "Cashier Unit" / "Cashier Office".
+    for suffix in (" office", " unit", " services"):
+        if office_norm.endswith(suffix):
+            stem = office_norm[: -len(suffix)].strip()
+            if len(stem) >= 4 and _keyword_in_text(text, stem):
+                return True
+    # Taxonomy label "Cashier" vs seeded/spoken "Cashier Unit".
+    if len(office_norm) >= 4 and _keyword_in_text(text, f"{office_norm} unit"):
+        return True
+    if len(office_norm) >= 4 and _keyword_in_text(text, f"{office_norm} office"):
+        return True
+    return False
+
+
 def _rule_based_classification(text: str) -> ClassificationResult:
-    best: tuple[float, CategoryConfig | None, SubcategoryConfig | None, list[str]] = (0.0, None, None, [])
+    best: tuple[float, CategoryConfig | None, SubcategoryConfig | None, list[str], bool] = (
+        0.0,
+        None,
+        None,
+        [],
+        False,
+    )
     for category in load_taxonomy():
         category_hits = _matched_keywords(text, category.keywords)
         for subcategory in category.subcategories:
             sub_hits = _matched_keywords(text, subcategory.keywords)
-            score = (len(sub_hits) * 2.5) + len(category_hits)
+            name_hit = _keyword_in_text(text, subcategory.name)
+            office_hit = _office_label_mentioned(text, subcategory.office)
+            has_specific_evidence = bool(sub_hits) or name_hit or office_hit
+            # Category-only hits are too weak to pick a subcategory winner
+            # (e.g. bare "request" must not invent a Registrar assignment).
+            if not has_specific_evidence:
+                score = len(category_hits) * 0.4
+            else:
+                score = (len(sub_hits) * 3.0) + (len(category_hits) * 0.8)
             # Phrase/word-boundary match only — never raw substring (e.g. "cas"
             # must not hit inside "cashier").
-            exact_name_bonus = 3.0 if _keyword_in_text(text, subcategory.name) else 0.0
+            exact_name_bonus = 3.0 if name_hit else 0.0
             category_name_bonus = 1.0 if _keyword_in_text(text, category.name) else 0.0
-            score += exact_name_bonus + category_name_bonus
+            office_bonus = 4.0 if office_hit else 0.0
+            score += exact_name_bonus + category_name_bonus + office_bonus
             if score > best[0]:
-                best = (score, category, subcategory, [*subcategory.keywords[:3], *sub_hits, *category_hits])
+                best = (
+                    score,
+                    category,
+                    subcategory,
+                    [*subcategory.keywords[:3], *sub_hits, *category_hits],
+                    has_specific_evidence,
+                )
 
-    score, category, subcategory, keywords = best
+    score, category, subcategory, keywords, has_specific_evidence = best
     if category is None or subcategory is None:
         return _fallback_result("rule", 0.0)
-    confidence = min(0.98, score / 8.0)
+    if has_specific_evidence:
+        confidence = min(0.98, score / 6.0)
+    else:
+        # Keep weak category-only guesses below the ticket-routing floor.
+        confidence = min(0.34, score / 8.0)
     return ClassificationResult(
         category=category.name,
         subcategory=subcategory.name,

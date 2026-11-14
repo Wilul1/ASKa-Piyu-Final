@@ -122,6 +122,54 @@ _TAXONOMY_OFFICE_CANDIDATES: dict[str, tuple[str, ...]] = {
 }
 
 
+def find_explicit_office_in_ticket_text(session: Session, text: str) -> tuple[str, str] | None:
+    """Return ``(office_id, office_name)`` when the ticket clearly names one office.
+
+    Prefer alias matches, then longest whole-phrase office-name matches. Ambiguous
+    multi-office mentions return ``None`` so taxonomy can decide instead of guessing.
+    """
+    haystack = _normalize(text)
+    if not haystack:
+        return None
+
+    alias_match = match_office_from_text(text, session)
+    if alias_match is not None:
+        return alias_match.office_id, alias_match.office_name
+
+    offices = session.query(Office).order_by(Office.name).all()
+    if not offices:
+        return None
+
+    matches: list[Office] = []
+    for office in offices:
+        name = _normalize(office.name)
+        if len(name) < 4:
+            continue
+        bare = re.sub(r"\([^)]*\)", "", name).strip()
+        candidates = [name]
+        if bare and bare != name and len(bare) >= 4:
+            candidates.append(bare)
+        for candidate in candidates:
+            pattern = r"\b" + r"\s+".join(re.escape(part) for part in candidate.split()) + r"\b"
+            if re.search(pattern, haystack):
+                matches.append(office)
+                break
+
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0].id, matches[0].name
+
+    # Multiple offices named: keep only when one name clearly dominates by length
+    # (e.g. "Cashier Unit" vs a shorter generic fragment). Otherwise abstain.
+    ranked = sorted(matches, key=lambda item: len(_normalize(item.name)), reverse=True)
+    best = ranked[0]
+    second = ranked[1]
+    if len(_normalize(best.name)) - len(_normalize(second.name)) >= 4:
+        return best.id, best.name
+    return None
+
+
 def resolve_office_for_ticket(
     session: Session,
     office_label: str,

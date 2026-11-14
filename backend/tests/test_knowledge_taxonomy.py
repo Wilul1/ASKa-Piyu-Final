@@ -131,3 +131,18 @@ def test_cas_acronym_still_routes_to_college_of_arts_and_sciences():
     )
     assert result.office == "College of Arts and Sciences"
     assert result.category == "Programs & Curricular Offerings"
+
+
+def test_generic_request_words_are_not_confident_registrar_hits():
+    load_taxonomy.cache_clear()
+    result = classify_question("Please help with my request")
+    assert result.confidence < 0.45 or result.office != "Registrar"
+
+
+def test_certificate_of_enrollment_classifies_to_registrar():
+    load_taxonomy.cache_clear()
+    result = classify_question(
+        "I need a Certificate of Enrollment from the Registrar for scholarship."
+    )
+    assert result.office == "Registrar"
+    assert result.confidence >= 0.45

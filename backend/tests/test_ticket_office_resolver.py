@@ -168,6 +168,148 @@ def test_cashier_unit_payment_methods_auto_routes_to_cashier_not_cas():
         session.close()
 
 
+def _routing_session():
+    return _session_with_offices(
+        "Accounting Unit",
+        "Admission and Testing Services",
+        "Cashier Unit",
+        "College of Arts and Sciences",
+        "College of Computer Studies",
+        "Guidance Office",
+        "ICT Office",
+        "Library",
+        "Medical Clinic",
+        "Office of Student Affairs",
+        "Registrar",
+        "Scholarship and Financial Assistance Office",
+    )
+
+
+def test_auto_routing_reliability_matrix():
+    """Common student questions should land in the right office automatically."""
+    from app.services.knowledge_taxonomy import load_taxonomy
+
+    load_taxonomy.cache_clear()
+    session = _routing_session()
+    cases = [
+        (
+            "What payment methods does the Cashier Unit accept?",
+            "Which payment methods are accepted at the Cashier Unit?",
+            "Cashier Unit",
+        ),
+        (
+            "I need a Certificate of Enrollment",
+            "Please advise how to request a COE from the Registrar.",
+            "Registrar",
+        ),
+        (
+            "How do I request a Good Moral Certificate?",
+            "I need a good moral certificate for employment.",
+            "Office of Student Affairs",
+        ),
+        (
+            "My student portal password will not reset",
+            "I cannot log in to the student portal.",
+            "ICT Office",
+        ),
+        (
+            "Is counseling free for enrolled students?",
+            "Asking the Guidance Office if counseling services are free.",
+            "Guidance Office",
+        ),
+        (
+            "What undergraduate programs does CAS offer?",
+            "I want the College of Arts and Sciences program list.",
+            "College of Arts and Sciences",
+        ),
+        (
+            "When is the Library open?",
+            "Need the library opening hours this semester.",
+            "Library",
+        ),
+        (
+            "How do I apply for a scholarship?",
+            "Looking for scholarship grant requirements.",
+            "Scholarship and Financial Assistance Office",
+        ),
+        (
+            "I need a TOR",
+            "Requesting a transcript of records from the registrar office.",
+            "Registrar",
+        ),
+        (
+            "I need a medical certificate",
+            "Can the Medical Clinic issue a medical certificate?",
+            "Medical Clinic",
+        ),
+    ]
+    try:
+        for subject, description, expected_office in cases:
+            result = triage_ticket(subject, description, session=session)
+            assert expected_office in result["assigned_office"], {
+                "subject": subject,
+                "expected": expected_office,
+                "result": result,
+            }
+            assert result["confidence"] >= 0.45, result
+            assert result["assigned_office_id"] is not None, result
+    finally:
+        session.close()
+
+
+def test_vague_request_does_not_auto_route_to_registrar():
+    """Bare 'request' language must not invent a Registrar assignment."""
+    from app.services.knowledge_taxonomy import load_taxonomy
+
+    load_taxonomy.cache_clear()
+    session = _routing_session()
+    try:
+        result = triage_ticket(
+            "Please help with my request",
+            "I just need assistance. Thank you.",
+            session=session,
+        )
+        assert "Registrar" not in result["assigned_office"], result
+        assert "Student Affairs" in result["assigned_office"] or result["method"] == "low_confidence_default"
+    finally:
+        session.close()
+
+
+def test_office_named_only_in_description_is_honored():
+    """Auto-routing must read description text, not subject alone."""
+    from app.services.knowledge_taxonomy import load_taxonomy
+
+    load_taxonomy.cache_clear()
+    session = _routing_session()
+    try:
+        result = triage_ticket(
+            "I have a quick question",
+            "Is counseling at the Guidance Office free for enrolled students?",
+            session=session,
+        )
+        assert result["assigned_office"] == "Guidance Office", result
+        assert result["method"] in {"office_mention", "rule"}, result
+    finally:
+        session.close()
+
+
+def test_subject_intent_beats_purpose_wording_in_description():
+    """TOR subject must stay with Registrar even if description mentions scholarship."""
+    from app.services.knowledge_taxonomy import load_taxonomy
+
+    load_taxonomy.cache_clear()
+    session = _routing_session()
+    try:
+        result = triage_ticket(
+            "How can I request a copy of my TOR?",
+            "I need it for scholarship application.",
+            session=session,
+        )
+        assert result["assigned_office"] == "Registrar", result
+    finally:
+        session.close()
+
+
 def test_miscellaneous_billing_routes_to_finance_not_osa():
     """BUG-R3: generic fee/billing concerns must not fall to OSA."""
     from app.services.knowledge_taxonomy import load_taxonomy

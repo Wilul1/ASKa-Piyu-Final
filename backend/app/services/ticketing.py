@@ -19,10 +19,19 @@ from app.models.schemas import (
     TicketTransferRequestSchema,
     UpdateTicketRequest,
 )
-from app.services.knowledge_taxonomy import DEFAULT_CATEGORY, classify_question
+from app.services.knowledge_taxonomy import (
+    DEFAULT_CATEGORY,
+    DEFAULT_OFFICE,
+    LOW_CONFIDENCE_THRESHOLD,
+    classify_question,
+)
 from app.services.ticket_audit import record_ticket_audit
 from app.services.ticket_notifications import notify_office_id_staff, notify_office_staff, notify_ticket_owner
-from app.services.ticket_office_resolver import UnresolvedOfficeLabelError, resolve_office_for_ticket
+from app.services.ticket_office_resolver import (
+    UnresolvedOfficeLabelError,
+    find_explicit_office_in_ticket_text,
+    resolve_office_for_ticket,
+)
 from app.services.ticket_text_quality import validate_ticket_description, validate_ticket_subject
 
 
@@ -39,37 +48,80 @@ class TicketValidationError(ValueError):
 
 
 def triage_ticket(question: str, description: str = "", *, session: Session | None = None) -> dict[str, Any]:
-    text = " ".join(part for part in (question, description) if part).strip()
-    classification = classify_question(question or text)
+    question_text = (question or "").strip()
+    description_text = (description or "").strip()
+    text = " ".join(part for part in (question_text, description_text) if part).strip()
+    # Prefer a confident subject classification so purpose wording in the
+    # description (e.g. "for scholarship") cannot steal TOR/Registrar routing.
+    # Fall back to subject+description when the subject alone is too weak, so
+    # office names mentioned only in the body still count.
+    question_classification = classify_question(question_text) if question_text else None
+    full_classification = classify_question(text or question_text)
+    if (
+        question_classification is not None
+        and question_classification.confidence >= LOW_CONFIDENCE_THRESHOLD
+    ):
+        classification = question_classification
+    else:
+        classification = full_classification
     office_name = classification.office
     office_id: str | None = None
+    method = classification.method
+    confidence = classification.confidence
+    category = classification.category
+    suggested_office_confirmed = False
+
     if session is not None:
-        # A specific (non-"General") taxonomy classification must not be
-        # silently rehomed to the Office of Student Affairs default when its
-        # seeded office can't be found -- that would make an unresolved
-        # taxonomy label indistinguishable from a genuine OSA classification.
-        # Only the deliberate "General"/unclassified sentinel is allowed to
-        # fall back to the OSA default here.
-        is_default_classification = classification.category == DEFAULT_CATEGORY
-        try:
+        mentioned = find_explicit_office_in_ticket_text(session, text)
+        if mentioned is not None:
+            office_id, office_name = mentioned
+            method = "office_mention"
+            confidence = max(confidence, 0.92)
+            suggested_office_confirmed = True
+        elif confidence < LOW_CONFIDENCE_THRESHOLD:
+            # Weak taxonomy guesses must not land in the wrong office queue.
+            # Fall back to the OSA holding office with a resolved id.
             office_id, office_name = resolve_office_for_ticket(
                 session,
-                classification.office,
-                allow_default_fallback=is_default_classification,
+                DEFAULT_OFFICE,
+                allow_default_fallback=True,
             )
-        except LookupError:
-            # Leaves office_id = None and office_name = classification.office
-            # (the raw taxonomy label) untouched, so the caller can tell this
-            # apart from a resolved office and preserve the label for
-            # diagnostics instead of silently claiming OSA was the target.
-            office_id = None
+            category = DEFAULT_CATEGORY
+            method = "low_confidence_default"
+        else:
+            # A specific (non-"General") taxonomy classification must not be
+            # silently rehomed to the Office of Student Affairs default when its
+            # seeded office can't be found -- that would make an unresolved
+            # taxonomy label indistinguishable from a genuine OSA classification.
+            # Only the deliberate "General"/unclassified sentinel is allowed to
+            # fall back to the OSA default here.
+            is_default_classification = classification.category == DEFAULT_CATEGORY
+            try:
+                office_id, office_name = resolve_office_for_ticket(
+                    session,
+                    classification.office,
+                    allow_default_fallback=is_default_classification,
+                )
+            except LookupError:
+                # Leaves office_id = None and office_name = classification.office
+                # (the raw taxonomy label) untouched, so the caller can tell this
+                # apart from a resolved office and preserve the label for
+                # diagnostics instead of silently claiming OSA was the target.
+                office_id = None
+                office_name = classification.office
+    elif confidence < LOW_CONFIDENCE_THRESHOLD:
+        category = DEFAULT_CATEGORY
+        office_name = DEFAULT_OFFICE
+        method = "low_confidence_default"
+
     return {
-        "category": classification.category,
+        "category": category,
         "assigned_office": office_name,
         "assigned_office_id": office_id,
         "priority": _priority_for_text(text),
-        "confidence": classification.confidence,
-        "method": classification.method,
+        "confidence": round(float(confidence), 3),
+        "method": method,
+        "suggested_office_confirmed": suggested_office_confirmed,
     }
 
 

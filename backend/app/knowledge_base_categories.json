@@ -79,12 +79,12 @@
     },
     {
       "name": "Student Records",
-      "keywords": ["student records", "records", "registrar", "transcript", "grades", "honorable dismissal", "good moral", "certificate of registration"],
+      "keywords": ["student records", "records", "registrar", "transcript", "grades", "honorable dismissal", "good moral", "certificate of registration", "certificate of enrollment", "coe"],
       "subcategories": [
         {
           "name": "Certificate of Registration",
           "office": "Registrar",
-          "keywords": ["certificate of registration", "cor", "registration certificate", "official registration form", "registration form"]
+          "keywords": ["certificate of registration", "cor", "registration certificate", "official registration form", "registration form", "certificate of enrollment", "certificate of enrolment", "enrollment certificate", "enrolment certificate", "coe"]
         },
         {
           "name": "Transcript of Records",
@@ -276,12 +276,12 @@
     },
     {
       "name": "Requirements & Forms",
-      "keywords": ["forms", "form", "clearance", "certificate request", "requirements", "request", "requests", "application form"],
+      "keywords": ["clearance", "certificate request", "application form", "request form", "documentary requirements"],
       "subcategories": [
         {
           "name": "Application Forms",
           "office": "Admissions Office",
-          "keywords": ["application forms", "application form", "admission form", "application", "form submission", "download form"]
+          "keywords": ["application forms", "application form", "admission form", "form submission", "download form"]
         },
         {
           "name": "Clearance",
@@ -296,7 +296,7 @@
         {
           "name": "Requests",
           "office": "Registrar",
-          "keywords": ["requests", "request", "student request", "document request", "request form", "service request", "processing request"]
+          "keywords": ["student request", "document request", "request form", "service request", "processing request"]
         }
       ]
     }

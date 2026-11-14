@@ -153,6 +153,14 @@ class Settings(BaseSettings):
     local_embedding_url: str | None = None
     local_embedding_token: str | None = None
     local_embedding_timeout_seconds: float = 15.0
+    # "gemini" (alias "google"): Google AI Studio gemini-embedding-001 via
+    # the Generative Language API. Free-tier friendly and always-on, but
+    # 768-d (not e5-small's 384-d) — switching requires an explicit Chroma
+    # reset + FAQ/document reindex so vectors stay in one embedding space.
+    gemini_api_key: str | None = None
+    gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_embedding_dimension: int = 768
+    gemini_embedding_timeout_seconds: float = 30.0
 
     # --- Student Q&A (retrieval only; no OCR) ---
     rag_top_k: int = 5

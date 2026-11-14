@@ -15,7 +15,9 @@ import pytest
 from app.services.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
     EXPECTED_EMBEDDING_DIMENSION,
+    GEMINI_EMBEDDING_DIMENSION,
     E5EmbeddingFunction,
+    GeminiEmbeddingFunction,
     HFRemoteEmbeddingFunction,
     LocalEC2EmbeddingFunction,
     RemoteEmbeddingError,
@@ -148,6 +150,30 @@ def test_get_embedding_function_local_ec2_is_case_insensitive():
         with patch("app.services.embeddings.settings.embedding_backend", "Local_EC2"):
             ef = get_embedding_function()
         assert isinstance(ef, LocalEC2EmbeddingFunction)
+    finally:
+        get_embedding_function.cache_clear()
+
+
+def test_get_embedding_function_returns_gemini_when_configured():
+    from app.services.embeddings import GeminiEmbeddingFunction
+
+    get_embedding_function.cache_clear()
+    try:
+        with patch("app.services.embeddings.settings.embedding_backend", "gemini"):
+            ef = get_embedding_function()
+        assert isinstance(ef, GeminiEmbeddingFunction)
+    finally:
+        get_embedding_function.cache_clear()
+
+
+def test_get_embedding_function_gemini_accepts_google_alias():
+    from app.services.embeddings import GeminiEmbeddingFunction
+
+    get_embedding_function.cache_clear()
+    try:
+        with patch("app.services.embeddings.settings.embedding_backend", "Google"):
+            ef = get_embedding_function()
+        assert isinstance(ef, GeminiEmbeddingFunction)
     finally:
         get_embedding_function.cache_clear()
 
@@ -695,3 +721,72 @@ def test_local_ec2_url_validation_error_never_contains_token():
                 raise AssertionError("expected RemoteEmbeddingError")
             except RemoteEmbeddingError as exc:
                 assert FAKE_LOCAL_TOKEN not in str(exc)
+
+
+FAKE_GEMINI_KEY = "test-gemini-key-not-real"
+
+
+def _fake_gemini_response(vectors: list[list[float]]) -> MagicMock:
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"embeddings": [{"values": row} for row in vectors]}
+    return response
+
+
+def test_gemini_embeds_passages_with_retrieval_document_task():
+    ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
+    fake_vector = [0.1] * GEMINI_EMBEDDING_DIMENSION
+    with patch("httpx.post", return_value=_fake_gemini_response([fake_vector])) as post:
+        result = ef(["cashier hours"])
+    assert len(result) == 1
+    assert len(result[0]) == GEMINI_EMBEDDING_DIMENSION
+    request = post.call_args.kwargs["json"]["requests"][0]
+    assert request["taskType"] == "RETRIEVAL_DOCUMENT"
+    assert request["outputDimensionality"] == GEMINI_EMBEDDING_DIMENSION
+    assert abs(float(np.linalg.norm(result[0])) - 1.0) < 1e-5
+
+
+def test_gemini_embeds_queries_with_retrieval_query_task():
+    ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
+    fake_vector = [0.2] * GEMINI_EMBEDDING_DIMENSION
+    with patch("httpx.post", return_value=_fake_gemini_response([fake_vector])) as post:
+        result = ef.embed_query(["where do I pay?"])
+    assert len(result) == 1
+    assert post.call_args.kwargs["json"]["requests"][0]["taskType"] == "RETRIEVAL_QUERY"
+
+
+def test_gemini_requires_api_key():
+    ef = GeminiEmbeddingFunction(api_key="", dimension=GEMINI_EMBEDDING_DIMENSION)
+    with pytest.raises(RemoteEmbeddingError, match="ASKA_GEMINI_API_KEY"):
+        ef.embed_query(["test"])
+
+
+def test_gemini_rejects_wrong_dimension():
+    ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
+    wrong = [0.1] * (GEMINI_EMBEDDING_DIMENSION - 1)
+    with patch("httpx.post", return_value=_fake_gemini_response([wrong])):
+        with pytest.raises(RemoteEmbeddingError, match="unexpected dimension"):
+            ef.embed_query(["test"])
+
+
+def test_gemini_error_never_contains_api_key():
+    ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
+    response = MagicMock()
+    response.status_code = 403
+    with patch("httpx.post", return_value=response):
+        with pytest.raises(RemoteEmbeddingError) as exc_info:
+            ef.embed_query(["test"])
+    assert FAKE_GEMINI_KEY not in str(exc_info.value)
+
+
+def test_current_embedding_model_label_reflects_gemini():
+    with patch("app.services.embeddings.settings.env", "production"):
+        with patch("app.services.embeddings.settings.embedding_backend", "gemini"):
+            with patch(
+                "app.services.embeddings.settings.gemini_embedding_model",
+                "gemini-embedding-001",
+            ):
+                with patch("app.services.embeddings.settings.gemini_embedding_dimension", 768):
+                    label = current_embedding_model_label()
+    assert "Gemini" in label
+    assert "768" in label

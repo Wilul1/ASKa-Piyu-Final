@@ -46,9 +46,15 @@ DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 # response rather than silently feeding Chroma a vector from a different
 # space.
 EXPECTED_EMBEDDING_DIMENSION = 384
+# Google gemini-embedding-001 default native size is 3072; we request 768 via
+# outputDimensionality so Chroma storage stays compact. Different space than
+# e5-small — never mix backends in one collection without a full reset.
+DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+GEMINI_EMBEDDING_DIMENSION = 768
 # Hugging Face's unified Inference Providers router. feature-extraction is
 # the task type for sentence/token embeddings.
 HF_ROUTER_BASE_URL = "https://router.huggingface.co/hf-inference/models"
+GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 class E5EmbeddingFunction:
@@ -103,21 +109,26 @@ class RemoteEmbeddingError(RuntimeError):
     or an API error response through this path."""
 
 
-def _validate_and_extract_vectors(payload: Any, *, expected_count: int) -> list[list[float]]:
-    """Validate a Hugging Face feature-extraction response shape and reject
-    anything malformed/non-finite rather than silently feeding Chroma bad
-    vectors."""
+def _validate_and_extract_vectors(
+    payload: Any,
+    *,
+    expected_count: int,
+    expected_dimension: int = EXPECTED_EMBEDDING_DIMENSION,
+    provider_label: str = "Hugging Face",
+) -> list[list[float]]:
+    """Validate a remote embedding response shape and reject anything
+    malformed/non-finite rather than silently feeding Chroma bad vectors."""
     if not isinstance(payload, list) or len(payload) != expected_count:
         raise RemoteEmbeddingError(
-            "Hugging Face embedding response shape was unexpected "
+            f"{provider_label} embedding response shape was unexpected "
             f"(expected a list of {expected_count} vector(s))."
         )
     vectors: list[list[float]] = []
     for row in payload:
-        if not isinstance(row, list) or len(row) != EXPECTED_EMBEDDING_DIMENSION:
+        if not isinstance(row, list) or len(row) != expected_dimension:
             raise RemoteEmbeddingError(
-                "Hugging Face embedding response contained a vector with an "
-                f"unexpected dimension (expected {EXPECTED_EMBEDDING_DIMENSION})."
+                f"{provider_label} embedding response contained a vector with an "
+                f"unexpected dimension (expected {expected_dimension})."
             )
         vector: list[float] = []
         for value in row:
@@ -125,15 +136,23 @@ def _validate_and_extract_vectors(payload: Any, *, expected_count: int) -> list[
                 number = float(value)
             except (TypeError, ValueError):
                 raise RemoteEmbeddingError(
-                    "Hugging Face embedding response contained a non-numeric value."
+                    f"{provider_label} embedding response contained a non-numeric value."
                 ) from None
             if not math.isfinite(number):
                 raise RemoteEmbeddingError(
-                    "Hugging Face embedding response contained a non-finite value."
+                    f"{provider_label} embedding response contained a non-finite value."
                 )
             vector.append(number)
         vectors.append(vector)
     return vectors
+
+
+def _l2_normalize(vector: list[float]) -> list[float]:
+    """Unit-length normalize; required when truncating Gemini outputDimensionality."""
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm <= 0.0:
+        return vector
+    return [value / norm for value in vector]
 
 
 class HFRemoteEmbeddingFunction:
@@ -409,6 +428,156 @@ class LocalEC2EmbeddingFunction:
         return LocalEC2EmbeddingFunction(base_url=config.get("base_url"))
 
 
+class GeminiEmbeddingFunction:
+    """Chroma-compatible embedding function using Google AI Studio
+    ``gemini-embedding-001`` (Generative Language API).
+
+    Uses RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY task types instead of E5's
+    ``passage:`` / ``query:`` prefixes. Vectors are L2-normalized after
+    truncating to ``outputDimensionality`` (Google's guidance for Matryoshka
+    dimensions). Not interchangeable with e5-small vectors — switching
+    requires Chroma reset + reindex.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_name: str | None = None,
+        api_key: str | None = None,
+        dimension: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        self._model_name = (
+            model_name
+            or settings.gemini_embedding_model
+            or DEFAULT_GEMINI_EMBEDDING_MODEL
+        )
+        self._api_key = api_key if api_key is not None else settings.gemini_api_key
+        configured_dim = (
+            dimension
+            if dimension is not None
+            else settings.gemini_embedding_dimension
+        )
+        self._dimension = int(configured_dim or GEMINI_EMBEDDING_DIMENSION)
+        self._timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else settings.gemini_embedding_timeout_seconds
+        )
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        """Embed documents/passages for indexing (``collection.add``)."""
+        return self._encode(input, task_type="RETRIEVAL_DOCUMENT")
+
+    def embed_query(self, input: list[str]) -> list[list[float]]:
+        """Embed a search query (``collection.query``)."""
+        return self._encode(input, task_type="RETRIEVAL_QUERY")
+
+    def _encode(self, texts: list[str], *, task_type: str) -> list[list[float]]:
+        if not texts:
+            return []
+        if not self._api_key:
+            raise RemoteEmbeddingError(
+                "ASKA_GEMINI_API_KEY is not configured; the Gemini embedding "
+                "backend cannot be used."
+            )
+
+        import httpx
+        import numpy as np
+
+        url = f"{GEMINI_API_BASE_URL}/{self._model_name}:batchEmbedContents"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self._api_key,
+        }
+        body = {
+            "requests": [
+                {
+                    "model": f"models/{self._model_name}",
+                    "content": {"parts": [{"text": text}]},
+                    "taskType": task_type,
+                    "outputDimensionality": self._dimension,
+                }
+                for text in texts
+            ]
+        }
+        try:
+            response = httpx.post(
+                url,
+                headers=headers,
+                json=body,
+                timeout=self._timeout_seconds,
+            )
+        except httpx.TimeoutException:
+            raise RemoteEmbeddingError(
+                f"Gemini embedding request timed out after {self._timeout_seconds}s."
+            ) from None
+        except httpx.HTTPError:
+            raise RemoteEmbeddingError(
+                "Gemini embedding request failed (network/transport error)."
+            ) from None
+
+        if response.status_code != 200:
+            raise RemoteEmbeddingError(
+                f"Gemini embedding request failed with HTTP {response.status_code}."
+            )
+
+        try:
+            payload = response.json()
+        except ValueError:
+            raise RemoteEmbeddingError(
+                "Gemini embedding response was not valid JSON."
+            ) from None
+
+        if not isinstance(payload, dict) or "embeddings" not in payload:
+            raise RemoteEmbeddingError(
+                "Gemini embedding response shape was unexpected (missing 'embeddings')."
+            )
+
+        raw_rows = payload["embeddings"]
+        if not isinstance(raw_rows, list) or len(raw_rows) != len(texts):
+            raise RemoteEmbeddingError(
+                "Gemini embedding response shape was unexpected "
+                f"(expected a list of {len(texts)} embedding(s))."
+            )
+
+        value_rows: list[Any] = []
+        for row in raw_rows:
+            if not isinstance(row, dict) or "values" not in row:
+                raise RemoteEmbeddingError(
+                    "Gemini embedding response contained a row without 'values'."
+                )
+            value_rows.append(row["values"])
+
+        vectors = _validate_and_extract_vectors(
+            value_rows,
+            expected_count=len(texts),
+            expected_dimension=self._dimension,
+            provider_label="Gemini",
+        )
+        normalized = [_l2_normalize(vector) for vector in vectors]
+        return [np.asarray(vector, dtype=np.float32) for vector in normalized]
+
+    @staticmethod
+    def name() -> str:
+        return "aska_piyu_gemini_remote"
+
+    def get_config(self) -> dict[str, Any]:
+        # Never include the API key: Chroma persists this config to disk
+        # alongside the collection.
+        return {
+            "model_name": self._model_name,
+            "dimension": self._dimension,
+        }
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "GeminiEmbeddingFunction":
+        return GeminiEmbeddingFunction(
+            model_name=config.get("model_name"),
+            dimension=config.get("dimension"),
+        )
+
+
 @lru_cache(maxsize=1)
 def get_embedding_function() -> Any:
     """The single chokepoint Chroma calls through (see chroma_store.py).
@@ -421,6 +590,8 @@ def get_embedding_function() -> Any:
         return HFRemoteEmbeddingFunction()
     if backend == "local_ec2":
         return LocalEC2EmbeddingFunction()
+    if backend in ("gemini", "google"):
+        return GeminiEmbeddingFunction()
     return E5EmbeddingFunction()
 
 
@@ -433,4 +604,8 @@ def current_embedding_model_label() -> str:
         return f"Hugging Face remote: {settings.hf_embedding_model or DEFAULT_EMBEDDING_MODEL}"
     if backend == "local_ec2":
         return f"Local EC2 remote: {DEFAULT_EMBEDDING_MODEL}"
+    if backend in ("gemini", "google"):
+        model = settings.gemini_embedding_model or DEFAULT_GEMINI_EMBEDDING_MODEL
+        dim = settings.gemini_embedding_dimension or GEMINI_EMBEDDING_DIMENSION
+        return f"Google Gemini remote: {model} ({dim}-d)"
     return f"sentence-transformers: {settings.embedding_model_name or DEFAULT_EMBEDDING_MODEL}"

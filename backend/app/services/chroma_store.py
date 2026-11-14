@@ -919,7 +919,14 @@ class KnowledgeBaseStore:
             return None
         existing = self._get_all_matching(where={"source_filename": name}, include=["metadatas"])
         metadatas = existing.get("metadatas") or []
-        doc_ids = {m.get("document_id") for m in metadatas if m and m.get("document_id")}
+        # Prefer real PDF/document ids. Ticket FAQ chunks sometimes inherit a
+        # handbook/charter source_filename for citations; never treat those
+        # faq:* ids as the replace target for a corpus re-ingest.
+        doc_ids = {
+            m.get("document_id")
+            for m in metadatas
+            if m and m.get("document_id") and not str(m.get("document_id")).startswith("faq:")
+        }
         if not doc_ids:
             return None
         if len(doc_ids) > 1:

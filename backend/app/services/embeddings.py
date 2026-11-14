@@ -51,6 +51,12 @@ EXPECTED_EMBEDDING_DIMENSION = 384
 # e5-small — never mix backends in one collection without a full reset.
 DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 GEMINI_EMBEDDING_DIMENSION = 768
+# Google batchEmbedContents rejects more than 100 items in one request
+# (HTTP 400 INVALID_ARGUMENT). Keep well under that.
+GEMINI_EMBED_BATCH_SIZE = 100
+# Model input is truncated at 2048 tokens; clamp chars so oversized handbook
+# chunks don't blow the request.
+GEMINI_EMBED_MAX_CHARS = 8000
 # Hugging Face's unified Inference Providers router. feature-extraction is
 # the task type for sentence/token embeddings.
 HF_ROUTER_BASE_URL = "https://router.huggingface.co/hf-inference/models"
@@ -482,8 +488,21 @@ class GeminiEmbeddingFunction:
                 "backend cannot be used."
             )
 
-        import httpx
         import numpy as np
+
+        # Clamp empties / oversize chunks; batch to Google's 100-item limit.
+        prepared = [
+            (text if (text or "").strip() else " ")[:GEMINI_EMBED_MAX_CHARS]
+            for text in texts
+        ]
+        vectors: list[list[float]] = []
+        for start in range(0, len(prepared), GEMINI_EMBED_BATCH_SIZE):
+            batch = prepared[start : start + GEMINI_EMBED_BATCH_SIZE]
+            vectors.extend(self._encode_batch(batch, task_type=task_type))
+        return [np.asarray(vector, dtype=np.float32) for vector in vectors]
+
+    def _encode_batch(self, texts: list[str], *, task_type: str) -> list[list[float]]:
+        import httpx
 
         url = f"{GEMINI_API_BASE_URL}/{self._model_name}:batchEmbedContents"
         headers = {
@@ -555,8 +574,7 @@ class GeminiEmbeddingFunction:
             expected_dimension=self._dimension,
             provider_label="Gemini",
         )
-        normalized = [_l2_normalize(vector) for vector in vectors]
-        return [np.asarray(vector, dtype=np.float32) for vector in normalized]
+        return [_l2_normalize(vector) for vector in vectors]
 
     @staticmethod
     def name() -> str:

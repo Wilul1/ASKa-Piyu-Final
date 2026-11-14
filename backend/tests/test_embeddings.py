@@ -746,6 +746,23 @@ def test_gemini_embeds_passages_with_retrieval_document_task():
     assert abs(float(np.linalg.norm(result[0])) - 1.0) < 1e-5
 
 
+def test_gemini_batches_above_google_100_item_limit():
+    from app.services.embeddings import GEMINI_EMBED_BATCH_SIZE
+
+    ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
+    texts = [f"chunk {i}" for i in range(GEMINI_EMBED_BATCH_SIZE + 5)]
+
+    def _side_effect(*_args, **kwargs):
+        n = len(kwargs["json"]["requests"])
+        assert n <= GEMINI_EMBED_BATCH_SIZE
+        return _fake_gemini_response([[0.1] * GEMINI_EMBEDDING_DIMENSION] * n)
+
+    with patch("httpx.post", side_effect=_side_effect) as post:
+        result = ef(texts)
+    assert len(result) == len(texts)
+    assert post.call_count == 2
+
+
 def test_gemini_embeds_queries_with_retrieval_query_task():
     ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
     fake_vector = [0.2] * GEMINI_EMBEDDING_DIMENSION

@@ -52,8 +52,9 @@ EXPECTED_EMBEDDING_DIMENSION = 384
 DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 GEMINI_EMBEDDING_DIMENSION = 768
 # Google batchEmbedContents rejects more than 100 items in one request
-# (HTTP 400 INVALID_ARGUMENT). Keep well under that.
-GEMINI_EMBED_BATCH_SIZE = 100
+# (HTTP 400 INVALID_ARGUMENT). Stay well under that, and prefer smaller
+# batches so free-tier RPM/TPM quotas don't trip mid-ingest.
+GEMINI_EMBED_BATCH_SIZE = 32
 # Model input is truncated at 2048 tokens; clamp chars so oversized handbook
 # chunks don't blow the request.
 GEMINI_EMBED_MAX_CHARS = 8000
@@ -495,13 +496,21 @@ class GeminiEmbeddingFunction:
             (text if (text or "").strip() else " ")[:GEMINI_EMBED_MAX_CHARS]
             for text in texts
         ]
+        import time
+
         vectors: list[list[float]] = []
-        for start in range(0, len(prepared), GEMINI_EMBED_BATCH_SIZE):
+        batch_starts = list(range(0, len(prepared), GEMINI_EMBED_BATCH_SIZE))
+        for index, start in enumerate(batch_starts):
+            if index > 0:
+                # Small pause between batches to reduce free-tier 429s.
+                time.sleep(1.0)
             batch = prepared[start : start + GEMINI_EMBED_BATCH_SIZE]
             vectors.extend(self._encode_batch(batch, task_type=task_type))
         return [np.asarray(vector, dtype=np.float32) for vector in vectors]
 
     def _encode_batch(self, texts: list[str], *, task_type: str) -> list[list[float]]:
+        import time
+
         import httpx
 
         url = f"{GEMINI_API_BASE_URL}/{self._model_name}:batchEmbedContents"
@@ -520,21 +529,37 @@ class GeminiEmbeddingFunction:
                 for text in texts
             ]
         }
-        try:
-            response = httpx.post(
-                url,
-                headers=headers,
-                json=body,
-                timeout=self._timeout_seconds,
-            )
-        except httpx.TimeoutException:
-            raise RemoteEmbeddingError(
-                f"Gemini embedding request timed out after {self._timeout_seconds}s."
-            ) from None
-        except httpx.HTTPError:
+        # Free-tier Gemini embedding quotas are tight; back off on 429 instead
+        # of failing a whole handbook ingest after one burst.
+        max_attempts = 6
+        response = None
+        for attempt in range(max_attempts):
+            try:
+                response = httpx.post(
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=self._timeout_seconds,
+                )
+            except httpx.TimeoutException:
+                raise RemoteEmbeddingError(
+                    f"Gemini embedding request timed out after {self._timeout_seconds}s."
+                ) from None
+            except httpx.HTTPError:
+                raise RemoteEmbeddingError(
+                    "Gemini embedding request failed (network/transport error)."
+                ) from None
+
+            if response.status_code != 429:
+                break
+            # 2s, 4s, 8s, 16s, 32s — then final attempt already spent.
+            if attempt < max_attempts - 1:
+                time.sleep(2 ** (attempt + 1))
+
+        if response is None:
             raise RemoteEmbeddingError(
                 "Gemini embedding request failed (network/transport error)."
-            ) from None
+            )
 
         if response.status_code != 200:
             raise RemoteEmbeddingError(

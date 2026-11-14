@@ -10,6 +10,7 @@ still hold the PDFs.
 from __future__ import annotations
 
 import sys
+import time
 
 CORE_FILENAMES = (
     "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
@@ -41,7 +42,10 @@ def main() -> int:
     session = get_session_factory()()
     failures = 0
     try:
-        for filename in CORE_FILENAMES:
+        for index, filename in enumerate(CORE_FILENAMES):
+            if index > 0:
+                # Pause between documents so Gemini free-tier quota can recover.
+                time.sleep(15)
             row = _best_source_row(session, filename)
             if row is None or not row.pdf_data:
                 print(f"FAIL missing_pdf filename={filename}")

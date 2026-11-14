@@ -746,7 +746,7 @@ def test_gemini_embeds_passages_with_retrieval_document_task():
     assert abs(float(np.linalg.norm(result[0])) - 1.0) < 1e-5
 
 
-def test_gemini_batches_above_google_100_item_limit():
+def test_gemini_batches_above_configured_batch_size():
     from app.services.embeddings import GEMINI_EMBED_BATCH_SIZE
 
     ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
@@ -758,8 +758,21 @@ def test_gemini_batches_above_google_100_item_limit():
         return _fake_gemini_response([[0.1] * GEMINI_EMBEDDING_DIMENSION] * n)
 
     with patch("httpx.post", side_effect=_side_effect) as post:
-        result = ef(texts)
+        with patch("time.sleep"):
+            result = ef(texts)
     assert len(result) == len(texts)
+    assert post.call_count == 2
+
+
+def test_gemini_retries_on_http_429():
+    ef = GeminiEmbeddingFunction(api_key=FAKE_GEMINI_KEY, dimension=GEMINI_EMBEDDING_DIMENSION)
+    throttled = MagicMock()
+    throttled.status_code = 429
+    ok = _fake_gemini_response([[0.1] * GEMINI_EMBEDDING_DIMENSION])
+    with patch("httpx.post", side_effect=[throttled, ok]) as post:
+        with patch("time.sleep"):
+            result = ef.embed_query(["retry me"])
+    assert len(result) == 1
     assert post.call_count == 2
 
 

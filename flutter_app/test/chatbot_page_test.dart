@@ -3,8 +3,9 @@
 // generated answer (it showed the *first* retrieved chunk regardless of
 // whether that chunk actually supported the answer — see the citation
 // grounding fix in backend/app/services/qa/question_answering.py). The
-// expandable Sources section below the answer, confidence indicator, and
-// citation/PDF-link metadata must all keep working.
+// expandable Sources section below the answer and citation/PDF-link
+// metadata must all keep working (the Low/Medium/High confidence badge
+// is intentionally not shown).
 //
 // These tests seed a chat session directly into local storage (the same
 // JSON shape `_ChatSession`/`_QaAnswer`/`_QaSource` already persist/parse in
@@ -229,7 +230,9 @@ void main() {
       );
     });
 
-    testWidgets('confidence indicator still renders', (tester) async {
+    testWidgets(
+        'confidence indicator (Low/Medium/High badge) is not rendered',
+        (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
         question: 'What is the passing grade?',
@@ -244,7 +247,9 @@ void main() {
         ],
       );
 
-      expect(find.text('medium'), findsOneWidget);
+      expect(find.text('medium'), findsNothing);
+      expect(find.text('high'), findsNothing);
+      expect(find.text('low'), findsNothing);
     });
 
     testWidgets(
@@ -352,7 +357,9 @@ void main() {
       expect(answerY, lessThan(sourcesY));
     });
 
-    testWidgets('a low-confidence answer with zero sources renders no Sources section',
+    testWidgets(
+        'a low-confidence answer with zero sources renders no Sources '
+        'section and no confidence badge',
         (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
@@ -369,7 +376,30 @@ void main() {
         find.textContaining('I do not have enough information'),
         findsOneWidget,
       );
-      expect(find.text('low'), findsOneWidget);
+      expect(find.text('low'), findsNothing);
+    });
+
+    testWidgets(
+        'citation-verification warning notices never render on zero-source answers',
+        (tester) async {
+      await _pumpChatbotWithSeededAnswer(
+        tester,
+        question: 'What is the deadline for filing an appeal?',
+        answerText: 'I do not have enough information in the knowledge base '
+            'to answer that question. Please contact the relevant office.',
+        confidence: 'low',
+        sources: const [],
+      );
+
+      expect(
+        find.textContaining('No official source was found to support'),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Source verification could not be completed'),
+        findsNothing,
+      );
+      expect(find.byIcon(Icons.error_outline), findsNothing);
     });
   });
 

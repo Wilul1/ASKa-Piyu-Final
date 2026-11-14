@@ -16,6 +16,7 @@ from app.services.ticket_knowledge import (
     _COMPLETION_MARKER,
     _classify_sentence,
     _classify_staff_answer,
+    _format_structured_article,
     build_generated_article_from_ticket,
     convert_ticket_to_draft_article,
     generate_article_from_resolved_ticket,
@@ -800,6 +801,30 @@ def test_genuine_complete_coe_answer_still_publishes_as_ready(session: Session):
     )
     assert payload["needs_manual_completion"] is False
     assert payload["kb_conversion_status"] == "draft"
+
+
+def test_informational_payment_answer_goes_to_overview_not_procedure():
+    """Factual 'payment' answers must not become Procedure via substring 'pay'."""
+    body = _format_structured_article(
+        [
+            "Yes. The Cashier Unit currently accepts cash and over-the-counter "
+            "bank payments. Online payment is available only through the "
+            "university's officially announced payment channels for the semester."
+        ],
+        office_name="Cashier Unit",
+    )
+    assert "## Overview" in body
+    assert "## Procedure" not in body
+    assert "Cashier Unit" in body
+
+
+def test_pay_at_cashier_still_counts_as_procedure():
+    body = _format_structured_article(
+        ["Go to Window 3 and pay at the cashier with your assessment form."],
+        office_name="Cashier Unit",
+    )
+    assert "## Procedure" in body
+    assert "pay at the cashier" in body.casefold()
 
 
 def test_review_message_f_is_deferred_and_incomplete(session: Session):

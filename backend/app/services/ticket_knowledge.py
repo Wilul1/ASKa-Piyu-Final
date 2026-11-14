@@ -2266,6 +2266,22 @@ def _referral_completion_notes(
     return notes
 
 
+# Section cues for FAQ layout. Keep these word-boundary / action-shaped so
+# informational nouns like "payment" are Overview, while "pay at the cashier"
+# stays Procedure.
+_REQUIREMENT_SECTION_CUE_RE = re.compile(
+    r"(?i)\b(?:"
+    r"bring|submit|requirement|required\s+documents?|documents?\s+are|"
+    r"forms?|\btor\b|valid\s+id|school\s+id"
+    r")\b"
+)
+_PROCEDURE_SECTION_CUE_RE = re.compile(
+    r"(?i)\b(?:"
+    r"go\s+to|fill\s+out|pay\s+(?:at|the|your|for)|return|claim|present|proceed|keep"
+    r")\b"
+)
+
+
 def _format_structured_article(
     answers: list[str],
     *,
@@ -2304,34 +2320,14 @@ def _format_structured_article(
                     continue
                 sentence = scrubbed
             lower = sentence.casefold()
-            if any(
-                token in lower
-                for token in (
-                    "bring",
-                    "submit",
-                    "requirement",
-                    "required document",
-                    "documents are",
-                    "form",
-                    "tor",
-                    "id ",
-                    "valid id",
-                )
-            ) and not lower.startswith(("go to", "pay at", "return", "keep")):
-                requirements.append(sentence)
-            elif any(
-                token in lower
-                for token in (
-                    "go to",
-                    "fill out",
-                    "pay",
-                    "return",
-                    "claim",
-                    "present",
-                    "proceed",
-                    "keep",
-                )
+            # Word-boundary cues only. Bare substring "pay" must not treat
+            # factual "payment" answers as Procedure steps. Keep requirement
+            # priority for mixed submit/pay sentences (same as before).
+            if _REQUIREMENT_SECTION_CUE_RE.search(sentence) and not lower.startswith(
+                ("go to", "pay at", "return", "keep")
             ):
+                requirements.append(sentence)
+            elif _PROCEDURE_SECTION_CUE_RE.search(sentence):
                 procedures.append(sentence)
             elif "working day" in lower or (
                 "within" in lower and "day" in lower

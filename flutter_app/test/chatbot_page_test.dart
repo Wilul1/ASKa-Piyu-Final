@@ -4,8 +4,8 @@
 // whether that chunk actually supported the answer — see the citation
 // grounding fix in backend/app/services/qa/question_answering.py). The
 // expandable Sources section below the answer and citation/PDF-link
-// metadata must all keep working (the Low/Medium/High confidence badge
-// is intentionally not shown).
+// metadata must all keep working. The high/medium/low confidence field
+// is removed from the student chatbot model/UI entirely.
 //
 // These tests seed a chat session directly into local storage (the same
 // JSON shape `_ChatSession`/`_QaAnswer`/`_QaSource` already persist/parse in
@@ -56,8 +56,8 @@ Map<String, dynamic> _sourceJson({
 Map<String, dynamic> _seedSessionJson({
   required String question,
   required String answerText,
-  required String confidence,
   required List<Map<String, dynamic>> sources,
+  bool degraded = false,
 }) {
   return {
     'id': 'chat_test_1',
@@ -70,8 +70,7 @@ Map<String, dynamic> _seedSessionJson({
         'answer': {
           'question': question,
           'text': answerText,
-          'confidence': confidence,
-          'degraded': false,
+          'degraded': degraded,
           'sources': sources,
         },
       },
@@ -97,8 +96,8 @@ Future<void> _pumpChatbotWithSeededAnswer(
   WidgetTester tester, {
   required String question,
   required String answerText,
-  required String confidence,
   required List<Map<String, dynamic>> sources,
+  bool degraded = false,
   Size size = const Size(1648, 928),
 }) async {
   LocalStore.resetForTest();
@@ -107,8 +106,8 @@ Future<void> _pumpChatbotWithSeededAnswer(
       _seedSessionJson(
         question: question,
         answerText: answerText,
-        confidence: confidence,
         sources: sources,
+        degraded: degraded,
       ),
     ]),
   });
@@ -162,7 +161,6 @@ void main() {
             'receive credit for equivalent courses without validation, but '
             'the credits cannot exceed 50 percent of the total credits '
             'required for graduation.',
-        confidence: 'high',
         sources: [
           _sourceJson(
             title: 'Validation Requirements',
@@ -183,7 +181,6 @@ void main() {
         question: 'How do I validate my ID?',
         answerText: 'Present your Certificate of Registration at the OSAS '
             'window to have your student ID validated.',
-        confidence: 'high',
         sources: [
           _sourceJson(
             title: 'ID Validation',
@@ -214,7 +211,6 @@ void main() {
         tester,
         question: 'How much credit can be given without validation?',
         answerText: answerText,
-        confidence: 'high',
         sources: [
           _sourceJson(
             title: 'Validation Requirements',
@@ -237,7 +233,6 @@ void main() {
         tester,
         question: 'What is the passing grade?',
         answerText: 'A grade of 3.00 or above is passing.',
-        confidence: 'medium',
         sources: [
           _sourceJson(
             title: 'Grading System',
@@ -260,7 +255,6 @@ void main() {
         question: 'What are the grade ranges for latin honors?',
         answerText: 'Summa cum laude requires 1.20-1.45; magna cum laude '
             '1.46-1.75; cum laude 1.76-2.00.',
-        confidence: 'high',
         sources: [
           _sourceJson(
             title: 'Latin Honors',
@@ -287,7 +281,6 @@ void main() {
         question: 'What are the grade ranges for latin honors?',
         answerText: 'Summa cum laude requires 1.20-1.45; magna cum laude '
             '1.46-1.75; cum laude 1.76-2.00.',
-        confidence: 'high',
         sources: [
           _sourceJson(
             title: 'Latin Honors',
@@ -332,7 +325,6 @@ void main() {
         tester,
         question: 'What is the attendance policy?',
         answerText: 'Students must submit an excuse slip for any absence.',
-        confidence: 'high',
         sources: [
           _sourceJson(
             title: 'Attendance Policy',
@@ -358,15 +350,14 @@ void main() {
     });
 
     testWidgets(
-        'a low-confidence answer with zero sources renders no Sources '
-        'section and no confidence badge',
+        'a zero-source answer renders no Sources section, no '
+        'high/medium/low label, and offers Submit ticket',
         (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
         question: 'What is the deadline for filing an appeal?',
         answerText: 'I do not have enough information in the knowledge base '
             'to answer that question. Please contact the relevant office.',
-        confidence: 'low',
         sources: const [],
       );
 
@@ -377,6 +368,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('low'), findsNothing);
+      expect(find.text('medium'), findsNothing);
+      expect(find.text('high'), findsNothing);
+      expect(find.text('Submit ticket'), findsOneWidget);
     });
 
     testWidgets(
@@ -387,7 +381,6 @@ void main() {
         question: 'What is the deadline for filing an appeal?',
         answerText: 'I do not have enough information in the knowledge base '
             'to answer that question. Please contact the relevant office.',
-        confidence: 'low',
         sources: const [],
       );
 
@@ -412,7 +405,6 @@ void main() {
         tester,
         question: 'How do I validate my ID?',
         answerText: answerText,
-        confidence: 'high',
         sources: const [],
       );
 
@@ -442,7 +434,6 @@ void main() {
         tester,
         question: 'How do I enroll?',
         answerText: answerText,
-        confidence: 'high',
         sources: const [],
       );
 
@@ -475,7 +466,6 @@ void main() {
         question: 'What are the grade ranges for latin honors?',
         answerText: 'Summa cum laude requires 1.20-1.45; magna cum laude '
             '1.46-1.75; cum laude 1.76-2.00.',
-        confidence: 'high',
         sources: [
           _sourceJson(
             title: 'Latin Honors',
@@ -524,7 +514,6 @@ void main() {
         tester,
         question: 'What documents are required?',
         answerText: longAnswer,
-        confidence: 'high',
         sources: const [],
       );
 

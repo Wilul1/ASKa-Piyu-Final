@@ -228,8 +228,7 @@ void main() {
   // stated a specific policy figure ("six units or two subjects") that no
   // retrieved chunk supported, and verification correctly resolved to
   // no_verified_support -- but the prior presentation was an easy-to-miss
-  // muted italic caption, with no link to the (unrelated) confidence chip
-  // shown above the answer.
+  // muted italic caption that was easy to miss.
   group('citationStatusPresentationFor', () {
     test('verifying is non-terminal and uses the quiet, unchanged '
         'presentation (not a warning)', () {
@@ -257,16 +256,14 @@ void main() {
       });
 
       test(
-          'terminal unverified status "$status" explicitly disclaims '
-          'confidence as a proxy for grounding', () {
+          'terminal unverified status "$status" asks the user to confirm '
+          'with the relevant office', () {
         final presentation = citationStatusPresentationFor(status)!;
         final lower = presentation.message.toLowerCase();
-        expect(lower.contains('confidence'), isTrue,
-            reason: 'the message must reference the confidence score to '
-                'prevent it being read as proof of verification');
-        expect(lower.contains('does not mean'), isTrue,
-            reason: 'the message must explicitly say confidence does not '
-                'mean the answer was verified');
+        expect(lower.contains('confidence'), isFalse,
+            reason: 'student UI no longer surfaces high/medium/low confidence');
+        expect(lower.contains('confirm'), isTrue,
+            reason: 'unverified answers must still push the user to confirm');
       });
     }
 

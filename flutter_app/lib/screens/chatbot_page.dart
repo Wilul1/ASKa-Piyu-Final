@@ -1345,7 +1345,9 @@ class _AnswerBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isLowConfidence = answer.confidence == 'low';
+    // Offer ticket escalation when retrieval produced no citations (or the
+    // answer was degraded) — never via a high/medium/low confidence label.
+    final offerTicket = answer.sources.isEmpty || answer.degraded;
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -1405,10 +1407,10 @@ class _AnswerBubble extends StatelessWidget {
               const SizedBox(height: 14),
               _CollapsibleSources(sources: answer.sources),
             ],
-            if (isLowConfidence) ...[
+            if (offerTicket) ...[
               const SizedBox(height: 14),
               const Text(
-                'I am not fully confident with this answer. You may submit this as a ticket so the appropriate office can assist you.',
+                'If this did not fully answer your question, you may submit a ticket so the appropriate office can assist you.',
                 style: TextStyle(
                   fontSize: 13,
                   height: 1.45,
@@ -1548,12 +1550,6 @@ class CitationStatusPresentation {
   });
 }
 
-/// Every message for an unverified terminal status explicitly disclaims
-/// confidence as a proxy for grounding -- confidence is computed from
-/// retrieval signals alone (see question_answering.py's _confidence_for),
-/// entirely independently of citation verification, so a "medium"/"high"
-/// confidence score sitting next to a verification failure must never be
-/// read as "verified anyway".
 CitationStatusPresentation? citationStatusPresentationFor(String status) {
   switch (status) {
     case 'verifying':
@@ -1564,17 +1560,14 @@ CitationStatusPresentation? citationStatusPresentationFor(String status) {
     case 'no_verified_support':
       return const CitationStatusPresentation(
         message: 'No official source was found to support this answer\'s '
-            'specific claims. The confidence score above does not mean '
-            'this was verified -- please confirm details with the '
-            'relevant office.',
+            'specific claims. Please confirm details with the relevant office.',
         isUnverifiedWarning: true,
       );
     case 'failed':
     case 'unknown':
       return const CitationStatusPresentation(
-        message: 'Source verification could not be completed. The '
-            'confidence score above does not mean this answer was '
-            'verified.',
+        message: 'Source verification could not be completed. Please confirm '
+            'details with the relevant office.',
         isUnverifiedWarning: true,
       );
     default:
@@ -2100,7 +2093,6 @@ class _ChatTurn {
 class _QaAnswer {
   final String question;
   final String text;
-  final String confidence;
   // Mutable (not final): a pending async citation verification result
   // mutates this SAME object in place once polling resolves, so
   // setState(() {}) on the page is enough to re-render with the update --
@@ -2125,7 +2117,6 @@ class _QaAnswer {
   _QaAnswer({
     required this.question,
     required this.text,
-    required this.confidence,
     required this.sources,
     this.degraded = false,
     this.activeService,
@@ -2136,7 +2127,6 @@ class _QaAnswer {
   Map<String, dynamic> toJson() => {
         'question': question,
         'text': text,
-        'confidence': confidence,
         'degraded': degraded,
         'sources': sources.map((source) => source.toJson()).toList(),
         if (activeService != null) 'active_service': activeService,
@@ -2145,6 +2135,8 @@ class _QaAnswer {
         // reload of this locally-stored turn -- a restored turn should
         // simply show whatever sources array was last saved, without
         // implying a "verifying" state that can never resolve again.
+        // Also deliberately omit API "confidence" (high/medium/low): the
+        // student UI no longer stores or displays that label.
       };
 
   factory _QaAnswer.fromStored(Map<String, dynamic> json) {
@@ -2154,7 +2146,6 @@ class _QaAnswer {
     return _QaAnswer(
       question: (json['question'] ?? '').toString(),
       text: (json['text'] ?? json['answer'] ?? '').toString(),
-      confidence: (json['confidence'] ?? 'low').toString(),
       degraded: json['degraded'] == true,
       sources: rawSources
           .whereType<Map>()
@@ -2196,7 +2187,6 @@ class _QaAnswer {
     return _QaAnswer(
       text: (json['answer'] ?? '').toString(),
       question: question,
-      confidence: (json['confidence'] ?? 'low').toString(),
       sources: merged,
       degraded: json['degraded'] == true,
       activeService: rawActiveService is String && rawActiveService.trim().isNotEmpty

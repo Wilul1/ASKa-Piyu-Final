@@ -16,6 +16,7 @@ import '../services/kb_compose_helpers.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
 import '../widgets/responsive_dialog_body.dart';
+import '../widgets/ticket_kb_incomplete_draft_banner.dart';
 import 'admin_scaffold.dart';
 import 'incoming_transfers_page.dart';
 import 'knowledge_articles_page.dart';

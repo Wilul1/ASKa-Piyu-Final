@@ -2802,6 +2802,12 @@ def _article_candidate_generation_payload(result: dict[str, Any]) -> dict[str, A
     }
 
 
+def _optional_generation_notes(raw: object) -> str | None:
+    """Expose persisted generation_notes codes only (no ticket body / PII)."""
+    text = str(raw or "").strip()
+    return text or None
+
+
 def _admin_article_schema(art) -> AdminPublishedArticleSchema:
     from app.services.article_content_formatter import extract_embedded_article_metadata
 
@@ -2873,6 +2879,12 @@ def _admin_article_schema(art) -> AdminPublishedArticleSchema:
         created_by_user_id=getattr(art, "created_by_user_id", None),
         rag_indexed=bool(getattr(art, "rag_indexed", False)),
         rag_document_id=getattr(art, "rag_document_id", None),
+        needs_manual_completion=bool(
+            getattr(art, "needs_manual_completion", False)
+        ),
+        generation_notes=_optional_generation_notes(
+            getattr(art, "generation_notes", None)
+        ),
     )
 
 

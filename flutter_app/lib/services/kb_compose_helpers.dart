@@ -1,5 +1,58 @@
 /// Helpers for ticket → public KB article composition.
 
+/// Must match backend ``ticket_knowledge._COMPLETION_MARKER``.
+const ticketKbCompletionMarker =
+    '[Needs staff completion: the ticket conversation does not contain '
+    'a complete reusable answer.]';
+
+/// True when article body still contains the incomplete-draft marker.
+bool contentHasTicketKbCompletionMarker(String? content) {
+  final text = content ?? '';
+  if (text.contains(ticketKbCompletionMarker)) return true;
+  // Tolerate minor wording drift / wrapping while still matching intent.
+  return RegExp(
+    r'\[Needs staff completion:[^\]]*\]',
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
+/// Publish must stay disabled while the persisted flag is set or the marker remains.
+bool ticketKbPublishBlocked({
+  required bool needsManualCompletion,
+  String? content,
+}) {
+  return needsManualCompletion || contentHasTicketKbCompletionMarker(content);
+}
+
+/// Human-readable copy for persisted ``generation_notes`` codes.
+String? formatTicketKbGenerationNotes(String? raw) {
+  final notes = (raw ?? '').trim();
+  if (notes.isEmpty) return null;
+  switch (notes) {
+    case 'incomplete_referral':
+      return 'The ticket only referred the student elsewhere without enough '
+          'reusable steps or requirements.';
+    case 'contradictory_answers':
+      return 'Staff replies in the ticket conflict and need reconciliation.';
+    case 'unanswered_followup':
+      return 'A student follow-up raised details that were never answered.';
+    case 'unconfirmed_referral':
+      return 'Some details still need office confirmation before publishing.';
+    case 'unresolved_status':
+      return 'The ticket still includes an unresolved status update.';
+    case 'deferred_answer':
+      return 'Staff only recorded a status update; a reusable answer is missing.';
+    case 'incomplete_answer':
+      return 'The ticket conversation did not establish a complete reusable answer.';
+    case 'rejected':
+      return 'This draft was previously rejected.';
+    case 'index_failed':
+      return 'Publishing previously failed during search indexing.';
+    default:
+      return notes;
+  }
+}
+
 const faqTemplateSections = <({String label, String heading, String hint})>[
   (
     label: 'Requirements',

@@ -26,6 +26,10 @@ class AdminArticle {
     this.contentFormat = 'plain',
     this.attachments = const [],
     this.media = const [],
+    this.kbOrigin,
+    this.sourceTicketId,
+    this.needsManualCompletion = false,
+    this.generationNotes,
   });
 
   final String id;
@@ -48,6 +52,15 @@ class AdminArticle {
   final String contentFormat;
   final List<ArticleMediaItem> attachments;
   final List<ArticleMediaItem> media;
+  final String? kbOrigin;
+  final String? sourceTicketId;
+  final bool needsManualCompletion;
+  final String? generationNotes;
+
+  bool get isTicketDerived {
+    if ((sourceTicketId ?? '').trim().isNotEmpty) return true;
+    return (kbOrigin ?? '').trim().toLowerCase() == 'ticket_resolution';
+  }
 
   bool get isHtmlContent {
     if (contentFormat.trim().toLowerCase() == 'html') return true;
@@ -125,6 +138,10 @@ class AdminArticle {
       contentFormat: parsed.isHtml ? 'html' : 'plain',
       attachments: _readMediaList(json['attachments']),
       media: _readMediaList(json['media']),
+      kbOrigin: json['kb_origin']?.toString(),
+      sourceTicketId: json['source_ticket_id']?.toString(),
+      needsManualCompletion: json['needs_manual_completion'] == true,
+      generationNotes: json['generation_notes']?.toString(),
     );
   }
 
@@ -152,6 +169,10 @@ class AdminArticle {
       contentFormat: (json['content_format']?.toString() ?? 'plain').trim(),
       attachments: _readMediaList(json['attachments']),
       media: _readMediaList(json['media']),
+      kbOrigin: json['kb_origin']?.toString(),
+      sourceTicketId: json['source_ticket_id']?.toString(),
+      needsManualCompletion: json['needs_manual_completion'] == true,
+      generationNotes: json['generation_notes']?.toString(),
     );
   }
 

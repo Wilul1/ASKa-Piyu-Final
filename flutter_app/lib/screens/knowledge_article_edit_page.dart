@@ -7,12 +7,14 @@ import '../models/admin_article_models.dart';
 import '../models/article_media_models.dart';
 import '../services/admin_article_service.dart';
 import '../services/file_pick.dart';
+import '../services/kb_compose_helpers.dart';
 import '../widgets/admin_kb_article_widgets.dart';
 import '../widgets/article_attachments_panel.dart';
 import '../widgets/article_html_codec.dart';
 import '../widgets/article_rich_editor.dart';
 import '../widgets/article_workspace_chrome.dart';
 import '../widgets/sidebar.dart';
+import '../widgets/ticket_kb_incomplete_draft_banner.dart';
 import 'admin_scaffold.dart';
 import 'login_page.dart';
 import 'office_scaffold.dart';
@@ -112,9 +114,24 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
   List<String> _offices = [];
   bool _officeFetchFailed = false;
   bool _published = false;
+  bool _needsManualCompletion = false;
+  String? _generationNotes;
   final List<ArticleMediaItem> _attachments = [];
   final Set<String> _uploadingIds = {};
   String? _attachmentError;
+
+  bool get _incompleteTicketDraft {
+    final article = _article;
+    if (article == null || !article.isTicketDerived) return false;
+    final live = _editorKey.currentState?.value.content;
+    final content = (live != null && live.trim().isNotEmpty)
+        ? live
+        : (article.content ?? article.displayContent);
+    return ticketKbPublishBlocked(
+      needsManualCompletion: _needsManualCompletion,
+      content: content,
+    );
+  }
 
   @override
   void initState() {
@@ -184,6 +201,8 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
     _article = article;
     _published = article.published;
     _audience = article.audience;
+    _needsManualCompletion = article.needsManualCompletion;
+    _generationNotes = article.generationNotes;
     _titleCtrl.text = article.title;
     _categoryCtrl.text = article.category;
     _summaryCtrl.text = buildShortSummary(
@@ -438,6 +457,13 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
       });
       return;
     }
+    if (_incompleteTicketDraft) {
+      setState(() {
+        _error =
+            'This ticket-derived draft still needs staff completion before it can be published.';
+      });
+      return;
+    }
     setState(() {
       _saving = true;
       _pendingAction = 'publish';
@@ -641,6 +667,12 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
                           'Update the content and details of this knowledge base article.',
                       backButtonKey: const Key('knowledge-article-edit-back'),
                     ),
+                    if (_incompleteTicketDraft) ...[
+                      const SizedBox(height: 14),
+                      TicketKbIncompleteDraftBanner(
+                        generationNotes: _generationNotes,
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     if (stacked) ...[
                       _buildArticleInformation(),
@@ -1083,7 +1115,9 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
                   )
                 : OutlinedButton(
                     key: const Key('knowledge-article-edit-publish'),
-                    onPressed: _saving ? null : _publish,
+                    onPressed: (_saving || _incompleteTicketDraft)
+                        ? null
+                        : _publish,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: DesignTokens.maroon,
                       side: const BorderSide(color: DesignTokens.maroon),
@@ -1101,9 +1135,11 @@ class _KnowledgeArticleEditPageState extends State<KnowledgeArticleEditPage> {
                               color: DesignTokens.maroon,
                             ),
                           )
-                        : const Text(
-                            'Publish',
-                            style: TextStyle(fontWeight: FontWeight.w800),
+                        : Text(
+                            _incompleteTicketDraft
+                                ? 'Publish (complete draft first)'
+                                : 'Publish',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                   );
             final save = ElevatedButton(

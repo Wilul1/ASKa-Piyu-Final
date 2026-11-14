@@ -2439,6 +2439,9 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
   bool _uploadingImage = false;
   bool _showPreview = false;
   bool _checkingDuplicate = false;
+  bool _loadingExisting = false;
+  bool _needsManualCompletion = false;
+  String? _generationNotes;
   String? _error;
   String? _duplicateWarning;
   String? _duplicateArticleTitle;
@@ -2446,10 +2449,16 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
   final List<String> _attachedImageUrls = [];
   static final _markdownImageRe = RegExp(r'!\[([^\]]*)\]\(([^)]+)\)');
 
+  bool get _publishBlocked => ticketKbPublishBlocked(
+        needsManualCompletion: _needsManualCompletion,
+        content: _contentCtrl.text,
+      );
+
   @override
   void initState() {
     super.initState();
     final ticket = widget.ticket;
+    _needsManualCompletion = ticket.kbNeedsManualCompletion;
     _titleCtrl = TextEditingController(text: cleanFaqTitle(ticket.subject));
     _categoryCtrl = TextEditingController(
       text: ticket.category.trim().isEmpty ? 'General' : ticket.category,
@@ -2467,12 +2476,75 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
     _titleCtrl.addListener(_onTitleChanged);
     _contentFocus = FocusNode();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _checkDuplicate();
+      if (!mounted) return;
+      _loadExistingDraft();
+      _checkDuplicate();
     });
   }
 
   void _onContentChanged() {
-    if (mounted && _showPreview) setState(() {});
+    if (!mounted) return;
+    // Refresh Publish enablement when the completion marker is edited away.
+    setState(() {});
+  }
+
+  void _applyArticlePayload(Map<String, dynamic> data) {
+    final title = (data['title'] ?? '').toString().trim();
+    final content = (data['content'] ?? '').toString();
+    final summary = (data['summary'] ?? '').toString();
+    final category = (data['category'] ?? '').toString().trim();
+    final audience = (data['audience'] ?? '').toString().trim();
+    if (title.isNotEmpty) _titleCtrl.text = title;
+    if (content.trim().isNotEmpty) _contentCtrl.text = content;
+    if (summary.trim().isNotEmpty) _summaryCtrl.text = summary;
+    if (category.isNotEmpty) _categoryCtrl.text = category;
+    if (audience.isNotEmpty) _audience = audience;
+    _needsManualCompletion = data['needs_manual_completion'] == true;
+    final notes = data['generation_notes']?.toString();
+    _generationNotes =
+        (notes == null || notes.trim().isEmpty) ? null : notes.trim();
+  }
+
+  Future<void> _loadExistingDraft() async {
+    final hasLinkedArticle =
+        (widget.ticket.kbArticleId ?? '').trim().isNotEmpty;
+    final status = widget.ticket.kbConversionStatus;
+    final shouldFetch = hasLinkedArticle ||
+        status == 'draft' ||
+        status == 'needs_review' ||
+        status == 'rejected' ||
+        status == 'failed';
+    if (!shouldFetch) return;
+    setState(() => _loadingExisting = true);
+    try {
+      final result = await ApiClient.send(
+        method: 'GET',
+        url:
+            '${AppConfig.resolvedApiBase}/tickets/${widget.ticket.id}/kb-article',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      if (!mounted) return;
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        setState(() => _loadingExisting = false);
+        return;
+      }
+      final raw = result.body.trim();
+      if (raw.isEmpty || raw == 'null') {
+        setState(() => _loadingExisting = false);
+        return;
+      }
+      final data = _decodeObject(raw);
+      if (data.isEmpty) {
+        setState(() => _loadingExisting = false);
+        return;
+      }
+      setState(() {
+        _applyArticlePayload(data);
+        _loadingExisting = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingExisting = false);
+    }
   }
 
   void _onTitleChanged() {
@@ -2744,6 +2816,17 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
       setState(() => _error = 'Enter a category for the public Knowledge Base.');
       return;
     }
+    if (publish &&
+        ticketKbPublishBlocked(
+          needsManualCompletion: _needsManualCompletion,
+          content: content,
+        )) {
+      setState(() {
+        _error =
+            'This draft still needs staff completion before it can be published.';
+      });
+      return;
+    }
     await _checkDuplicate();
     if (!mounted) return;
     if (_duplicateWarning != null) {
@@ -2765,6 +2848,7 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
       );
       return;
     }
+    final wasIncomplete = _publishBlocked;
     setState(() {
       _saving = true;
       _error = null;
@@ -2799,6 +2883,30 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
       if (!mounted) return;
       if (refresh.statusCode >= 200 && refresh.statusCode < 300) {
         final updated = _AdminTicketEntry.fromJson(refreshed);
+        if (!publish) {
+          setState(() {
+            _applyArticlePayload(data);
+            _saving = false;
+          });
+          final stillBlocked = ticketKbPublishBlocked(
+            needsManualCompletion: _needsManualCompletion,
+            content: _contentCtrl.text,
+          );
+          if (wasIncomplete || stillBlocked) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  stillBlocked
+                      ? 'Draft saved. Finish the incomplete sections before publishing.'
+                      : 'Draft completed and saved. You can publish when ready.',
+                ),
+                duration: const Duration(seconds: 5),
+              ),
+            );
+            // Keep the editor open so staff can publish after completing.
+            return;
+          }
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -2842,21 +2950,31 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
   }
 
   Widget _ticketKbPublishButton(bool busy) {
+    final blocked = _publishBlocked;
     return ElevatedButton(
       key: const Key('ticket-kb-publish'),
-      onPressed: busy ? null : () => _save(publish: true),
+      onPressed: busy || blocked ? null : () => _save(publish: true),
       style: ElevatedButton.styleFrom(
         backgroundColor: DesignTokens.maroon,
         foregroundColor: Colors.white,
+        disabledBackgroundColor: const Color(0xFFCBD5E1),
+        disabledForegroundColor: const Color(0xFF64748B),
         elevation: 0,
       ),
-      child: Text(_saving && _publishNow ? 'Publishing…' : 'Publish'),
+      child: Text(
+        _saving && _publishNow
+            ? 'Publishing…'
+            : blocked
+                ? 'Publish (complete draft first)'
+                : 'Publish',
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final busy = _saving || _uploadingImage;
+    final busy = _saving || _uploadingImage || _loadingExisting;
+    final blocked = _publishBlocked;
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FB),
       appBar: AppBar(
@@ -2974,6 +3092,12 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
                   ],
                 ),
               ),
+              if (blocked) ...[
+                const SizedBox(height: 16),
+                TicketKbIncompleteDraftBanner(
+                  generationNotes: _generationNotes,
+                ),
+              ],
               const SizedBox(height: 16),
               if (_error != null) ...[
                 Container(
@@ -3295,18 +3419,27 @@ class _TicketKbArticleEditorPageState extends State<_TicketKbArticleEditorPage> 
               Row(
                 children: [
                   OutlinedButton(
+                    key: const Key('ticket-kb-save-draft-footer'),
                     onPressed: busy ? null : () => _save(publish: false),
                     child: const Text('Save as draft'),
                   ),
                   const SizedBox(width: 10),
                   ElevatedButton(
-                    onPressed: busy ? null : () => _save(publish: true),
+                    key: const Key('ticket-kb-publish-footer'),
+                    onPressed:
+                        busy || blocked ? null : () => _save(publish: true),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: DesignTokens.maroon,
                       foregroundColor: Colors.white,
+                      disabledBackgroundColor: const Color(0xFFCBD5E1),
+                      disabledForegroundColor: const Color(0xFF64748B),
                       elevation: 0,
                     ),
-                    child: const Text('Publish to public KB'),
+                    child: Text(
+                      blocked
+                          ? 'Publish (complete draft first)'
+                          : 'Publish to public KB',
+                    ),
                   ),
                 ],
               ),

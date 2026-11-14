@@ -1086,6 +1086,10 @@ class AdminPublishedArticleSchema(BaseModel):
     created_by_user_id: str | None = None
     rag_indexed: bool = False
     rag_document_id: str | None = None
+    # Optional ticket-KB completion signals (read-only on this schema).
+    # Clients cannot clear these via AdminPublishedArticleCreate/Update.
+    needs_manual_completion: bool = False
+    generation_notes: str | None = None
 
 
 class AdminBulkArticleItem(BaseModel):

@@ -5756,14 +5756,23 @@ def _display_sources_for_answer(
     if mode == "shadow":
         return _sources_from_chunks(v1_supporting, merge_articles=merge_articles, user_role=user_role)
 
-    # mode == "llm": display ONLY V2-verified citations. A failed/empty
-    # outcome yields verified_citation_ids == [] -> zero citations, by
-    # construction -- never a fallback to v1_supporting.
+    # mode == "llm": prefer citations that pass BOTH V2 entailment and V1
+    # lexical support. V2 alone was too willing to accept near-topic chunks
+    # (same handbook / shared "offense"/"penalty" vocabulary) that do not
+    # actually establish the answer's claims. When V1 found nothing, keep
+    # V2-only (cross-lingual cases V1 can miss); never fall back to showing
+    # unverified V1 alone.
     id_to_chunk = {
         _raw_citation_id(chunk, index): chunk for index, chunk in enumerate(candidates, start=1)
     }
+    v1_allow = {
+        _raw_citation_id(chunk, index)
+        for index, chunk in enumerate(v1_supporting, start=1)
+    }
     verified_chunks = [
-        id_to_chunk[cid] for cid in outcome.verified_citation_ids if cid in id_to_chunk
+        id_to_chunk[cid]
+        for cid in outcome.verified_citation_ids
+        if cid in id_to_chunk and (not v1_allow or cid in v1_allow)
     ]
     return _sources_from_chunks(verified_chunks, merge_articles=merge_articles, user_role=user_role)
 

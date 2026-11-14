@@ -52,6 +52,64 @@ def test_run_verification_job_success_produces_verified_status_and_safe_citation
     assert job.verified_citations[0].title == "Refunding of Fees"
 
 
+def test_async_llm_drops_v2_citations_absent_from_v1_lexical_set():
+    """Near-topic V2 hits must not display when V1 did not select them."""
+    candidates = [
+        CandidateEvidence(
+            citation_id="gamble::1", title="Gambling", source_section="Sec. 8",
+            source_filename="handbook.pdf", text="Gambling first offense suspension one week.",
+        ),
+        CandidateEvidence(
+            citation_id="drug::1", title="Methamphetamine", source_section="Drug testing",
+            source_filename="handbook.pdf", text="Methamphetamine mandatory drug testing.",
+        ),
+    ]
+    outcome = VerificationOutcome(
+        mode="async_llm",
+        verifier_succeeded=True,
+        verified_citation_ids=["gamble::1", "drug::1"],
+    )
+    vid = jobs.create_job(
+        answer="Gambling first offense is one week suspension.",
+        candidates=candidates,
+        mode="async_llm",
+        v1_citation_ids=["gamble::1"],
+    )
+    with patch(VERIFY, return_value=outcome):
+        jobs.run_verification_job(vid)
+    job = jobs.get_job(vid)
+    assert job.status == jobs.JobStatus.VERIFIED
+    assert [c.citation_id for c in job.verified_citations] == ["gamble::1"]
+
+
+def test_async_llm_empty_intersection_becomes_no_verified_support():
+    outcome = VerificationOutcome(
+        mode="async_llm",
+        verifier_succeeded=True,
+        verified_citation_ids=["drug::1"],
+    )
+    vid = jobs.create_job(
+        answer="Gambling first offense is one week suspension.",
+        candidates=[
+            CandidateEvidence(
+                citation_id="gamble::1", title="Gambling", source_section="Sec. 8",
+                source_filename="handbook.pdf", text="Gambling first offense suspension.",
+            ),
+            CandidateEvidence(
+                citation_id="drug::1", title="Methamphetamine", source_section="Drug",
+                source_filename="handbook.pdf", text="Methamphetamine drug testing.",
+            ),
+        ],
+        mode="async_llm",
+        v1_citation_ids=["gamble::1"],
+    )
+    with patch(VERIFY, return_value=outcome):
+        jobs.run_verification_job(vid)
+    job = jobs.get_job(vid)
+    assert job.status == jobs.JobStatus.NO_VERIFIED_SUPPORT
+    assert job.verified_citations == []
+
+
 def test_run_verification_job_no_support_is_a_distinct_status_not_verified():
     outcome = VerificationOutcome(mode="async_llm", verifier_succeeded=True, verified_citation_ids=[])
     vid = jobs.create_job(answer="X", candidates=_candidates(), mode="async_llm")

@@ -176,12 +176,12 @@ def create_job(
     have used, and return a fresh, unguessable verification_id. Does not
     call the verifier -- see run_verification_job for that.
 
-    ``v1_citation_ids`` is diagnostic-only (ids, never text) -- the citation
-    ids V1 already decided to display for this same answer, captured at the
-    exact point that decision was made (see
-    question_answering._display_sources_for_answer). It plays no role in
-    verification itself; it exists solely so the terminal log event in
-    run_verification_job can report V1 vs V2 side by side.
+    ``v1_citation_ids`` (ids, never text) are the citation ids V1 already
+    decided would support this answer (see
+    question_answering._display_sources_for_answer). For ``async_llm`` they
+    also gate display: V2-verified ids absent from this set are dropped so
+    near-topic false positives never reach Sources. They remain in the
+    terminal diagnostic log for V1 vs V2 comparison.
     """
     verification_id = uuid.uuid4().hex
     with _LOCK:
@@ -353,6 +353,18 @@ def run_verification_job(verification_id: str) -> None:
         )
         if outcome.verifier_succeeded and outcome.verified_citation_ids:
             by_id = {c.citation_id: c for c in (candidates or [])}
+            # Display gate for async_llm: when V1 found any lexically
+            # supporting citation, only keep the V2∩V1 intersection. V2
+            # alone was promoting near-topic handbook sections (drug
+            # testing / overspeeding / "subsequent offense") for unrelated
+            # answers (gambling penalties). When V1 found nothing, keep V2
+            # as-is (fail-open on empty V1 so Filipino/cross-lingual cases
+            # V1 misses are not wiped). async_shadow keeps raw V2 for
+            # diagnostics only (client never polls that mode).
+            display_ids = list(outcome.verified_citation_ids)
+            if async_mode == "async_llm" and v1_citation_ids:
+                v1_allow = set(v1_citation_ids)
+                display_ids = [cid for cid in display_ids if cid in v1_allow]
             safe = [
                 _SafeCitation(
                     citation_id=cid,
@@ -361,7 +373,7 @@ def run_verification_job(verification_id: str) -> None:
                     source_filename=by_id[cid].source_filename,
                     page_number=by_id[cid].page_number,
                 )
-                for cid in outcome.verified_citation_ids
+                for cid in display_ids
                 if cid in by_id
             ]
             new_status = JobStatus.VERIFIED if safe else JobStatus.NO_VERIFIED_SUPPORT

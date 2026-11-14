@@ -138,6 +138,27 @@ def _is_authoritative_oos_answer(answer: str) -> bool:
     }
 
 
+# Soft "topic not in the sources" refusals that still digress into naming
+# near-miss retrieved sections. Those digressions must not become Sources
+# (gambling answer citing methamphetamine / overspeeding).
+_SOFT_TOPIC_MISS_RE = re.compile(
+    r"(?:does not (?:explicitly )?mention|"
+    r"no specific (?:section|provision|policy|rule)|"
+    r"not (?:explicitly )?(?:covered|addressed|listed)|"
+    r"could not find|"
+    r"do not have enough information|"
+    r"do(?:es)? not contain enough information)",
+    re.IGNORECASE,
+)
+
+
+def _should_suppress_display_citations(answer: str) -> bool:
+    """True when showing Sources would misrepresent grounding for this answer."""
+    if _is_authoritative_oos_answer(answer):
+        return True
+    return bool(_SOFT_TOPIC_MISS_RE.search(answer or ""))
+
+
 NORMAL_QA = "NORMAL_QA"
 DEFINITION_QUESTION = "DEFINITION_QUESTION"
 PROCEDURE_QUESTION = "PROCEDURE_QUESTION"
@@ -5687,11 +5708,12 @@ def _display_sources_for_answer(
       zero citations immediately and always -- V1's guesses are never shown
       even transiently while verification is pending.
     """
-    # Authoritative stock OOS refusal: never run V1 selection or V2 (sync or
-    # async). extract_claims still yields a span from the stock OOS line, so
-    # without this gate async_* modes would populate the verification sink
-    # and schedule an irrelevant verifier job.
-    if _is_authoritative_oos_answer(answer):
+    # Stock OOS or soft "topic not found" answers: never run V1 selection or
+    # V2. Soft misses often digress into naming near-miss retrieved sections
+    # (e.g. drug-testing chunks after a gambling miss); those must not become
+    # Sources. Without this gate async_* modes would still schedule a verifier
+    # job over that digression.
+    if _should_suppress_display_citations(answer):
         return []
 
     grounding = (evidence_text or "").strip() or answer

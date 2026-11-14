@@ -113,11 +113,11 @@ class VerificationJob:
     # the moment a terminal state is reached -- see _discard_snapshot().
     _answer: str | None
     _candidates: list[CandidateEvidence] | None
-    # V1's displayed citation ids only (never source text) -- diagnostic
-    # input for the terminal shadow-comparison log event, discarded (set to
-    # an empty list) the moment that event has been emitted; never returned
-    # by status_and_citations_for_poll.
-    _v1_citation_ids: list[str] = field(default_factory=list)
+    # V1's displayed citation ids only (never source text). ``None`` means
+    # the caller omitted them (tests / legacy); a list (possibly empty)
+    # means V1 ran. Discarded after the terminal diagnostic event; never
+    # returned by status_and_citations_for_poll.
+    _v1_citation_ids: list[str] | None = None
     completed_at: float | None = None
     verified_citations: list[_SafeCitation] = field(default_factory=list)
     failure_reason: str | None = None
@@ -193,7 +193,9 @@ def create_job(
             mode=mode,
             _answer=answer,
             _candidates=list(candidates),
-            _v1_citation_ids=list(v1_citation_ids) if v1_citation_ids else [],
+            _v1_citation_ids=(
+                list(v1_citation_ids) if v1_citation_ids is not None else None
+            ),
         )
     return verification_id
 
@@ -337,7 +339,9 @@ def run_verification_job(verification_id: str) -> None:
         answer = job._answer
         candidates = job._candidates
         async_mode = job.mode
-        v1_citation_ids = list(job._v1_citation_ids)
+        v1_citation_ids = (
+            list(job._v1_citation_ids) if job._v1_citation_ids is not None else None
+        )
 
     semantic_mode = _semantic_mode_for(async_mode)
     duration_ms: float | None = None
@@ -353,18 +357,17 @@ def run_verification_job(verification_id: str) -> None:
         )
         if outcome.verifier_succeeded and outcome.verified_citation_ids:
             by_id = {c.citation_id: c for c in (candidates or [])}
-            # Display gate for async_llm: when V1 found any lexically
-            # supporting citation, only keep the V2∩V1 intersection. V2
-            # alone was promoting near-topic handbook sections (drug
-            # testing / overspeeding / "subsequent offense") for unrelated
-            # answers (gambling penalties). When V1 found nothing, keep V2
-            # as-is (fail-open on empty V1 so Filipino/cross-lingual cases
-            # V1 misses are not wiped). async_shadow keeps raw V2 for
-            # diagnostics only (client never polls that mode).
+            # Display gate for async_llm when V1 results were provided:
+            # keep only V2∩V1. Empty V1 => show nothing (V1 found no
+            # lexically grounded support; do not fall back to V2-only
+            # near-topic false positives). When V1 was omitted (None),
+            # keep raw V2 (tests / legacy callers).
             display_ids = list(outcome.verified_citation_ids)
-            if async_mode == "async_llm" and v1_citation_ids:
+            if async_mode == "async_llm" and v1_citation_ids is not None:
                 v1_allow = set(v1_citation_ids)
-                display_ids = [cid for cid in display_ids if cid in v1_allow]
+                display_ids = (
+                    [cid for cid in display_ids if cid in v1_allow] if v1_allow else []
+                )
             safe = [
                 _SafeCitation(
                     citation_id=cid,
@@ -418,7 +421,7 @@ def run_verification_job(verification_id: str) -> None:
         # benchmark/operator diagnostics until the job TTL sweeps the record.
         current._answer = None
         current._candidates = None
-        current._v1_citation_ids = []
+        current._v1_citation_ids = None
 
     # Best-effort, outside the lock (no I/O while holding it): one terminal
     # diagnostic event per completed async job (async_shadow and async_llm
@@ -427,7 +430,7 @@ def run_verification_job(verification_id: str) -> None:
         verification_id=verification_id,
         mode=async_mode,
         status=new_status,
-        v1_citation_ids=v1_citation_ids,
+        v1_citation_ids=v1_citation_ids or [],
         v2_citation_ids=[c.citation_id for c in safe],
         duration_ms=duration_ms,
         failure_category=(
@@ -472,7 +475,7 @@ def _fail_job_locked(verification_id: str, reason: str) -> None:
     job.failure_reason = reason
     job._answer = None
     job._candidates = None
-    job._v1_citation_ids = []
+    job._v1_citation_ids = None
     job.per_claim_supporting_ids = []
 
 

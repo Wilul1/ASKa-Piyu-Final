@@ -5366,6 +5366,12 @@ claim is not dropped merely because another claim's source scored higher.
 A straggler on the *same* claim, far weaker than that claim's best evidence,
 is still dropped."""
 
+_SUPPORT_RARE_IDF_FLOOR = 1.35
+"""At least one shared word must be this rare in the turn's own candidate
+pool (or a shared number must appear). Blocks the gambling→methamphetamine
+failure mode: every disciplinary chunk shares "offense"/"penalty"/
+"suspension", so those ubiquitous terms alone must never clear support."""
+
 _NUMBER_TOKEN_WEIGHT = 2.0
 """A shared number (a percentage, a day count, a grade-range boundary...) is
 unusually specific evidence, so it is weighted above an average word term."""
@@ -5435,11 +5441,18 @@ def _citation_support_score(
 
     Returns 0.0 (never a "weak but nonzero" score) when fewer than
     ``_SUPPORT_MIN_SIGNALS`` distinctive terms are shared — keyword overlap
-    alone is explicitly not sufficient evidence.
+    alone is explicitly not sufficient evidence. Also returns 0.0 when every
+    shared word is ubiquitous across this turn's candidates and no number
+    is shared (near-topic disciplinary false positives).
     """
     shared_words = answer_words & chunk_words
     shared_numbers = answer_numbers & chunk_numbers
     if (len(shared_words) + len(shared_numbers)) < _SUPPORT_MIN_SIGNALS:
+        return 0.0
+    rare_words = [
+        token for token in shared_words if idf.get(token, 1.0) >= _SUPPORT_RARE_IDF_FLOOR
+    ]
+    if not rare_words and not shared_numbers:
         return 0.0
     word_score = sum(idf.get(token, 1.0) for token in shared_words)
     number_score = len(shared_numbers) * _NUMBER_TOKEN_WEIGHT
@@ -5756,12 +5769,9 @@ def _display_sources_for_answer(
     if mode == "shadow":
         return _sources_from_chunks(v1_supporting, merge_articles=merge_articles, user_role=user_role)
 
-    # mode == "llm": prefer citations that pass BOTH V2 entailment and V1
-    # lexical support. V2 alone was too willing to accept near-topic chunks
-    # (same handbook / shared "offense"/"penalty" vocabulary) that do not
-    # actually establish the answer's claims. When V1 found nothing, keep
-    # V2-only (cross-lingual cases V1 can miss); never fall back to showing
-    # unverified V1 alone.
+    # mode == "llm": display only V2∩V1. V2 alone accepted near-topic
+    # chunks; empty V1 (after rare-term lexical scoring) means show nothing
+    # rather than V2-only false positives. Never fall back to unverified V1.
     id_to_chunk = {
         _raw_citation_id(chunk, index): chunk for index, chunk in enumerate(candidates, start=1)
     }
@@ -5769,11 +5779,15 @@ def _display_sources_for_answer(
         _raw_citation_id(chunk, index)
         for index, chunk in enumerate(v1_supporting, start=1)
     }
-    verified_chunks = [
-        id_to_chunk[cid]
-        for cid in outcome.verified_citation_ids
-        if cid in id_to_chunk and (not v1_allow or cid in v1_allow)
-    ]
+    verified_chunks = (
+        [
+            id_to_chunk[cid]
+            for cid in outcome.verified_citation_ids
+            if cid in id_to_chunk and cid in v1_allow
+        ]
+        if v1_allow
+        else []
+    )
     return _sources_from_chunks(verified_chunks, merge_articles=merge_articles, user_role=user_role)
 
 

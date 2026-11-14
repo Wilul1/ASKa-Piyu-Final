@@ -628,8 +628,11 @@ def test_mixed_substantive_with_referral_and_identity_ask(session: Session):
     body = generated.content.casefold()
     assert "student id" in body or "osas" in body
     assert "where to go" in body or "confirm" in body
-    assert generated.needs_manual_completion is True
+    # Identity-intake / status chatter no longer forces incomplete when a
+    # substantive reusable step already exists; staff review is the gate.
+    assert generated.needs_manual_completion is False
     assert "php" not in body
+    assert "kindly provide your complete name" not in body
 
 
 def test_prod_coe_conversation_stays_incomplete_draft(session: Session):
@@ -1005,15 +1008,16 @@ def test_mixed_submit_and_status_keeps_instruction_and_needs_review(session: Ses
     body = generated.content.casefold()
     assert "submit your completed form" in body
     assert "registrar" in body
-    assert "request status" in body
-    assert "we will update you once processing is complete" in body
-    # Status must not become the Overview answer.
+    # Status chatter is omitted from reusable FAQ copy and no longer forces
+    # incomplete when a substantive answer already exists.
+    assert "request status" not in body
+    assert "we will update you once processing is complete" not in body
     if "## overview" in body:
         overview = body.split("## overview", 1)[1].split("##", 1)[0]
         assert "we will update you" not in overview
-    assert generated.needs_manual_completion is True
-    assert "needs staff completion" in body
-    assert generated.generation_notes == "unresolved_status"
+    assert generated.needs_manual_completion is False
+    assert "needs staff completion" not in body
+    assert generated.generation_notes is None
 
 
 def test_mixed_requirements_and_status_preserve_documents(session: Session):
@@ -1040,10 +1044,10 @@ def test_mixed_requirements_and_status_preserve_documents(session: Session):
     assert "valid id" in body
     assert "enrollment form" in body
     assert "required documents" in body
-    assert generated.needs_manual_completion is True
-    assert "request status" in body or "we will contact you" in body
-    assert "needs staff completion" in body
-    # Must not look like a finished FAQ with only a status overview.
+    assert generated.needs_manual_completion is False
+    assert "request status" not in body
+    assert "we will contact you" not in body
+    assert "needs staff completion" not in body
     assert generated.summary.casefold().startswith("we will contact you") is False
 
 
@@ -1147,7 +1151,7 @@ def test_duplicate_relevant_referrals_appear_once(session: Session):
         ),
     ],
 )
-def test_unpunctuated_mixed_status_requires_review(
+def test_unpunctuated_mixed_status_omits_status_from_faq(
     session: Session, ticket_id: str, question: str, message: str
 ):
     office = _office(session)
@@ -1166,10 +1170,18 @@ def test_unpunctuated_mixed_status_requires_review(
     assert _classify_staff_answer(message) == "substantive"
     generated = build_generated_article_from_ticket(ticket)
     body = generated.content.casefold()
-    assert generated.needs_manual_completion is True
-    assert generated.generation_notes == "unresolved_status"
-    assert "needs staff completion" in body
-    assert "request status" in body
+    assert "request status" not in body
+    assert "we will update you" not in body
+    assert "we will contact you" not in body
+    assert "we will notify you" not in body
+    # Long reusable remainder stays complete; tiny leftovers may still be
+    # answer_too_short after status clauses are scrubbed.
+    if generated.needs_manual_completion:
+        assert generated.generation_notes == "answer_too_short"
+        assert "needs staff completion" in body
+    else:
+        assert generated.generation_notes is None
+        assert "needs staff completion" not in body
     if "## overview" in body:
         overview = body.split("## overview", 1)[1].split("##", 1)[0]
         assert "we will update you" not in overview
@@ -1200,9 +1212,9 @@ def test_status_first_then_requirements_without_period(session: Session):
     assert _classify_staff_answer(message) == "substantive"
     assert "valid id" in body
     assert "enrollment form" in body
-    assert generated.needs_manual_completion is True
-    assert "request status" in body
-    assert "we will contact you" in body
+    assert generated.needs_manual_completion is False
+    assert "request status" not in body
+    assert "we will contact you" not in body
 
 
 def test_multi_requirements_and_multi_status_clauses(session: Session):
@@ -1226,9 +1238,10 @@ def test_multi_requirements_and_multi_status_clauses(session: Session):
     body = generated.content.casefold()
     assert "valid id" in body
     assert "enrollment form" in body
-    assert generated.needs_manual_completion is True
-    assert body.count("staff recorded a status update") == 1
-    assert "request status" in body
+    assert generated.needs_manual_completion is False
+    assert "staff recorded a status update" not in body
+    assert "request status" not in body
+    assert "being processed" not in body
 
 
 def test_dormitory_form_referral_excluded_from_excuse_slip(session: Session):
@@ -1385,16 +1398,15 @@ def test_a8_status_plus_claim_stub_requires_review(session: Session):
     body = generated.content.casefold()
     assert "submit your completed form" in body
     assert "claim stub" in body
-    assert "we will update you once processing is complete" in body
-    assert "request status" in body
-    assert generated.needs_manual_completion is True
-    assert generated.generation_notes == "unresolved_status"
-    assert "needs staff completion" in body
-    # Status must not be presented as the completed Procedure answer alone.
+    assert "we will update you once processing is complete" not in body
+    assert "request status" not in body
+    assert generated.needs_manual_completion is False
+    assert generated.generation_notes is None
+    assert "needs staff completion" not in body
     if "## procedure" in body:
         procedure = body.split("## procedure", 1)[1].split("##", 1)[0]
         assert "we will update you" not in procedure
-    assert "we will update you" not in generated.summary.casefold() or "unresolved" in generated.summary.casefold()
+    assert "we will update you" not in generated.summary.casefold()
 
 
 @pytest.mark.parametrize(
@@ -1417,7 +1429,7 @@ def test_a8_status_plus_claim_stub_requires_review(session: Session):
         ),
     ],
 )
-def test_status_plus_action_tail_keeps_evidence_and_flags_review(
+def test_status_plus_action_tail_keeps_evidence_without_forcing_incomplete(
     session: Session, ticket_id: str, message: str, must_keep: str
 ):
     office = _office(session)
@@ -1436,10 +1448,16 @@ def test_status_plus_action_tail_keeps_evidence_and_flags_review(
     generated = build_generated_article_from_ticket(ticket)
     body = generated.content.casefold()
     assert must_keep in body
-    assert generated.needs_manual_completion is True
-    assert generated.generation_notes == "unresolved_status"
-    assert "request status" in body
-    assert "needs staff completion" in body
+    assert "request status" not in body
+    assert "we will update you" not in body
+    assert "we will notify you" not in body
+    assert "being processed" not in body
+    if generated.needs_manual_completion:
+        assert generated.generation_notes == "answer_too_short"
+        assert "needs staff completion" in body
+    else:
+        assert generated.generation_notes is None
+        assert "needs staff completion" not in body
 
 
 def test_legitimate_so_instruction_without_status_stays_complete(session: Session):

@@ -823,12 +823,16 @@ def build_generated_article_from_ticket(ticket: Ticket) -> GeneratedTicketArticl
         unconfirmed_referrals = _dedupe_texts(
             [*preserved_referrals, *embedded_referrals]
         )
+        # Status/progress chatter is omitted from reusable FAQ copy. When a
+        # substantive answer already exists, do not force incomplete solely
+        # because the ticket also had "please wait / under review" updates —
+        # staff review remains the quality gate before publish.
         content = _format_structured_article(
             staff_substantive,
             office_name=office_name,
             followups=student_followups,
             referrals=preserved_referrals,
-            status_updates=staff_deferred,
+            status_updates=None,
         )
         completion_notes: list[str] = []
         if unanswered:
@@ -850,19 +854,12 @@ def build_generated_article_from_ticket(ticket: Ticket) -> GeneratedTicketArticl
                 "At least one staff referral was too ambiguous to include as "
                 "confirmed guidance and needs manual review."
             )
-        if staff_deferred:
-            completion_notes.append(
-                "Staff recorded a status update that does not complete the "
-                "reusable Knowledge Base answer."
-            )
         if completion_notes:
             needs_completion = True
             if unanswered:
                 notes = "unanswered_followup"
             elif unconfirmed_referrals or ambiguous_referrals:
                 notes = "unconfirmed_referral"
-            elif staff_deferred:
-                notes = "unresolved_status"
             else:
                 notes = "unconfirmed_referral"
             content = _append_incomplete_notes(content, completion_notes)
@@ -2350,19 +2347,10 @@ def _format_structured_article(
     if retained_notes:
         note_lines = "\n".join(f"- {item}" for item in retained_notes)
         sections.append(f"## Important notes\n\n{note_lines}")
-    status_lines = [
-        item
-        for item in _dedupe_texts(status_updates or [])
-        if item.casefold() not in " ".join(usable).casefold()
-    ]
-    if status_lines:
-        bullets = "\n".join(f"- {item}" for item in status_lines)
-        sections.append(
-            "## Request status\n\n"
-            "These updates describe ticket progress only and are not a complete "
-            "reusable Knowledge Base answer.\n\n"
-            f"{bullets}"
-        )
+    # Ticket progress/status lines are intentionally not rendered into FAQ
+    # bodies. They are not reusable procedures, and surfacing them as
+    # "## Request status" confused staff review without improving the answer.
+    _ = status_updates
 
     if sections:
         return "\n\n".join(sections).strip()

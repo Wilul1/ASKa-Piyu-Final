@@ -502,8 +502,8 @@ class GeminiEmbeddingFunction:
         batch_starts = list(range(0, len(prepared), GEMINI_EMBED_BATCH_SIZE))
         for index, start in enumerate(batch_starts):
             if index > 0:
-                # Small pause between batches to reduce free-tier 429s.
-                time.sleep(1.0)
+                # Pause between batches to reduce free-tier 429s (handbook = many batches).
+                time.sleep(2.5)
             batch = prepared[start : start + GEMINI_EMBED_BATCH_SIZE]
             vectors.extend(self._encode_batch(batch, task_type=task_type))
         return [np.asarray(vector, dtype=np.float32) for vector in vectors]
@@ -531,7 +531,7 @@ class GeminiEmbeddingFunction:
         }
         # Free-tier Gemini embedding quotas are tight; back off on 429 instead
         # of failing a whole handbook ingest after one burst.
-        max_attempts = 6
+        max_attempts = 8
         response = None
         for attempt in range(max_attempts):
             try:
@@ -552,9 +552,9 @@ class GeminiEmbeddingFunction:
 
             if response.status_code != 429:
                 break
-            # 2s, 4s, 8s, 16s, 32s — then final attempt already spent.
+            # 3s, 6s, 12s, 24s, 48s, 96s, 120s — then final attempt already spent.
             if attempt < max_attempts - 1:
-                time.sleep(2 ** (attempt + 1))
+                time.sleep(min(120, 3 * (2 ** attempt)))
 
         if response is None:
             raise RemoteEmbeddingError(

@@ -1522,59 +1522,6 @@ TextSpan _inlineMarkdownSpans(String text, TextStyle style) {
   return TextSpan(style: style, children: spans);
 }
 
-/// Pure mapping from a citation-verification status (the same string
-/// [evaluateCitationPollTick] resolves to, or the initial `/qa/ask`
-/// response's own `citation_status`) to what the UI must show -- extracted
-/// (like [evaluateCitationPollTick] above) so this decision is unit-
-/// testable without a widget tree.
-///
-/// [isUnverifiedWarning] is true for every TERMINAL status that means
-/// verification did NOT establish support for the answer's claims
-/// (`no_verified_support`, `failed`, `unknown`) -- the one thing this type
-/// exists to guarantee is that none of those three cases can ever be
-/// confused, by a future edit, with a success/verified presentation. It is
-/// false for `verifying` (still in progress, not a failure) and for any
-/// status this widget does not otherwise recognize (hidden, unchanged from
-/// before this fix). `verified` itself never reaches this widget in
-/// practice -- see the call site -- because by the time the client has a
-/// `verified` resolvedStatus, [mergeVerifiedCitationsIntoSources] has
-/// already populated `answer.sources`, so the sources list (not this note)
-/// is what renders.
-class CitationStatusPresentation {
-  final String message;
-  final bool isUnverifiedWarning;
-
-  const CitationStatusPresentation({
-    required this.message,
-    required this.isUnverifiedWarning,
-  });
-}
-
-CitationStatusPresentation? citationStatusPresentationFor(String status) {
-  switch (status) {
-    case 'verifying':
-      return const CitationStatusPresentation(
-        message: 'Verifying sources…',
-        isUnverifiedWarning: false,
-      );
-    case 'no_verified_support':
-      return const CitationStatusPresentation(
-        message: 'No official source was found to support this answer\'s '
-            'specific claims. Please confirm details with the relevant office.',
-        isUnverifiedWarning: true,
-      );
-    case 'failed':
-    case 'unknown':
-      return const CitationStatusPresentation(
-        message: 'Source verification could not be completed. Please confirm '
-            'details with the relevant office.',
-        isUnverifiedWarning: true,
-      );
-    default:
-      return null;
-  }
-}
-
 class _CollapsibleSources extends StatefulWidget {
   final List<_QaSource> sources;
 

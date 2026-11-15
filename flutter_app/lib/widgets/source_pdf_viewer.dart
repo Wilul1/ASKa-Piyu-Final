@@ -144,6 +144,7 @@ Future<void> showSourcePdfViewer(
     );
     return;
   }
+  final pdfBytes = bytes;
 
   if (!context.mounted) return;
 
@@ -210,7 +211,7 @@ Future<void> showSourcePdfViewer(
                       ),
                     ),
                     TextButton(
-                      onPressed: () => openPdfExternally(bytes),
+                      onPressed: () => openPdfExternally(pdfBytes),
                       child: const Text('Open PDF'),
                     ),
                     IconButton(
@@ -228,7 +229,7 @@ Future<void> showSourcePdfViewer(
                     bottomLeft: Radius.circular(18),
                     bottomRight: Radius.circular(18),
                   ),
-                  child: SourcePdfEmbed(bytes: bytes),
+                  child: SourcePdfEmbed(bytes: pdfBytes),
                 ),
               ),
             ],

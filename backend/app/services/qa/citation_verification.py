@@ -536,6 +536,171 @@ class CandidateEvidence:
 
 _MAX_EVIDENCE_CHARS = 700
 
+# Topic/section agreement post-gate (deterministic; no LLM). Mirrors the
+# spirit of question_answering._label_agrees_with_answer but allows body
+# overlap as well -- defense in depth when the verifier returns a near-topic
+# chunk whose section title names a different procedure.
+_TOPIC_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOPIC_STOP = frozenset(
+    {
+        "what",
+        "which",
+        "should",
+        "about",
+        "after",
+        "with",
+        "from",
+        "that",
+        "this",
+        "available",
+        "offered",
+        "under",
+        "must",
+        "have",
+        "been",
+        "when",
+        "will",
+        "into",
+        "their",
+        "them",
+        "they",
+        "also",
+        "only",
+        "does",
+        "than",
+        "then",
+        "such",
+        "same",
+    }
+)
+_TOPIC_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?%?")
+# Labels that only use these tokens are too generic to contradict a claim
+# (e.g. "Integrated Policy"); body agreement is allowed. Procedure-specific
+# labels like "Publication (Editor-in-Chief)" keep their rare tokens and
+# must agree with the answer topic.
+_GENERIC_LABEL_TOKENS = frozenset(
+    {
+        "policy",
+        "policies",
+        "integrated",
+        "section",
+        "article",
+        "chapter",
+        "general",
+        "rules",
+        "guidelines",
+        "student",
+        "students",
+        "handbook",
+        "manual",
+        "procedure",
+        "procedures",
+        "service",
+        "services",
+        "office",
+        "university",
+        "campus",
+        "academic",
+        "rule",
+        "title",
+        "appendix",
+    }
+)
+
+
+def _topic_words(text: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in _TOPIC_TOKEN_RE.findall((text or "").lower())
+        if len(token) >= 4 and token not in _TOPIC_STOP
+    )
+
+
+def _topic_numbers(text: str) -> frozenset[str]:
+    return frozenset(_TOPIC_NUMBER_RE.findall((text or "").lower()))
+
+
+def _topic_tokens_agree(left: frozenset[str], right: frozenset[str]) -> bool:
+    if left & right:
+        return True
+    for left_token in left:
+        if len(left_token) < 5:
+            continue
+        for right_token in right:
+            if len(right_token) < 5:
+                continue
+            if left_token.startswith(right_token) or right_token.startswith(left_token):
+                return True
+    return False
+
+
+def filter_verified_ids_by_topic_agreement(
+    answer: str,
+    candidates: list[CandidateEvidence],
+    citation_ids: list[str],
+) -> list[str]:
+    """Drop verified ids whose section/title names a conflicting procedure.
+
+    Prefer ids whose title/section the answer names. Allow body agreement for
+    sparse/generic labels. When the answer clearly names a long procedure
+    token (len >= 8) that no survivor label covers, fail closed to ``[]``
+    (Honorable Dismissal answer must not keep Publication). When the answer
+    does not name a procedure (e.g. fee-only text), keep body-agreeing ids
+    even if the section title is not repeated in the answer.
+    """
+    if not citation_ids:
+        return []
+    answer_words = _topic_words(answer)
+    answer_numbers = _topic_numbers(answer)
+    distinctive = frozenset(token for token in answer_words if len(token) >= 5) or answer_words
+    if not distinctive and not answer_numbers:
+        return list(citation_ids)
+    by_id = {c.citation_id: c for c in candidates}
+    label_hits: list[str] = []
+    generic_body_hits: list[str] = []
+    body_hits: list[str] = []
+    for cid in citation_ids:
+        candidate = by_id.get(cid)
+        if candidate is None:
+            continue
+        label = f"{candidate.title or ''} {candidate.source_section or ''}"
+        label_words = _topic_words(label)
+        label_numbers = _topic_numbers(label)
+        haystack = f"{label} {candidate.text or ''}"
+        hay_words = _topic_words(haystack)
+        hay_numbers = _topic_numbers(haystack)
+        body_agrees = bool(
+            answer_numbers & hay_numbers or _topic_tokens_agree(distinctive, hay_words)
+        )
+        if answer_numbers & label_numbers or _topic_tokens_agree(distinctive, label_words):
+            label_hits.append(cid)
+            continue
+        label_specific = frozenset(
+            token for token in label_words if token not in _GENERIC_LABEL_TOKENS
+        )
+        if not label_specific and body_agrees:
+            generic_body_hits.append(cid)
+            continue
+        if body_agrees:
+            body_hits.append(cid)
+    if label_hits:
+        return label_hits
+    if generic_body_hits:
+        return generic_body_hits
+    strong = frozenset(token for token in distinctive if len(token) >= 8)
+    if strong:
+        for cid in citation_ids:
+            candidate = by_id.get(cid)
+            if candidate is None:
+                continue
+            label_words = _topic_words(
+                f"{candidate.title or ''} {candidate.source_section or ''}"
+            )
+            if _topic_tokens_agree(strong, label_words):
+                return body_hits or list(citation_ids)
+        return []
+    return body_hits
+
 
 # --- verifier outcome ---------------------------------------------------------
 
@@ -625,6 +790,16 @@ A chunk does NOT support a claim merely because it:
 - concerns the same broad topic or procedure family
 - was ranked highly during retrieval
 - was used somewhere in generating the answer
+
+The candidate's section title / procedure title must name the SAME specific
+procedure the claim is about. Shared actors (Registrar, Dean, student,
+parent/guardian) or shared handbook boilerplate are never enough when the
+section title names a different procedure. Example shape (illustrative
+labels only): a claim about permanent university withdrawal is NOT
+supported by a campus-publication section, a course-dropping section, or a
+registration-change section, even when those chunks mention the same
+office; a temporary leave claim is NOT supported by a permanent-withdrawal
+section, and vice versa.
 
 Many candidate chunks describe near-duplicate procedures that must be told
 apart precisely, by:
@@ -1286,7 +1461,9 @@ def verify_citations(
             if candidate.citation_id in supporting_ids and candidate.citation_id not in seen:
                 ordered_ids.append(candidate.citation_id)
                 seen.add(candidate.citation_id)
-        outcome.verified_citation_ids = ordered_ids
+        outcome.verified_citation_ids = filter_verified_ids_by_topic_agreement(
+            answer, candidates, ordered_ids
+        )
         outcome.verifier_succeeded = True
     except CitationVerificationError as exc:
         outcome.failure_reason = str(exc)

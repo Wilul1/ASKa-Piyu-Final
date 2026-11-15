@@ -37,6 +37,7 @@ from typing import Any
 from app.services.qa.citation_verification import (
     CandidateEvidence,
     build_per_claim_supporting_ids_diagnostic,
+    filter_verified_ids_by_topic_agreement,
     verify_citations,
 )
 
@@ -368,6 +369,11 @@ def run_verification_job(verification_id: str) -> None:
                 display_ids = (
                     [cid for cid in display_ids if cid in v1_allow] if v1_allow else []
                 )
+            # Deterministic topic/section agreement even when the verifier
+            # (or a test double) returns a near-topic false positive.
+            display_ids = filter_verified_ids_by_topic_agreement(
+                answer or "", candidates or [], display_ids
+            )
             safe = [
                 _SafeCitation(
                     citation_id=cid,

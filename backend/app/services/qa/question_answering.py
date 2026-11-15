@@ -5480,6 +5480,106 @@ def _citation_support_score(
     return word_score + number_score
 
 
+def _chunk_label_text(chunk: RetrievedChunk) -> str:
+    """Display-facing section/title text used for topic/section agreement."""
+    metadata = chunk.metadata or {}
+    return f"{_display_title(chunk)} {_source_section(metadata)}"
+
+
+def _tokens_agree(left: frozenset[str], right: frozenset[str]) -> bool:
+    """True when sets share a token or a length>=5 stem/prefix relationship.
+
+    Prefix matching covers morphological pairs like refund/refunding without
+    a stemmer, while still rejecting unrelated short stop-ish tokens.
+    """
+    if left & right:
+        return True
+    for left_token in left:
+        if len(left_token) < 5:
+            continue
+        for right_token in right:
+            if len(right_token) < 5:
+                continue
+            if left_token.startswith(right_token) or right_token.startswith(left_token):
+                return True
+    return False
+
+
+def _distinctive_answer_tokens(
+    answer_words: frozenset[str],
+    idf: dict[str, float],
+) -> frozenset[str]:
+    """Answer tokens rare enough in this turn's candidate pool to identify topic.
+
+    Falls back to longer answer tokens when nothing clears the rare-IDF floor
+    (tiny candidate pools where every term looks common).
+    """
+    rare = frozenset(
+        token for token in answer_words if idf.get(token, 1.0) >= _SUPPORT_RARE_IDF_FLOOR
+    )
+    if rare:
+        return rare
+    return frozenset(token for token in answer_words if len(token) >= 5)
+
+
+def _label_agrees_with_answer(
+    chunk: RetrievedChunk,
+    *,
+    answer_words: frozenset[str],
+    answer_numbers: frozenset[str],
+    idf: dict[str, float],
+) -> bool:
+    """True when the chunk's section/title label shares topic signal with the answer."""
+    label_words, label_numbers = _grounding_tokens(_chunk_label_text(chunk))
+    if answer_numbers & label_numbers:
+        return True
+    distinctive = _distinctive_answer_tokens(answer_words, idf)
+    return _tokens_agree(distinctive, label_words)
+
+
+def _filter_supporting_by_section_agreement(
+    ordered: list[RetrievedChunk],
+    *,
+    answer: str,
+    idf: dict[str, float],
+) -> list[RetrievedChunk]:
+    """Prefer citations whose section/title the answer actually names.
+
+    - If any survivor's label agrees with the answer (e.g. Honorable Dismissal),
+      keep only those -- drops Publication/Dropping false positives beside a
+      correctly named section.
+    - If none agree but the answer contains a long distinctive procedure token
+      (len >= 8, e.g. ``honorable`` / ``dismissal``) unmatched by every
+      survivor label, fail closed to ``[]``.
+    - Otherwise keep the lexical survivors (e.g. ``The fee is P75 per page.``
+      citing Transcript of Records -- answer never repeats the section title).
+    """
+    if not ordered:
+        return []
+    answer_words, answer_numbers = _grounding_tokens(answer)
+    hits = [
+        chunk
+        for chunk in ordered
+        if _label_agrees_with_answer(
+            chunk,
+            answer_words=answer_words,
+            answer_numbers=answer_numbers,
+            idf=idf,
+        )
+    ]
+    if hits:
+        return hits
+    distinctive = _distinctive_answer_tokens(answer_words, idf)
+    strong = frozenset(token for token in distinctive if len(token) >= 8)
+    if not strong:
+        return ordered
+    for chunk in ordered:
+        label_words, _ = _grounding_tokens(_chunk_label_text(chunk))
+        if _tokens_agree(strong, label_words):
+            return ordered
+    return []
+
+
 # A bare "." does not split when it sits inside a decimal amount (e.g. the
 # "." in "P100.00" or "PHP 20.00") -- otherwise a single currency figure is
 # torn into two claim fragments, one of which (the digits after the point)
@@ -5639,8 +5739,8 @@ def _select_supporting_context(
 
     if not best:
         return []
-    ordered = sorted(best.values(), key=lambda pair: pair[0], reverse=True)
-    return [chunk for _, chunk in ordered]
+    ordered = [chunk for _, chunk in sorted(best.values(), key=lambda pair: pair[0], reverse=True)]
+    return _filter_supporting_by_section_agreement(ordered, answer=answer, idf=idf)
 
 
 def _citation_status_after_sources(async_verification_sink: dict[str, Any] | None) -> str | None:
@@ -5725,7 +5825,12 @@ def _display_sources_for_answer(
     if mode == "lexical":
         return _sources_from_chunks(v1_supporting, merge_articles=merge_articles, user_role=user_role)
 
-    from app.services.qa.citation_verification import CandidateEvidence, extract_claims, verify_citations
+    from app.services.qa.citation_verification import (
+        CandidateEvidence,
+        extract_claims,
+        filter_verified_ids_by_topic_agreement,
+        verify_citations,
+    )
 
     v2_candidates = [
         CandidateEvidence(
@@ -5801,15 +5906,18 @@ def _display_sources_for_answer(
         _raw_citation_id(chunk, index)
         for index, chunk in enumerate(v1_supporting, start=1)
     }
-    verified_chunks = (
+    display_ids = (
         [
-            id_to_chunk[cid]
+            cid
             for cid in outcome.verified_citation_ids
             if cid in id_to_chunk and cid in v1_allow
         ]
         if v1_allow
         else []
     )
+    # Defense in depth if verify_citations was patched / skipped the gate.
+    display_ids = filter_verified_ids_by_topic_agreement(answer, v2_candidates, display_ids)
+    verified_chunks = [id_to_chunk[cid] for cid in display_ids if cid in id_to_chunk]
     return _sources_from_chunks(verified_chunks, merge_articles=merge_articles, user_role=user_role)
 
 

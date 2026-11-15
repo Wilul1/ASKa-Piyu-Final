@@ -82,6 +82,54 @@ def test_async_llm_drops_v2_citations_absent_from_v1_lexical_set():
     assert [c.citation_id for c in job.verified_citations] == ["gamble::1"]
 
 
+def test_async_llm_topic_agreement_drops_publication_for_honorable_dismissal():
+    """Even if V2 (or a double) keeps Publication, the post-gate must drop it."""
+    candidates = [
+        CandidateEvidence(
+            citation_id="pub::1",
+            title="2.6. Publication (Editor-in-Chief)",
+            source_section="2.6. Publication (Editor-in-Chief)",
+            source_filename="handbook.pdf",
+            text=(
+                "The Editor-in-Chief of the student publication is appointed "
+                "by the University President. Campus paper staff may petition "
+                "the Registrar for credentials."
+            ),
+        ),
+        CandidateEvidence(
+            citation_id="hd::1",
+            title="Honorable Dismissal",
+            source_section="Honorable Dismissal",
+            source_filename="handbook.pdf",
+            text=(
+                "A student in good standing who desires permanent withdrawal "
+                "submits a written petition for Honorable Dismissal to the "
+                "Office of the Registrar."
+            ),
+        ),
+    ]
+    outcome = VerificationOutcome(
+        mode="async_llm",
+        verifier_succeeded=True,
+        verified_citation_ids=["pub::1", "hd::1"],
+    )
+    vid = jobs.create_job(
+        answer=(
+            "Permanently withdraw by applying for Honorable Dismissal. Submit "
+            "a written petition to the Office of the Registrar. The student "
+            "must be in good standing and settle indebtedness."
+        ),
+        candidates=candidates,
+        mode="async_llm",
+        v1_citation_ids=["pub::1", "hd::1"],
+    )
+    with patch(VERIFY, return_value=outcome):
+        jobs.run_verification_job(vid)
+    job = jobs.get_job(vid)
+    assert job.status == jobs.JobStatus.VERIFIED
+    assert [c.citation_id for c in job.verified_citations] == ["hd::1"]
+
+
 def test_async_llm_empty_intersection_becomes_no_verified_support():
     outcome = VerificationOutcome(
         mode="async_llm",

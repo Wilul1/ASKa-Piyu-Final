@@ -2519,6 +2519,10 @@ def test_citation_precision_keeps_weaker_source_for_a_different_claim():
             "app.services.qa.question_answering.generate_groq_answer",
             side_effect=generate_from_context,
         ),
+        patch(
+            "app.services.qa.question_answering.settings.citation_verification_mode",
+            "lexical",
+        ),
     ):
         result = answer_qa_question(
             "Explain the alpha protocol requirements and how long library reserves last."
@@ -2529,6 +2533,94 @@ def test_citation_precision_keeps_weaker_source_for_a_different_claim():
     assert "Library Reserves" in titles
     assert "Cafeteria Tickets" not in titles
     assert titles[0] == "Alpha Protocol"
+
+
+def test_select_supporting_context_drops_publication_for_honorable_dismissal_answer():
+    """HD answer must not cite Publication / Dropping / Change of Registration.
+
+    Regression for the mobile grounding miss: correct Honorable Dismissal
+    answer text paired with a wrong handbook section label.
+    """
+    honorable = chunk(
+        "Honorable Dismissal",
+        "A student in good standing who desires to permanently withdraw shall "
+        "submit a written petition to the Office of the Registrar signed by "
+        "the student and parent or guardian. All indebtedness must be settled. "
+        "Honorable Dismissal confirms withdrawal in good standing and the "
+        "student may not be readmitted.",
+        score=0.92,
+        path=("Student Handbook", "Academic Policies", "Honorable Dismissal"),
+    )
+    publication = chunk(
+        "2.6. Publication (Editor-in-Chief)",
+        "The Editor-in-Chief of the student publication shall be appointed "
+        "by the University President upon recommendation of the publication "
+        "board. The student and parent guardian may petition the Registrar "
+        "for related credentials when transferring.",
+        score=0.88,
+        path=(
+            "Student Handbook",
+            "Student Publication",
+            "2.6. Publication (Editor-in-Chief)",
+        ),
+    )
+    dropping = chunk(
+        "Dropping of Students from a Course",
+        "Students are dropped after accumulating absences of at least 25% "
+        "of total class hours. Dropping before mid-term is without prejudice. "
+        "File the prescribed form with faculty consent and Dean approval.",
+        score=0.84,
+        path=(
+            "Student Handbook",
+            "Academic Policies",
+            "Dropping of Students from a Course",
+        ),
+    )
+    registration = chunk(
+        "Change of Registration",
+        "No changes involving a new subject are allowed after 12% of regular "
+        "class meetings. Changes require adviser recommendation and Dean "
+        "approval submitted to the Registrar.",
+        score=0.8,
+        path=("Student Handbook", "Academic Policies", "Change of Registration"),
+    )
+    answer = (
+        "To permanently withdraw from LSPU, apply for Honorable Dismissal. "
+        "Submit a written petition to the Office of the Registrar signed by "
+        "the student and parent or guardian. The student must be in good "
+        "standing and settle all indebtedness. A student granted Honorable "
+        "Dismissal may not be readmitted. Honorable Dismissal is permanent "
+        "withdrawal and is not the same as a Leave of Absence."
+    )
+
+    selected = _select_supporting_context(
+        [publication, dropping, registration, honorable],
+        answer,
+    )
+    selected_sections = {item.metadata["section"] for item in selected}
+    assert selected_sections == {"Honorable Dismissal"}
+
+
+def test_select_supporting_context_empty_when_only_wrong_section_candidates():
+    """Fail closed: wrong-section-only candidates → no Sources, not a bad cite."""
+    publication = chunk(
+        "2.6. Publication (Editor-in-Chief)",
+        "The Editor-in-Chief shall supervise the campus paper. Students may "
+        "petition the Registrar for transcript copies when leaving campus "
+        "activities related to publication work.",
+        score=0.9,
+        path=(
+            "Student Handbook",
+            "Student Publication",
+            "2.6. Publication (Editor-in-Chief)",
+        ),
+    )
+    answer = (
+        "To permanently withdraw, apply for Honorable Dismissal via a written "
+        "petition to the Office of the Registrar. The student must be in good "
+        "standing and settle indebtedness before Honorable Dismissal issues."
+    )
+    assert _select_supporting_context([publication], answer) == []
 
 
 def test_citation_precision_no_fabricated_source_for_degraded_answer():

@@ -28,6 +28,9 @@ def extract_citation_pages_pdf(
     - When ``section_title`` is set, the first page drops content above that
       heading (e.g. leftover ID Validation), and the last page drops the next
       numbered service section so the viewer shows the full cited source only.
+    - When ``section_title`` is set but the heading is not found on any page
+      in the range, raises ``CitedSectionNotFoundError`` instead of returning
+      an unrelated full page (ValueError subclass -- routes map it to 404).
     - ``path`` may be a filesystem ``Path`` (existing behavior) or raw PDF
       ``bytes`` -- the latter lets callers serve directly from durably
       stored database bytes when no local file copy is available.
@@ -64,6 +67,51 @@ def extract_citation_pages_pdf(
         source.close()
 
 
+class CitedSectionNotFoundError(ValueError):
+    """Raised when a section_title was requested but is absent from the page range.
+
+    Callers must not fall back to returning the full unrelated page -- that
+    previously showed Dropping/Registration content under a Publication label.
+    """
+
+
+def section_heading_present(
+    source: fitz.Document | Path | bytes,
+    *,
+    page_start: int,
+    page_end: int | None = None,
+    section_title: str,
+) -> bool:
+    """True when ``section_title`` is findable on any page in the inclusive range."""
+    section = (section_title or "").strip()
+    if not section or page_start < 1:
+        return False
+    owns_doc = not isinstance(source, fitz.Document)
+    doc = (
+        source
+        if isinstance(source, fitz.Document)
+        else (
+            fitz.open(stream=source, filetype="pdf")
+            if isinstance(source, bytes)
+            else fitz.open(source)
+        )
+    )
+    try:
+        end = int(page_end) if page_end is not None else page_start
+        if end < page_start:
+            end = page_start
+        end = min(end, doc.page_count)
+        if page_start > doc.page_count:
+            return False
+        for page_index in range(page_start - 1, end):
+            if _find_section_top(doc[page_index], section) is not None:
+                return True
+        return False
+    finally:
+        if owns_doc:
+            doc.close()
+
+
 def _extract_section_clipped_pdf(
     source: fitz.Document,
     *,
@@ -71,39 +119,52 @@ def _extract_section_clipped_pdf(
     page_end: int,
     section_title: str,
 ) -> bytes:
+    first_idx = page_start - 1
+    last_idx = page_end - 1
+
+    # Locate the cited heading anywhere in the requested range. Soft +1 page
+    # extension often includes a neighboring service's page; never return that
+    # full page when the cited section heading is absent entirely.
+    section_page_idx: int | None = None
+    section_top_on_first: float | None = None
+    for page_index in range(first_idx, last_idx + 1):
+        top = _find_section_top(source[page_index], section_title)
+        if top is not None:
+            section_page_idx = page_index
+            section_top_on_first = top
+            break
+    if section_page_idx is None:
+        raise CitedSectionNotFoundError(
+            f"Cited section {section_title!r} not found on pages "
+            f"{page_start}-{page_end}."
+        )
+
     out = fitz.open()
     try:
-        first_idx = page_start - 1
-        last_idx = page_end - 1
-        section_top_on_first: float | None = None
-
-        for page_index in range(first_idx, last_idx + 1):
+        for page_index in range(section_page_idx, last_idx + 1):
             page = source[page_index]
             clip = fitz.Rect(page.rect)
 
-            if page_index == first_idx:
-                top = _find_section_top(page, section_title)
-                if top is not None:
-                    section_top_on_first = top
-                    clip.y0 = max(page.rect.y0, top)
+            if page_index == section_page_idx and section_top_on_first is not None:
+                clip.y0 = max(page.rect.y0, section_top_on_first)
 
             # Crop at the next numbered service on *every* page in the range.
             # Soft +1 page extension often lands on a page that is mostly the
             # following service; only clipping the last page left bleed-through.
             min_y = clip.y0 + 12
-            if page_index == first_idx and section_top_on_first is not None:
+            if page_index == section_page_idx and section_top_on_first is not None:
                 min_y = section_top_on_first + 24
             bottom = _find_next_section_top(page, section_title, min_y=min_y)
             if bottom is not None and bottom > clip.y0 + 36:
                 clip.y1 = min(page.rect.y1, bottom)
 
             # Continuation page that is only the next service → omit it.
-            if page_index > first_idx and clip.height < 72:
+            if page_index > section_page_idx and clip.height < 72:
                 continue
 
-            # Degenerate clip on the first page → keep a usable fallback.
+            # Degenerate clip on the section page → keep a usable fallback.
             if clip.height < 40 or clip.width < 40:
-                if page_index > first_idx:
+                if page_index > section_page_idx:
                     continue
                 clip = fitz.Rect(page.rect)
 
@@ -111,10 +172,10 @@ def _extract_section_clipped_pdf(
             new_page.show_pdf_page(new_page.rect, source, page_index, clip=clip)
 
         if out.page_count == 0:
-            # Safety: never return an empty PDF.
-            page = source[first_idx]
+            # Safety: never return an empty PDF once the heading was found.
+            page = source[section_page_idx]
             out.new_page(width=page.rect.width, height=page.rect.height)
-            out[0].show_pdf_page(out[0].rect, source, first_idx)
+            out[0].show_pdf_page(out[0].rect, source, section_page_idx)
 
         return out.tobytes()
     finally:

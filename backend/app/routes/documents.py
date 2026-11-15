@@ -11,7 +11,7 @@ from app.models.db_models import SourceDocument, User
 from app.models.schemas import DocumentSourceMetaSchema
 from app.services.article_rag_indexer import infer_rag_audience_from_document
 from app.services.auth import get_current_user
-from app.services.citation_pdf import extract_citation_pages_pdf
+from app.services.citation_pdf import CitedSectionNotFoundError, extract_citation_pages_pdf
 from app.services.document_storage import (
     get_source_document,
     is_source_pdf_resolvable,
@@ -144,6 +144,9 @@ def get_document_source_page(
             page_end=page_end,
             section_title=(section or "").strip() or None,
         )
+    except CitedSectionNotFoundError as exc:
+        # Prefer a failed clipped preview over a wrong neighboring section page.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

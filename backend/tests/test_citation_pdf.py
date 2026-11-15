@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import fitz
 
-from app.services.citation_pdf import extract_citation_pages_pdf
+import pytest
+
+from app.services.citation_pdf import (
+    CitedSectionNotFoundError,
+    extract_citation_pages_pdf,
+    section_heading_present,
+)
 from app.services.document_storage import source_page_url
 
 
@@ -107,6 +113,24 @@ def test_extract_crops_next_service_on_first_page_and_omits_bleed_page(tmp_path)
         assert "Enrollment Advising" not in text
     finally:
         opened.close()
+
+
+def test_extract_raises_when_cited_section_missing_from_page_range(tmp_path):
+    """Do not return Change-of-Registration pages under a Publication label."""
+    path = _make_dropping_like_pdf(tmp_path)
+    assert section_heading_present(
+        path,
+        page_start=1,
+        page_end=2,
+        section_title="2.6. Publication (Editor-in-Chief)",
+    ) is False
+    with pytest.raises(CitedSectionNotFoundError, match="Publication"):
+        extract_citation_pages_pdf(
+            path,
+            page_start=1,
+            page_end=2,
+            section_title="2.6. Publication (Editor-in-Chief)",
+        )
 
 
 def test_source_page_url_includes_end_and_section():

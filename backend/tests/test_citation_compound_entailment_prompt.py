@@ -66,6 +66,8 @@ def test_compound_entailment_rule_present_and_general():
     assert "relationship" in prompt.lower()
     assert "procedure A" in prompt
     assert "procedure B" in prompt
+    assert "same specific" in prompt.lower()
+    assert "permanent university withdrawal" in prompt.lower()
     banned = (
         "Refunding of Fees",
         "Honorable Dismissal",

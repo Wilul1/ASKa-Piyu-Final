@@ -54,7 +54,8 @@ GEMINI_EMBEDDING_DIMENSION = 768
 # Google batchEmbedContents rejects more than 100 items in one request
 # (HTTP 400 INVALID_ARGUMENT). Stay well under that, and prefer smaller
 # batches so free-tier RPM/TPM quotas don't trip mid-ingest.
-GEMINI_EMBED_BATCH_SIZE = 32
+# Keep batches small: free-tier RPM/RPD quotas reject large bursts with 429.
+GEMINI_EMBED_BATCH_SIZE = 8
 # Model input is truncated at 2048 tokens; clamp chars so oversized handbook
 # chunks don't blow the request.
 GEMINI_EMBED_MAX_CHARS = 8000
@@ -552,9 +553,15 @@ class GeminiEmbeddingFunction:
 
             if response.status_code != 429:
                 break
-            # 3s, 6s, 12s, 24s, 48s, 96s, 120s — then final attempt already spent.
             if attempt < max_attempts - 1:
-                time.sleep(min(120, 3 * (2 ** attempt)))
+                retry_after = response.headers.get("retry-after")
+                try:
+                    wait_s = float(retry_after) if retry_after else 0.0
+                except ValueError:
+                    wait_s = 0.0
+                # Prefer Retry-After when present; otherwise 3s, 6s, 12s, ... capped.
+                wait_s = max(wait_s, min(180.0, 3.0 * (2 ** attempt)))
+                time.sleep(wait_s)
 
         if response is None:
             raise RemoteEmbeddingError(

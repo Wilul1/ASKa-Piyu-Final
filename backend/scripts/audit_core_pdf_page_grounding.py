@@ -52,22 +52,41 @@ def _heading_variants(title: str) -> list[str]:
     if not raw:
         return []
     variants = [raw]
-    # Drop leading "Article 9." / "4.2." / "Sec. 3."
-    stripped = re.sub(
-        r"^(?:article|sec(?:tion)?|chapter)\s+[\w.-]+\s*[.:\-–—]?\s*",
-        "",
-        raw,
-        flags=re.I,
-    ).strip()
-    if stripped and stripped.casefold() != raw.casefold():
-        variants.append(stripped)
-    # Drop trailing parenthetical
-    no_paren = re.sub(r"\s*\([^)]*\)\s*$", "", stripped or raw).strip()
-    if no_paren and no_paren not in variants:
-        variants.append(no_paren)
-    # Prefer longer first
-    variants.sort(key=len, reverse=True)
-    return [v for v in variants if len(v) >= 4]
+    # Handbook structure labels are "1.1 > New Student" / "Article 18 > Leave..."
+    if " > " in raw:
+        leaf = raw.rsplit(" > ", 1)[-1].strip()
+        if leaf:
+            variants.append(leaf)
+        left = raw.split(" > ", 1)[0].strip()
+        if left:
+            variants.append(left)
+    for candidate in list(variants):
+        # Drop leading "Article 9." / "4.2." / "Sec. 3." / "1.1"
+        stripped = re.sub(
+            r"^(?:article|sec(?:tion)?|chapter)\s+[\w.-]+\s*[.:\-–—]?\s*",
+            "",
+            candidate,
+            flags=re.I,
+        ).strip()
+        if stripped and stripped.casefold() != candidate.casefold():
+            variants.append(stripped)
+        numbered = re.sub(r"^[\d.]+(?:\s*[.:\-–—]\s*|\s+)", "", candidate).strip()
+        if numbered and numbered.casefold() != candidate.casefold():
+            variants.append(numbered)
+        # Drop trailing parenthetical
+        no_paren = re.sub(r"\s*\([^)]*\)\s*$", "", stripped or candidate).strip()
+        if no_paren and no_paren not in variants:
+            variants.append(no_paren)
+    # Prefer longer first; dedupe
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for variant in sorted(variants, key=len, reverse=True):
+        key = variant.casefold()
+        if key in seen or len(variant) < 4:
+            continue
+        seen.add(key)
+        ordered.append(variant)
+    return ordered
 
 
 def _page_has_heading(page_text: str, title: str) -> bool:
@@ -120,20 +139,16 @@ def _page_of(meta: dict) -> int | None:
 
 def audit_one(filename: str, pdf_bytes: bytes) -> dict:
     from app.services.admin.digital_ingestion import (
-        build_chunks_with_pages,
+        build_structure_aware_chunks,
         extract_digital_text_only,
-        _page_offsets_from_texts,
     )
-    from app.config import settings
 
-    page_texts, page_offsets = extract_digital_text_only(pdf_bytes)
-    chunks = build_chunks_with_pages(
+    page_texts, _page_offsets = extract_digital_text_only(pdf_bytes)
+    chunks = build_structure_aware_chunks(
         page_texts,
-        page_offsets,
-        chunk_size=getattr(settings, "chunk_max_chars", 900) or 900,
-        chunk_overlap=getattr(settings, "chunk_overlap_chars", 120) or 120,
         title=filename.rsplit(".", 1)[0],
         source_filename=filename,
+        pdf_bytes=pdf_bytes,
     )
 
     checked = 0
@@ -220,7 +235,7 @@ def audit_one(filename: str, pdf_bytes: bytes) -> dict:
                         page
                         and (
                             (found and page in found)
-                            or (body_pages and abs(body_pages[0] - page) <= 2)
+                            or any(abs(bp - page) <= 2 for bp in body_pages)
                         )
                     ),
                 }
@@ -285,20 +300,55 @@ def _print_report(report: dict) -> None:
                 )
 
 
-def main() -> int:
-    from app.db.session import get_session_factory
+def _local_pdf_bytes(filename: str) -> bytes | None:
+    """Optional local fallback under backend/data/audit_pdfs (gitignored)."""
+    from pathlib import Path
 
-    session = get_session_factory()()
+    root = Path(__file__).resolve().parents[1] / "data" / "audit_pdfs"
+    if not root.is_dir():
+        return None
+    candidates = [
+        root / filename,
+        root / filename.replace(" ", "_"),
+        root / "LSPU_Student_Handbook.pdf" if "Handbook" in filename else None,
+        root / "Laguna_State_Polytechnic_University-CC_2026-1st_Edition.pdf"
+        if "CC_2026" in filename or "Charter" in filename
+        else None,
+    ]
+    for path in candidates:
+        if path is not None and path.is_file():
+            return path.read_bytes()
+    return None
+
+
+def main() -> int:
     failures = 0
+    session = None
     try:
+        try:
+            from app.db.session import get_session_factory
+
+            session = get_session_factory()()
+        except Exception as exc:
+            print(f"NOTE db_unavailable ({type(exc).__name__}); trying local audit_pdfs")
+            session = None
+
         for filename in CORE:
-            row = _best_row(session, filename)
-            if row is None:
+            pdf_bytes = None
+            source_note = "local"
+            if session is not None:
+                row = _best_row(session, filename)
+                if row is not None and row.pdf_data:
+                    pdf_bytes = bytes(row.pdf_data)
+                    source_note = f"db source_id={row.id}"
+            if pdf_bytes is None:
+                pdf_bytes = _local_pdf_bytes(filename)
+            if pdf_bytes is None:
                 print(f"FAIL missing_pdf filename={filename}")
                 failures += 1
                 continue
-            print(f"START filename={filename} source_id={row.id}")
-            report = audit_one(filename, bytes(row.pdf_data))
+            print(f"START filename={filename} ({source_note})")
+            report = audit_one(filename, pdf_bytes)
             _print_report(report)
             # Fail closed recommendation threshold: >25% elsewhere or key probes fail
             checked = report["checked_labeled"] or 1
@@ -318,7 +368,8 @@ def main() -> int:
             else:
                 print("  VERDICT: GOOD_TO_REINGEST")
     finally:
-        session.close()
+        if session is not None:
+            session.close()
     return 1 if failures else 0
 
 

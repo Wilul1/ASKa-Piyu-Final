@@ -37,6 +37,7 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -60,13 +61,11 @@ from app.services.admin.knowledge_base_pipeline import (
 from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk
-# NOTE: adapt_handbook_document is NOT imported here -- this baseline
-# (674f95ae) has no _chunks_from_handbook_document or any Handbook-
-# detection dispatch to use it with (see the Stage 3 reconstruction
-# report's explicit note on the unresolved Handbook-integration portion).
-# Importing it unused here would be misleading dead code, not a faithful
-# reconstruction of the approved change.
-from app.services.common_representation.adapters import adapt_generic_text
+from app.services.common_representation.adapters import (
+    adapt_charter_v2_services,
+    adapt_generic_text,
+    adapt_handbook_document,
+)
 from app.services.common_representation.chunker import chunk_document_record
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
 from app.services.text_cleaner import (
@@ -798,6 +797,229 @@ def build_chunks_with_pages(
     )
 
 
+@dataclass
+class _DigitalPage:
+    """Minimal page shape for Citizen's Charter V2 (avoids importing EasyOCR)."""
+
+    page_number: int
+    text: str
+    method: str = "digital"
+    words: list[dict] | None = None
+    table_regions: list[dict] | None = None
+    geometry_scale: float = 1.0
+
+
+def _infer_structure_kind(source_filename: str, sample_text: str) -> str:
+    """Return handbook_policy | citizen_charter | generic for chunk routing."""
+    lower = (source_filename or "").casefold()
+    if "charter" in lower:
+        return "citizen_charter"
+    if "handbook" in lower or "faculty manual" in lower:
+        return "handbook_policy"
+    try:
+        from app.services.structured_document_parser import classify_document_type
+
+        kind = classify_document_type(sample_text[:80_000])
+    except Exception:
+        logger.exception("structure kind classification failed; using generic chunking")
+        return "generic"
+    if kind == "citizen_charter":
+        return "citizen_charter"
+    if kind == "handbook_policy":
+        return "handbook_policy"
+    return "generic"
+
+
+def _digital_pages_from_pdf_bytes(pdf_bytes: bytes) -> list[_DigitalPage]:
+    """Build geometry-aware digital pages with fitz only (no OCR/EasyOCR)."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages: list[_DigitalPage] = []
+    try:
+        for index in range(doc.page_count):
+            page = doc[index]
+            words_raw = page.get_text("words", sort=True) or []
+            word_items: list[dict] = []
+            for word in words_raw:
+                if len(word) < 5:
+                    continue
+                x0, y0, x1, y1, text = word[:5]
+                cleaned = str(text).strip()
+                if not cleaned:
+                    continue
+                word_items.append(
+                    {
+                        "text": cleaned,
+                        "x0": float(x0),
+                        "y0": float(y0),
+                        "x1": float(x1),
+                        "y1": float(y1),
+                        "cy": (float(y0) + float(y1)) / 2,
+                        "height": max(1.0, float(y1) - float(y0)),
+                    }
+                )
+            pages.append(
+                _DigitalPage(
+                    page_number=index + 1,
+                    text=page.get_text("text") or "",
+                    words=word_items or None,
+                )
+            )
+    finally:
+        doc.close()
+    return pages
+
+
+def _ensure_page_number_metadata(chunks: list[DocumentChunk]) -> list[DocumentChunk]:
+    """Citation grounding reads page_number; structure adapters set page_start."""
+    updated: list[DocumentChunk] = []
+    for chunk in chunks:
+        metadata = dict(chunk.metadata or {})
+        if metadata.get("page_number") is None and metadata.get("page_start") is not None:
+            metadata["page_number"] = metadata["page_start"]
+        if metadata.get("page_end") is None and metadata.get("page_start") is not None:
+            metadata["page_end"] = metadata["page_start"]
+        updated.append(
+            DocumentChunk(
+                text=chunk.text,
+                chunk_index=chunk.chunk_index,
+                char_start=chunk.char_start,
+                metadata=metadata,
+            )
+        )
+    return updated
+
+
+def _chunks_from_handbook_policy(
+    page_texts: list[str],
+    *,
+    title: str,
+    source_filename: str,
+) -> list[DocumentChunk]:
+    from app.services.handbook_policy_processor import build_handbook_policy_document
+
+    raw_text = "\n".join(page_texts)
+    document = build_handbook_policy_document(
+        raw_text=raw_text,
+        page_texts=page_texts,
+        source_title=title,
+    )
+    if not document.units:
+        return []
+    record = adapt_handbook_document(document, document_id=source_filename)
+    chunks = chunk_document_record(
+        record,
+        target_chars=settings.chunk_max_chars,
+        max_chars=settings.chunk_hard_max_chars,
+        overlap_chars=settings.chunk_overlap,
+    )
+    chunks = _ensure_page_number_metadata(chunks)
+    chunks = _apply_lightweight_compat_metadata(
+        chunks,
+        document_type="information",
+        title=title,
+        source_filename=source_filename,
+    )
+    return enrich_chunks_with_category_metadata(
+        chunks, title=title, source_document=source_filename, allow_llm=False
+    )
+
+
+def _chunks_from_citizen_charter(
+    pdf_bytes: bytes,
+    *,
+    title: str,
+    source_filename: str,
+) -> list[DocumentChunk]:
+    from app.services.citizen_charter_extraction_renderer import (
+        finalize_charter_v2_services_for_extraction,
+    )
+    from app.services.citizen_charter_extractor_v2 import extract_citizen_charter_services_v2
+
+    pages = _digital_pages_from_pdf_bytes(pdf_bytes)
+    services = extract_citizen_charter_services_v2(pages)  # type: ignore[arg-type]
+    if not services:
+        return []
+    service_dicts = finalize_charter_v2_services_for_extraction(
+        [asdict(service) for service in services]
+    )
+    record = adapt_charter_v2_services(
+        service_dicts,
+        document_id=source_filename,
+        source_filename=source_filename,
+    )
+    # Hard ceiling only: do not re-split already-bounded service units.
+    chunks = chunk_document_record(
+        record,
+        target_chars=settings.chunk_hard_max_chars,
+        max_chars=settings.chunk_hard_max_chars,
+        overlap_chars=settings.chunk_overlap,
+    )
+    chunks = _ensure_page_number_metadata(chunks)
+    chunks = _apply_lightweight_compat_metadata(
+        chunks,
+        document_type="procedure",
+        title=title,
+        source_filename=source_filename,
+    )
+    return enrich_chunks_with_category_metadata(
+        chunks, title=title, source_document=source_filename, allow_llm=False
+    )
+
+
+def build_structure_aware_chunks(
+    page_texts: list[str],
+    *,
+    title: str,
+    source_filename: str,
+    pdf_bytes: bytes | None = None,
+) -> list[DocumentChunk]:
+    """Prefer handbook/charter structure (real page_start) over generic offsets.
+
+    Falls back to generic ``build_chunks_with_pages`` when structure routing
+    is unavailable or produces zero chunks. Never imports EasyOCR.
+    """
+    sample = "\n".join(page_texts[: min(12, len(page_texts))])
+    kind = _infer_structure_kind(source_filename, sample or "\n".join(page_texts[:3]))
+    try:
+        if kind == "handbook_policy":
+            chunks = _chunks_from_handbook_policy(
+                page_texts, title=title, source_filename=source_filename
+            )
+            if chunks:
+                logger.info(
+                    "structure_aware_chunks kind=handbook_policy filename=%s chunks=%s",
+                    source_filename,
+                    len(chunks),
+                )
+                return chunks
+        elif kind == "citizen_charter" and pdf_bytes:
+            chunks = _chunks_from_citizen_charter(
+                pdf_bytes, title=title, source_filename=source_filename
+            )
+            if chunks:
+                logger.info(
+                    "structure_aware_chunks kind=citizen_charter filename=%s chunks=%s",
+                    source_filename,
+                    len(chunks),
+                )
+                return chunks
+    except Exception:
+        logger.exception(
+            "structure_aware_chunks failed kind=%s filename=%s; falling back to generic",
+            kind,
+            source_filename,
+        )
+
+    return build_chunks_with_pages(
+        page_texts,
+        _page_offsets_from_texts(page_texts),
+        chunk_size=settings.chunk_max_chars,
+        chunk_overlap=settings.chunk_overlap,
+        title=title,
+        source_filename=source_filename,
+    )
+
+
 def _mirror_page_range_metadata(chunks: list[DocumentChunk]) -> list[DocumentChunk]:
     """Mirror page_number into page_start/page_end on each chunk's metadata.
 
@@ -1013,6 +1235,7 @@ def chunks_from_pages_or_reviewed_text(
     *,
     title: str,
     source_filename: str,
+    pdf_bytes: bytes | None = None,
 ) -> list[DocumentChunk]:
     """Build chunks either from the original (possibly OCR'd) page texts, or
     from the admin's edited reviewed_text when provided -- shared by
@@ -1023,6 +1246,10 @@ def chunks_from_pages_or_reviewed_text(
     equivalent reviewed_text override already accepts (see
     knowledge_base_pipeline._best_review_text) -- page_number/page_start/
     page_end all collapse to 1 for every resulting chunk in that case.
+
+    When ``reviewed_text`` is empty and ``pdf_bytes`` is available, handbook
+    and citizen-charter PDFs use structure-aware chunking so ``page_start``
+    comes from the heading/service page rather than generic char offsets.
     """
     reviewed = (reviewed_text or "").strip()
     if reviewed:
@@ -1035,13 +1262,11 @@ def chunks_from_pages_or_reviewed_text(
             source_filename=source_filename,
         )
     else:
-        chunks = build_chunks_with_pages(
+        chunks = build_structure_aware_chunks(
             page_texts,
-            _page_offsets_from_texts(page_texts),
-            chunk_size=settings.chunk_max_chars,
-            chunk_overlap=settings.chunk_overlap,
             title=title,
             source_filename=source_filename,
+            pdf_bytes=pdf_bytes,
         )
     return _mirror_page_range_metadata(chunks)
 
@@ -1074,7 +1299,11 @@ def build_lightweight_publish(
     page_texts, _page_offsets, extraction_method = _extract_or_ocr(file_bytes)
 
     chunks = chunks_from_pages_or_reviewed_text(
-        page_texts, reviewed_text, title=display_title, source_filename=source_document
+        page_texts,
+        reviewed_text,
+        title=display_title,
+        source_filename=source_document,
+        pdf_bytes=file_bytes,
     )
 
     if not chunks:
@@ -1102,12 +1331,18 @@ def build_lightweight_publish(
         content_type=content_type,
     )
 
+    structure_kind = _infer_structure_kind(source_document, "\n".join(page_texts[:8]))
+    kb_document_type = "procedure" if structure_kind == "citizen_charter" else "information"
+    structuring_method = {
+        "handbook_policy": "handbook_policy_structure",
+        "citizen_charter": "citizen_charter_v2_structure",
+    }.get(structure_kind, "generic_chunking")
     units = knowledge_units_for_extraction(None, chunks, kb_document_type=None)
     previews = chunk_preview(chunks)
-    validation = validation_report(document_type="information", units=units, chunks=chunks)
+    validation = validation_report(document_type=kb_document_type, units=units, chunks=chunks)
     stages = pipeline_stages(
         extraction_method=extraction_method,
-        structuring_method="generic_chunking",
+        structuring_method=structuring_method,
         indexed=True,
         chunks_indexed=indexed,
     )
@@ -1116,7 +1351,7 @@ def build_lightweight_publish(
 
     return {
         "document_id": new_document_id,
-        "document_type": "information",
+        "document_type": kb_document_type,
         "source_filename": source_document,
         "title": display_title,
         "chunks_indexed": indexed,
@@ -1124,12 +1359,15 @@ def build_lightweight_publish(
         "extraction_method": extraction_method,
         "extracted_text_preview": preview_text,
         "structured": _lightweight_structured_response(index_text),
-        "structuring_method": "generic_chunking",
+        "structuring_method": structuring_method,
         "pipeline_stages": stages,
         "diagnostic_report": None,
         "validation_report": validation,
         "detected_document_type": _lightweight_detected_document_type(
-            reason="Lightweight cloud-safe pipeline: generic chunking, no document-type detection."
+            reason=(
+                f"Lightweight cloud-safe pipeline: structure_kind={structure_kind}, "
+                f"structuring_method={structuring_method}."
+            )
         ),
         "knowledge_units": units,
         "chunk_preview": previews,
@@ -1386,7 +1624,11 @@ def process_indexing_job(job_id: str, reviewed_text: str | None) -> None:
         title = (job.source_filename or "Untitled document").rsplit(".", 1)[0]
         try:
             chunks = chunks_from_pages_or_reviewed_text(
-                page_texts, reviewed_text, title=title, source_filename=job.source_filename
+                page_texts,
+                reviewed_text,
+                title=title,
+                source_filename=job.source_filename,
+                pdf_bytes=bytes(job.pdf_bytes) if job.pdf_bytes else None,
             )
         except DigitalIngestionError as exc:
             job.status = "failed"

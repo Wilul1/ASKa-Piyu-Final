@@ -351,7 +351,7 @@ void main() {
 
     testWidgets(
         'a zero-source answer renders no Sources section, no '
-        'high/medium/low label, and offers Submit ticket',
+        'high/medium/low label, and no Submit ticket CTA',
         (tester) async {
       await _pumpChatbotWithSeededAnswer(
         tester,
@@ -370,7 +370,11 @@ void main() {
       expect(find.text('low'), findsNothing);
       expect(find.text('medium'), findsNothing);
       expect(find.text('high'), findsNothing);
-      expect(find.text('Submit ticket'), findsOneWidget);
+      expect(find.text('Submit ticket'), findsNothing);
+      expect(
+        find.textContaining('If this did not fully answer your question'),
+        findsNothing,
+      );
     });
 
     testWidgets(

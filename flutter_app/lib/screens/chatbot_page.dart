@@ -5,7 +5,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../auth/auth_navigation.dart';
 import '../auth/auth_state.dart';
 import '../app_config.dart';
 import '../design_tokens.dart';
@@ -16,7 +15,6 @@ import '../widgets/phone_layout.dart';
 import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
 import 'login_page.dart';
-import 'my_tickets_page.dart';
 
 const _chatSessionsKey = 'aska_chat_sessions_v1';
 const _maxStoredSessions = 20;
@@ -539,15 +537,6 @@ class _ChatbotPageState extends State<ChatbotPage> {
     });
   }
 
-  void _submitTicketForQuestion(String question) {
-    openProtectedPage(
-      context,
-      builder: (_) => MyTicketsPage(initialTab: 1, initialQuestion: question),
-      requireVerifiedEmail: true,
-      message: emailVerifyRequiredMessage,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
@@ -588,7 +577,6 @@ class _ChatbotPageState extends State<ChatbotPage> {
       isDesktop: wide,
       isGuest: !AuthScope.of(context).isAuthenticated,
       onSend: _sendQuestion,
-      onSubmitTicket: _submitTicketForQuestion,
       onToggleHistory: canUseHistory
           ? () => setState(() => _historyOpen = !_historyOpen)
           : null,
@@ -1090,7 +1078,6 @@ class _ChatBody extends StatelessWidget {
   final bool historyOpen;
   final bool canUseHistory;
   final VoidCallback onSend;
-  final ValueChanged<String> onSubmitTicket;
   final VoidCallback? onToggleHistory;
   final VoidCallback onNewChat;
 
@@ -1107,7 +1094,6 @@ class _ChatBody extends StatelessWidget {
     required this.historyOpen,
     required this.canUseHistory,
     required this.onSend,
-    required this.onSubmitTicket,
     required this.onToggleHistory,
     required this.onNewChat,
   });
@@ -1154,10 +1140,7 @@ class _ChatBody extends StatelessWidget {
                         if (turn.question != null) {
                           return _UserBubble(text: turn.question!);
                         }
-                        return _AnswerBubble(
-                          answer: turn.answer!,
-                          onSubmitTicket: onSubmitTicket,
-                        );
+                        return _AnswerBubble(answer: turn.answer!);
                       }),
                       if (isLoading) const _LoadingBubble(),
                       if (error != null) _ErrorBanner(message: error!),
@@ -1197,10 +1180,7 @@ class _ChatBody extends StatelessWidget {
                           if (turn.question != null) {
                             return _UserBubble(text: turn.question!);
                           }
-                          return _AnswerBubble(
-                            answer: turn.answer!,
-                            onSubmitTicket: onSubmitTicket,
-                          );
+                          return _AnswerBubble(answer: turn.answer!);
                         }),
                         if (isLoading) const _LoadingBubble(),
                         if (error != null) _ErrorBanner(message: error!),
@@ -1336,18 +1316,15 @@ class _UserBubble extends StatelessWidget {
 
 class _AnswerBubble extends StatelessWidget {
   final _QaAnswer answer;
-  final ValueChanged<String> onSubmitTicket;
 
   const _AnswerBubble({
     required this.answer,
-    required this.onSubmitTicket,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Offer ticket escalation when retrieval produced no citations (or the
-    // answer was degraded) — never via a high/medium/low confidence label.
-    final offerTicket = answer.sources.isEmpty || answer.degraded;
+    // No Sources → leave the answer blank underneath (no Submit-ticket CTA).
+    // Ticket filing stays available from My Tickets in the nav.
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -1389,10 +1366,9 @@ class _AnswerBubble extends StatelessWidget {
             // bubble) so drag-to-select/right-click-copy/Ctrl+C work across
             // the complete multi-paragraph/bullet response in one
             // continuous selection, like a normal chat answer -- while
-            // leaving the Sources links and Submit ticket button (all
-            // outside this wrapper) exactly as tappable as before, and
-            // without this small selection region competing with the
-            // enclosing ListView's own vertical drag-to-scroll.
+            // leaving the Sources links (outside this wrapper) exactly as
+            // tappable as before, and without this small selection region
+            // competing with the enclosing ListView's own vertical drag.
             SelectionArea(
               child: _ChatMarkdown(
                 text: answer.text,
@@ -1406,30 +1382,6 @@ class _AnswerBubble extends StatelessWidget {
             if (answer.sources.isNotEmpty) ...[
               const SizedBox(height: 14),
               _CollapsibleSources(sources: answer.sources),
-            ],
-            if (offerTicket) ...[
-              const SizedBox(height: 14),
-              const Text(
-                'If this did not fully answer your question, you may submit a ticket so the appropriate office can assist you.',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.45,
-                  color: DesignTokens.muted,
-                ),
-              ),
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: () => onSubmitTicket(answer.question),
-                icon: const Icon(Icons.confirmation_num_outlined, size: 18),
-                label: const Text('Submit ticket'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: DesignTokens.maroon,
-                  side: const BorderSide(color: DesignTokens.maroon),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
             ],
           ],
         ),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,8 @@ from app.services.document_storage import (
     resolve_pdf_source,
     source_document_payload,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["Source Documents"])
 
@@ -136,17 +139,36 @@ def get_document_source_page(
     row = _load_source_row(document_id, current_user)
     page_end = end if end is not None and end >= page_number else page_number
 
+    section_title = (section or "").strip() or None
+    section_crop = "applied"
     try:
         source = resolve_pdf_source(row)
-        page_bytes = extract_citation_pages_pdf(
-            source,
-            page_start=page_number,
-            page_end=page_end,
-            section_title=(section or "").strip() or None,
-        )
-    except CitedSectionNotFoundError as exc:
-        # Prefer a failed clipped preview over a wrong neighboring section page.
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            page_bytes = extract_citation_pages_pdf(
+                source,
+                page_start=page_number,
+                page_end=page_end,
+                section_title=section_title,
+            )
+        except CitedSectionNotFoundError:
+            # Heading missing on the cited pages (stale page metadata / soft +1).
+            # Still serve the page range uncropped so Sources remain viewable
+            # instead of a dead "PDF source unavailable" snackbar.
+            logger.info(
+                "citation_section_miss document_id=%s pages=%s-%s section=%r; "
+                "falling back to uncropped page range",
+                row.id,
+                page_number,
+                page_end,
+                section_title,
+            )
+            page_bytes = extract_citation_pages_pdf(
+                source,
+                page_start=page_number,
+                page_end=page_end,
+                section_title=None,
+            )
+            section_crop = "missed_fallback"
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -168,6 +190,7 @@ def get_document_source_page(
         "X-Source-Page": str(page_number),
         "X-Source-Page-End": str(page_end),
         "X-Source-Page-Only": "true",
+        "X-Section-Crop": section_crop,
         "Content-Disposition": f'inline; filename="{page_name}"',
     }
     return Response(

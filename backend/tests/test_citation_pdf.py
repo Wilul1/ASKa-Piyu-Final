@@ -116,7 +116,11 @@ def test_extract_crops_next_service_on_first_page_and_omits_bleed_page(tmp_path)
 
 
 def test_extract_raises_when_cited_section_missing_from_page_range(tmp_path):
-    """Do not return Change-of-Registration pages under a Publication label."""
+    """Extractor refuses to pretend a missing heading was found.
+
+    The documents route catches this and falls back to an uncropped page
+    range so Sources remain viewable.
+    """
     path = _make_dropping_like_pdf(tmp_path)
     assert section_heading_present(
         path,
@@ -131,6 +135,14 @@ def test_extract_raises_when_cited_section_missing_from_page_range(tmp_path):
             page_end=2,
             section_title="2.6. Publication (Editor-in-Chief)",
         )
+    # Uncropped fallback still returns the requested pages.
+    raw = extract_citation_pages_pdf(path, page_start=1, page_end=2, section_title=None)
+    opened = fitz.open(stream=raw, filetype="pdf")
+    try:
+        assert opened.page_count == 2
+        assert "Dropping of Subjects" in opened[0].get_text()
+    finally:
+        opened.close()
 
 
 def test_source_page_url_includes_end_and_section():

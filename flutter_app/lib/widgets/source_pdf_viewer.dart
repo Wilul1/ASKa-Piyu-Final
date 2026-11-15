@@ -90,18 +90,17 @@ Future<void> showSourcePdfViewer(
     return;
   }
 
-  late final Uint8List bytes;
-  try {
+  Future<Uint8List?> fetchPdf(String url) async {
     final result = await ApiClient.send(
       method: 'GET',
-      url: embedUrl.split('#').first,
+      url: url.split('#').first,
       headers: {'Authorization': 'Bearer $token'},
       asBytes: true,
     );
     final status = result.statusCode;
     final contentType = (result.header('content-type') ?? '').toLowerCase();
     if (status == 401 || status == 403) {
-      if (!context.mounted) return;
+      if (!context.mounted) return null;
       if (status == 403) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -109,24 +108,32 @@ Future<void> showSourcePdfViewer(
           ),
         );
       }
-      return;
+      return null;
     }
     if (status < 200 || status >= 300 || !contentType.contains('pdf')) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'PDF source unavailable. Re-index this document to enable PDF viewing.',
-          ),
-        ),
-      );
-      return;
+      return null;
     }
     if (result.bytes.isEmpty) {
-      throw StateError('Empty PDF response');
+      return null;
     }
-    bytes = result.bytes;
+    return result.bytes;
+  }
+
+  Uint8List? bytes;
+  try {
+    bytes = await fetchPdf(embedUrl);
+    // Clipped page URL can 404 when section metadata is stale; fall back to
+    // the full-document view URL so Sources remain openable.
+    if (bytes == null &&
+        pageOnlyUrl.isNotEmpty &&
+        fullUrl.isNotEmpty &&
+        pageOnlyUrl != fullUrl) {
+      bytes = await fetchPdf(fullUrl);
+    }
   } catch (_) {
+    bytes = null;
+  }
+  if (bytes == null) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(

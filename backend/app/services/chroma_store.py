@@ -340,6 +340,8 @@ class KnowledgeBaseStore:
             # chunk without its own "document_id" key.
             metadata["document_id"] = document_id
             _enrich_chunk_citation_metadata(metadata, chunk_text=chunk.text)
+            # Defense in depth: enrich already clamps, but never send >32 keys.
+            _clamp_chroma_metadata_keys(metadata)
             metadatas.append(metadata)
 
         if max_batch_size is None or max_batch_size <= 0 or len(ids) <= max_batch_size:
@@ -1071,6 +1073,65 @@ def get_knowledge_base_store() -> KnowledgeBaseStore:
     return KnowledgeBaseStore()
 
 
+# Chroma Cloud free tier: Max metadata dictionary keys per Add record.
+_CHROMA_MAX_METADATA_KEYS = 32
+
+# Drop first when over the cloud key quota (keep citation/retrieval identity).
+_CHROMA_METADATA_DROP_ORDER = (
+    "classification_confidence",
+    "classification_method",
+    "keywords",
+    "content_type",
+    "campus",
+    "office",
+    "responsible_office",
+    "source_document",  # duplicate of source_filename
+    "page",  # duplicate of page_number
+    "appendix",
+    "chapter",
+    "subcategory",
+    "structural_type",
+    "unit_id",
+    "hierarchy_path",
+    "article",
+    "section",
+    "section_heading",  # source_section already carries the display label
+)
+
+
+def _clamp_chroma_metadata_keys(metadata: dict[str, Any], *, max_keys: int = _CHROMA_MAX_METADATA_KEYS) -> None:
+    """Drop non-essential keys so Chroma Cloud NumMetadataKeys quota is not exceeded."""
+    if len(metadata) <= max_keys:
+        return
+    for key in _CHROMA_METADATA_DROP_ORDER:
+        if len(metadata) <= max_keys:
+            break
+        metadata.pop(key, None)
+    # Last resort: drop remaining non-core keys alphabetically.
+    if len(metadata) > max_keys:
+        core = {
+            "document_id",
+            "title",
+            "source_filename",
+            "document_type",
+            "chunk_index",
+            "chunk_id",
+            "char_start",
+            "indexed_at",
+            "page_number",
+            "page_start",
+            "page_end",
+            "source_section",
+            "source_excerpt",
+            "article_type",
+            "category",
+        }
+        for key in sorted(k for k in list(metadata) if k not in core):
+            if len(metadata) <= max_keys:
+                break
+            metadata.pop(key, None)
+
+
 def _enrich_chunk_citation_metadata(metadata: dict[str, Any], *, chunk_text: str) -> None:
     """Ensure Level-2 citation fields exist on every indexed chunk.
 
@@ -1117,6 +1178,8 @@ def _enrich_chunk_citation_metadata(metadata: dict[str, Any], *, chunk_text: str
     for key in ("bbox", "page_width", "page_height", "text_position"):
         if key in metadata and metadata[key] in ("", None):
             metadata.pop(key, None)
+
+    _clamp_chroma_metadata_keys(metadata)
 
 
 def _is_missing_collection_error(exc: Exception) -> bool:

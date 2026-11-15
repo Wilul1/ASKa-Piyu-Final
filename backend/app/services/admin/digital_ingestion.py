@@ -812,7 +812,8 @@ class _DigitalPage:
 def _infer_structure_kind(source_filename: str, sample_text: str) -> str:
     """Return handbook_policy | citizen_charter | generic for chunk routing."""
     lower = (source_filename or "").casefold()
-    if "charter" in lower:
+    # Production CC PDF is named "...-CC_2026-..." without the word "charter".
+    if "charter" in lower or re.search(r"(?:^|[\s_-])cc[\s_-]?\d{4}", lower):
         return "citizen_charter"
     if "handbook" in lower or "faculty manual" in lower:
         return "handbook_policy"

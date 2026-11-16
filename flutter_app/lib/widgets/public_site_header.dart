@@ -300,14 +300,20 @@ class PublicSiteHeader extends StatelessWidget {
                                   active: mailboxActive,
                                   onTap: () => _openStudentMailbox(context),
                                 ),
-                              if (!isAuthed)
+                              if (!isAuthed) ...[
                                 _NavLink(
                                   label: 'Login',
                                   icon: Icons.lock_outline_rounded,
                                   onTap: () =>
                                       softPush(context, const LoginPage()),
-                                )
-                              else
+                                ),
+                                _NavLink(
+                                  label: 'Sign up',
+                                  icon: Icons.person_add_alt_1_rounded,
+                                  onTap: () =>
+                                      softPush(context, const SignupPage()),
+                                ),
+                              ] else
                                 _NavLink(
                                   label: role == 'office'
                                       ? 'Office'
@@ -337,37 +343,8 @@ class PublicSiteHeader extends StatelessWidget {
                                   },
                                 ),
                             ]),
-                            const SizedBox(width: 10),
                           ],
                         ),
-                      ),
-                    ),
-                  ),
-                if (!matchedChrome && !isAuthed && !isNarrow)
-                  TextButton.icon(
-                    onPressed: () => softPush(context, const SignupPage()),
-                    icon: const Icon(Icons.person_add_alt_1_rounded, size: 15),
-                    // Explicit ButtonStyle so the global ElevatedButton
-                    // 48px theme minimum cannot inflate this nav CTA.
-                    style: const ButtonStyle(
-                      backgroundColor: WidgetStatePropertyAll(Color(0xFF5C0A0F)),
-                      foregroundColor: WidgetStatePropertyAll(Colors.white),
-                      overlayColor: WidgetStatePropertyAll(Color(0x33FFFFFF)),
-                      elevation: WidgetStatePropertyAll(0),
-                      padding: WidgetStatePropertyAll(
-                        EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-                      ),
-                      minimumSize: WidgetStatePropertyAll(Size.zero),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                      shape: WidgetStatePropertyAll(StadiumBorder()),
-                    ),
-                    label: const Text(
-                      'Sign up',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13.5,
-                        height: 1.1,
                       ),
                     ),
                   ),

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
+import '../app_route_observer.dart';
 import '../auth/auth_state.dart';
 import '../design_tokens.dart';
 import '../screens/login_page.dart';
@@ -42,7 +43,7 @@ class AdminPanelPage extends StatefulWidget {
   State<AdminPanelPage> createState() => _AdminPanelPageState();
 }
 
-class _AdminPanelPageState extends State<AdminPanelPage> {
+class _AdminPanelPageState extends State<AdminPanelPage> with RouteAware {
   static const String _adminKeyHeader = 'x-admin-key';
 
   final TextEditingController _adminKeyController = TextEditingController();
@@ -56,6 +57,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   int? _draftArticleCount;
   KbWorkspaceSession? _session;
   bool _sessionListenerAttached = false;
+  bool _routeObserverSubscribed = false;
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _articlesSectionKey = GlobalKey();
   int _scrollToArticlesAttempts = 0;
@@ -68,6 +70,20 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     _loadKbStatistics();
     if (widget.initialTab == 1) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToArticles());
+    }
+  }
+
+  void _clearActiveDocumentOnLeave({bool refreshUi = true}) {
+    _session?.dismissOnLeave();
+    try {
+      AppConfig.lastExtractionPreview = null;
+    } catch (_) {
+      // LocalStore may be unavailable in some widget tests; session clear
+      // above is enough to drop the Active Document from this visit.
+    }
+    _reviewController.clear();
+    if (refreshUi && mounted) {
+      setState(() {});
     }
   }
 
@@ -89,10 +105,17 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
 
   @override
   void dispose() {
+    if (_routeObserverSubscribed) {
+      appRouteObserver.unsubscribe(this);
+      _routeObserverSubscribed = false;
+    }
     _scrollController.dispose();
     if (_sessionListenerAttached) {
       _session?.removeListener(_onSessionChanged);
     }
+    // Leaving Knowledge Base drops the Active Document / preview so an
+    // unfinished extract does not keep showing on the next visit.
+    _clearActiveDocumentOnLeave(refreshUi: false);
     _adminKeyController.dispose();
     _reviewController.dispose();
     _retrievalController.dispose();
@@ -102,6 +125,11 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (!_routeObserverSubscribed && route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+      _routeObserverSubscribed = true;
+    }
     final session = KbWorkspaceScope.of(context);
     if (!identical(_session, session)) {
       _session?.removeListener(_onSessionChanged);
@@ -110,6 +138,17 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       _sessionListenerAttached = true;
       _bootstrapSession(session);
     }
+  }
+
+  @override
+  void didPushNext() {
+    // Sidebar navigates by pushing another office/admin page on top of KB.
+    _clearActiveDocumentOnLeave();
+  }
+
+  @override
+  void didPop() {
+    _clearActiveDocumentOnLeave();
   }
 
   void _bootstrapSession(KbWorkspaceSession session) {
@@ -355,8 +394,6 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       }
     }
   }
-
-  // Extract/ingest run on [KbWorkspaceSession] so they survive page disposal.
 
   void _setAdminHeader(Map<String, String> headers) {
     final auth = AuthScope.of(context);

@@ -64,8 +64,11 @@ String sanitizeDigitalIngestionError(String raw) {
   return text;
 }
 
-/// Survives Knowledge Base page disposal so extract/ingest keep running when
-/// the admin navigates away and comes back.
+/// App-scoped Knowledge Base extract/index session.
+///
+/// Cleared when the Knowledge Base page is left so an unfinished Active
+/// Document does not keep reappearing on the next visit. In-flight server
+/// jobs are not cancelled; only this UI session is reset.
 class KbWorkspaceSession extends ChangeNotifier {
   PickedAppFile? selectedFile;
   String? selectedFileName;
@@ -191,6 +194,12 @@ class KbWorkspaceSession extends ChangeNotifier {
     _digitalPollAttempts = 0;
     _digitalPollFailureStreak = 0;
     notifyListeners();
+  }
+
+  /// Drop the Active Document / preview UI when leaving Knowledge Base.
+  /// Does not delete Chroma chunks or cancel a server-side job already started.
+  void dismissOnLeave() {
+    clear();
   }
 
   /// Clears the digital-ingestion job state only. Never touches Chroma or

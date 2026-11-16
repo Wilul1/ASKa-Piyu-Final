@@ -90,7 +90,11 @@ class AppConfig {
   ) async {
     if (value == null) {
       _extractionCache = null;
-      await LocalStore.remove(_extractionKey);
+      try {
+        await LocalStore.remove(_extractionKey);
+      } catch (_) {
+        // Memory cache is already cleared; storage may be unavailable in tests.
+      }
       return true;
     }
 

@@ -74,6 +74,24 @@ void main() {
       expect(session.digitalSelectedFile, isNull);
     });
 
+    test('dismissOnLeave clears Active Document state when leaving KB', () {
+      final session = KbWorkspaceSession();
+      session.setDigitalSelectedFile(
+        PickedAppFile(name: 'handbook.pdf', bytes: Uint8ListFixture.pdf),
+      );
+      session.applyDigitalJobStatus({'status': 'review_ready'});
+      session.selectedFileName = 'handbook.pdf';
+      session.extractionPreview = {'knowledge_units': <Map>[]};
+
+      session.dismissOnLeave();
+
+      expect(session.digitalSelectedFile, isNull);
+      expect(session.digitalSelectedFileName, isNull);
+      expect(session.digitalJobStatus, 'ready');
+      expect(session.selectedFileName, isNull);
+      expect(session.extractionPreview, isNull);
+    });
+
     test('digitalIsBusy is true only for active (non-terminal, non-ready) statuses', () {
       final session = KbWorkspaceSession();
       for (final status in ['uploading', 'queued', 'processing']) {

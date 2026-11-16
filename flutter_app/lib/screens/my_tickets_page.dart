@@ -1268,14 +1268,18 @@ class TicketCard extends StatelessWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.only(right: 6),
-                  child: TicketStatusChip(status: ticket.status),
+                  child: Center(
+                    child: TicketStatusChip(status: ticket.status),
+                  ),
                 ),
                 const Padding(
                   padding: EdgeInsets.only(right: 10),
-                  child: Icon(
-                    Icons.chevron_right_rounded,
-                    color: Color(0xFF9AA3B2),
-                    size: 22,
+                  child: Center(
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      color: Color(0xFF9AA3B2),
+                      size: 22,
+                    ),
                   ),
                 ),
               ],

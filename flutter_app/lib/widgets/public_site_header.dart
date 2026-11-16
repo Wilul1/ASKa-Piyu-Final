@@ -346,20 +346,26 @@ class PublicSiteHeader extends StatelessWidget {
                 if (!matchedChrome && !isAuthed && !isNarrow)
                   ElevatedButton.icon(
                     onPressed: () => softPush(context, const SignupPage()),
-                    icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                    icon: const Icon(Icons.person_add_alt_1_rounded, size: 15),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF5C0A0F),
                       foregroundColor: Colors.white,
                       elevation: 0,
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 14,
+                        horizontal: 12,
+                        vertical: 8,
                       ),
                       shape: const StadiumBorder(),
                     ),
                     label: const Text(
                       'Sign up',
-                      style: TextStyle(fontWeight: FontWeight.w800),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
+                      ),
                     ),
                   ),
                 if (isNarrow)

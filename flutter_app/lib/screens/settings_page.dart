@@ -1010,6 +1010,44 @@ class _HelpSupportPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final cards = [
+      _HelpTileCard(
+        icon: Icons.menu_book_outlined,
+        title: 'Knowledge Base',
+        body: 'Browse official articles, policies, and campus procedures.',
+        onTap: () => softPush(context, const KnowledgeBasePage()),
+      ),
+      _HelpTileCard(
+        icon: Icons.chat_bubble_outline_rounded,
+        title: 'Ask Assistant',
+        body: 'Get answers from ASKa-Piyu using published campus sources.',
+        onTap: () => softPush(context, const ChatbotPage()),
+      ),
+      _HelpTileCard(
+        icon: Icons.confirmation_number_outlined,
+        title: 'My Tickets',
+        body: 'Submit a request or track an existing support ticket.',
+        onTap: () => openProtectedPage(
+          context,
+          builder: (_) => const MyTicketsPage(),
+          requireVerifiedEmail: true,
+          message: emailVerifyRequiredMessage,
+        ),
+      ),
+      _HelpTileCard(
+        icon: Icons.inbox_outlined,
+        title: 'Mailbox',
+        body: 'Read ticket replies, status changes, and other notifications.',
+        onTap: () => openProtectedPage(
+          context,
+          builder: (_) => const StudentMailboxPage(),
+          requireVerifiedEmail: true,
+          message: emailVerifyRequiredMessage,
+        ),
+      ),
+    ];
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1019,50 +1057,42 @@ class _HelpSupportPanel extends StatelessWidget {
           subtitle: 'Find guides, ask the assistant, or send a support ticket.',
         ),
         const SizedBox(height: 22),
-        _HelpLinkCard(
-          title: 'Knowledge Base',
-          body: 'Browse official articles, policies, and campus procedures.',
-          onTap: () => softPush(context, const KnowledgeBasePage()),
-        ),
-        const SizedBox(height: 12),
-        _HelpLinkCard(
-          title: 'Ask Assistant',
-          body: 'Get answers from ASKa-Piyu using published campus sources.',
-          onTap: () => softPush(context, const ChatbotPage()),
-        ),
-        const SizedBox(height: 12),
-        _HelpLinkCard(
-          title: 'My Tickets',
-          body: 'Submit a request or track an existing support ticket.',
-          onTap: () => openProtectedPage(
-            context,
-            builder: (_) => const MyTicketsPage(),
-            requireVerifiedEmail: true,
-            message: emailVerifyRequiredMessage,
+        if (wide) ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: cards[0]),
+              const SizedBox(width: 14),
+              Expanded(child: cards[1]),
+            ],
           ),
-        ),
-        const SizedBox(height: 12),
-        _HelpLinkCard(
-          title: 'Mailbox',
-          body: 'Read ticket replies, status changes, and other notifications.',
-          onTap: () => openProtectedPage(
-            context,
-            builder: (_) => const StudentMailboxPage(),
-            requireVerifiedEmail: true,
-            message: emailVerifyRequiredMessage,
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: cards[2]),
+              const SizedBox(width: 14),
+              Expanded(child: cards[3]),
+            ],
           ),
-        ),
+        ] else
+          for (var i = 0; i < cards.length; i++) ...[
+            if (i > 0) const SizedBox(height: 12),
+            cards[i],
+          ],
       ],
     );
   }
 }
 
-class _HelpLinkCard extends StatelessWidget {
+class _HelpTileCard extends StatelessWidget {
+  final IconData icon;
   final String title;
   final String body;
   final VoidCallback onTap;
 
-  const _HelpLinkCard({
+  const _HelpTileCard({
+    required this.icon,
     required this.title,
     required this.body,
     required this.onTap,
@@ -1076,33 +1106,46 @@ class _HelpLinkCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: _SettingsCard(
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15.5,
-                        color: _navy,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      body,
-                      style: const TextStyle(
-                        color: _muted,
-                        fontSize: 13,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  color: _iconWell,
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
+                child: Icon(icon, color: DesignTokens.maroon, size: 22),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15.5,
+                  color: _navy,
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFFB0B7C3)),
+              const SizedBox(height: 6),
+              Text(
+                body,
+                style: const TextStyle(
+                  color: _muted,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Open',
+                style: TextStyle(
+                  color: DesignTokens.maroon,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
+              ),
             ],
           ),
         ),
@@ -1116,16 +1159,35 @@ class _AboutPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final tiles = const [
+      _AboutFeatureTile(
+        icon: Icons.menu_book_outlined,
+        title: 'Knowledge Base',
+        body: 'Access published campus guides and resources.',
+      ),
+      _AboutFeatureTile(
+        icon: Icons.chat_bubble_outline_rounded,
+        title: 'Ask Assistant',
+        body: 'Get instant answers to your specific queries.',
+      ),
+      _AboutFeatureTile(
+        icon: Icons.confirmation_number_outlined,
+        title: 'My Tickets',
+        body: 'Submit and track your support requests.',
+      ),
+    ];
+
+    return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SectionHeading(
+        const _SectionHeading(
           title: 'About ASKa-Piyu',
           subtitle: 'Laguna State Polytechnic University student support.',
         ),
-        SizedBox(height: 22),
-        _SettingsCard(
+        const SizedBox(height: 22),
+        const _SettingsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1141,7 +1203,105 @@ class _AboutPanel extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: 14),
+        if (wide)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < tiles.length; i++) ...[
+                if (i > 0) const SizedBox(width: 14),
+                Expanded(child: tiles[i]),
+              ],
+            ],
+          )
+        else
+          for (var i = 0; i < tiles.length; i++) ...[
+            if (i > 0) const SizedBox(height: 12),
+            tiles[i],
+          ],
+        const SizedBox(height: 14),
+        const _AboutSourcesNote(),
       ],
+    );
+  }
+}
+
+class _AboutFeatureTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String body;
+
+  const _AboutFeatureTile({
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsCard(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: const BoxDecoration(
+              color: _iconWell,
+              borderRadius: BorderRadius.all(Radius.circular(10)),
+            ),
+            child: Icon(icon, color: DesignTokens.maroon, size: 20),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 14.5,
+              color: _navy,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            body,
+            style: const TextStyle(
+              color: _muted,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutSourcesNote extends StatelessWidget {
+  const _AboutSourcesNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsCard(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      color: const Color(0xFFF8F5F6),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline_rounded, size: 18, color: DesignTokens.maroon),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Answers cite published campus sources.',
+              style: TextStyle(
+                fontSize: 13.5,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+                color: _navy,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

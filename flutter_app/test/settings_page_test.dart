@@ -276,6 +276,9 @@ void main() {
       find.text('Find guides, ask the assistant, or send a support ticket.'),
       findsOneWidget,
     );
+    expect(find.text('Open'), findsNWidgets(4));
+    expect(find.text('Knowledge Base'), findsWidgets);
+    expect(find.text('Mailbox'), findsWidgets);
 
     await tester.tap(find.text('About ASKa-Piyu'));
     await tester.pump();
@@ -283,6 +286,12 @@ void main() {
       find.text('Laguna State Polytechnic University student support.'),
       findsOneWidget,
     );
+    expect(
+      find.text('Answers cite published campus sources.'),
+      findsOneWidget,
+    );
+    expect(find.text('Access published campus guides and resources.'),
+        findsOneWidget);
   });
 
   testWidgets(

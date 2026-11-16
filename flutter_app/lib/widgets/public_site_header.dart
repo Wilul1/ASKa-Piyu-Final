@@ -344,27 +344,30 @@ class PublicSiteHeader extends StatelessWidget {
                     ),
                   ),
                 if (!matchedChrome && !isAuthed && !isNarrow)
-                  ElevatedButton.icon(
+                  TextButton.icon(
                     onPressed: () => softPush(context, const SignupPage()),
                     icon: const Icon(Icons.person_add_alt_1_rounded, size: 15),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF5C0A0F),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      visualDensity: VisualDensity.compact,
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                    // Explicit ButtonStyle so the global ElevatedButton
+                    // 48px theme minimum cannot inflate this nav CTA.
+                    style: const ButtonStyle(
+                      backgroundColor: WidgetStatePropertyAll(Color(0xFF5C0A0F)),
+                      foregroundColor: WidgetStatePropertyAll(Colors.white),
+                      overlayColor: WidgetStatePropertyAll(Color(0x33FFFFFF)),
+                      elevation: WidgetStatePropertyAll(0),
+                      padding: WidgetStatePropertyAll(
+                        EdgeInsets.symmetric(horizontal: 11, vertical: 5),
                       ),
-                      shape: const StadiumBorder(),
+                      minimumSize: WidgetStatePropertyAll(Size.zero),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      shape: WidgetStatePropertyAll(StadiumBorder()),
                     ),
                     label: const Text(
                       'Sign up',
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 13.5,
+                        height: 1.1,
                       ),
                     ),
                   ),

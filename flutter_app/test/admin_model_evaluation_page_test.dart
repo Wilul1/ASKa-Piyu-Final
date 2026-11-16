@@ -234,7 +234,8 @@ void main() {
     expect(find.byKey(const Key('eval-retrieval-overview-title')), findsOneWidget);
     expect(find.byKey(const Key('eval-classification-overview-title')), findsOneWidget);
     expect(find.text('Classification Evaluation'), findsOneWidget);
-    _expectPendingRagOverview(tester);
+    _expectHumanRagOverlayGone();
+    expect(find.byKey(const Key('eval-qa-section')), findsOneWidget);
   });
 
   testWidgets('error state shows a friendly message when the summary call fails', (tester) async {
@@ -305,7 +306,8 @@ void main() {
     expect(find.text('Retrieval Evaluation'), findsWidgets);
     expect(find.byKey(const Key('eval-classification-overview-title')), findsOneWidget);
     expect(find.text('Classification Evaluation'), findsOneWidget);
-    _expectRagMetricCardsPresent();
+    _expectHumanRagOverlayGone();
+    expect(find.byKey(const Key('eval-qa-section')), findsOneWidget);
     expect(find.byKey(const Key('eval-classification-methodology-notice')), findsNothing);
     expect(
       find.textContaining('Classification labels were generated through two independent AI annotation passes'),
@@ -349,7 +351,7 @@ void main() {
     );
 
     expect(find.textContaining('No evaluation has been run yet'), findsOneWidget);
-    _expectPendingRagOverview(tester);
+    _expectHumanRagOverlayGone();
 
     await tester.tap(find.byKey(const Key('eval-run-button')));
     await tester.pumpAndSettle();
@@ -577,7 +579,7 @@ void main() {
     expect(find.textContaining('not a valid comparison of LLM effectiveness'), findsNothing);
   });
 
-  testWidgets('overview always shows four RAG metric cards when no answer-generation results exist',
+  testWidgets('human Answer Generation / RAG overlay is gone; dual-AI QA section remains',
       (tester) async {
     const runId = 'run-no-rag';
     final components = [
@@ -634,16 +636,22 @@ void main() {
         debugFetchHistory: ({required limit, required offset}) async =>
             const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
         debugFetchRunDetail: (id) async => EvaluationRunDetail.fromJson(detailJson),
+        debugFetchQaCitationOverview: () async =>
+            QaCitationJudgingOverview.fromJson({'available': false}),
       ),
     );
 
     expect(find.byKey(const Key('eval-overview-section')), findsOneWidget);
     expect(find.text('Retrieval Evaluation'), findsWidgets);
     expect(find.text('Classification Evaluation'), findsOneWidget);
-    _expectPendingRagOverview(tester);
+    _expectHumanRagOverlayGone();
+    expect(find.byKey(const Key('eval-qa-section')), findsOneWidget);
+    expect(find.byKey(const Key('eval-qa-judging-empty')), findsOneWidget);
+    expect(find.text('Answer quality'), findsOneWidget);
+    expect(find.text('Not scored'), findsWidgets);
   });
 
-  testWidgets('overview RAG cards populate from saved citation_verifier metrics without fabricating scores',
+  testWidgets('legacy answer_generation_llm human scores are not rendered as RAG cards',
       (tester) async {
     const runId = 'run-rag-scores';
     final components = [
@@ -699,124 +707,17 @@ void main() {
         debugFetchHistory: ({required limit, required offset}) async =>
             const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
         debugFetchRunDetail: (id) async => EvaluationRunDetail.fromJson(detailJson),
+        debugFetchQaCitationOverview: () async =>
+            QaCitationJudgingOverview.fromJson({'available': false}),
       ),
     );
 
-    _expectRagMetricCardsPresent();
-    expect(tester.widget<StatusBadge>(find.byKey(const Key('eval-rag-overview-status'))).status, 'evaluated');
-    expect(find.text('0.8100'), findsOneWidget);
-    expect(find.text('0.7200'), findsOneWidget);
-    expect(find.text('0.6400'), findsOneWidget);
-    expect(find.text('0.5500'), findsOneWidget);
-    expect(find.text('Evaluated · 5 cases'), findsWidgets);
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('eval-rag-card-answer-correctness')),
-        matching: find.text('Not yet evaluated'),
-      ),
-      findsNothing,
-    );
+    _expectHumanRagOverlayGone();
+    expect(find.text('0.8100'), findsNothing);
+    expect(find.text('0.7200'), findsNothing);
+    expect(find.text('0.6400'), findsNothing);
+    expect(find.text('0.5500'), findsNothing);
     expect(find.byKey(const Key('eval-rag-case-table-title')), findsNothing);
-  });
-
-  testWidgets('overview lists each human-scored question under the RAG cards', (tester) async {
-    const runId = 'run-human-overlay';
-    final components = [
-      _componentJson(
-        componentId: 'c-answer',
-        component: 'answer_generation_llm',
-        status: 'evaluated',
-        note: 'Human-scored live student chatbot screenshots',
-        modelName: 'human_live_student_chat',
-        caseCount: 12,
-        skippedUnlabeledCount: 2,
-        metrics: [
-          _metricJson('answer_correctness', 0.5833),
-          _metricJson('faithfulness', 0.5417),
-          _metricJson('answer_relevancy', 0.9167),
-          _metricJson('citation_set_precision', 0.9000),
-          {
-            'metric_name': 'per_case_breakdown',
-            'metric_value': null,
-            'extra': [
-              {
-                'case_id': 'aq_01_tor_fee',
-                'question': 'How much does it cost to get a copy of my Transcript of Records?',
-                'included': true,
-                'correctness': {'label': 'pass', 'score': 1.0},
-                'faithfulness': {'label': 'faithful', 'score': 1.0},
-                'relevance': {'label': 'addressed', 'score': 1.0},
-                'citation': {'label': 'no_sources_visible', 'score': null},
-                'note': 'Undergraduate P75.00/page matches the Charter.',
-              },
-              {
-                'case_id': 'aq_04_dropping_fee_multi_document',
-                'question': 'How much does it cost to drop a subject?',
-                'included': true,
-                'correctness': {'label': 'fail', 'score': 0.0},
-                'faithfulness': {'label': 'faithful', 'score': 1.0},
-                'relevance': {'label': 'addressed', 'score': 1.0},
-                'citation': {'label': 'no_sources_visible', 'score': null},
-              },
-              {
-                'case_id': 'aq_09_faculty_teaching_load',
-                'question': 'How is faculty teaching load determined?',
-                'included': false,
-                'exclusion_reason': 'role_gated_faculty',
-                'correctness': {'label': 'role_gated', 'score': null},
-                'faithfulness': {'label': 'role_gated', 'score': null},
-                'relevance': {'label': 'role_gated', 'score': null},
-                'citation': {'label': 'role_gated', 'score': null},
-                'note': 'Faculty Manual is faculty-audience only.',
-              },
-            ],
-          },
-        ],
-      ),
-    ];
-
-    await pumpPage(
-      tester,
-      build: () => AdminModelEvaluationPage(
-        debugFetchModels: () async => const [],
-        debugFetchSummary: () async => EvaluationSummary.fromJson({
-          'latest_run': {
-            'run_id': runId,
-            'status': 'completed',
-            'triggered_by_user_id': null,
-            'started_at': '2026-11-04T08:00:00+00:00',
-            'completed_at': '2026-11-04T08:05:00+00:00',
-            'error_message': null,
-          },
-          'components': components,
-        }),
-        debugFetchHistory: ({required limit, required offset}) async =>
-            const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
-        debugFetchRunDetail: (id) async => EvaluationRunDetail.fromJson({
-          'run_id': runId,
-          'status': 'completed',
-          'triggered_by_user_id': null,
-          'started_at': '2026-11-04T08:00:00+00:00',
-          'completed_at': '2026-11-04T08:05:00+00:00',
-          'error_message': null,
-          'config': <String, dynamic>{},
-          'components': components,
-        }),
-      ),
-    );
-
-    expect(find.text('0.5833'), findsOneWidget);
-    expect(find.byKey(const Key('eval-rag-case-table-title')), findsOneWidget);
-    expect(find.text('Per-question scores'), findsOneWidget);
-    expect(
-      find.textContaining('How much does it cost to get a copy of my Transcript of Records?'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('How much does it cost to drop a subject?'), findsOneWidget);
-    expect(find.textContaining('How is faculty teaching load determined?'), findsOneWidget);
-    expect(find.text('Correctness · Pass 1.0'), findsOneWidget);
-    expect(find.text('Correctness · Fail 0.0'), findsOneWidget);
-    expect(find.text('Correctness · Excluded'), findsWidgets);
   });
 
   testWidgets('overview shows retrieval overlay hit rate and per-question hits', (tester) async {
@@ -1245,7 +1146,7 @@ void main() {
     );
   });
 
-  testWidgets('human-scored live chatbot results stay labeled as human-scored, distinct from automated QA/citation scoring',
+  testWidgets('human-scored RAG overlay text is gone while dual-AI QA/citation still render',
       (tester) async {
     const runId = 'run-human-label-check';
     final components = [
@@ -1301,13 +1202,13 @@ void main() {
       ),
     );
 
-    // The genuinely human-graded RAG block still says "Human-scored" --
-    // request #4 explicitly requires this distinction to remain, and only
-    // this block (never the automated QA/Citation sections) should use it.
-    expect(find.textContaining('Human-scored from 12 live student chatbot answers'), findsOneWidget);
-    expect(find.text('0.5833'), findsOneWidget);
+    _expectHumanRagOverlayGone();
+    expect(find.textContaining('Human-scored from 12 live student chatbot answers'), findsNothing);
+    expect(find.text('0.5833'), findsNothing);
 
-    // The automated sections never claim to be human-reviewed/human-scored.
+    expect(find.byKey(const Key('eval-qa-section')), findsOneWidget);
+    expect(find.byKey(const Key('eval-citation-section')), findsOneWidget);
+    expect(find.byKey(const Key('eval-qa-card-overall')), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('eval-qa-section')),
@@ -1455,58 +1356,13 @@ void main() {
   });
 }
 
-void _expectRagMetricCardsPresent() {
-  expect(find.byKey(const Key('eval-rag-overview-title')), findsOneWidget);
-  expect(find.text('Answer Generation / RAG Evaluation'), findsOneWidget);
-  expect(find.byKey(const Key('eval-rag-card-answer-correctness')), findsOneWidget);
-  expect(find.byKey(const Key('eval-rag-card-faithfulness')), findsOneWidget);
-  expect(find.byKey(const Key('eval-rag-card-answer-relevance')), findsOneWidget);
-  expect(find.byKey(const Key('eval-rag-card-citation-accuracy')), findsOneWidget);
-  expect(find.text('Answer Correctness'), findsOneWidget);
-  expect(find.text('Faithfulness'), findsOneWidget);
-  expect(find.text('Answer Relevance'), findsOneWidget);
-  expect(find.text('Citation Accuracy'), findsOneWidget);
-}
-
-void _expectPendingRagOverview(WidgetTester tester) {
-  _expectRagMetricCardsPresent();
-  expect(find.byKey(const Key('eval-rag-overview-status')), findsOneWidget);
-  expect(tester.widget<StatusBadge>(find.byKey(const Key('eval-rag-overview-status'))).status, 'pending');
-  expect(find.text('Pending Evaluation'), findsWidgets);
-  expect(find.text('Not yet evaluated'), findsWidgets);
-  expect(
-    find.descendant(
-      of: find.byKey(const Key('eval-rag-card-answer-correctness')),
-      matching: find.text('—'),
-    ),
-    findsOneWidget,
-  );
-  expect(
-    find.descendant(
-      of: find.byKey(const Key('eval-rag-card-faithfulness')),
-      matching: find.text('—'),
-    ),
-    findsOneWidget,
-  );
-  expect(
-    find.descendant(
-      of: find.byKey(const Key('eval-rag-card-answer-relevance')),
-      matching: find.text('—'),
-    ),
-    findsOneWidget,
-  );
-  expect(
-    find.descendant(
-      of: find.byKey(const Key('eval-rag-card-citation-accuracy')),
-      matching: find.text('—'),
-    ),
-    findsOneWidget,
-  );
-  expect(
-    find.descendant(
-      of: find.byKey(const Key('eval-rag-card-answer-correctness')),
-      matching: find.text('Not yet evaluated'),
-    ),
-    findsOneWidget,
-  );
+void _expectHumanRagOverlayGone() {
+  expect(find.byKey(const Key('eval-rag-overview-title')), findsNothing);
+  expect(find.text('Answer Generation / RAG Evaluation'), findsNothing);
+  expect(find.byKey(const Key('eval-rag-card-answer-correctness')), findsNothing);
+  expect(find.byKey(const Key('eval-rag-card-faithfulness')), findsNothing);
+  expect(find.byKey(const Key('eval-rag-card-answer-relevance')), findsNothing);
+  expect(find.byKey(const Key('eval-rag-card-citation-accuracy')), findsNothing);
+  expect(find.byKey(const Key('eval-rag-case-table-title')), findsNothing);
+  expect(find.textContaining('Human-scored from'), findsNothing);
 }

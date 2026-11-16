@@ -166,21 +166,34 @@ class EvalBarChartCard extends StatelessWidget {
 /// widget (no heatmap/matrix chart type exists there). Shown only for
 /// classification components, per the "confusion matrices only for
 /// classification" requirement; callers decide which components to pass.
+///
+/// Empty taxonomy rows/columns (all zeros) are dropped so a sparse run
+/// does not render as a sea of truncated labels and zeros. Column headers
+/// are rotated so full predicted-label names stay readable.
 class ConfusionMatrixGrid extends StatelessWidget {
   const ConfusionMatrixGrid({super.key, required this.matrix});
 
   final EvaluationConfusionMatrix matrix;
 
+  static const _rowLabelWidth = 176.0;
+  static const _cellWidth = 40.0;
+  static const _headerHeight = 132.0;
+  static const _rowHeight = 36.0;
+
   @override
   Widget build(BuildContext context) {
-    final labels = matrix.labels;
+    final compact = _compactConfusionMatrix(matrix);
+    final labels = compact.labels;
+    final grid = compact.matrix;
     var maxCell = 1;
-    for (final row in matrix.matrix) {
+    for (final row in grid) {
       for (final cell in row) {
         if (cell > maxCell) maxCell = cell;
       }
     }
+
     return Container(
+      key: const Key('eval-confusion-matrix-grid'),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -196,47 +209,183 @@ class ConfusionMatrixGrid extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            '${matrix.caseCount} case${matrix.caseCount == 1 ? '' : 's'} · rows = true label, columns = predicted label',
+            '${matrix.caseCount} case${matrix.caseCount == 1 ? '' : 's'} · rows = actual · columns = predicted',
             style: const TextStyle(color: DesignTokens.muted, fontSize: 11),
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Rows = actual subcategory, columns = predicted. Darker cells have higher counts. Bold diagonal cells are correct classifications.',
-            style: TextStyle(color: DesignTokens.muted, fontSize: 11),
+          const SizedBox(height: 6),
+          Text(
+            compact.droppedEmptyLabels > 0
+                ? 'Showing ${labels.length} of ${matrix.labels.length} labels that appear in this run '
+                    '(${compact.droppedEmptyLabels} empty classes hidden). Zeros stay blank; darker cells = higher counts; bold diagonal = correct.'
+                : 'Zeros stay blank. Darker cells = higher counts. Bold diagonal cells = correct classifications.',
+            style: const TextStyle(color: DesignTokens.muted, fontSize: 11, height: 1.35),
           ),
           const SizedBox(height: 12),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Table(
-              defaultColumnWidth: const FixedColumnWidth(72),
-              border: TableBorder.all(color: DesignTokens.border),
-              children: [
-                TableRow(
-                  decoration: const BoxDecoration(color: DesignTokens.bgGrey),
-                  children: [
-                    const _MatrixCell(text: '', header: true),
-                    for (final label in labels) _MatrixCell(text: label, header: true),
-                  ],
-                ),
-                for (var row = 0; row < matrix.matrix.length; row++)
-                  TableRow(
-                    children: [
-                      _MatrixCell(text: row < labels.length ? labels[row] : '?', header: true),
-                      for (var col = 0; col < matrix.matrix[row].length; col++)
-                        _MatrixCell(
-                          text: '${matrix.matrix[row][col]}',
-                          intensity: _heatmapIntensity(matrix.matrix[row][col], maxCell),
-                          diagonal: row == col,
+          if (labels.isEmpty)
+            const Text(
+              'No non-empty confusion cells were returned for this classifier.',
+              style: TextStyle(color: DesignTokens.muted, fontSize: 12, fontStyle: FontStyle.italic),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    height: _headerHeight,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        SizedBox(
+                          width: _rowLabelWidth,
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 8, bottom: 8),
+                            child: Text(
+                              'Actual \\ Predicted',
+                              style: TextStyle(
+                                color: DesignTokens.muted.withValues(alpha: 0.9),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                         ),
-                    ],
+                        for (final label in labels)
+                          Tooltip(
+                            message: label,
+                            child: SizedBox(
+                              width: _cellWidth,
+                              height: _headerHeight,
+                              child: OverflowBox(
+                                alignment: Alignment.bottomCenter,
+                                maxWidth: 120,
+                                maxHeight: _headerHeight,
+                                child: Transform.rotate(
+                                  angle: -0.85,
+                                  alignment: Alignment.bottomLeft,
+                                  child: SizedBox(
+                                    width: 110,
+                                    child: Text(
+                                      label,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: DesignTokens.ink,
+                                        height: 1.15,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-              ],
+                  for (var row = 0; row < grid.length; row++)
+                    SizedBox(
+                      height: _rowHeight,
+                      child: Row(
+                        children: [
+                          Tooltip(
+                            message: labels[row],
+                            child: SizedBox(
+                              width: _rowLabelWidth,
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: Text(
+                                  labels[row],
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: DesignTokens.ink,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          for (var col = 0; col < grid[row].length; col++)
+                            _MatrixCell(
+                              value: grid[row][col],
+                              intensity: _heatmapIntensity(grid[row][col], maxCell),
+                              diagonal: row == col,
+                              width: _cellWidth,
+                              height: _rowHeight,
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
   }
+}
+
+class _CompactConfusionMatrix {
+  const _CompactConfusionMatrix({
+    required this.labels,
+    required this.matrix,
+    required this.droppedEmptyLabels,
+  });
+
+  final List<String> labels;
+  final List<List<int>> matrix;
+  final int droppedEmptyLabels;
+}
+
+_CompactConfusionMatrix _compactConfusionMatrix(EvaluationConfusionMatrix source) {
+  final labels = source.labels;
+  final grid = source.matrix;
+  if (labels.isEmpty || grid.isEmpty) {
+    return const _CompactConfusionMatrix(labels: [], matrix: [], droppedEmptyLabels: 0);
+  }
+
+  final n = labels.length;
+  final keep = <int>[];
+  for (var i = 0; i < n; i++) {
+    var active = false;
+    if (i < grid.length) {
+      for (final cell in grid[i]) {
+        if (cell > 0) {
+          active = true;
+          break;
+        }
+      }
+    }
+    if (!active) {
+      for (final row in grid) {
+        if (i < row.length && row[i] > 0) {
+          active = true;
+          break;
+        }
+      }
+    }
+    if (active) keep.add(i);
+  }
+
+  if (keep.isEmpty) {
+    return _CompactConfusionMatrix(labels: const [], matrix: const [], droppedEmptyLabels: n);
+  }
+  if (keep.length == n) {
+    return _CompactConfusionMatrix(labels: labels, matrix: grid, droppedEmptyLabels: 0);
+  }
+
+  return _CompactConfusionMatrix(
+    labels: [for (final i in keep) labels[i]],
+    matrix: [
+      for (final r in keep)
+        [for (final c in keep) (r < grid.length && c < grid[r].length) ? grid[r][c] : 0],
+    ],
+    droppedEmptyLabels: n - keep.length,
+  );
 }
 
 double _heatmapIntensity(int value, int maxCell) {
@@ -246,37 +395,41 @@ double _heatmapIntensity(int value, int maxCell) {
 
 class _MatrixCell extends StatelessWidget {
   const _MatrixCell({
-    required this.text,
-    this.header = false,
-    this.intensity = 0,
-    this.diagonal = false,
+    required this.value,
+    required this.intensity,
+    required this.diagonal,
+    required this.width,
+    required this.height,
   });
 
-  final String text;
-  final bool header;
+  final int value;
   final double intensity;
   final bool diagonal;
+  final double width;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
-    final fill = header
-        ? DesignTokens.bgGrey
-        : Color.lerp(Colors.white, const Color(0xFF5C0A0F), 0.12 + intensity * 0.72)!;
-    final fg = header || intensity < 0.45 ? DesignTokens.ink : Colors.white;
-    return ColoredBox(
-      color: fill,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: header || diagonal ? FontWeight.w800 : FontWeight.w600,
-            color: fg,
-          ),
+    final empty = value <= 0;
+    final fill = empty
+        ? const Color(0xFFF8FAFC)
+        : Color.lerp(const Color(0xFFFCE8EA), const Color(0xFF5C0A0F), 0.18 + intensity * 0.72)!;
+    final fg = empty || intensity < 0.45 ? DesignTokens.ink : Colors.white;
+    return Container(
+      width: width,
+      height: height,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: fill,
+        border: Border.all(color: DesignTokens.border.withValues(alpha: 0.7), width: 0.5),
+      ),
+      child: Text(
+        empty ? '' : '$value',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: diagonal && !empty ? FontWeight.w900 : FontWeight.w600,
+          color: fg,
         ),
       ),
     );

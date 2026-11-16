@@ -685,7 +685,7 @@ void main() {
     expect(find.byKey(const Key('eval-rag-case-table-title')), findsNothing);
   });
 
-  testWidgets('human-scored Table 11 cards stay visible without per-question rows', (tester) async {
+  testWidgets('human-scored QA cards stay visible without per-question rows', (tester) async {
     const runId = 'run-human-overlay';
     final components = [
       _componentJson(
@@ -1004,8 +1004,8 @@ void main() {
     // ("QA Evaluation"/"Citation Evaluation" legitimately appear twice each:
     // once as the big section heading, once as the inner sub-header -- both
     // were renamed identically, which is exactly the declutter requested.)
-    expect(find.text('QA · Table 11'), findsWidgets);
-    expect(find.text('Dual-AI QA Judging (supplementary)'), findsOneWidget);
+    expect(find.text('QA'), findsWidgets);
+    expect(find.text('Automated QA Judging'), findsOneWidget);
     expect(find.text('Citation Evaluation'), findsWidgets);
     expect(find.text('QA Evaluation (AI judges)'), findsNothing);
     expect(find.text('Citation Evaluation (AI judges)'), findsNothing);
@@ -1036,13 +1036,12 @@ void main() {
     expect(find.text('0.0%'), findsNothing);
     expect(find.textContaining('86/86'), findsWidgets);
 
-    // The correction note and the coverage-vs-correctness distinction are both visible.
-    expect(find.byKey(const Key('eval-citation-validity-correction-note')), findsOneWidget);
-    expect(find.byKey(const Key('eval-citation-vs-coverage-note')), findsOneWidget);
-    expect(find.textContaining('34/36'), findsOneWidget);
-
-    expect(find.byKey(const Key('eval-qa-grounding-limitations')), findsOneWidget);
-    expect(find.textContaining('limitation one'), findsOneWidget);
+    // Correction notes and limitations callouts were removed from the presentation UI.
+    expect(find.byKey(const Key('eval-citation-validity-correction-note')), findsNothing);
+    expect(find.byKey(const Key('eval-citation-vs-coverage-note')), findsNothing);
+    expect(find.byKey(const Key('eval-qa-grounding-limitations')), findsNothing);
+    expect(find.textContaining('34/36'), findsNothing);
+    expect(find.textContaining('limitation one'), findsNothing);
   });
 
   testWidgets('QA Evaluation and Citation sections degrade honestly on a load error without blocking the rest of the dashboard',
@@ -1285,13 +1284,13 @@ void main() {
       ),
     );
 
-    // Manuscript Table 11 human block stays labeled human-scored.
-    expect(find.textContaining('Human-scored from 12 live student chatbot answers (manuscript Table 11)'), findsOneWidget);
-    expect(find.textContaining('Question-Answering Quality (Manuscript Table 11)'), findsOneWidget);
+    // Human-scored QA block stays labeled human-scored.
+    expect(find.textContaining('Human-scored from 12 live student chatbot answers'), findsOneWidget);
+    expect(find.textContaining('Question-Answering Quality'), findsOneWidget);
     expect(find.text('0.5833'), findsOneWidget);
 
-    // Dual-AI / citation blocks stay labeled as automated, not human-scored.
-    expect(find.text('Dual-AI QA Judging (supplementary)'), findsOneWidget);
+    // Automated QA / citation blocks stay labeled as automated, not human-scored.
+    expect(find.text('Automated QA Judging'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('eval-qa-grounding-qa-title')),
@@ -1441,7 +1440,7 @@ void main() {
 
 void _expectRagMetricCardsPresent() {
   expect(find.byKey(const Key('eval-rag-overview-title')), findsOneWidget);
-  expect(find.text('Question-Answering Quality (Manuscript Table 11)'), findsOneWidget);
+  expect(find.text('Question-Answering Quality'), findsOneWidget);
   expect(find.byKey(const Key('eval-rag-card-answer-correctness')), findsOneWidget);
   expect(find.byKey(const Key('eval-rag-card-faithfulness')), findsOneWidget);
   expect(find.byKey(const Key('eval-rag-card-answer-relevance')), findsOneWidget);

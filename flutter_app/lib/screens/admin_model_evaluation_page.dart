@@ -464,7 +464,7 @@ class _EvalJumpNav extends StatelessWidget {
       ('Overview', const Key('eval-jump-overview'), onOverview),
       ('Classification', const Key('eval-jump-classification'), onClassification),
       ('Retrieval', const Key('eval-jump-retrieval'), onRetrieval),
-      ('QA · Table 11', const Key('eval-jump-qa'), onQa),
+      ('QA', const Key('eval-jump-qa'), onQa),
       ('Citation', const Key('eval-jump-citation'), onCitation),
     ];
     return Container(
@@ -832,7 +832,7 @@ class _QaCitationOverviewSummary extends StatelessWidget {
                   width: cardWidth,
                   child: _FractionMetricCard(
                     cardKey: const Key('eval-overview-citation-validity'),
-                    title: 'Citation Validity (corrected)',
+                    title: 'Citation Validity',
                     fraction: data.citationValidityCorrected,
                     highlight: true,
                   ),
@@ -1036,7 +1036,7 @@ class _AtAGlanceRow extends StatelessWidget {
                 ? (answerCorrectness != null ? _percentLabel(answerCorrectness) : 'Scored')
                 : 'Not scored',
             detail: answersScored
-                ? 'Manuscript Table 11 · human-scored student answers'
+                ? 'Human-scored student answers'
                 : 'Waiting on a labeled answer-quality set',
           ),
         ];
@@ -1323,13 +1323,13 @@ class _AnswerGenerationOverviewSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _OverviewSectionHeader(
-            title: 'Question-Answering Quality (Manuscript Table 11)',
+            title: 'Question-Answering Quality',
             titleKey: const Key('eval-rag-overview-title'),
             statusKey: const Key('eval-rag-overview-status'),
             status: sectionStatus,
             caseCount: sectionCases,
             subtitle: hasAnyScore
-                ? 'Human-scored from 12 live student chatbot answers (manuscript Table 11). Two faculty-manual questions were excluded (role-gated).'
+                ? 'Human-scored from 12 live student chatbot answers. Two faculty-manual questions were excluded (role-gated).'
                 : 'Student answers are not scored in this run. The labeled answer-quality dataset is still empty.',
           ),
           if (!hasAnyScore) ...[
@@ -1643,9 +1643,8 @@ class _QaEvaluationSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _ReportSectionHeading(
-          title: 'QA · Table 11',
-          subtitle:
-              'Manuscript Table 11 human-scored answers first; dual-AI 0–4 judging below is supplementary and separate.',
+          title: 'QA',
+          subtitle: 'Human-scored answers first; automated 0–4 judging below is supplementary and separate.',
           sectionKey: Key('eval-section-4-qa'),
         ),
         Padding(
@@ -1672,7 +1671,7 @@ class _QaEvaluationSection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _OverviewSectionHeader(
-                      title: 'Dual-AI QA Judging (supplementary)',
+                      title: 'Automated QA Judging',
                       titleKey: const Key('eval-qa-grounding-qa-title'),
                       status: 'evaluated',
                       subtitle:
@@ -1756,7 +1755,7 @@ class _CitationGroundingSection extends StatelessWidget {
       children: [
         const _ReportSectionHeading(
           title: 'Citation',
-          subtitle: 'Citation precision, completeness, claim support, and the Stage 3.6-corrected citation validity.',
+          subtitle: 'Citation precision, completeness, claim support, and citation validity.',
           sectionKey: Key('eval-section-5-citation'),
         ),
         Padding(
@@ -1794,7 +1793,7 @@ class _CitationGroundingSection extends StatelessWidget {
                       ('Completeness', data.citationCompleteness, 'eval-citation-card-completeness'),
                       ('Claim Support Rate', data.claimSupportRate, 'eval-citation-card-support'),
                       ('Unsupported Claim Rate', data.unsupportedClaimRate, 'eval-citation-card-unsupported'),
-                      ('Citation Validity (corrected)', data.citationValidityCorrected, 'eval-citation-card-validity'),
+                      ('Citation Validity', data.citationValidityCorrected, 'eval-citation-card-validity'),
                     ];
                     return Wrap(
                       spacing: gap,
@@ -1814,81 +1813,6 @@ class _CitationGroundingSection extends StatelessWidget {
                     );
                   },
                 ),
-                const SizedBox(height: 16),
-                Container(
-                  key: const Key('eval-citation-validity-correction-note'),
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: DesignTokens.maroonWash,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: DesignTokens.maroon.withValues(alpha: 0.28),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Citation validity: original vs. corrected',
-                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: DesignTokens.ink),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Originally computed as ${data.citationValidityOriginalDefective?.numerator ?? 0}/'
-                        '${data.citationValidityOriginalDefective?.denominator ?? 0} '
-                        '(${(((data.citationValidityOriginalDefective?.value ?? 0)) * 100).toStringAsFixed(0)}%) due to a confirmed defect that compared two unrelated identifier systems. '
-                        'Fixed and independently verified: the corrected value shown above is '
-                        '${data.citationValidityCorrected?.numerator ?? 0}/${data.citationValidityCorrected?.denominator ?? 0} '
-                        '(${(((data.citationValidityCorrected?.value ?? 0)) * 100).toStringAsFixed(0)}%). The other four citation metrics were confirmed unchanged by this fix.',
-                        style: const TextStyle(color: DesignTokens.ink, fontSize: 12, height: 1.4),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  key: const Key('eval-citation-vs-coverage-note'),
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFFECACA)),
-                  ),
-                  child: Text(
-                    'Do not confuse citation validity (${((data.citationValidityCorrected?.value ?? 0) * 100).toStringAsFixed(0)}%, "was the citation ID real?") with claim support rate '
-                    '(${((data.claimSupportRate?.value ?? 0) * 100).toStringAsFixed(1)}%, "was the claim actually backed by what was cited?"). '
-                    'Separately, Stage 3.4 capture coverage showed ${data.captureCasesWithCitations ?? 0}/${data.captureTotalCases ?? 0} cases had any displayed citation at all -- that is a different measurement again (whether a citation was shown), not citation correctness.',
-                    style: const TextStyle(color: Color(0xFF991B1B), fontSize: 12, height: 1.4),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                if (data.limitations.isNotEmpty)
-                  Container(
-                    key: const Key('eval-qa-grounding-limitations'),
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: DesignTokens.border),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Known limitations',
-                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: DesignTokens.ink),
-                        ),
-                        const SizedBox(height: 8),
-                        for (final note in data.limitations) ...[
-                          Text('•  $note', style: const TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.4)),
-                          const SizedBox(height: 6),
-                        ],
-                      ],
-                    ),
-                  ),
               ],
             ),
           ),

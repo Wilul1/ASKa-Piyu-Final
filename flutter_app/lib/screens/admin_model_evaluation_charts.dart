@@ -168,17 +168,18 @@ class EvalBarChartCard extends StatelessWidget {
 /// classification" requirement; callers decide which components to pass.
 ///
 /// Empty taxonomy rows/columns (all zeros) are dropped so a sparse run
-/// does not render as a sea of truncated labels and zeros. Column headers
-/// are rotated so full predicted-label names stay readable.
+/// does not render as a sea of zeros. Predicted labels use numbered column
+/// headers plus a legend underneath -- rotated text was tried and piled up
+/// illegibly in Flutter web layout.
 class ConfusionMatrixGrid extends StatelessWidget {
   const ConfusionMatrixGrid({super.key, required this.matrix});
 
   final EvaluationConfusionMatrix matrix;
 
-  static const _rowLabelWidth = 176.0;
-  static const _cellWidth = 40.0;
-  static const _headerHeight = 132.0;
-  static const _rowHeight = 36.0;
+  static const _rowLabelWidth = 180.0;
+  static const _cellWidth = 36.0;
+  static const _headerHeight = 34.0;
+  static const _rowHeight = 34.0;
 
   @override
   Widget build(BuildContext context) {
@@ -209,7 +210,7 @@ class ConfusionMatrixGrid extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            '${matrix.caseCount} case${matrix.caseCount == 1 ? '' : 's'} · rows = actual · columns = predicted',
+            '${matrix.caseCount} case${matrix.caseCount == 1 ? '' : 's'} · rows = actual · columns = predicted (numbered)',
             style: const TextStyle(color: DesignTokens.muted, fontSize: 11),
           ),
           const SizedBox(height: 6),
@@ -226,7 +227,7 @@ class ConfusionMatrixGrid extends StatelessWidget {
               'No non-empty confusion cells were returned for this classifier.',
               style: TextStyle(color: DesignTokens.muted, fontSize: 12, fontStyle: FontStyle.italic),
             )
-          else
+          else ...[
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Column(
@@ -235,49 +236,35 @@ class ConfusionMatrixGrid extends StatelessWidget {
                   SizedBox(
                     height: _headerHeight,
                     child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         SizedBox(
                           width: _rowLabelWidth,
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 8, bottom: 8),
-                            child: Text(
-                              'Actual \\ Predicted',
-                              style: TextStyle(
-                                color: DesignTokens.muted.withValues(alpha: 0.9),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
+                          child: Text(
+                            'Actual \\ Pred #',
+                            style: TextStyle(
+                              color: DesignTokens.muted.withValues(alpha: 0.9),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
-                        for (final label in labels)
+                        for (var i = 0; i < labels.length; i++)
                           Tooltip(
-                            message: label,
-                            child: SizedBox(
+                            message: labels[i],
+                            child: Container(
                               width: _cellWidth,
                               height: _headerHeight,
-                              child: OverflowBox(
-                                alignment: Alignment.bottomCenter,
-                                maxWidth: 120,
-                                maxHeight: _headerHeight,
-                                child: Transform.rotate(
-                                  angle: -0.85,
-                                  alignment: Alignment.bottomLeft,
-                                  child: SizedBox(
-                                    width: 110,
-                                    child: Text(
-                                      label,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                        color: DesignTokens.ink,
-                                        height: 1.15,
-                                      ),
-                                    ),
-                                  ),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: DesignTokens.bgGrey,
+                                border: Border.all(color: DesignTokens.border.withValues(alpha: 0.7), width: 0.5),
+                              ),
+                              child: Text(
+                                '${i + 1}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                  color: DesignTokens.ink,
                                 ),
                               ),
                             ),
@@ -291,13 +278,13 @@ class ConfusionMatrixGrid extends StatelessWidget {
                       child: Row(
                         children: [
                           Tooltip(
-                            message: labels[row],
+                            message: 'Actual: ${labels[row]}',
                             child: SizedBox(
                               width: _rowLabelWidth,
                               child: Padding(
                                 padding: const EdgeInsets.only(right: 8),
                                 child: Text(
-                                  labels[row],
+                                  '${row + 1}. ${labels[row]}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -310,12 +297,15 @@ class ConfusionMatrixGrid extends StatelessWidget {
                             ),
                           ),
                           for (var col = 0; col < grid[row].length; col++)
-                            _MatrixCell(
-                              value: grid[row][col],
-                              intensity: _heatmapIntensity(grid[row][col], maxCell),
-                              diagonal: row == col,
-                              width: _cellWidth,
-                              height: _rowHeight,
+                            Tooltip(
+                              message: 'Actual ${labels[row]} → Predicted ${labels[col]}: ${grid[row][col]}',
+                              child: _MatrixCell(
+                                value: grid[row][col],
+                                intensity: _heatmapIntensity(grid[row][col], maxCell),
+                                diagonal: row == col,
+                                width: _cellWidth,
+                                height: _rowHeight,
+                              ),
                             ),
                         ],
                       ),
@@ -323,6 +313,33 @@ class ConfusionMatrixGrid extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 14),
+            const Text(
+              'Predicted column legend',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: DesignTokens.ink),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < labels.length; i++)
+                  Container(
+                    key: Key('eval-confusion-legend-$i'),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: DesignTokens.bgGrey,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: DesignTokens.border),
+                    ),
+                    child: Text(
+                      '${i + 1}  ${labels[i]}',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DesignTokens.ink),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );

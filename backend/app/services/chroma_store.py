@@ -1125,6 +1125,8 @@ def _clamp_chroma_metadata_keys(metadata: dict[str, Any], *, max_keys: int = _CH
             "source_excerpt",
             "article_type",
             "category",
+            # Role gating for Faculty Manual vs student handbook.
+            "audience",
         }
         for key in sorted(k for k in list(metadata) if k not in core):
             if len(metadata) <= max_keys:

@@ -58,6 +58,10 @@ from app.services.admin.knowledge_base_pipeline import (
     suspicious_unit_diagnostics,
     validation_report,
 )
+from app.services.article_rag_indexer import (
+    infer_rag_audience_from_document,
+    stamp_chunks_with_audience,
+)
 from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
 from app.services.chunking import DocumentChunk
@@ -1310,6 +1314,12 @@ def build_lightweight_publish(
     if not chunks:
         raise DigitalIngestionError("No chunks produced from extracted text.")
 
+    rag_audience = infer_rag_audience_from_document(
+        filename=source_document,
+        title=display_title,
+    )
+    chunks = stamp_chunks_with_audience(chunks, rag_audience)
+
     store = get_knowledge_base_store()
     replaced_document_id = store.document_id_for_source_filename(source_document)
 
@@ -1643,6 +1653,12 @@ def process_indexing_job(job_id: str, reviewed_text: str | None) -> None:
             session.commit()
             return
 
+        rag_audience = infer_rag_audience_from_document(
+            filename=job.source_filename,
+            title=title,
+        )
+        chunks = stamp_chunks_with_audience(chunks, rag_audience)
+
         store = get_knowledge_base_store()
         replaced_document_id = store.document_id_for_source_filename(job.source_filename)
 
@@ -1966,6 +1982,12 @@ def process_ingestion_job(job_id: str) -> None:
             job.error_message = str(exc)
             session.commit()
             return
+
+        rag_audience = infer_rag_audience_from_document(
+            filename=job.source_filename,
+            title=title,
+        )
+        chunks = stamp_chunks_with_audience(chunks, rag_audience)
 
         store = get_knowledge_base_store()
         replaced_document_id = store.document_id_for_source_filename(job.source_filename)

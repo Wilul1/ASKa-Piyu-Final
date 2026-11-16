@@ -349,6 +349,7 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
                     ),
                     _RetrievalEvaluationSection(components: components),
                     _QaEvaluationSection(
+                      components: components,
                       overview: _qaCitationOverview,
                       loading: _qaCitationOverviewLoading,
                       error: _qaCitationOverviewError,
@@ -624,7 +625,16 @@ class _EvaluationOverviewSection extends StatelessWidget {
 
     final question = _byName(components, 'classify_question');
     final questionAccuracy = question?.status == 'evaluated' ? question!.metric('accuracy') : null;
-    final qaOverall = (qaCitationOverview?.available == true) ? qaCitationOverview!.qaOverall : null;
+    final answer = _byName(components, 'answer_generation_llm');
+    final verifier = _byName(components, 'citation_verifier_llm');
+    final ragScored = (verifier?.metrics.any((m) => m.metricValue != null) ?? false) ||
+        (answer?.metrics.any((m) =>
+                m.metricValue != null &&
+                {'answer_correctness', 'faithfulness', 'answer_relevancy', 'citation_set_precision', 'citation_accuracy'}
+                    .contains(m.metricName)) ??
+            false);
+    final answerCorrectness = (answer?.status == 'evaluated' ? answer?.metric('answer_correctness') : null) ??
+        (verifier?.status == 'evaluated' ? verifier?.metric('answer_correctness') : null);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -652,7 +662,7 @@ class _EvaluationOverviewSection extends StatelessWidget {
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Three checks: did we find the right pages, tag the right categories, and judge answer quality?',
+                          'Three checks: did we find the right pages, tag the right categories, and score generated answers?',
                           style: TextStyle(color: DesignTokens.muted, fontSize: 13, height: 1.35),
                         ),
                       ],
@@ -695,7 +705,8 @@ class _EvaluationOverviewSection extends StatelessWidget {
         _AtAGlanceRow(
           retrievalHit: retrievalEvaluated ? hit : null,
           classificationAccuracy: questionAccuracy,
-          qaOverall: qaOverall,
+          answersScored: ragScored,
+          answerCorrectness: answerCorrectness,
         ),
         const SizedBox(height: 20),
         _QaCitationOverviewSummary(
@@ -977,12 +988,14 @@ class _AtAGlanceRow extends StatelessWidget {
   const _AtAGlanceRow({
     required this.retrievalHit,
     required this.classificationAccuracy,
-    this.qaOverall,
+    required this.answersScored,
+    this.answerCorrectness,
   });
 
   final double? retrievalHit;
   final double? classificationAccuracy;
-  final double? qaOverall;
+  final bool answersScored;
+  final double? answerCorrectness;
 
   @override
   Widget build(BuildContext context) {
@@ -1009,13 +1022,15 @@ class _AtAGlanceRow extends StatelessWidget {
                 : 'Correct category on student questions',
           ),
           _glanceCard(
-            color: qaOverall != null ? const Color(0xFF166534) : const Color(0xFF6B7280),
+            color: answersScored ? const Color(0xFF166534) : const Color(0xFF6B7280),
             icon: Icons.chat_bubble_outline_rounded,
             label: 'Answer quality',
-            value: qaOverall != null ? '${qaOverall!.toStringAsFixed(2)} / 4' : 'Not scored',
-            detail: qaOverall != null
-                ? 'Dual-AI judged answers (0–4 scale)'
-                : 'Waiting on QA judging artifacts',
+            value: answersScored
+                ? (answerCorrectness != null ? _percentLabel(answerCorrectness) : 'Scored')
+                : 'Not scored',
+            detail: answersScored
+                ? 'Manuscript Table 11 · human-scored student answers'
+                : 'Waiting on a labeled answer-quality set',
           ),
         ];
         if (!wide) {
@@ -1356,6 +1371,318 @@ class _OverviewSectionHeader extends StatelessWidget {
   }
 }
 
+class _AnswerGenerationOverviewSection extends StatelessWidget {
+  const _AnswerGenerationOverviewSection({required this.components});
+
+  final List<EvaluationComponentResult> components;
+
+  static const _metricCards = [
+    ('Answer Correctness', 'answer_correctness', <String>[], 'eval-rag-card-answer-correctness'),
+    ('Faithfulness', 'faithfulness', <String>[], 'eval-rag-card-faithfulness'),
+    ('Answer Relevance', 'answer_relevancy', <String>['answer_relevance'], 'eval-rag-card-answer-relevance'),
+    ('Citation Accuracy', 'citation_accuracy', <String>['citation_set_precision'], 'eval-rag-card-citation-accuracy'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final answer = _byName(components, 'answer_generation_llm');
+    final verifier = _byName(components, 'citation_verifier_llm');
+
+    double? ragMetric(String name, List<String> aliases) {
+      for (final metricName in [name, ...aliases]) {
+        final value = verifier?.metric(metricName) ?? answer?.metric(metricName);
+        if (value != null) return value;
+      }
+      return null;
+    }
+
+    EvaluationComponentResult? sourceFor(String name, List<String> aliases) {
+      for (final metricName in [name, ...aliases]) {
+        if (verifier?.hasMetric(metricName) == true) return verifier;
+        if (answer?.hasMetric(metricName) == true) return answer;
+      }
+      return null;
+    }
+
+    final values = [
+      for (final card in _metricCards) ragMetric(card.$2, card.$3),
+    ];
+    final hasAnyScore = values.any((value) => value != null);
+    final scoredSource = verifier?.metrics.any((m) => m.metricValue != null) == true ? verifier : answer;
+    final sectionStatus = hasAnyScore ? (scoredSource?.status ?? 'evaluated') : 'pending';
+    final sectionCases = hasAnyScore ? scoredSource?.caseCount : null;
+    final questionScores = (answer?.humanRagCases().isNotEmpty == true)
+        ? answer!.humanRagCases()
+        : (verifier?.humanRagCases() ?? const <HumanRagCaseScore>[]);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: DesignTokens.border),
+        boxShadow: DesignTokens.softShadow(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _OverviewSectionHeader(
+            title: 'Question-Answering Quality (Manuscript Table 11)',
+            titleKey: const Key('eval-rag-overview-title'),
+            statusKey: const Key('eval-rag-overview-status'),
+            status: sectionStatus,
+            caseCount: sectionCases,
+            subtitle: hasAnyScore
+                ? 'Human-scored from 12 live student chatbot answers (manuscript Table 11). Two faculty-manual questions were excluded (role-gated).'
+                : 'Student answers are not scored in this run. The labeled answer-quality dataset is still empty.',
+          ),
+          if (!hasAnyScore) ...[
+            const SizedBox(height: 14),
+            const _PendingCallout(
+              title: 'No answer scores yet',
+              body:
+                  'The four cards below stay blank until a labeled RAG evaluation set is saved. This does not mean the chatbot failed — those cases have not been scored.',
+            ),
+          ],
+          const SizedBox(height: 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 900 ? 4 : constraints.maxWidth >= 560 ? 2 : 1;
+              const gap = 12.0;
+              final width = constraints.maxWidth;
+              final cardWidth = columns == 1 ? width : (width - gap * (columns - 1)) / columns;
+              return Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  for (final card in _metricCards)
+                    SizedBox(
+                      width: cardWidth,
+                      child: _RagMetricCard(
+                        cardKey: Key(card.$4),
+                        title: card.$1,
+                        value: ragMetric(card.$2, card.$3),
+                        source: sourceFor(card.$2, card.$3),
+                        explanation: switch (card.$1) {
+                          'Answer Correctness' => 'Pass = 1, partial = 0.5, fail = 0 on 12 student-visible questions',
+                          'Faithfulness' => 'Did the live answer invent fees, totals, or facts not in the sources?',
+                          'Answer Relevance' => 'Did the live answer address the question asked?',
+                          _ => 'Right document title on the 5 replies that displayed source titles — not gold chunk IDs',
+                        },
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+          if (questionScores.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _RagQuestionBreakdown(cases: questionScores),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RagQuestionBreakdown extends StatelessWidget {
+  const _RagQuestionBreakdown({required this.cases});
+
+  final List<HumanRagCaseScore> cases;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Per-question scores',
+          key: Key('eval-rag-case-table-title'),
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: DesignTokens.ink),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Each row is one live chatbot question. The four cards above are averages of the 12 student-visible rows. Faculty-only questions are listed but not counted.',
+          style: TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.35),
+        ),
+        const SizedBox(height: 12),
+        for (var index = 0; index < cases.length; index++)
+          _RagQuestionRow(index: index + 1, caseScore: cases[index]),
+      ],
+    );
+  }
+}
+
+class _RagQuestionRow extends StatelessWidget {
+  const _RagQuestionRow({required this.index, required this.caseScore});
+
+  final int index;
+  final HumanRagCaseScore caseScore;
+
+  @override
+  Widget build(BuildContext context) {
+    final excluded = !caseScore.included;
+    return Container(
+      key: Key('eval-rag-case-${caseScore.caseId}'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: excluded ? const Color(0xFFF8FAFC) : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: DesignTokens.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Q$index  ${caseScore.question}',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+              height: 1.35,
+              color: excluded ? DesignTokens.muted : DesignTokens.ink,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _RagScoreChip(title: 'Correctness', dimension: caseScore.correctness, excluded: excluded),
+              _RagScoreChip(title: 'Faithfulness', dimension: caseScore.faithfulness, excluded: excluded),
+              _RagScoreChip(title: 'Relevance', dimension: caseScore.relevance, excluded: excluded),
+              _RagScoreChip(title: 'Citation', dimension: caseScore.citation, excluded: excluded),
+            ],
+          ),
+          if (caseScore.note != null && caseScore.note!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(caseScore.note!, style: const TextStyle(color: DesignTokens.muted, fontSize: 11, height: 1.35)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RagScoreChip extends StatelessWidget {
+  const _RagScoreChip({required this.title, required this.dimension, required this.excluded});
+
+  final String title;
+  final HumanRagDimensionScore? dimension;
+  final bool excluded;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _chipLabel(dimension, excluded: excluded);
+    final color = _chipColor(dimension, excluded: excluded);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        '$title · $label',
+        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
+String _chipLabel(HumanRagDimensionScore? dimension, {required bool excluded}) {
+  if (excluded || dimension == null) {
+    return dimension?.label == 'role_gated' ? 'Excluded' : (dimension?.label.replaceAll('_', ' ') ?? '—');
+  }
+  final pretty = switch (dimension.label) {
+    'pass' => 'Pass',
+    'partial' => 'Partial',
+    'fail' => 'Fail',
+    'faithful' => 'Faithful',
+    'mixed' => 'Mixed',
+    'invented_or_garbled' => 'Invented',
+    'addressed' => 'Addressed',
+    'not_addressed' => 'Not addressed',
+    'matched' => 'Match',
+    'no_sources_visible' => 'No sources',
+    'role_gated' => 'Excluded',
+    final other => other.replaceAll('_', ' '),
+  };
+  if (dimension.score == null) return pretty;
+  return '$pretty ${dimension.score!.toStringAsFixed(1)}';
+}
+
+Color _chipColor(HumanRagDimensionScore? dimension, {required bool excluded}) {
+  if (excluded || dimension?.label == 'role_gated') return DesignTokens.muted;
+  final score = dimension?.score;
+  if (score == null) return DesignTokens.muted;
+  if (score >= 0.999) return const Color(0xFF166534);
+  if (score >= 0.5) return const Color(0xFFB45309);
+  return const Color(0xFFB91C1C);
+}
+
+class _RagMetricCard extends StatelessWidget {
+  const _RagMetricCard({
+    required this.cardKey,
+    required this.title,
+    required this.value,
+    required this.source,
+    required this.explanation,
+  });
+
+  final Key cardKey;
+  final String title;
+  final double? value;
+  final EvaluationComponentResult? source;
+  final String explanation;
+
+  @override
+  Widget build(BuildContext context) {
+    final evaluated = value != null;
+    final statusLabel = switch (source?.status) {
+      'evaluated' || null => 'Evaluated',
+      'not_evaluable' => 'Not evaluable',
+      'failed' => 'Failed',
+      'running' => 'Running',
+      final other => other,
+    };
+    final caption = evaluated
+        ? (source == null ? statusLabel : '$statusLabel · ${source!.caseCount} cases')
+        : 'Not yet evaluated';
+    return Container(
+      key: cardKey,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: evaluated ? Colors.white : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: evaluated ? DesignTokens.border : const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(color: DesignTokens.muted, fontSize: 11, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Text(
+            _metricOrDash(value),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: evaluated ? DesignTokens.ink : const Color(0xFF94A3B8),
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(explanation, style: const TextStyle(color: DesignTokens.muted, fontSize: 11, height: 1.3)),
+          const SizedBox(height: 4),
+          Text(caption, style: const TextStyle(color: DesignTokens.muted, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
 String _metricOrDash(double? value) {
   if (value == null) return '—';
   return value.toStringAsFixed(4);
@@ -1535,17 +1862,20 @@ Widget _qaJudgingGate({
   return builder(data);
 }
 
-/// Section 4: "QA Evaluation". Stage 3.2B-3.6 dual-AI, 0-4-scale judging only.
-/// The older human screenshot RAG overlay was removed so the report has one
-/// QA story, not two conflicting score sets.
+/// Section 4: "QA Evaluation". Two methodologically distinct measurements,
+/// clearly labeled apart: manuscript Table 11 human-scored 0-1 QA
+/// ([_AnswerGenerationOverviewSection]) and Stage 3.2B-3.6 dual-AI
+/// 0-4 judging below it -- never blended into one number.
 class _QaEvaluationSection extends StatelessWidget {
   const _QaEvaluationSection({
+    required this.components,
     required this.overview,
     required this.loading,
     required this.error,
     required this.onRetry,
   });
 
+  final List<EvaluationComponentResult> components;
   final QaCitationJudgingOverview? overview;
   final bool loading;
   final String? error;
@@ -1560,75 +1890,85 @@ class _QaEvaluationSection extends StatelessWidget {
         const _ReportSectionHeading(
           number: 4,
           title: 'QA Evaluation',
-          subtitle: 'Dual-AI correctness, completeness, relevance, and faithfulness on a 0–4 scale.',
+          subtitle:
+              'Manuscript Table 11 human-scored answers first; dual-AI 0–4 judging below is supplementary and separate.',
           sectionKey: Key('eval-section-4-qa'),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-          child: _qaJudgingGate(
-            overview: overview,
-            loading: loading,
-            error: error,
-            onRetry: onRetry,
-            loadingKey: const Key('eval-qa-judging-loading'),
-            errorKey: const Key('eval-qa-judging-error'),
-            retryKey: const Key('eval-qa-judging-retry'),
-            emptyKey: const Key('eval-qa-judging-empty'),
-            emptyBody:
-                'The Stage 3.2B-3.6 QA judging artifacts have not been produced yet, or one of them is currently unreadable. This does not mean the chatbot failed -- these results simply have not been computed.',
-            builder: (data) => Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _OverviewSectionHeader(
-                  title: 'QA Evaluation',
-                  titleKey: const Key('eval-qa-grounding-qa-title'),
-                  status: 'evaluated',
-                  subtitle:
-                      '${data.qaJudgedCount ?? 0} fully judged answerable cases · ${data.ieTotalCount ?? 0} insufficient-evidence cases'
-                      '${(data.fallbackCount ?? 0) > 0 ? ' · ${data.fallbackCount} generation fallback excluded from genuine-output scoring' : ''}',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _AnswerGenerationOverviewSection(components: components),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              _qaJudgingGate(
+                overview: overview,
+                loading: loading,
+                error: error,
+                onRetry: onRetry,
+                loadingKey: const Key('eval-qa-judging-loading'),
+                errorKey: const Key('eval-qa-judging-error'),
+                retryKey: const Key('eval-qa-judging-retry'),
+                emptyKey: const Key('eval-qa-judging-empty'),
+                emptyBody:
+                    'The Stage 3.2B-3.6 QA judging artifacts have not been produced yet, or one of them is currently unreadable. This does not mean the chatbot failed -- these results simply have not been computed.',
+                builder: (data) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _OverviewSectionHeader(
+                      title: 'Dual-AI QA Judging (supplementary)',
+                      titleKey: const Key('eval-qa-grounding-qa-title'),
+                      status: 'evaluated',
+                      subtitle:
+                          '${data.qaJudgedCount ?? 0} fully judged answerable cases · ${data.ieTotalCount ?? 0} insufficient-evidence cases'
+                          '${(data.fallbackCount ?? 0) > 0 ? ' · ${data.fallbackCount} generation fallback excluded from genuine-output scoring' : ''}',
+                    ),
+                    const SizedBox(height: 14),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = constraints.maxWidth >= 900 ? 5 : constraints.maxWidth >= 560 ? 3 : 1;
+                        const gap = 12.0;
+                        final width = constraints.maxWidth;
+                        final cardWidth = columns == 1 ? width : (width - gap * (columns - 1)) / columns;
+                        final cards = [
+                          ('Correctness', data.qaCorrectness, 'eval-qa-card-correctness'),
+                          ('Completeness', data.qaCompleteness, 'eval-qa-card-completeness'),
+                          ('Relevance', data.qaRelevance, 'eval-qa-card-relevance'),
+                          ('Faithfulness', data.qaFaithfulness, 'eval-qa-card-faithfulness'),
+                          ('Overall', data.qaOverall, 'eval-qa-card-overall'),
+                        ];
+                        return Wrap(
+                          spacing: gap,
+                          runSpacing: gap,
+                          children: [
+                            for (final card in cards)
+                              SizedBox(
+                                width: cardWidth,
+                                child: _ScaleMetricCard(
+                                  cardKey: Key(card.$3),
+                                  title: card.$1,
+                                  value: card.$2,
+                                  scaleMax: 4,
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    if (data.qaJudgeDisagreementRate != null)
+                      Text(
+                        key: const Key('eval-qa-disagreement'),
+                        'Judge disagreement: ${data.qaJudgeDisagreementRate!.numerator}/${data.qaJudgeDisagreementRate!.denominator} cases '
+                        '(${((data.qaJudgeDisagreementRate!.value ?? 0) * 100).toStringAsFixed(1)}%) had at least one dimension where the two judges scored differently.',
+                        style: const TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.4),
+                      ),
+                  ],
                 ),
-                const SizedBox(height: 14),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = constraints.maxWidth >= 900 ? 5 : constraints.maxWidth >= 560 ? 3 : 1;
-                    const gap = 12.0;
-                    final width = constraints.maxWidth;
-                    final cardWidth = columns == 1 ? width : (width - gap * (columns - 1)) / columns;
-                    final cards = [
-                      ('Correctness', data.qaCorrectness, 'eval-qa-card-correctness'),
-                      ('Completeness', data.qaCompleteness, 'eval-qa-card-completeness'),
-                      ('Relevance', data.qaRelevance, 'eval-qa-card-relevance'),
-                      ('Faithfulness', data.qaFaithfulness, 'eval-qa-card-faithfulness'),
-                      ('Overall', data.qaOverall, 'eval-qa-card-overall'),
-                    ];
-                    return Wrap(
-                      spacing: gap,
-                      runSpacing: gap,
-                      children: [
-                        for (final card in cards)
-                          SizedBox(
-                            width: cardWidth,
-                            child: _ScaleMetricCard(
-                              cardKey: Key(card.$3),
-                              title: card.$1,
-                              value: card.$2,
-                              scaleMax: 4,
-                            ),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                if (data.qaJudgeDisagreementRate != null)
-                  Text(
-                    key: const Key('eval-qa-disagreement'),
-                    'Judge disagreement: ${data.qaJudgeDisagreementRate!.numerator}/${data.qaJudgeDisagreementRate!.denominator} cases '
-                    '(${((data.qaJudgeDisagreementRate!.value ?? 0) * 100).toStringAsFixed(1)}%) had at least one dimension where the two judges scored differently.',
-                    style: const TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.4),
-                  ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ],

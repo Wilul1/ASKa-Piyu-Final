@@ -268,7 +268,7 @@ class _OverviewCardGrid extends StatelessWidget {
   }
 }
 
-class ClassificationClassifierSections extends StatelessWidget {
+class ClassificationClassifierSections extends StatefulWidget {
   const ClassificationClassifierSections({
     super.key,
     required this.components,
@@ -278,43 +278,86 @@ class ClassificationClassifierSections extends StatelessWidget {
   final List<EvaluationComponentResult> components;
   final Map<String, EvaluationConfusionMatrix> matrices;
 
+  static const specs = [
+    (
+      'Question Classifier',
+      'classify_question',
+      'Rules + taxonomy similarity only — never an LLM.',
+    ),
+    (
+      'Chunk Classifier — LLM Enabled',
+      'classify_chunk(allow_llm=True)',
+      'Rules + similarity, then optional LLM fallback when confidence is low.',
+    ),
+    (
+      'Chunk Classifier — LLM Disabled',
+      'classify_chunk(allow_llm=False)',
+      'Rules + similarity only for this run.',
+    ),
+  ];
+
+  @override
+  State<ClassificationClassifierSections> createState() =>
+      _ClassificationClassifierSectionsState();
+}
+
+class _ClassificationClassifierSectionsState extends State<ClassificationClassifierSections> {
+  String _selectedComponent = ClassificationClassifierSections.specs.first.$2;
+
   @override
   Widget build(BuildContext context) {
-    final specs = [
-      (
-        'Question Classifier',
-        'classify_question',
-        'Rules + taxonomy similarity only — never an LLM.',
-      ),
-      (
-        'Chunk Classifier — LLM Enabled',
-        'classify_chunk(allow_llm=True)',
-        'Rules + similarity, then optional LLM fallback when confidence is low.',
-      ),
-      (
-        'Chunk Classifier — LLM Disabled',
-        'classify_chunk(allow_llm=False)',
-        'Rules + similarity only for this run.',
-      ),
-    ];
+    final selected = ClassificationClassifierSections.specs.firstWhere(
+      (spec) => spec.$2 == _selectedComponent,
+      orElse: () => ClassificationClassifierSections.specs.first,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Classifier results',
+          'Confusion matrices',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: DesignTokens.ink),
         ),
+        const SizedBox(height: 6),
+        const Text(
+          'Pick one classifier to inspect its metrics and confusion matrix.',
+          style: TextStyle(color: DesignTokens.muted, fontSize: 13, height: 1.35),
+        ),
         const SizedBox(height: 12),
-        for (final spec in specs) ...[
-          _ClassifierResultSection(
-            title: spec.$1,
-            componentName: spec.$2,
-            subtitle: spec.$3,
-            component: classificationByName(components, spec.$2),
-            matrix: matrices[spec.$2],
+        DropdownButtonFormField<String>(
+          key: const Key('eval-classifier-dropdown'),
+          value: _selectedComponent,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: 'Classifier',
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: DesignTokens.border),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           ),
-          const SizedBox(height: 16),
-        ],
+          items: [
+            for (final spec in ClassificationClassifierSections.specs)
+              DropdownMenuItem<String>(
+                value: spec.$2,
+                child: Text(spec.$1, overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: (value) {
+            if (value == null || value == _selectedComponent) return;
+            setState(() => _selectedComponent = value);
+          },
+        ),
+        const SizedBox(height: 16),
+        _ClassifierResultSection(
+          title: selected.$1,
+          componentName: selected.$2,
+          subtitle: selected.$3,
+          component: classificationByName(widget.components, selected.$2),
+          matrix: widget.matrices[selected.$2],
+        ),
       ],
     );
   }

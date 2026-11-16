@@ -312,15 +312,15 @@ void main() {
       findsNothing,
     );
 
-    // Classification Results section -- unavailable metric is captioned, not silently zero,
-    // and each classifier's confusion matrix renders inline.
+    // Classification Results: summary stays visible; only the selected classifier matrix shows.
+    expect(find.byKey(const Key('eval-classifier-dropdown')), findsOneWidget);
     expect(find.byKey(const Key('eval-classifier-section-classify_question')), findsOneWidget);
-    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=True)')), findsOneWidget);
-    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=False)')), findsOneWidget);
-    expect(find.textContaining('Not available'), findsWidgets);
-    expect(find.text('Per-subcategory performance'), findsWidgets);
+    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=True)')), findsNothing);
+    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=False)')), findsNothing);
+    expect(find.text('Per-subcategory performance'), findsOneWidget);
     expect(find.text('Enrollment'), findsWidgets);
     expect(find.text('Library'), findsWidgets);
+    expect(find.text('Per-question scores'), findsNothing);
 
     // Performance evaluation is out of scope and was removed as a curated section --
     // no latency/throughput bar charts or "Performance" heading anywhere.
@@ -569,9 +569,10 @@ void main() {
       findsNothing,
     );
 
+    expect(find.byKey(const Key('eval-classifier-dropdown')), findsOneWidget);
     expect(find.byKey(const Key('eval-classifier-section-classify_question')), findsOneWidget);
-    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=True)')), findsOneWidget);
-    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=False)')), findsOneWidget);
+    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=True)')), findsNothing);
+    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=False)')), findsNothing);
     expect(find.text('Transcript of Records'), findsWidgets);
     expect(find.text('0.8889'), findsWidgets);
     expect(find.textContaining('not a valid comparison of LLM effectiveness'), findsNothing);
@@ -719,7 +720,7 @@ void main() {
     expect(find.byKey(const Key('eval-rag-case-table-title')), findsNothing);
   });
 
-  testWidgets('overview lists each human-scored question under the RAG cards', (tester) async {
+  testWidgets('human-scored Table 11 cards stay visible without per-question rows', (tester) async {
     const runId = 'run-human-overlay';
     final components = [
       _componentJson(
@@ -748,26 +749,6 @@ void main() {
                 'relevance': {'label': 'addressed', 'score': 1.0},
                 'citation': {'label': 'no_sources_visible', 'score': null},
                 'note': 'Undergraduate P75.00/page matches the Charter.',
-              },
-              {
-                'case_id': 'aq_04_dropping_fee_multi_document',
-                'question': 'How much does it cost to drop a subject?',
-                'included': true,
-                'correctness': {'label': 'fail', 'score': 0.0},
-                'faithfulness': {'label': 'faithful', 'score': 1.0},
-                'relevance': {'label': 'addressed', 'score': 1.0},
-                'citation': {'label': 'no_sources_visible', 'score': null},
-              },
-              {
-                'case_id': 'aq_09_faculty_teaching_load',
-                'question': 'How is faculty teaching load determined?',
-                'included': false,
-                'exclusion_reason': 'role_gated_faculty',
-                'correctness': {'label': 'role_gated', 'score': null},
-                'faithfulness': {'label': 'role_gated', 'score': null},
-                'relevance': {'label': 'role_gated', 'score': null},
-                'citation': {'label': 'role_gated', 'score': null},
-                'note': 'Faculty Manual is faculty-audience only.',
               },
             ],
           },
@@ -806,20 +787,104 @@ void main() {
     );
 
     expect(find.text('0.5833'), findsOneWidget);
-    expect(find.byKey(const Key('eval-rag-case-table-title')), findsOneWidget);
-    expect(find.text('Per-question scores'), findsOneWidget);
+    expect(find.byKey(const Key('eval-rag-case-table-title')), findsNothing);
+    expect(find.text('Per-question scores'), findsNothing);
     expect(
       find.textContaining('How much does it cost to get a copy of my Transcript of Records?'),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.textContaining('How much does it cost to drop a subject?'), findsOneWidget);
-    expect(find.textContaining('How is faculty teaching load determined?'), findsOneWidget);
-    expect(find.text('Correctness · Pass 1.0'), findsOneWidget);
-    expect(find.text('Correctness · Fail 0.0'), findsOneWidget);
-    expect(find.text('Correctness · Excluded'), findsWidgets);
   });
 
-  testWidgets('overview shows retrieval overlay hit rate and per-question hits', (tester) async {
+  testWidgets('classifier dropdown switches among the three confusion matrices', (tester) async {
+    const runId = 'run-classifier-dropdown';
+    final components = [
+      _componentJson(
+        componentId: 'c-question',
+        component: 'classify_question',
+        status: 'evaluated',
+        modelName: 'rule+similarity (never calls an LLM)',
+        allowLlmFallback: false,
+        caseCount: 4,
+        hasConfusionMatrix: true,
+        metrics: [
+          _metricJson('accuracy', 1.0),
+          _metricJson('macro_f1', 1.0),
+        ],
+      ),
+      _componentJson(
+        componentId: 'c-chunk-true',
+        component: 'classify_chunk(allow_llm=True)',
+        status: 'evaluated',
+        modelName: 'rule+similarity+optional_llm',
+        allowLlmFallback: true,
+        caseCount: 4,
+        hasConfusionMatrix: true,
+        metrics: [
+          _metricJson('accuracy', 0.75),
+          _metricJson('macro_f1', 0.70),
+        ],
+      ),
+      _componentJson(
+        componentId: 'c-chunk-false',
+        component: 'classify_chunk(allow_llm=False)',
+        status: 'evaluated',
+        modelName: 'rule+similarity',
+        allowLlmFallback: false,
+        caseCount: 4,
+        hasConfusionMatrix: true,
+        metrics: [
+          _metricJson('accuracy', 0.50),
+          _metricJson('macro_f1', 0.40),
+        ],
+      ),
+    ];
+
+    await pumpPage(
+      tester,
+      build: () => AdminModelEvaluationPage(
+        debugFetchModels: () async => const [],
+        debugFetchSummary: () async => EvaluationSummary.fromJson({
+          'latest_run': {
+            'run_id': runId,
+            'status': 'completed',
+            'triggered_by_user_id': null,
+            'started_at': '2026-11-04T08:00:00+00:00',
+            'completed_at': '2026-11-04T08:05:00+00:00',
+            'error_message': null,
+          },
+          'components': components,
+        }),
+        debugFetchHistory: ({required limit, required offset}) async =>
+            const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
+        debugFetchRunDetail: (id) async => EvaluationRunDetail.fromJson({
+          'run_id': runId,
+          'status': 'completed',
+          'triggered_by_user_id': null,
+          'started_at': '2026-11-04T08:00:00+00:00',
+          'completed_at': '2026-11-04T08:05:00+00:00',
+          'error_message': null,
+          'config': <String, dynamic>{},
+          'components': components,
+        }),
+      ),
+    );
+
+    expect(find.byKey(const Key('eval-classifier-dropdown')), findsOneWidget);
+    expect(find.byKey(const Key('eval-classifier-section-classify_question')), findsOneWidget);
+    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=True)')), findsNothing);
+
+    await tester.ensureVisible(find.byKey(const Key('eval-classifier-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('eval-classifier-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Chunk Classifier — LLM Enabled').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('eval-classifier-section-classify_question')), findsNothing);
+    expect(find.byKey(const Key('eval-classifier-section-classify_chunk(allow_llm=True)')), findsOneWidget);
+  });
+
+  testWidgets('overview shows retrieval overlay hit rate without per-question rows', (tester) async {
     const runId = 'run-retrieval-overlay';
     final components = [
       _componentJson(
@@ -893,12 +958,10 @@ void main() {
     );
 
     expect(find.text('91.67%'), findsWidgets);
-    expect(find.byKey(const Key('eval-retrieval-case-table-title')), findsOneWidget);
-    expect(find.textContaining('How much does it cost to get a copy of my Transcript of Records?'), findsOneWidget);
-    expect(find.textContaining('Which office handles student enrollment?'), findsOneWidget);
-    expect(find.text('Embedding · Hit'), findsWidgets);
-    expect(find.text('Embedding · Miss'), findsWidgets);
-    expect(find.text('Reranked · Miss'), findsOneWidget);
+    expect(find.byKey(const Key('eval-retrieval-case-table-title')), findsNothing);
+    expect(find.text('Per-question scores'), findsNothing);
+    expect(find.text('Embedding · Hit'), findsNothing);
+    expect(find.text('Reranked · Miss'), findsNothing);
   });
 
   testWidgets('QA Evaluation and Citation sections show the empty state when the overview is unavailable',

@@ -870,7 +870,7 @@ class _ClassificationResultsSection extends StatelessWidget {
         const _ReportSectionHeading(
           number: 2,
           title: 'Classification Results',
-          subtitle: 'Did the system assign the right category to student questions and handbook passages, including confusion matrices per classifier?',
+          subtitle: 'Summary scores for student questions and handbook passages, plus one selectable confusion matrix.',
           sectionKey: Key('eval-section-2-classification'),
         ),
         Padding(
@@ -1211,115 +1211,7 @@ class _RetrievalOverviewPanel extends StatelessWidget {
               ),
             ],
           ],
-          if ((retrieval?.retrievalCases().isNotEmpty == true) ||
-              (embedding?.retrievalCases().isNotEmpty == true)) ...[
-            const SizedBox(height: 20),
-            _RetrievalQuestionBreakdown(
-              cases: retrieval?.retrievalCases().isNotEmpty == true
-                  ? retrieval!.retrievalCases()
-                  : embedding!.retrievalCases(),
-            ),
-          ],
         ],
-      ),
-    );
-  }
-}
-
-class _RetrievalQuestionBreakdown extends StatelessWidget {
-  const _RetrievalQuestionBreakdown({required this.cases});
-
-  final List<RetrievalCaseScore> cases;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Per-question scores',
-          key: Key('eval-retrieval-case-table-title'),
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: DesignTokens.ink),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          'Hit = a relevant page was in the top 5. Embedding-only vs reranked use the same 12 labeled questions.',
-          style: TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.35),
-        ),
-        const SizedBox(height: 12),
-        for (var index = 0; index < cases.length; index++)
-          _RetrievalQuestionRow(index: index + 1, caseScore: cases[index]),
-      ],
-    );
-  }
-}
-
-class _RetrievalQuestionRow extends StatelessWidget {
-  const _RetrievalQuestionRow({required this.index, required this.caseScore});
-
-  final int index;
-  final RetrievalCaseScore caseScore;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      key: Key('eval-retrieval-case-${caseScore.caseId}'),
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Q$index  ${caseScore.question}',
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-              height: 1.35,
-              color: DesignTokens.ink,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              _RetrievalHitChip(title: 'Embedding', hit: caseScore.embeddingHit),
-              _RetrievalHitChip(title: 'Reranked', hit: caseScore.rerankedHit),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RetrievalHitChip extends StatelessWidget {
-  const _RetrievalHitChip({required this.title, required this.hit});
-
-  final String title;
-  final bool? hit;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = hit == null ? '—' : (hit! ? 'Hit' : 'Miss');
-    final color = hit == null
-        ? DesignTokens.muted
-        : (hit! ? const Color(0xFF166534) : const Color(0xFFB91C1C));
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        '$title · $label',
-        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -1411,10 +1303,6 @@ class _AnswerGenerationOverviewSection extends StatelessWidget {
     final scoredSource = verifier?.metrics.any((m) => m.metricValue != null) == true ? verifier : answer;
     final sectionStatus = hasAnyScore ? (scoredSource?.status ?? 'evaluated') : 'pending';
     final sectionCases = hasAnyScore ? scoredSource?.caseCount : null;
-    final questionScores = (answer?.humanRagCases().isNotEmpty == true)
-        ? answer!.humanRagCases()
-        : (verifier?.humanRagCases() ?? const <HumanRagCaseScore>[]);
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -1476,150 +1364,10 @@ class _AnswerGenerationOverviewSection extends StatelessWidget {
               );
             },
           ),
-          if (questionScores.isNotEmpty) ...[
-            const SizedBox(height: 20),
-            _RagQuestionBreakdown(cases: questionScores),
-          ],
         ],
       ),
     );
   }
-}
-
-class _RagQuestionBreakdown extends StatelessWidget {
-  const _RagQuestionBreakdown({required this.cases});
-
-  final List<HumanRagCaseScore> cases;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Per-question scores',
-          key: Key('eval-rag-case-table-title'),
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: DesignTokens.ink),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          'Each row is one live chatbot question. The four cards above are averages of the 12 student-visible rows. Faculty-only questions are listed but not counted.',
-          style: TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.35),
-        ),
-        const SizedBox(height: 12),
-        for (var index = 0; index < cases.length; index++)
-          _RagQuestionRow(index: index + 1, caseScore: cases[index]),
-      ],
-    );
-  }
-}
-
-class _RagQuestionRow extends StatelessWidget {
-  const _RagQuestionRow({required this.index, required this.caseScore});
-
-  final int index;
-  final HumanRagCaseScore caseScore;
-
-  @override
-  Widget build(BuildContext context) {
-    final excluded = !caseScore.included;
-    return Container(
-      key: Key('eval-rag-case-${caseScore.caseId}'),
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: excluded ? const Color(0xFFF8FAFC) : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: DesignTokens.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Q$index  ${caseScore.question}',
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-              height: 1.35,
-              color: excluded ? DesignTokens.muted : DesignTokens.ink,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              _RagScoreChip(title: 'Correctness', dimension: caseScore.correctness, excluded: excluded),
-              _RagScoreChip(title: 'Faithfulness', dimension: caseScore.faithfulness, excluded: excluded),
-              _RagScoreChip(title: 'Relevance', dimension: caseScore.relevance, excluded: excluded),
-              _RagScoreChip(title: 'Citation', dimension: caseScore.citation, excluded: excluded),
-            ],
-          ),
-          if (caseScore.note != null && caseScore.note!.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(caseScore.note!, style: const TextStyle(color: DesignTokens.muted, fontSize: 11, height: 1.35)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _RagScoreChip extends StatelessWidget {
-  const _RagScoreChip({required this.title, required this.dimension, required this.excluded});
-
-  final String title;
-  final HumanRagDimensionScore? dimension;
-  final bool excluded;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = _chipLabel(dimension, excluded: excluded);
-    final color = _chipColor(dimension, excluded: excluded);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        '$title · $label',
-        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-}
-
-String _chipLabel(HumanRagDimensionScore? dimension, {required bool excluded}) {
-  if (excluded || dimension == null) {
-    return dimension?.label == 'role_gated' ? 'Excluded' : (dimension?.label.replaceAll('_', ' ') ?? '—');
-  }
-  final pretty = switch (dimension.label) {
-    'pass' => 'Pass',
-    'partial' => 'Partial',
-    'fail' => 'Fail',
-    'faithful' => 'Faithful',
-    'mixed' => 'Mixed',
-    'invented_or_garbled' => 'Invented',
-    'addressed' => 'Addressed',
-    'not_addressed' => 'Not addressed',
-    'matched' => 'Match',
-    'no_sources_visible' => 'No sources',
-    'role_gated' => 'Excluded',
-    final other => other.replaceAll('_', ' '),
-  };
-  if (dimension.score == null) return pretty;
-  return '$pretty ${dimension.score!.toStringAsFixed(1)}';
-}
-
-Color _chipColor(HumanRagDimensionScore? dimension, {required bool excluded}) {
-  if (excluded || dimension?.label == 'role_gated') return DesignTokens.muted;
-  final score = dimension?.score;
-  if (score == null) return DesignTokens.muted;
-  if (score >= 0.999) return const Color(0xFF166534);
-  if (score >= 0.5) return const Color(0xFFB45309);
-  return const Color(0xFFB91C1C);
 }
 
 class _RagMetricCard extends StatelessWidget {

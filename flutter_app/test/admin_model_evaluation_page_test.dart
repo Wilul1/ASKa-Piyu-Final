@@ -229,11 +229,12 @@ void main() {
     );
 
     expect(find.textContaining('No evaluation has been run yet'), findsOneWidget);
-    expect(find.byKey(const Key('eval-run-button')), findsOneWidget);
+    expect(find.byKey(const Key('eval-run-button')), findsNothing);
+    expect(find.byKey(const Key('eval-jump-nav')), findsOneWidget);
     expect(find.byKey(const Key('eval-overview-section')), findsOneWidget);
     expect(find.byKey(const Key('eval-retrieval-overview-title')), findsOneWidget);
     expect(find.byKey(const Key('eval-classification-overview-title')), findsOneWidget);
-    expect(find.text('Classification Evaluation'), findsOneWidget);
+    expect(find.text('Classification'), findsWidgets);
     _expectPendingRagOverview(tester);
   });
 
@@ -302,9 +303,9 @@ void main() {
     expect(find.byKey(const Key('eval-overview-section')), findsOneWidget);
     expect(find.text('Completed'), findsWidgets);
     expect(find.byKey(const Key('eval-export-button')), findsOneWidget);
-    expect(find.text('Retrieval Evaluation'), findsWidgets);
+    expect(find.text('Retrieval'), findsWidgets);
     expect(find.byKey(const Key('eval-classification-overview-title')), findsOneWidget);
-    expect(find.text('Classification Evaluation'), findsOneWidget);
+    expect(find.text('Classification'), findsWidgets);
     _expectRagMetricCardsPresent();
     expect(find.byKey(const Key('eval-classification-methodology-notice')), findsNothing);
     expect(
@@ -329,75 +330,39 @@ void main() {
     expect(find.textContaining('Success rate'), findsNothing);
   });
 
-  testWidgets('tapping Run Evaluation starts a new run and the new results flow through', (tester) async {
-    const newRunId = 'run-2';
-    var startCalls = 0;
+  testWidgets('Refresh reloads the latest completed evaluation without a Run button', (tester) async {
+    const runId = 'run-refresh';
+    var summaryCalls = 0;
     await pumpPage(
       tester,
       build: () => AdminModelEvaluationPage(
         debugFetchModels: () async => const [],
-        debugFetchSummary: () async => const EvaluationSummary(latestRun: null, components: []),
+        debugFetchSummary: () async {
+          summaryCalls += 1;
+          return EvaluationSummary.fromJson({
+            'latest_run': {
+              'run_id': runId,
+              'status': 'completed',
+              'triggered_by_user_id': null,
+              'started_at': '2026-11-04T08:00:00+00:00',
+              'completed_at': '2026-11-04T08:05:00+00:00',
+              'error_message': null,
+            },
+            'components': _sampleComponents(),
+          });
+        },
         debugFetchHistory: ({required limit, required offset}) async =>
             const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
-        debugStartRun: () async {
-          startCalls += 1;
-          return newRunId;
-        },
         debugFetchRunDetail: (id) async => EvaluationRunDetail.fromJson(_sampleRunDetailJson(id)),
-        debugFetchConfusionMatrix: ({required runId, required component}) async => null,
       ),
     );
 
-    expect(find.textContaining('No evaluation has been run yet'), findsOneWidget);
-    _expectPendingRagOverview(tester);
-
-    await tester.tap(find.byKey(const Key('eval-run-button')));
+    expect(find.byKey(const Key('eval-run-button')), findsNothing);
+    expect(find.byKey(const Key('eval-refresh-button')), findsOneWidget);
+    final before = summaryCalls;
+    await tester.tap(find.byKey(const Key('eval-refresh-button')));
     await tester.pumpAndSettle();
-
-    expect(startCalls, 1);
-    expect(find.text('Running'), findsWidgets);
-
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('eval-classifier-section-classify_question')), findsOneWidget);
-  });
-
-  testWidgets('a timed-out run detail fetch keeps polling instead of showing TimeoutException',
-      (tester) async {
-    const newRunId = 'run-timeout';
-    var detailCalls = 0;
-    await pumpPage(
-      tester,
-      build: () => AdminModelEvaluationPage(
-        debugFetchModels: () async => const [],
-        debugFetchSummary: () async => const EvaluationSummary(latestRun: null, components: []),
-        debugFetchHistory: ({required limit, required offset}) async =>
-            const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
-        debugStartRun: () async => newRunId,
-        debugFetchRunDetail: (id) async {
-          detailCalls += 1;
-          if (detailCalls < 2) {
-            throw TimeoutException('Future not completed');
-          }
-          return EvaluationRunDetail.fromJson(_sampleRunDetailJson(id));
-        },
-        debugFetchConfusionMatrix: ({required runId, required component}) async => null,
-      ),
-    );
-
-    await tester.tap(find.byKey(const Key('eval-run-button')));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('TimeoutException'), findsNothing);
-    expect(find.text('Running'), findsWidgets);
-
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('TimeoutException'), findsNothing);
-    expect(find.text('Running'), findsWidgets);
-
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('eval-classifier-section-classify_question')), findsOneWidget);
+    expect(summaryCalls, greaterThan(before));
   });
 
   testWidgets('confusion matrices tab shows a placeholder for a not_evaluable classification component',
@@ -639,8 +604,8 @@ void main() {
     );
 
     expect(find.byKey(const Key('eval-overview-section')), findsOneWidget);
-    expect(find.text('Retrieval Evaluation'), findsWidgets);
-    expect(find.text('Classification Evaluation'), findsOneWidget);
+    expect(find.text('Retrieval'), findsWidgets);
+    expect(find.text('Classification'), findsWidgets);
     _expectPendingRagOverview(tester);
   });
 
@@ -1039,7 +1004,8 @@ void main() {
     // ("QA Evaluation"/"Citation Evaluation" legitimately appear twice each:
     // once as the big section heading, once as the inner sub-header -- both
     // were renamed identically, which is exactly the declutter requested.)
-    expect(find.text('QA Evaluation'), findsWidgets);
+    expect(find.text('QA · Table 11'), findsWidgets);
+    expect(find.text('Dual-AI QA Judging (supplementary)'), findsOneWidget);
     expect(find.text('Citation Evaluation'), findsWidgets);
     expect(find.text('QA Evaluation (AI judges)'), findsNothing);
     expect(find.text('Citation Evaluation (AI judges)'), findsNothing);
@@ -1224,7 +1190,7 @@ void main() {
     expect(find.byKey(const Key('eval-overview-qa-citation-summary')), findsNothing);
   });
 
-  testWidgets('the report renders all 6 sections, in order, with no horizontal tabs', (tester) async {
+  testWidgets('the report renders 5 sections plus jump nav, with no methodology or run button', (tester) async {
     await pumpPage(
       tester,
       build: () => AdminModelEvaluationPage(
@@ -1235,9 +1201,11 @@ void main() {
       ),
     );
 
-    // No TabBar/Tab widgets anywhere -- this is one continuous scroll, not tabs.
     expect(find.byType(TabBar), findsNothing);
     expect(find.byType(Tab), findsNothing);
+    expect(find.byKey(const Key('eval-jump-nav')), findsOneWidget);
+    expect(find.byKey(const Key('eval-run-button')), findsNothing);
+    expect(find.text('Run Evaluation'), findsNothing);
 
     const sectionKeys = [
       'eval-section-1-overview',
@@ -1245,67 +1213,20 @@ void main() {
       'eval-section-3-retrieval',
       'eval-section-4-qa',
       'eval-section-5-citation',
-      'eval-section-6-methodology',
     ];
     for (final key in sectionKeys) {
       expect(find.byKey(Key(key)), findsOneWidget, reason: 'missing section $key');
     }
-    // Section 7 (Run Provenance, History, and Raw Results) was removed in
-    // the dashboard-cleanup pass, along with the Run History list, Model
-    // Inventory cards, raw per-component results, and the full-report
-    // JSON download button.
+    expect(find.byKey(const Key('eval-section-6-methodology')), findsNothing);
+    expect(find.byKey(const Key('eval-methodology-section')), findsNothing);
     expect(find.byKey(const Key('eval-section-7-provenance')), findsNothing);
 
-    // Sections appear top-to-bottom in the required 1-6 order.
     final offsets = [
       for (final key in sectionKeys) tester.getTopLeft(find.byKey(Key(key))).dy,
     ];
     for (var i = 1; i < offsets.length; i++) {
       expect(offsets[i], greaterThan(offsets[i - 1]), reason: 'section $i is not below section ${i - 1}');
     }
-  });
-
-  testWidgets('Evaluation Methodology section cites real backend file paths for every topic', (tester) async {
-    await pumpPage(
-      tester,
-      build: () => AdminModelEvaluationPage(
-        debugFetchModels: () async => const [],
-        debugFetchSummary: () async => const EvaluationSummary(latestRun: null, components: []),
-        debugFetchHistory: ({required limit, required offset}) async =>
-            const EvaluationRunHistoryPage(runs: [], total: 0, limit: 20, offset: 0),
-      ),
-    );
-
-    expect(find.byKey(const Key('eval-methodology-section')), findsOneWidget);
-    expect(find.text('Evaluation Methodology and Computation Process'), findsOneWidget);
-    // Each methodology topic's citation strings name a real backend path --
-    // this is read from the backend source, never a generic description.
-    expect(find.textContaining('backend/app/services/evaluation/'), findsWidgets);
-    expect(find.text('Dataset and case selection'), findsOneWidget);
-    expect(find.text('Citation validity verification and the Stage 3.6 correction'), findsOneWidget);
-    expect(find.text('How run-level metrics are aggregated'), findsOneWidget);
-  });
-
-  testWidgets('the compact automated-evaluation disclosure appears exactly once, inside Methodology',
-      (tester) async {
-    await pumpPage(
-      tester,
-      build: () => AdminModelEvaluationPage(
-        debugFetchSummary: () async => const EvaluationSummary(latestRun: null, components: []),
-      ),
-    );
-
-    const disclosure = 'QA and citation scores were produced through independent automated '
-        'model-based assessments. These results are automated evaluations and '
-        'should not be interpreted as human ratings.';
-    expect(find.text(disclosure), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('eval-methodology-section')),
-        matching: find.byKey(const Key('eval-methodology-automated-disclosure')),
-      ),
-      findsOneWidget,
-    );
   });
 
   testWidgets('human-scored live chatbot results stay labeled as human-scored, distinct from automated QA/citation scoring',
@@ -1417,7 +1338,8 @@ void main() {
     // toolbar keeps working.
     expect(find.byKey(const Key('eval-export-button')), findsOneWidget);
     expect(find.byKey(const Key('eval-refresh-button')), findsOneWidget);
-    expect(find.byKey(const Key('eval-run-button')), findsOneWidget);
+    expect(find.byKey(const Key('eval-run-button')), findsNothing);
+    expect(find.byKey(const Key('eval-jump-nav')), findsOneWidget);
   });
 
   group('responsive rendering of the consolidated report', () {
@@ -1428,7 +1350,7 @@ void main() {
     };
 
     for (final entry in widths.entries) {
-      testWidgets('renders all 6 sections with real data and no exceptions at ${entry.key} width',
+      testWidgets('renders all 5 sections with real data and no exceptions at ${entry.key} width',
           (tester) async {
         tester.view.physicalSize = entry.value;
         tester.view.devicePixelRatio = 1;
@@ -1497,7 +1419,6 @@ void main() {
           'eval-section-3-retrieval',
           'eval-section-4-qa',
           'eval-section-5-citation',
-          'eval-section-6-methodology',
         ]) {
           expect(find.byKey(Key(key)), findsOneWidget, reason: 'missing $key at ${entry.key} width');
         }

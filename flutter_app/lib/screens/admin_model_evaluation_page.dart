@@ -109,13 +109,29 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
   EvaluationRunDetail? _selectedRunDetail;
   final Map<String, EvaluationConfusionMatrix> _matrixByComponent = {};
 
-  bool _startingRun = false;
   Timer? _pollTimer;
+
+  final GlobalKey _overviewJumpKey = GlobalKey();
+  final GlobalKey _classificationJumpKey = GlobalKey();
+  final GlobalKey _retrievalJumpKey = GlobalKey();
+  final GlobalKey _qaJumpKey = GlobalKey();
+  final GlobalKey _citationJumpKey = GlobalKey();
 
   @override
   void dispose() {
     _pollTimer?.cancel();
     super.dispose();
+  }
+
+  void _jumpTo(GlobalKey key) {
+    final target = key.currentContext;
+    if (target == null) return;
+    Scrollable.ensureVisible(
+      target,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      alignment: 0.02,
+    );
   }
 
   @override
@@ -138,10 +154,6 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
     return widget.debugFetchRunDetail != null
         ? widget.debugFetchRunDetail!(runId)
         : eval_api.fetchEvaluationRunDetail(context, runId);
-  }
-
-  Future<String> _startRun() {
-    return widget.debugStartRun != null ? widget.debugStartRun!() : eval_api.startEvaluationRun(context);
   }
 
   Future<EvaluationConfusionMatrix?> _fetchMatrix({required String runId, required String component}) {
@@ -251,39 +263,6 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
     });
   }
 
-  Future<void> _onRunEvaluation() async {
-    setState(() => _startingRun = true);
-    try {
-      final runId = await _startRun();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Evaluation run started.')),
-      );
-      if (mounted) {
-        setState(() {
-          _selectedRunId = runId;
-          _selectedRunDetail = EvaluationRunDetail(
-            summary: EvaluationRunSummary(
-              runId: runId,
-              status: 'running',
-              startedAt: DateTime.now().toUtc().toIso8601String(),
-            ),
-            config: const {},
-            components: const [],
-          );
-        });
-      }
-      _schedulePoll(runId);
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendlyEvalError(error))),
-      );
-    } finally {
-      if (mounted) setState(() => _startingRun = false);
-    }
-  }
-
   Future<void> _exportSelectedRun() async {
     final detail = _selectedRunDetail;
     if (detail == null) return;
@@ -307,7 +286,7 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
     return AdminScaffold(
       current: StudentNavItem.adminModelEvaluation,
       title: 'Model Evaluation',
-      description: 'Run and review automated evaluation of every AI component ASKa-Piyu uses.',
+      description: 'Review the latest evaluation results for ASKa-Piyu.',
       fillBody: true,
       showHeader: false,
       child: ColoredBox(
@@ -315,10 +294,13 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _EvalHeader(
-              onRefresh: _initialLoading ? null : _loadAll,
-              onRun: _startingRun ? null : _onRunEvaluation,
-              running: _startingRun,
+            _EvalHeader(onRefresh: _initialLoading ? null : _loadAll),
+            _EvalJumpNav(
+              onOverview: () => _jumpTo(_overviewJumpKey),
+              onClassification: () => _jumpTo(_classificationJumpKey),
+              onRetrieval: () => _jumpTo(_retrievalJumpKey),
+              onQa: () => _jumpTo(_qaJumpKey),
+              onCitation: () => _jumpTo(_citationJumpKey),
             ),
             if (_initialLoading)
               const LinearProgressIndicator(minHeight: 3, key: Key('eval-initial-loading')),
@@ -333,35 +315,49 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _EvaluationOverviewSection(
-                      summary: _summary,
-                      detail: detail,
-                      loading: _initialLoading,
-                      onExport: detail == null ? null : _exportSelectedRun,
-                      qaCitationOverview: _qaCitationOverview,
-                      qaCitationOverviewLoading: _qaCitationOverviewLoading,
-                      qaCitationOverviewError: _qaCitationOverviewError,
+                    KeyedSubtree(
+                      key: _overviewJumpKey,
+                      child: _EvaluationOverviewSection(
+                        summary: _summary,
+                        detail: detail,
+                        loading: _initialLoading,
+                        onExport: detail == null ? null : _exportSelectedRun,
+                        qaCitationOverview: _qaCitationOverview,
+                        qaCitationOverviewLoading: _qaCitationOverviewLoading,
+                        qaCitationOverviewError: _qaCitationOverviewError,
+                      ),
                     ),
-                    _ClassificationResultsSection(
-                      components: components,
-                      matrices: _matrixByComponent,
-                      config: detail?.config ?? const {},
+                    KeyedSubtree(
+                      key: _classificationJumpKey,
+                      child: _ClassificationResultsSection(
+                        components: components,
+                        matrices: _matrixByComponent,
+                        config: detail?.config ?? const {},
+                      ),
                     ),
-                    _RetrievalEvaluationSection(components: components),
-                    _QaEvaluationSection(
-                      components: components,
-                      overview: _qaCitationOverview,
-                      loading: _qaCitationOverviewLoading,
-                      error: _qaCitationOverviewError,
-                      onRetry: _loadQaCitationOverview,
+                    KeyedSubtree(
+                      key: _retrievalJumpKey,
+                      child: _RetrievalEvaluationSection(components: components),
                     ),
-                    _CitationGroundingSection(
-                      overview: _qaCitationOverview,
-                      loading: _qaCitationOverviewLoading,
-                      error: _qaCitationOverviewError,
-                      onRetry: _loadQaCitationOverview,
+                    KeyedSubtree(
+                      key: _qaJumpKey,
+                      child: _QaEvaluationSection(
+                        components: components,
+                        overview: _qaCitationOverview,
+                        loading: _qaCitationOverviewLoading,
+                        error: _qaCitationOverviewError,
+                        onRetry: _loadQaCitationOverview,
+                      ),
                     ),
-                    const _MethodologySection(),
+                    KeyedSubtree(
+                      key: _citationJumpKey,
+                      child: _CitationGroundingSection(
+                        overview: _qaCitationOverview,
+                        loading: _qaCitationOverviewLoading,
+                        error: _qaCitationOverviewError,
+                        onRetry: _loadQaCitationOverview,
+                      ),
+                    ),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -417,16 +413,14 @@ String buildEvalRunReportText(EvaluationRunDetail detail) {
 // --- shared small widgets -----------------------------------------------
 
 class _EvalHeader extends StatelessWidget {
-  const _EvalHeader({required this.onRefresh, required this.onRun, required this.running});
+  const _EvalHeader({required this.onRefresh});
 
   final VoidCallback? onRefresh;
-  final VoidCallback? onRun;
-  final bool running;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       child: Wrap(
         spacing: 10,
         runSpacing: 10,
@@ -443,22 +437,60 @@ class _EvalHeader extends StatelessWidget {
             icon: const Icon(Icons.refresh_rounded, size: 18),
             label: const Text('Refresh'),
           ),
-          ElevatedButton.icon(
-            key: const Key('eval-run-button'),
-            onPressed: onRun,
-            icon: running
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Icon(Icons.play_arrow_rounded, size: 18),
-            label: Text(running ? 'Starting...' : 'Run Evaluation'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: DesignTokens.maroon,
-              foregroundColor: Colors.white,
+        ],
+      ),
+    );
+  }
+}
+
+class _EvalJumpNav extends StatelessWidget {
+  const _EvalJumpNav({
+    required this.onOverview,
+    required this.onClassification,
+    required this.onRetrieval,
+    required this.onQa,
+    required this.onCitation,
+  });
+
+  final VoidCallback onOverview;
+  final VoidCallback onClassification;
+  final VoidCallback onRetrieval;
+  final VoidCallback onQa;
+  final VoidCallback onCitation;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = <(String, Key, VoidCallback)>[
+      ('Overview', const Key('eval-jump-overview'), onOverview),
+      ('Classification', const Key('eval-jump-classification'), onClassification),
+      ('Retrieval', const Key('eval-jump-retrieval'), onRetrieval),
+      ('QA · Table 11', const Key('eval-jump-qa'), onQa),
+      ('Citation', const Key('eval-jump-citation'), onCitation),
+    ];
+    return Container(
+      key: const Key('eval-jump-nav'),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: DesignTokens.border)),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final item in items)
+            OutlinedButton(
+              key: item.$2,
+              onPressed: item.$3,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: DesignTokens.ink,
+                side: const BorderSide(color: DesignTokens.border),
+                backgroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                shape: const StadiumBorder(),
+                textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+              ),
+              child: Text(item.$1),
             ),
-          ),
         ],
       ),
     );
@@ -518,11 +550,10 @@ class StatusBadge extends StatelessWidget {
   }
 }
 
-/// Big numbered heading for one of the report's 7 top-level sections.
+/// Section heading for the Model Evaluation report (no section numbers).
 class _ReportSectionHeading extends StatelessWidget {
-  const _ReportSectionHeading({required this.number, required this.title, required this.subtitle, this.sectionKey});
+  const _ReportSectionHeading({required this.title, required this.subtitle, this.sectionKey});
 
-  final int number;
   final String title;
   final String subtitle;
   final Key? sectionKey;
@@ -535,29 +566,9 @@ class _ReportSectionHeading extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(color: DesignTokens.maroon, borderRadius: BorderRadius.circular(8)),
-                child: Text('$number', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15)),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: DesignTokens.ink)),
-                    const SizedBox(height: 2),
-                    Text(subtitle, style: const TextStyle(color: DesignTokens.muted, fontSize: 13, height: 1.35)),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: DesignTokens.ink)),
+          const SizedBox(height: 4),
+          Text(subtitle, style: const TextStyle(color: DesignTokens.muted, fontSize: 13, height: 1.35)),
           const SizedBox(height: 14),
           const Divider(height: 1),
         ],
@@ -604,9 +615,8 @@ class _EvaluationOverviewSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _ReportSectionHeading(
-          number: 1,
-          title: 'Evaluation Overview',
-          subtitle: 'A quick summary of the latest run. Full detail for each area is in the sections below.',
+          title: 'Overview',
+          subtitle: 'Three headline checks. Full detail for each area is in the sections below.',
           sectionKey: Key('eval-section-1-overview'),
         ),
         Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 0), child: body),
@@ -868,8 +878,7 @@ class _ClassificationResultsSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _ReportSectionHeading(
-          number: 2,
-          title: 'Classification Results',
+          title: 'Classification',
           subtitle: 'Summary scores for student questions and handbook passages, plus one selectable confusion matrix.',
           sectionKey: Key('eval-section-2-classification'),
         ),
@@ -911,9 +920,7 @@ class _RetrievalEvaluationSection extends StatelessWidget {
       key: const Key('eval-retrieval-section'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _ReportSectionHeading(
-          number: 3,
-          title: 'Retrieval Evaluation',
+        const _ReportSectionHeading(title: 'Retrieval',
           subtitle: 'Did the chatbot find the right handbook or charter pages for the test questions, embedding-only vs. reranked?',
           sectionKey: Key('eval-section-3-retrieval'),
         ),
@@ -1636,8 +1643,7 @@ class _QaEvaluationSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _ReportSectionHeading(
-          number: 4,
-          title: 'QA Evaluation',
+          title: 'QA · Table 11',
           subtitle:
               'Manuscript Table 11 human-scored answers first; dual-AI 0–4 judging below is supplementary and separate.',
           sectionKey: Key('eval-section-4-qa'),
@@ -1749,8 +1755,7 @@ class _CitationGroundingSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _ReportSectionHeading(
-          number: 5,
-          title: 'Citation and Grounding Evaluation',
+          title: 'Citation',
           subtitle: 'Citation precision, completeness, claim support, and the Stage 3.6-corrected citation validity.',
           sectionKey: Key('eval-section-5-citation'),
         ),
@@ -1986,283 +1991,6 @@ class _FractionMetricCard extends StatelessWidget {
             style: const TextStyle(color: DesignTokens.muted, fontSize: 11),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// --- Methodology ---------------------------------------------------------
-
-/// One methodology topic: a plain-language explanation plus the exact
-/// backend file(s)/line(s) it is drawn from, so every claim here is
-/// traceable to the real implementation rather than a generic description.
-class _MethodologyBlock {
-  const _MethodologyBlock({required this.title, required this.body, required this.citations});
-
-  final String title;
-  final String body;
-  final List<String> citations;
-}
-
-const List<_MethodologyBlock> _kMethodologyBlocks = [
-  _MethodologyBlock(
-    title: 'Dataset and case selection',
-    body:
-        'Cases belong to experiment family "qa_citation_v1" and fall into exactly two types: '
-        'labeled_student_support (ordinary answerable questions) and insufficient_evidence '
-        '(deliberately unanswerable from the corpus). Only student-facing cases are ever loaded as '
-        'live evaluation cases -- faculty-as-audience cases are rejected, and example/placeholder '
-        'artifacts marked example_only or not_an_evaluation_result are never treated as real cases.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_dataset.py:6-10 (module docstring)',
-      'backend/app/services/evaluation/qa_citation_dataset.py:31 (EXPERIMENT_FAMILY)',
-      'backend/app/services/evaluation/qa_citation_dataset.py:35-39 (CASE_TYPES)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'Dataset and corpus version/digests',
-    body:
-        'All QA/citation runs score against one locked, frozen 691-chunk Chroma extract, identified '
-        'by two digests (an identity digest and a metadata-text digest) -- never the dataset JSON\'s '
-        'own sha256, which is a separate, unrelated hash. Every capture and judging run verifies its '
-        'corpus against these two digests before scoring and records the result; the accepted run used '
-        'dataset version 2026-11-09-v1.1.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_dataset.py:12-14 (module docstring)',
-      'backend/app/services/evaluation/qa_citation_dataset.py:51-58 (LOCKED_CORPUS_*, LOCKED_IDENTITY_DIGEST, LOCKED_METADATA_TEXT_DIGEST)',
-      'backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json (the locked extract artifact)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'Classification evaluation method and metrics',
-    body:
-        'Classification (student-question category, handbook-chunk category) is scored with a pure, '
-        'no-I/O multiclass one-vs-rest implementation: accuracy, macro/weighted precision, recall, and '
-        'F1 per class. A class with a zero denominator (never predicted, or never actually present) '
-        'reports 0.0 by explicit convention -- never a fabricated or omitted value.',
-    citations: [
-      'backend/app/services/evaluation/classification_metrics.py:1-5 (module docstring)',
-      'backend/app/services/evaluation/classification_metrics.py:29-40 (ClassificationMetrics)',
-      'backend/app/services/evaluation/classification_metrics.py:43-49 (_safe_divide)',
-      'backend/app/services/evaluation/classification_metrics.py:52 (evaluate_classification)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'Retrieval benchmark and ranking metrics',
-    body:
-        'Retrieval is scored with pure Hit@K, MRR, Precision@K, Recall@K, and nDCG@K functions that take '
-        'already-retrieved ranked id lists plus labeled relevance judgments -- the exact same metric code '
-        'scores both the embedding-only ranking and the post-reranking ranking, so the ablation comparison '
-        'is an apples-to-apples use of one implementation. The 12 human-labeled questions are scored '
-        'against the isolated 691-chunk evaluation Chroma index (source run 131ba7a4-...), never live '
-        'student Chroma.',
-    citations: [
-      'backend/app/services/evaluation/retrieval_metrics.py:1-9 (module docstring)',
-      'backend/app/services/evaluation/retrieval_metrics.py:41-49 (RetrievalMetrics)',
-      'backend/app/services/evaluation/retrieval_metrics.py:52-60 (nDCG@K: DCG@K / IDCG@K)',
-      'backend/app/services/evaluation/labeled_retrieval_overview.py:1-9 (module docstring)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'Actual QA chatbot execution and dual-AI judging procedure',
-    body:
-        'Each case is a real, live chatbot answer capture (not a canned response). Before ordinary QA '
-        'judging, a fail-closed eligibility check requires execution_status == "ok" AND '
-        'is_genuine_model_output is True AND fallback_used is False AND a non-empty generated answer; '
-        'any missing field excludes the case rather than assuming eligibility. Eligible cases are then '
-        'judged by two independent AI judge calls (never a human rater). The combination rule is the '
-        'same everywhere: both judges succeed -> judged; exactly one succeeds -> judging_failed_partial '
-        '(no combined score; the surviving judge is kept for diagnostics only, never presented as the '
-        'result); both fail -> judging_failed_total. There are no automatic retries.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_eligibility.py:101-171 (classify_eligibility)',
-      'backend/app/services/evaluation/qa_citation_metrics.py:119-159 (JUDGING_STATUS_* definitions)',
-      'backend/app/services/evaluation/qa_citation_judging.py:94-108 (JudgeSlotOutcome, JudgingOutcome)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'QA scoring rubric and aggregation',
-    body:
-        'Every judged case is scored on four criteria -- correctness, completeness, relevance, '
-        'faithfulness -- each an integer 0-4. The reported value per criterion is the arithmetic mean '
-        'of the two judges\' scores (never the maximum, never a single judge standing in); "Overall" is '
-        'the mean of the four criteria means. A case is flagged as a judge disagreement when the two '
-        'judges differ by 1 or more on any single criterion. Faithfulness is judged against retrieved/'
-        'displayed evidence, not similarity to a reference answer.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_metrics.py:66-69 (QA_CRITERIA, QA_DISAGREEMENT_THRESHOLD)',
-      'backend/app/services/evaluation/qa_citation_metrics.py:316-352 (aggregate_dual_ai_qa_scores)',
-      'backend/app/services/evaluation/qa_citation_run_report.py:229-314 (_qa_dimension_means, _qa_disagreement, _build_qa_aggregation)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'Citation claim extraction and dual-judge evaluation',
-    body:
-        'Citation-claim judging is a separate two-judge call from QA scoring, with its own failure '
-        'domain, so a malformed QA response never voids an otherwise-good claim extraction or vice '
-        'versa. Each judge independently extracts the answer\'s factual claims, marks which require a '
-        'citation, and assesses each citation-required claim as supported / unsupported / '
-        'not_assessable against the case\'s own displayed citation ids -- never an id the judge invents. '
-        'Both judges\' claim sets are preserved and scored independently; the run-level aggregation sums '
-        'counts across every (case, judge-slot) data point before computing a fraction, rather than '
-        'averaging two already-computed per-case fractions.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_claim_judging.py:1-50 (module docstring)',
-      'backend/app/services/evaluation/qa_citation_metrics.py:6-53 (claim status definitions)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'Citation validity verification and the Stage 3.6 correction',
-    body:
-        'citation_precision is the share of unique displayed citation ids that back at least one claim. '
-        'citation_completeness is the share of citation-required claims that have at least one '
-        'supporting displayed id. claim_support_rate / unsupported_claim_rate are the shares of '
-        'citation-required claims marked supported / unsupported. citation_validity is the share of '
-        'unique displayed citation ids that resolve against the locked 691-chunk extract\'s own chunk-id '
-        'index. A defect found and fixed in Stage 3.6: the original resolver additionally cross-checked '
-        'an unrelated application-level Document-table UUID against the extract\'s own document id -- two '
-        'unrelated identifier namespaces -- which produced a spurious mismatch for every real citation '
-        '(0/86). The fix removed that cross-check; resolution now uses only the locked extract\'s own '
-        'chunk-id lookup. The corrected value (86/86, 100%) was independently verified against the other '
-        'four citation metrics, confirmed byte-identical before and after the fix.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_metrics.py:407-437 (compute_citation_metrics)',
-      'backend/app/services/evaluation/qa_citation_claim_judging.py:353-399 (resolve_citation_validity, Stage 3.6 fix)',
-      'backend/benchmarks/evaluation/qa_citation_runs/qacj_citation_validity_correction_20261110T112506Z/citation_validity_correction.json',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'Treatment of insufficient evidence, fallback outputs, and partial failures',
-    body:
-        'A generation fallback (a safe canned response substituted for a real model answer) is excluded '
-        'from genuine-output scoring entirely -- it is never scored as if it were a real answer. '
-        'insufficient_evidence cases (deliberately unanswerable from the corpus) are scored on a '
-        'separate binary rubric -- correctly_declined vs. unsupported_claim_detected -- not the 0-4 QA '
-        'scale, since "did the chatbot correctly decline" is a different question from "how good was '
-        'the answer." Eligibility exclusions (missing fields, no result, fallback-not-genuine, refusal '
-        'not QA-scored, empty answer) are recorded by reason, never silently dropped. A single '
-        'surviving judge in a judging_failed_partial case is kept only for diagnostics, never reported '
-        'as a result.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_eligibility.py:101-171 (exclusion reasons)',
-      'backend/app/services/evaluation/qa_citation_insufficient_evidence.py (InsufficientEvidenceJudgeAdapter)',
-      'backend/app/services/evaluation/qa_citation_metrics.py:149-158 (JUDGING_STATUS_FAILED_PARTIAL / _TOTAL)',
-    ],
-  ),
-  _MethodologyBlock(
-    title: 'How run-level metrics are aggregated',
-    body:
-        'run_qa_citation_judging() orchestrates all three rubrics (QA, insufficient-evidence, citation-'
-        'claims) for one capture run in a single pass. Classification, retrieval, and QA/citation each '
-        'have their own independent aggregation; this report never recombines numbers across those three '
-        'systems into one blended score. Denominators are always shown alongside every fraction (e.g. '
-        '78/86) so a percentage is never presented without the counts it came from.',
-    citations: [
-      'backend/app/services/evaluation/qa_citation_run_report.py:410 (run_qa_citation_judging)',
-      'backend/app/services/evaluation/qa_citation_metrics.py:182-206 (FractionMetric.from_counts)',
-    ],
-  ),
-];
-
-/// Section 6: "Evaluation Methodology and Computation Process". Static,
-/// hand-written content sourced directly from the backend code and
-/// artifact filenames cited inline -- not a generic description. No
-/// video reference was available to this implementation; this section
-/// follows the written structure of the request instead.
-class _MethodologySection extends StatelessWidget {
-  const _MethodologySection();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const Key('eval-methodology-section'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _ReportSectionHeading(
-          number: 6,
-          title: 'Evaluation Methodology and Computation Process',
-          subtitle: 'How each result above was produced, with the exact backend file/line it comes from.',
-          sectionKey: Key('eval-section-6-methodology'),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                key: const Key('eval-methodology-automated-disclosure'),
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: DesignTokens.border),
-                ),
-                child: const Text(
-                  'QA and citation scores were produced through independent automated '
-                  'model-based assessments. These results are automated evaluations and '
-                  'should not be interpreted as human ratings.',
-                  style: TextStyle(color: DesignTokens.ink, fontSize: 13, height: 1.45, fontWeight: FontWeight.w600),
-                ),
-              ),
-              const SizedBox(height: 16),
-              for (var i = 0; i < _kMethodologyBlocks.length; i++) ...[
-                if (i > 0) const SizedBox(height: 10),
-                _MethodologyPanel(block: _kMethodologyBlocks[i], initiallyExpanded: i == 0),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _MethodologyPanel extends StatelessWidget {
-  const _MethodologyPanel({required this.block, required this.initiallyExpanded});
-
-  final _MethodologyBlock block;
-  final bool initiallyExpanded;
-
-  @override
-  Widget build(BuildContext context) {
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: Container(
-        key: Key('eval-methodology-${block.title}'),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: DesignTokens.border),
-        ),
-        child: ExpansionTile(
-          initiallyExpanded: initiallyExpanded,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          title: Text(
-            block.title,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: DesignTokens.ink),
-          ),
-          children: [
-            Text(block.body, style: const TextStyle(color: DesignTokens.ink, fontSize: 13, height: 1.5)),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                for (final citation in block.citations)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                    decoration: BoxDecoration(color: DesignTokens.bgGrey, borderRadius: BorderRadius.circular(6)),
-                    child: Text(
-                      citation,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: DesignTokens.muted),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }

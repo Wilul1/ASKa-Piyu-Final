@@ -1234,3 +1234,31 @@ class EvaluationCaseResultListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class QaCitationJudgingOverviewResponse(BaseModel):
+    """Read-only Stage 3.2B-3.6 QA/citation-claim judging overview.
+
+    `available=False` with all other fields null/empty is the honest
+    "not computed yet" state; it is never fabricated.
+    """
+
+    available: bool
+    judge_source: str | None = None
+    judges: dict[str, Any] | None = None
+    qa: dict[str, Any] | None = None
+    citation: dict[str, Any] | None = None
+    capture_coverage: dict[str, Any] | None = None
+    source_run_ids: dict[str, str] | None = None
+    limitations: list[str] = Field(default_factory=list)
+
+
+class EvaluationFullReportResponse(BaseModel):
+    """Combined, read-only JSON export for the consolidated Model Evaluation report."""
+
+    generated_at: str
+    latest_run: EvaluationRunDetailSchema | None = None
+    qa_citation_judging: dict[str, Any] | None = None
+    retrieval_provenance: dict[str, Any] | None = None
+    models: list[EvaluationModelInfoSchema] = Field(default_factory=list)
+    scope_notes: list[str] = Field(default_factory=list)

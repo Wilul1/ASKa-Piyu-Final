@@ -6,6 +6,21 @@
 /// constructor parameter lets widget tests inject canned data instead of
 /// making a real HTTP call, following this codebase's existing `debug*`
 /// test-seam convention (see AdminOfficesPage).
+///
+/// Rendered as ONE continuous, scrollable report (no horizontal tabs):
+/// Evaluation Overview -> Classification Results -> Retrieval Evaluation
+/// -> QA Evaluation -> Citation and Grounding Evaluation -> Evaluation
+/// Methodology and Computation Process. Every section reads from the same
+/// already-fetched state this widget loads once; no section triggers its
+/// own extra fetch, and opening the page never runs the chatbot, an LLM,
+/// or the citation verifier.
+///
+/// Provenance/history/raw-results/JSON-export content (formerly a 7th
+/// section) was removed in the dashboard-cleanup pass -- the backend
+/// routes and services it used (`/admin/evaluation/full-report`,
+/// `/models`, `/history`, `/{run_id}`, `/{run_id}/confusion-matrix`) are
+/// intentionally untouched and still live; this screen simply no longer
+/// calls the ones that only fed that removed UI.
 library;
 
 import 'dart:async';
@@ -21,18 +36,6 @@ import '../widgets/sidebar.dart';
 import 'admin_model_evaluation_charts.dart';
 import 'admin_model_evaluation_classification.dart';
 import 'admin_scaffold.dart';
-
-const List<String> _kEvalTabTitles = [
-  'Overview',
-  'Model Inventory',
-  'Component Results',
-  'Comparison',
-  'Confusion Matrices',
-  'Performance',
-  'History',
-];
-
-const int _kHistoryPageSize = 10;
 
 typedef FetchModels = Future<List<EvaluationModelInfo>> Function();
 typedef FetchSummary = Future<EvaluationSummary> Function();
@@ -52,6 +55,8 @@ typedef FetchCaseResults = Future<EvaluationCaseResultsPage> Function({
   required int limit,
   required int offset,
 });
+typedef FetchQaCitationOverview = Future<QaCitationJudgingOverview> Function();
+typedef FetchFullReport = Future<Map<String, dynamic>> Function();
 
 class AdminModelEvaluationPage extends StatefulWidget {
   const AdminModelEvaluationPage({
@@ -63,6 +68,8 @@ class AdminModelEvaluationPage extends StatefulWidget {
     this.debugStartRun,
     this.debugFetchConfusionMatrix,
     this.debugFetchCaseResults,
+    this.debugFetchQaCitationOverview,
+    this.debugFetchFullReport,
   });
 
   @visibleForTesting
@@ -79,43 +86,35 @@ class AdminModelEvaluationPage extends StatefulWidget {
   final FetchConfusionMatrix? debugFetchConfusionMatrix;
   @visibleForTesting
   final FetchCaseResults? debugFetchCaseResults;
+  @visibleForTesting
+  final FetchQaCitationOverview? debugFetchQaCitationOverview;
+  @visibleForTesting
+  final FetchFullReport? debugFetchFullReport;
 
   @override
   State<AdminModelEvaluationPage> createState() => _AdminModelEvaluationPageState();
 }
 
-class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-
+class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage> {
   bool _initialLoading = false;
   bool _requestedInitialLoad = false;
   String? _loadError;
 
-  List<EvaluationModelInfo> _models = const [];
   EvaluationSummary? _summary;
-  EvaluationRunHistoryPage? _history;
-  int _historyOffset = 0;
+  QaCitationJudgingOverview? _qaCitationOverview;
+  String? _qaCitationOverviewError;
+  bool _qaCitationOverviewLoading = false;
 
   String? _selectedRunId;
   EvaluationRunDetail? _selectedRunDetail;
-  bool _loadingRunDetail = false;
-  String? _runDetailError;
   final Map<String, EvaluationConfusionMatrix> _matrixByComponent = {};
 
   bool _startingRun = false;
   Timer? _pollTimer;
 
   @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: _kEvalTabTitles.length, vsync: this);
-  }
-
-  @override
   void dispose() {
     _pollTimer?.cancel();
-    _tabController.dispose();
     super.dispose();
   }
 
@@ -129,22 +128,10 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
     });
   }
 
-  Future<List<EvaluationModelInfo>> _fetchModels() {
-    return widget.debugFetchModels != null
-        ? widget.debugFetchModels!()
-        : eval_api.fetchEvaluationModels(context);
-  }
-
   Future<EvaluationSummary> _fetchSummary() {
     return widget.debugFetchSummary != null
         ? widget.debugFetchSummary!()
         : eval_api.fetchEvaluationSummary(context);
-  }
-
-  Future<EvaluationRunHistoryPage> _fetchHistory({required int limit, required int offset}) {
-    return widget.debugFetchHistory != null
-        ? widget.debugFetchHistory!(limit: limit, offset: offset)
-        : eval_api.fetchEvaluationHistory(context, limit: limit, offset: offset);
   }
 
   Future<EvaluationRunDetail> _fetchRunDetail(String runId) {
@@ -163,16 +150,29 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
         : eval_api.fetchEvaluationConfusionMatrix(context, runId: runId, component: component);
   }
 
-  Future<EvaluationCaseResultsPage> _fetchCaseResults({
-    required String runId,
-    required String componentId,
-    required int limit,
-    required int offset,
-  }) {
-    return widget.debugFetchCaseResults != null
-        ? widget.debugFetchCaseResults!(runId: runId, componentId: componentId, limit: limit, offset: offset)
-        : eval_api.fetchEvaluationCaseResults(
-            context, runId: runId, componentId: componentId, limit: limit, offset: offset);
+  Future<QaCitationJudgingOverview> _fetchQaCitationOverview() {
+    return widget.debugFetchQaCitationOverview != null
+        ? widget.debugFetchQaCitationOverview!()
+        : eval_api.fetchQaCitationJudgingOverview(context);
+  }
+
+  Future<void> _loadQaCitationOverview() async {
+    setState(() {
+      _qaCitationOverviewLoading = true;
+      _qaCitationOverviewError = null;
+    });
+    try {
+      final overview = await _fetchQaCitationOverview();
+      if (!mounted) return;
+      setState(() => _qaCitationOverview = overview);
+    } catch (error) {
+      if (!mounted) return;
+      // Degrade honestly: this section's own load failure never blocks or
+      // fabricates data for the rest of the dashboard.
+      setState(() => _qaCitationOverviewError = friendlyEvalError(error));
+    } finally {
+      if (mounted) setState(() => _qaCitationOverviewLoading = false);
+    }
   }
 
   Future<void> _loadAll() async {
@@ -181,20 +181,16 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
       _loadError = null;
     });
     try {
-      final models = await _fetchModels();
       final summary = await _fetchSummary();
-      final history = await _fetchHistory(limit: _kHistoryPageSize, offset: 0);
       if (!mounted) return;
       setState(() {
-        _models = models;
         _summary = summary;
-        _history = history;
-        _historyOffset = 0;
       });
       final latestId = summary.latestRun?.runId;
       if (latestId != null && latestId.isNotEmpty) {
         await _selectRun(latestId, switchTab: false);
       }
+      unawaited(_loadQaCitationOverview());
     } catch (error) {
       if (!mounted) return;
       setState(() => _loadError = friendlyEvalError(error));
@@ -206,8 +202,6 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
   Future<void> _selectRun(String runId, {bool switchTab = true}) async {
     setState(() {
       _selectedRunId = runId;
-      _loadingRunDetail = true;
-      _runDetailError = null;
       _matrixByComponent.clear();
     });
     try {
@@ -229,7 +223,6 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
     } on TimeoutException {
       if (!mounted) return;
       setState(() {
-        _runDetailError = null;
         _selectedRunDetail ??= EvaluationRunDetail(
           summary: EvaluationRunSummary(
             runId: runId,
@@ -242,13 +235,11 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
       });
       _schedulePoll(runId);
     } catch (error) {
+      // Each section below degrades gracefully on its own (pending/empty
+      // states) when `_selectedRunDetail` stays unset -- this previously
+      // also surfaced via Section 7's "Viewing run" banner, which the
+      // dashboard-cleanup pass removed along with the rest of Section 7.
       if (!mounted) return;
-      setState(() => _runDetailError = friendlyEvalError(error));
-    } finally {
-      if (mounted) setState(() => _loadingRunDetail = false);
-    }
-    if (switchTab && mounted) {
-      _tabController.animateTo(2);
     }
   }
 
@@ -268,17 +259,9 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Evaluation run started.')),
       );
-      final history = await _fetchHistory(limit: _kHistoryPageSize, offset: 0);
-      if (mounted) {
-        setState(() {
-          _history = history;
-          _historyOffset = 0;
-        });
-      }
       if (mounted) {
         setState(() {
           _selectedRunId = runId;
-          _runDetailError = null;
           _selectedRunDetail = EvaluationRunDetail(
             summary: EvaluationRunSummary(
               runId: runId,
@@ -289,7 +272,6 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
             components: const [],
           );
         });
-        _tabController.animateTo(2);
       }
       _schedulePoll(runId);
     } catch (error) {
@@ -299,20 +281,6 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
       );
     } finally {
       if (mounted) setState(() => _startingRun = false);
-    }
-  }
-
-  Future<void> _changeHistoryPage(int offset) async {
-    try {
-      final history = await _fetchHistory(limit: _kHistoryPageSize, offset: offset);
-      if (!mounted) return;
-      setState(() {
-        _history = history;
-        _historyOffset = offset;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyEvalError(error))));
     }
   }
 
@@ -328,23 +296,6 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Evaluation report copied and downloaded.')),
-    );
-  }
-
-  void _openCaseResults(EvaluationComponentResult component) {
-    final runId = _selectedRunId;
-    if (runId == null) return;
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => _CaseResultsDialog(
-        component: component,
-        fetchPage: ({required int limit, required int offset}) => _fetchCaseResults(
-          runId: runId,
-          componentId: component.componentId,
-          limit: limit,
-          offset: offset,
-        ),
-      ),
     );
   }
 
@@ -376,76 +327,44 @@ class _AdminModelEvaluationPageState extends State<AdminModelEvaluationPage>
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                 child: EvalNotice(message: _loadError!, key: const Key('eval-load-error')),
               ),
-            Material(
-              color: Colors.white,
-              child: TabBar(
-                controller: _tabController,
-                isScrollable: true,
-                labelColor: DesignTokens.maroon,
-                unselectedLabelColor: DesignTokens.muted,
-                indicatorColor: DesignTokens.maroon,
-                tabs: [for (final title in _kEvalTabTitles) Tab(text: title)],
-              ),
-            ),
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _OverviewTab(
-                    summary: _summary,
-                    detail: detail,
-                    loading: _initialLoading,
-                    onExport: detail == null ? null : _exportSelectedRun,
-                  ),
-                  _ModelsTab(models: _models, loading: _initialLoading),
-                  _RunScopedTab(
-                    runId: _selectedRunId,
-                    status: detail?.summary.status,
-                    loading: _loadingRunDetail,
-                    error: _runDetailError,
-                    child: _ComponentResultsTab(
-                      components: components,
-                      runStatus: detail?.summary.status,
-                      onViewCases: _openCaseResults,
+              child: SingleChildScrollView(
+                key: const Key('eval-report-scroll'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _EvaluationOverviewSection(
+                      summary: _summary,
+                      detail: detail,
+                      loading: _initialLoading,
+                      onExport: detail == null ? null : _exportSelectedRun,
+                      qaCitationOverview: _qaCitationOverview,
+                      qaCitationOverviewLoading: _qaCitationOverviewLoading,
+                      qaCitationOverviewError: _qaCitationOverviewError,
                     ),
-                  ),
-                  _RunScopedTab(
-                    runId: _selectedRunId,
-                    status: detail?.summary.status,
-                    loading: _loadingRunDetail,
-                    error: _runDetailError,
-                    child: _ComparisonTab(
+                    _ClassificationResultsSection(
                       components: components,
                       matrices: _matrixByComponent,
                       config: detail?.config ?? const {},
                     ),
-                  ),
-                  _RunScopedTab(
-                    runId: _selectedRunId,
-                    status: detail?.summary.status,
-                    loading: _loadingRunDetail,
-                    error: _runDetailError,
-                    child: _ConfusionMatricesTab(
+                    _RetrievalEvaluationSection(components: components),
+                    _QaEvaluationSection(
                       components: components,
-                      matrices: _matrixByComponent,
+                      overview: _qaCitationOverview,
+                      loading: _qaCitationOverviewLoading,
+                      error: _qaCitationOverviewError,
+                      onRetry: _loadQaCitationOverview,
                     ),
-                  ),
-                  _RunScopedTab(
-                    runId: _selectedRunId,
-                    status: detail?.summary.status,
-                    loading: _loadingRunDetail,
-                    error: _runDetailError,
-                    child: _PerformanceTab(components: components),
-                  ),
-                  _HistoryTab(
-                    history: _history,
-                    offset: _historyOffset,
-                    pageSize: _kHistoryPageSize,
-                    selectedRunId: _selectedRunId,
-                    onSelectRun: (runId) => _selectRun(runId),
-                    onChangePage: _changeHistoryPage,
-                  ),
-                ],
+                    _CitationGroundingSection(
+                      overview: _qaCitationOverview,
+                      loading: _qaCitationOverviewLoading,
+                      error: _qaCitationOverviewError,
+                      onRetry: _loadQaCitationOverview,
+                    ),
+                    const _MethodologySection(),
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
             ),
           ],
@@ -584,7 +503,7 @@ class StatusBadge extends StatelessWidget {
       'completed' => (const Color(0xFFDCFCE7), const Color(0xFF166534), 'Completed'),
       'not_evaluable' => (const Color(0xFFF3F4F6), const Color(0xFF4B5563), 'Not evaluable'),
       'failed' => (const Color(0xFFFEE2E2), const Color(0xFFB91C1C), 'Failed'),
-      'running' => (const Color(0xFFDBEAFE), const Color(0xFF1D4ED8), 'Running'),
+      'running' => (DesignTokens.maroonWash, DesignTokens.maroon, 'Running'),
       'pending' => (const Color(0xFFF3F4F6), const Color(0xFF4B5563), 'Pending Evaluation'),
       _ => (const Color(0xFFF3F4F6), const Color(0xFF4B5563), status),
     };
@@ -599,117 +518,105 @@ class StatusBadge extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.icon, required this.title, required this.description});
+/// Big numbered heading for one of the report's 7 top-level sections.
+class _ReportSectionHeading extends StatelessWidget {
+  const _ReportSectionHeading({required this.number, required this.title, required this.subtitle, this.sectionKey});
 
-  final IconData icon;
+  final int number;
   final String title;
-  final String description;
+  final String subtitle;
+  final Key? sectionKey;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 40, color: DesignTokens.muted),
-            const SizedBox(height: 12),
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: DesignTokens.ink)),
-            const SizedBox(height: 6),
-            Text(
-              description,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: DesignTokens.muted, fontSize: 13),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Wraps a tab's content with the loading/error/"no run selected" states
-/// shared by every tab that depends on `_selectedRunDetail`.
-class _RunScopedTab extends StatelessWidget {
-  const _RunScopedTab({
-    required this.runId,
-    required this.status,
-    required this.loading,
-    required this.error,
-    required this.child,
-  });
-
-  final String? runId;
-  final String? status;
-  final bool loading;
-  final String? error;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    if (loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (error != null) {
-      return Padding(padding: const EdgeInsets.all(20), child: EvalNotice(message: error!));
-    }
-    if (runId == null) {
-      return const _EmptyState(
-        icon: Icons.science_outlined,
-        title: 'No evaluation run yet',
-        description: 'Run an evaluation, or pick one from History, to see results here.',
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          key: const Key('eval-viewing-run-banner'),
-          color: DesignTokens.bgGrey,
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          child: Row(
+    return Padding(
+      key: sectionKey,
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Viewing run: ', style: TextStyle(color: DesignTokens.muted, fontSize: 12, fontWeight: FontWeight.w700)),
-              Text(runId!, style: const TextStyle(color: DesignTokens.ink, fontSize: 12, fontWeight: FontWeight.w800)),
-              const SizedBox(width: 8),
-              if (status != null) StatusBadge(status: status!),
+              Container(
+                width: 32,
+                height: 32,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: DesignTokens.maroon, borderRadius: BorderRadius.circular(8)),
+                child: Text('$number', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: DesignTokens.ink)),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: const TextStyle(color: DesignTokens.muted, fontSize: 13, height: 1.35)),
+                  ],
+                ),
+              ),
             ],
           ),
-        ),
-        Expanded(child: child),
-      ],
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+        ],
+      ),
     );
   }
 }
 
 // --- Overview -------------------------------------------------------------
 
-class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({
+/// Section 1: "Evaluation Overview". A short at-a-glance summary only --
+/// the full Classification/Retrieval/QA/Citation panels live in their own
+/// numbered sections below (2-5); this section never duplicates their
+/// detail, only teases it.
+class _EvaluationOverviewSection extends StatelessWidget {
+  const _EvaluationOverviewSection({
     required this.summary,
     required this.detail,
     required this.loading,
     required this.onExport,
+    required this.qaCitationOverview,
+    required this.qaCitationOverviewLoading,
+    required this.qaCitationOverviewError,
   });
 
   final EvaluationSummary? summary;
   final EvaluationRunDetail? detail;
   final bool loading;
   final VoidCallback? onExport;
+  final QaCitationJudgingOverview? qaCitationOverview;
+  final bool qaCitationOverviewLoading;
+  final String? qaCitationOverviewError;
 
   @override
   Widget build(BuildContext context) {
-    if (loading && summary == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final body = loading && summary == null
+        ? const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        : _buildContent(context);
+    return Column(
+      key: const Key('eval-overview-section'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _ReportSectionHeading(
+          number: 1,
+          title: 'Evaluation Overview',
+          subtitle: 'A quick summary of the latest run. Full detail for each area is in the sections below.',
+          sectionKey: Key('eval-section-1-overview'),
+        ),
+        Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 0), child: body),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     final latest = detail?.summary ?? summary?.latestRun;
     final components = detail?.components ?? summary?.components ?? const [];
-    final evaluated = components.where((c) => c.status == 'evaluated').length;
-    final notEvaluable = components.where((c) => c.status == 'not_evaluable').length;
-    final failed = components.where((c) => c.status == 'failed').length;
-    final config = detail?.config ?? const {};
     final retrieval = _byName(components, 'reranker') ?? _byName(components, 'embedding_retrieval');
     final hit = retrieval?.metric('reranked_hit_at_k') ?? retrieval?.metric('embedding_hit_at_k');
     final mrr = retrieval?.metric('reranked_mrr') ?? retrieval?.metric('embedding_mrr');
@@ -729,94 +636,345 @@ class _OverviewTab extends StatelessWidget {
     final answerCorrectness = (answer?.status == 'evaluated' ? answer?.metric('answer_correctness') : null) ??
         (verifier?.status == 'evaluated' ? verifier?.metric('answer_correctness') : null);
 
-    return SingleChildScrollView(
-      key: const Key('eval-overview-tab'),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (latest != null)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                StatusBadge(status: latest.status),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text(
-                        'Latest evaluation at a glance',
-                        style: TextStyle(
-                          color: DesignTokens.ink,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (latest != null)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 480;
+              final badgeAndText = Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  StatusBadge(status: latest.status),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text(
+                          'Latest evaluation at a glance',
+                          style: TextStyle(
+                            color: DesignTokens.ink,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
-                      ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Three checks: did we find the right pages, tag the right categories, and score generated answers?',
-                        style: TextStyle(color: DesignTokens.muted, fontSize: 13, height: 1.35),
-                      ),
-                    ],
+                        SizedBox(height: 2),
+                        Text(
+                          'Three checks: did we find the right pages, tag the right categories, and score generated answers?',
+                          style: TextStyle(color: DesignTokens.muted, fontSize: 13, height: 1.35),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (onExport != null && !narrow)
+                    OutlinedButton.icon(
+                      key: const Key('eval-export-button'),
+                      onPressed: onExport,
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: const Text('Export report'),
+                    ),
+                ],
+              );
+              if (!narrow || onExport == null) return badgeAndText;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  badgeAndText,
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      key: const Key('eval-export-button'),
+                      onPressed: onExport,
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: const Text('Export report'),
+                    ),
+                  ),
+                ],
+              );
+            },
+          )
+        else
+          const Text(
+            'No evaluation has been run yet. Metric cards stay pending until a run completes.',
+            style: TextStyle(color: DesignTokens.muted, fontSize: 13),
+          ),
+        const SizedBox(height: 16),
+        _AtAGlanceRow(
+          retrievalHit: retrievalEvaluated ? hit : null,
+          classificationAccuracy: questionAccuracy,
+          answersScored: ragScored,
+          answerCorrectness: answerCorrectness,
+        ),
+        const SizedBox(height: 20),
+        _QaCitationOverviewSummary(
+          overview: qaCitationOverview,
+          loading: qaCitationOverviewLoading,
+          error: qaCitationOverviewError,
+        ),
+        if (latest?.status == 'failed' && latest?.errorMessage != null) ...[
+          const SizedBox(height: 16),
+          EvalNotice(message: latest!.errorMessage!),
+        ],
+      ],
+    );
+  }
+}
+
+/// Concise Overview-section summary of the Stage 3.2B-3.6 QA/citation
+/// judging results. Reuses the same already-fetched `QaCitationJudgingOverview`
+/// object Sections 4 ("QA Evaluation") and 5 ("Citation and Grounding
+/// Evaluation") render in full -- no second fetch, no duplicated backend
+/// call, no hardcoded metric values. Degrades honestly (loading/error/
+/// empty) exactly like those sections do, independent of the rest of
+/// Overview's own loading state, since this data loads separately.
+class _QaCitationOverviewSummary extends StatelessWidget {
+  const _QaCitationOverviewSummary({
+    required this.overview,
+    required this.loading,
+    required this.error,
+  });
+
+  final QaCitationJudgingOverview? overview;
+  final bool loading;
+  final String? error;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading && overview == null && error == null) {
+      return const Padding(
+        key: Key('eval-overview-qa-citation-loading'),
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 10),
+            Text('Loading QA and citation judging summary...',
+                style: TextStyle(color: DesignTokens.muted, fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    if (error != null && overview == null) {
+      return EvalNotice(
+        key: const Key('eval-overview-qa-citation-error'),
+        message: 'QA and citation summary unavailable: $error',
+      );
+    }
+    final data = overview;
+    if (data == null || !data.available) {
+      return const _PendingCallout(
+        key: Key('eval-overview-qa-citation-empty'),
+        title: 'QA and citation judging results are not available',
+        body: 'See "QA Evaluation" and "Citation and Grounding Evaluation" below once the Stage 3.2B-3.6 artifacts are available.',
+      );
+    }
+
+    return Column(
+      key: const Key('eval-overview-qa-citation-summary'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _OverviewSectionHeader(
+          title: 'QA & Citation',
+          titleKey: const Key('eval-overview-qa-citation-title'),
+          status: 'evaluated',
+          subtitle: 'Full breakdown, disagreement, and limitations are in "QA Evaluation" and "Citation and Grounding Evaluation" below.',
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = constraints.maxWidth >= 900 ? 6 : constraints.maxWidth >= 560 ? 3 : 1;
+            const gap = 12.0;
+            final width = constraints.maxWidth;
+            final cardWidth = columns == 1 ? width : (width - gap * (columns - 1)) / columns;
+            return Wrap(
+              spacing: gap,
+              runSpacing: gap,
+              children: [
+                SizedBox(
+                  width: cardWidth,
+                  child: _ScaleMetricCard(
+                    cardKey: const Key('eval-overview-qa-overall'),
+                    title: 'QA Overall',
+                    value: data.qaOverall,
+                    scaleMax: 4,
                   ),
                 ),
-                if (onExport != null)
-                  OutlinedButton.icon(
-                    key: const Key('eval-export-button'),
-                    onPressed: onExport,
-                    icon: const Icon(Icons.download_rounded, size: 18),
-                    label: const Text('Export report'),
+                SizedBox(
+                  width: cardWidth,
+                  child: _FractionMetricCard(
+                    cardKey: const Key('eval-overview-citation-precision'),
+                    title: 'Citation Precision',
+                    fraction: data.citationPrecision,
                   ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: _FractionMetricCard(
+                    cardKey: const Key('eval-overview-citation-completeness'),
+                    title: 'Citation Completeness',
+                    fraction: data.citationCompleteness,
+                  ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: _FractionMetricCard(
+                    cardKey: const Key('eval-overview-citation-validity'),
+                    title: 'Citation Validity (corrected)',
+                    fraction: data.citationValidityCorrected,
+                    highlight: true,
+                  ),
+                ),
               ],
-            )
-          else
-            const Text(
-              'No evaluation has been run yet. Metric cards stay pending until a run completes.',
-              style: TextStyle(color: DesignTokens.muted, fontSize: 13),
-            ),
-          const SizedBox(height: 16),
-          _AtAGlanceRow(
-            retrievalHit: retrievalEvaluated ? hit : null,
-            retrievalIsSnapshot: _isSavedRetrievalSnapshot(retrieval),
-            classificationAccuracy: questionAccuracy,
-            answersScored: ragScored,
-            answerCorrectness: answerCorrectness,
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        Text(
+          key: const Key('eval-overview-qa-citation-counts'),
+          'QA: ${data.qaJudgedCount ?? 0} fully judged answerable cases.  '
+          'Citation: ${data.citationJudgedCaseCount ?? 0} fully judged cases, '
+          '${data.citationJudgingFailedPartialCount ?? 0} partial judging failure(s).',
+          style: const TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.4),
+        ),
+      ],
+    );
+  }
+}
+
+/// Section 2: "Classification Results". Consolidates the former
+/// "Comparison" tab's classification half and the former "Confusion
+/// Matrices" tab's classify_question/classify_chunk matrices --
+/// [ClassificationClassifierSections] already renders each classifier's
+/// confusion matrix inline (admin_model_evaluation_classification.dart),
+/// so no separate matrix listing is needed here.
+class _ClassificationResultsSection extends StatelessWidget {
+  const _ClassificationResultsSection({
+    required this.components,
+    required this.matrices,
+    required this.config,
+  });
+
+  final List<EvaluationComponentResult> components;
+  final Map<String, EvaluationConfusionMatrix> matrices;
+  final Map<String, dynamic> config;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('eval-classification-section'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _ReportSectionHeading(
+          number: 2,
+          title: 'Classification Results',
+          subtitle: 'Did the system assign the right category to student questions and handbook passages, including confusion matrices per classifier?',
+          sectionKey: Key('eval-section-2-classification'),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClassificationOverviewSection(components: components, config: config, title: 'Classification Evaluation'),
+              const SizedBox(height: 16),
+              ClassificationClassifierSections(components: components, matrices: matrices),
+            ],
           ),
-          const SizedBox(height: 20),
-          _RetrievalOverviewPanel(
-            retrieval: retrieval,
-            embedding: _byName(components, 'embedding_retrieval'),
-            hit: hit,
-            mrr: mrr,
-            ndcg: ndcg,
-            evaluated: retrievalEvaluated,
+        ),
+      ],
+    );
+  }
+}
+
+/// Section 3: "Retrieval Evaluation". Consolidates the former Overview
+/// tab's retrieval panel plus the former "Comparison" tab's
+/// embedding-vs-reranked retrieval comparator and bar chart.
+class _RetrievalEvaluationSection extends StatelessWidget {
+  const _RetrievalEvaluationSection({required this.components});
+
+  final List<EvaluationComponentResult> components;
+
+  @override
+  Widget build(BuildContext context) {
+    final reranker = _byName(components, 'reranker');
+    final embedding = _byName(components, 'embedding_retrieval');
+    final retrieval = reranker ?? embedding;
+    final hit = retrieval?.metric('reranked_hit_at_k') ?? retrieval?.metric('embedding_hit_at_k');
+    final mrr = retrieval?.metric('reranked_mrr') ?? retrieval?.metric('embedding_mrr');
+    final ndcg = retrieval?.metric('reranked_ndcg_at_k') ?? retrieval?.metric('embedding_ndcg_at_k');
+    final retrievalEvaluated = hit != null || mrr != null || ndcg != null;
+
+    return Column(
+      key: const Key('eval-retrieval-section'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _ReportSectionHeading(
+          number: 3,
+          title: 'Retrieval Evaluation',
+          subtitle: 'Did the chatbot find the right handbook or charter pages for the test questions, embedding-only vs. reranked?',
+          sectionKey: Key('eval-section-3-retrieval'),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _RetrievalOverviewPanel(
+                retrieval: retrieval,
+                embedding: embedding,
+                hit: hit,
+                mrr: mrr,
+                ndcg: ndcg,
+                evaluated: retrievalEvaluated,
+              ),
+              const SizedBox(height: 16),
+              EvalComparatorTable(
+                title: 'Retrieval comparator',
+                subtitle: 'Same 12 labeled queries, same isolated evaluation corpus. Bars are the metric values (0-1).',
+                rows: [
+                  EvalComparatorRow(
+                    label: 'Embedding-only',
+                    metrics: [
+                      EvalComparatorMetric(name: 'Hit@K', value: reranker?.metric('embedding_hit_at_k') ?? embedding?.metric('embedding_hit_at_k')),
+                      EvalComparatorMetric(name: 'MRR', value: reranker?.metric('embedding_mrr') ?? embedding?.metric('embedding_mrr')),
+                      EvalComparatorMetric(name: 'nDCG@K', value: reranker?.metric('embedding_ndcg_at_k') ?? embedding?.metric('embedding_ndcg_at_k')),
+                      EvalComparatorMetric(name: 'Precision@K', value: reranker?.metric('embedding_precision_at_k') ?? embedding?.metric('embedding_precision_at_k')),
+                      EvalComparatorMetric(name: 'Recall@K', value: reranker?.metric('embedding_recall_at_k') ?? embedding?.metric('embedding_recall_at_k')),
+                    ],
+                  ),
+                  EvalComparatorRow(
+                    label: 'Reranked',
+                    metrics: [
+                      EvalComparatorMetric(name: 'Hit@K', value: reranker?.metric('reranked_hit_at_k')),
+                      EvalComparatorMetric(name: 'MRR', value: reranker?.metric('reranked_mrr')),
+                      EvalComparatorMetric(name: 'nDCG@K', value: reranker?.metric('reranked_ndcg_at_k')),
+                      EvalComparatorMetric(name: 'Precision@K', value: reranker?.metric('reranked_precision_at_k')),
+                      EvalComparatorMetric(name: 'Recall@K', value: reranker?.metric('reranked_recall_at_k')),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              EvalBarChartCard(
+                title: 'Retrieval: embedding-only vs reranked',
+                subtitle: 'Same queries/labels for both rankings -- the delta is the reranker\'s measured contribution',
+                bars: [
+                  EvalBarEntry(label: 'Hit@K\n(embed)', value: reranker?.metric('embedding_hit_at_k'), color: DesignTokens.maroonSoft),
+                  EvalBarEntry(label: 'Hit@K\n(reranked)', value: reranker?.metric('reranked_hit_at_k'), color: DesignTokens.maroon),
+                  EvalBarEntry(label: 'MRR\n(embed)', value: reranker?.metric('embedding_mrr'), color: DesignTokens.maroonSoft),
+                  EvalBarEntry(label: 'MRR\n(reranked)', value: reranker?.metric('reranked_mrr'), color: DesignTokens.maroon),
+                  EvalBarEntry(label: 'nDCG@K\n(embed)', value: reranker?.metric('embedding_ndcg_at_k'), color: DesignTokens.maroonSoft),
+                  EvalBarEntry(label: 'nDCG@K\n(reranked)', value: reranker?.metric('reranked_ndcg_at_k'), color: DesignTokens.maroon),
+                ],
+                maxY: 1.0,
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          ClassificationOverviewSection(
-            components: components,
-            config: config,
-            title: 'Classification Evaluation',
-          ),
-          const SizedBox(height: 16),
-          _AnswerGenerationOverviewSection(components: components),
-          if (latest?.status == 'failed' && latest?.errorMessage != null) ...[
-            const SizedBox(height: 16),
-            EvalNotice(message: latest!.errorMessage!),
-          ],
-          if (latest != null) ...[
-            const SizedBox(height: 16),
-            _RunDetailsPanel(
-              evaluated: evaluated,
-              notEvaluable: notEvaluable,
-              failed: failed,
-              startedAt: latest.startedAt,
-              completedAt: latest.completedAt,
-              config: config,
-            ),
-          ],
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -826,29 +984,15 @@ String _percentLabel(double? value) {
   return '${(value * 100).toStringAsFixed(2)}%';
 }
 
-bool _isSavedRetrievalSnapshot(EvaluationComponentResult? retrieval) {
-  if (retrieval == null) return false;
-  for (final name in ['reranked_hit_at_k', 'embedding_hit_at_k']) {
-    final extra = retrieval.metricRow(name)?.extra;
-    if (extra is Map && (extra['not_live_chroma'] == true || extra['durable_overview_overlay'] == true)) {
-      return true;
-    }
-  }
-  final note = retrieval.note ?? '';
-  return note.contains('Not a live') || note.contains('isolated 691-chunk');
-}
-
 class _AtAGlanceRow extends StatelessWidget {
   const _AtAGlanceRow({
     required this.retrievalHit,
-    required this.retrievalIsSnapshot,
     required this.classificationAccuracy,
     required this.answersScored,
     this.answerCorrectness,
   });
 
   final double? retrievalHit;
-  final bool retrievalIsSnapshot;
   final double? classificationAccuracy;
   final bool answersScored;
   final double? answerCorrectness;
@@ -866,12 +1010,10 @@ class _AtAGlanceRow extends StatelessWidget {
             value: _percentLabel(retrievalHit),
             detail: retrievalHit == null
                 ? 'Not scored yet'
-                : (retrievalIsSnapshot
-                    ? 'Saved 12-question benchmark snapshot — not live Heroku retrieval'
-                    : 'Found a relevant page in the top 5'),
+                : 'Found a relevant page in the top 5',
           ),
           _glanceCard(
-            color: const Color(0xFF1D4ED8),
+            color: DesignTokens.maroon,
             icon: Icons.category_outlined,
             label: 'Category tagging',
             value: _percentLabel(classificationAccuracy),
@@ -1015,13 +1157,11 @@ class _RetrievalOverviewPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _OverviewSectionHeader(
-            title: 'Retrieval Evaluation',
+            title: 'Retrieval Metrics',
             titleKey: const Key('eval-retrieval-overview-title'),
             statusKey: const Key('eval-retrieval-overview-status'),
             status: evaluated ? 'evaluated' : 'pending',
-            subtitle: evaluated && _isSavedRetrievalSnapshot(retrieval)
-                ? 'Saved benchmark snapshot from isolated evaluation corpus run 131ba7a4. Not a live Heroku / production Chroma score.'
-                : 'Did the chatbot find the right handbook or charter pages for the test questions?',
+            subtitle: 'Did the chatbot find the right handbook or charter pages for the test questions?',
           ),
           const SizedBox(height: 16),
           if (!evaluated)
@@ -1103,7 +1243,7 @@ class _RetrievalQuestionBreakdown extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Saved benchmark hits for the 12 labeled questions. Embedding-only vs reranked. Not live Heroku retrieval.',
+          'Hit = a relevant page was in the top 5. Embedding-only vs reranked use the same 12 labeled questions.',
           style: TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.35),
         ),
         const SizedBox(height: 12),
@@ -1180,83 +1320,6 @@ class _RetrievalHitChip extends StatelessWidget {
       child: Text(
         '$title · $label',
         style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-}
-
-class _RunDetailsPanel extends StatelessWidget {
-  const _RunDetailsPanel({
-    required this.evaluated,
-    required this.notEvaluable,
-    required this.failed,
-    required this.startedAt,
-    required this.completedAt,
-    required this.config,
-  });
-
-  final int evaluated;
-  final int notEvaluable;
-  final int failed;
-  final String startedAt;
-  final String? completedAt;
-  final Map<String, dynamic> config;
-
-  @override
-  Widget build(BuildContext context) {
-    final versions = config['dataset_versions'];
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: DesignTokens.border),
-        ),
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          title: const Text(
-            'Run details',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: DesignTokens.ink),
-          ),
-          subtitle: Text(
-            'Models, timestamps, and dataset versions  ·  $evaluated scored, $notEvaluable not ready, $failed failed',
-            style: const TextStyle(color: DesignTokens.muted, fontSize: 12),
-          ),
-          children: [
-            _StatGrid(
-              columns: 2,
-              stats: [
-                ('Evaluated components', '$evaluated', null),
-                ('Not evaluable', '$notEvaluable', null),
-                ('Failed components', '$failed', null),
-                ('Started', _formatTimestamp(startedAt), null),
-                ('Completed', completedAt == null ? '—' : _formatTimestamp(completedAt!), null),
-                if (config['groq_model'] != null) ('Answer-generation model', '${config['groq_model']}', 'Environment'),
-                if (config['embedding_model_label'] != null)
-                  ('Embedding model', '${config['embedding_model_label']}', 'Environment'),
-                if (config['app_commit'] != null) ('App commit', '${config['app_commit']}', 'Provenance'),
-              ],
-            ),
-            if (versions is Map) ...[
-              const SizedBox(height: 8),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Dataset versions', style: TextStyle(fontWeight: FontWeight.w800, color: DesignTokens.ink)),
-              ),
-              const SizedBox(height: 6),
-              for (final entry in versions.entries)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '${entry.key}: ${entry.value}',
-                    style: const TextStyle(color: DesignTokens.muted, fontSize: 13),
-                  ),
-                ),
-            ],
-          ],
-        ),
       ),
     );
   }
@@ -1626,7 +1689,7 @@ String _metricOrDash(double? value) {
 }
 
 class _PendingCallout extends StatelessWidget {
-  const _PendingCallout({required this.title, required this.body});
+  const _PendingCallout({super.key, required this.title, required this.body});
 
   final String title;
   final String body;
@@ -1741,281 +1804,7 @@ class _CompactStatRow extends StatelessWidget {
   }
 }
 
-String _formatTimestamp(String iso) {
-  final parsed = DateTime.tryParse(iso);
-  if (parsed == null) return iso;
-  final local = parsed.toLocal();
-  String two(int v) => v.toString().padLeft(2, '0');
-  return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
-}
-
-class _StatGrid extends StatelessWidget {
-  const _StatGrid({required this.columns, required this.stats});
-
-  final int columns;
-  final List<(String, String, String?)> stats;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const gap = 12.0;
-        final width = constraints.maxWidth;
-        final cardWidth = columns == 1 ? width : (width - gap * (columns - 1)) / columns;
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final stat in stats)
-              SizedBox(
-                width: cardWidth,
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: DesignTokens.border),
-                    boxShadow: DesignTokens.softShadow(),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(stat.$1, style: const TextStyle(color: DesignTokens.muted, fontSize: 11, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 8),
-                      Text(
-                        stat.$2,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: DesignTokens.ink, fontSize: 22, fontWeight: FontWeight.w900),
-                      ),
-                      if (stat.$3 != null) ...[
-                        const SizedBox(height: 6),
-                        Text(stat.$3!, style: const TextStyle(color: DesignTokens.muted, fontSize: 11)),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// --- Model Inventory --------------------------------------------------------
-
-class _ModelsTab extends StatelessWidget {
-  const _ModelsTab({required this.models, required this.loading});
-
-  final List<EvaluationModelInfo> models;
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    if (loading && models.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (models.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.memory_rounded,
-        title: 'No components configured',
-        description: 'The evaluation system has no known AI components yet.',
-      );
-    }
-    return ListView.separated(
-      key: const Key('eval-models-tab'),
-      padding: const EdgeInsets.all(20),
-      itemCount: models.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final model = models[index];
-        return Container(
-          key: Key('eval-model-${model.component}'),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: DesignTokens.border),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(model.component, style: const TextStyle(fontWeight: FontWeight.w800, color: DesignTokens.ink)),
-                    const SizedBox(height: 4),
-                    Text(model.modelName, style: const TextStyle(color: DesignTokens.muted, fontSize: 13)),
-                  ],
-                ),
-              ),
-              Wrap(
-                spacing: 6,
-                children: [
-                  if (model.sharesModelWith != null)
-                    _InfoChip(text: 'shares model with ${model.sharesModelWith}'),
-                  if (model.allowLlmFallback != null)
-                    _InfoChip(text: model.allowLlmFallback! ? 'LLM fallback enabled' : 'LLM fallback disabled'),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: DesignTokens.bgGrey, borderRadius: BorderRadius.circular(8)),
-      child: Text(text, style: const TextStyle(fontSize: 11, color: DesignTokens.muted, fontWeight: FontWeight.w600)),
-    );
-  }
-}
-
-// --- Component Results ------------------------------------------------------
-
-class _ComponentResultsTab extends StatelessWidget {
-  const _ComponentResultsTab({
-    required this.components,
-    required this.onViewCases,
-    this.runStatus,
-  });
-
-  final List<EvaluationComponentResult> components;
-  final ValueChanged<EvaluationComponentResult> onViewCases;
-  final String? runStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    if (components.isEmpty) {
-      if (runStatus == 'running') {
-        return const _EmptyState(
-          icon: Icons.hourglass_top_rounded,
-          title: 'Evaluation is still running',
-          description:
-              'Metrics and graphs appear when the 12 retrieval queries finish. Keep this tab open; Refresh if it still says Running after a couple of minutes.',
-        );
-      }
-      return const _EmptyState(
-        icon: Icons.fact_check_outlined,
-        title: 'No component results',
-        description: 'This run has no component results to show.',
-      );
-    }
-    return ListView.separated(
-      key: const Key('eval-results-tab'),
-      padding: const EdgeInsets.all(20),
-      itemCount: components.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, index) {
-        final component = components[index];
-        return Container(
-          key: Key('eval-result-${component.component}'),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: DesignTokens.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(component.component, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: DesignTokens.ink)),
-                  ),
-                  StatusBadge(status: component.status),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '${component.modelName}'
-                '${component.sharesModelWith != null ? " · shares model with ${component.sharesModelWith}" : ""}',
-                style: const TextStyle(color: DesignTokens.muted, fontSize: 12),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Cases used: ${component.caseCount} · Unlabeled excluded: ${component.skippedUnlabeledCount}',
-                style: const TextStyle(color: DesignTokens.muted, fontSize: 12),
-              ),
-              if (component.reason != null) ...[
-                const SizedBox(height: 6),
-                Text(component.reason!, style: const TextStyle(color: Color(0xFF9A5B13), fontSize: 12)),
-              ],
-              if (component.note != null) ...[
-                const SizedBox(height: 4),
-                Text(component.note!, style: const TextStyle(color: DesignTokens.muted, fontSize: 12, fontStyle: FontStyle.italic)),
-              ],
-              if (component.metrics.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 16,
-                  runSpacing: 6,
-                  children: [
-                    for (final metric in component.metrics)
-                      _MetricPill(name: metric.metricName, value: metric.metricValue),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  key: Key('eval-view-cases-${component.component}'),
-                  onPressed: component.caseCount == 0 ? null : () => onViewCases(component),
-                  child: const Text('View case-level results'),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _MetricPill extends StatelessWidget {
-  const _MetricPill({required this.name, required this.value});
-
-  final String name;
-  final double? value;
-
-  @override
-  Widget build(BuildContext context) {
-    final v = value;
-    final display = v == null ? 'N/A' : v.toStringAsFixed(v == v.roundToDouble() ? 0 : 4);
-    return RichText(
-      text: TextSpan(
-        children: [
-          TextSpan(text: '$name: ', style: const TextStyle(color: DesignTokens.muted, fontSize: 12, fontWeight: FontWeight.w600)),
-          TextSpan(
-            text: display,
-            style: TextStyle(
-              color: value == null ? DesignTokens.muted : DesignTokens.ink,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              fontStyle: value == null ? FontStyle.italic : FontStyle.normal,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// --- Comparison -------------------------------------------------------------
+// --- shared lookup -----------------------------------------------------------
 
 EvaluationComponentResult? _byName(List<EvaluationComponentResult> components, String name) {
   for (final c in components) {
@@ -2024,438 +1813,706 @@ EvaluationComponentResult? _byName(List<EvaluationComponentResult> components, S
   return null;
 }
 
-class _ComparisonTab extends StatelessWidget {
-  const _ComparisonTab({
+/// Shared loading/error/empty gate for the two Stage 3.2B-3.6 AI-judge
+/// sections (QA Evaluation, Citation and Grounding Evaluation) -- both
+/// read the same `QaCitationJudgingOverview` object and must degrade
+/// identically and independently of each other.
+Widget _qaJudgingGate({
+  required QaCitationJudgingOverview? overview,
+  required bool loading,
+  required String? error,
+  required VoidCallback onRetry,
+  required Key loadingKey,
+  required Key errorKey,
+  required Key retryKey,
+  required Key emptyKey,
+  required String emptyBody,
+  required Widget Function(QaCitationJudgingOverview data) builder,
+}) {
+  if (loading && overview == null && error == null) {
+    return Padding(
+      key: loadingKey,
+      padding: const EdgeInsets.all(20),
+      child: const Center(child: CircularProgressIndicator()),
+    );
+  }
+  if (error != null && overview == null) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        EvalNotice(message: error, key: errorKey),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          key: retryKey,
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Retry'),
+        ),
+      ],
+    );
+  }
+  final data = overview;
+  if (data == null || !data.available) {
+    return _PendingCallout(
+      key: emptyKey,
+      title: 'QA and citation judging results are not available',
+      body: emptyBody,
+    );
+  }
+  return builder(data);
+}
+
+/// Section 4: "QA Evaluation". Two methodologically distinct measurements,
+/// clearly labeled apart: the human-graded 0-1 RAG overview
+/// ([_AnswerGenerationOverviewSection]) and the Stage 3.2B-3.6 dual-AI,
+/// 0-4-scale QA judging below it -- never blended into one number.
+class _QaEvaluationSection extends StatelessWidget {
+  const _QaEvaluationSection({
     required this.components,
-    required this.matrices,
-    this.config = const {},
+    required this.overview,
+    required this.loading,
+    required this.error,
+    required this.onRetry,
   });
 
   final List<EvaluationComponentResult> components;
-  final Map<String, EvaluationConfusionMatrix> matrices;
-  final Map<String, dynamic> config;
+  final QaCitationJudgingOverview? overview;
+  final bool loading;
+  final String? error;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    final reranker = _byName(components, 'reranker');
-    final embedding = _byName(components, 'embedding_retrieval');
+    return Column(
+      key: const Key('eval-qa-section'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _ReportSectionHeading(
+          number: 4,
+          title: 'QA Evaluation',
+          subtitle: 'Human-graded live chatbot answers, plus automated correctness/completeness/relevance/faithfulness scoring.',
+          sectionKey: Key('eval-section-4-qa'),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _AnswerGenerationOverviewSection(components: components),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              _qaJudgingGate(
+                overview: overview,
+                loading: loading,
+                error: error,
+                onRetry: onRetry,
+                loadingKey: const Key('eval-qa-judging-loading'),
+                errorKey: const Key('eval-qa-judging-error'),
+                retryKey: const Key('eval-qa-judging-retry'),
+                emptyKey: const Key('eval-qa-judging-empty'),
+                emptyBody:
+                    'The Stage 3.2B-3.6 QA judging artifacts have not been produced yet, or one of them is currently unreadable. This does not mean the chatbot failed -- these results simply have not been computed.',
+                builder: (data) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _OverviewSectionHeader(
+                      title: 'QA Evaluation',
+                      titleKey: const Key('eval-qa-grounding-qa-title'),
+                      status: 'evaluated',
+                      subtitle:
+                          '${data.qaJudgedCount ?? 0} fully judged answerable cases · ${data.ieTotalCount ?? 0} insufficient-evidence cases'
+                          '${(data.fallbackCount ?? 0) > 0 ? ' · ${data.fallbackCount} generation fallback excluded from genuine-output scoring' : ''}',
+                    ),
+                    const SizedBox(height: 14),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = constraints.maxWidth >= 900 ? 5 : constraints.maxWidth >= 560 ? 3 : 1;
+                        const gap = 12.0;
+                        final width = constraints.maxWidth;
+                        final cardWidth = columns == 1 ? width : (width - gap * (columns - 1)) / columns;
+                        final cards = [
+                          ('Correctness', data.qaCorrectness, 'eval-qa-card-correctness'),
+                          ('Completeness', data.qaCompleteness, 'eval-qa-card-completeness'),
+                          ('Relevance', data.qaRelevance, 'eval-qa-card-relevance'),
+                          ('Faithfulness', data.qaFaithfulness, 'eval-qa-card-faithfulness'),
+                          ('Overall', data.qaOverall, 'eval-qa-card-overall'),
+                        ];
+                        return Wrap(
+                          spacing: gap,
+                          runSpacing: gap,
+                          children: [
+                            for (final card in cards)
+                              SizedBox(
+                                width: cardWidth,
+                                child: _ScaleMetricCard(
+                                  cardKey: Key(card.$3),
+                                  title: card.$1,
+                                  value: card.$2,
+                                  scaleMax: 4,
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    if (data.qaJudgeDisagreementRate != null)
+                      Text(
+                        key: const Key('eval-qa-disagreement'),
+                        'Judge disagreement: ${data.qaJudgeDisagreementRate!.numerator}/${data.qaJudgeDisagreementRate!.denominator} cases '
+                        '(${((data.qaJudgeDisagreementRate!.value ?? 0) * 100).toStringAsFixed(1)}%) had at least one dimension where the two judges scored differently.',
+                        style: const TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.4),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
 
-    return SingleChildScrollView(
-      key: const Key('eval-comparison-tab'),
-      padding: const EdgeInsets.all(20),
+/// Section 5: "Citation and Grounding Evaluation". Stage 3.2B-3.6
+/// claim-level citation metrics plus the Stage 3.6 citation-validity
+/// correction -- kept deliberately separate from "capture coverage"
+/// (whether any citation was shown at all), which is a different
+/// measurement (see the coverage note rendered below).
+class _CitationGroundingSection extends StatelessWidget {
+  const _CitationGroundingSection({
+    required this.overview,
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final QaCitationJudgingOverview? overview;
+  final bool loading;
+  final String? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('eval-citation-section'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _ReportSectionHeading(
+          number: 5,
+          title: 'Citation and Grounding Evaluation',
+          subtitle: 'Citation precision, completeness, claim support, and the Stage 3.6-corrected citation validity.',
+          sectionKey: Key('eval-section-5-citation'),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: _qaJudgingGate(
+            overview: overview,
+            loading: loading,
+            error: error,
+            onRetry: onRetry,
+            loadingKey: const Key('eval-citation-judging-loading'),
+            errorKey: const Key('eval-citation-judging-error'),
+            retryKey: const Key('eval-citation-judging-retry'),
+            emptyKey: const Key('eval-citation-judging-empty'),
+            emptyBody:
+                'The Stage 3.2B-3.6 citation judging artifacts have not been produced yet, or one of them is currently unreadable. This does not mean the chatbot failed -- these results simply have not been computed.',
+            builder: (data) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _OverviewSectionHeader(
+                  title: 'Citation Evaluation',
+                  titleKey: const Key('eval-qa-grounding-citation-title'),
+                  status: 'evaluated',
+                  subtitle:
+                      '${data.citationJudgedCaseCount ?? 0} fully judged cases · ${data.citationJudgingFailedPartialCount ?? 0} partial judging failure(s)',
+                ),
+                const SizedBox(height: 14),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final columns = constraints.maxWidth >= 900 ? 5 : constraints.maxWidth >= 560 ? 3 : 1;
+                    const gap = 12.0;
+                    final width = constraints.maxWidth;
+                    final cardWidth = columns == 1 ? width : (width - gap * (columns - 1)) / columns;
+                    final cards = [
+                      ('Precision', data.citationPrecision, 'eval-citation-card-precision'),
+                      ('Completeness', data.citationCompleteness, 'eval-citation-card-completeness'),
+                      ('Claim Support Rate', data.claimSupportRate, 'eval-citation-card-support'),
+                      ('Unsupported Claim Rate', data.unsupportedClaimRate, 'eval-citation-card-unsupported'),
+                      ('Citation Validity (corrected)', data.citationValidityCorrected, 'eval-citation-card-validity'),
+                    ];
+                    return Wrap(
+                      spacing: gap,
+                      runSpacing: gap,
+                      children: [
+                        for (final card in cards)
+                          SizedBox(
+                            width: cardWidth,
+                            child: _FractionMetricCard(
+                              cardKey: Key(card.$3),
+                              title: card.$1,
+                              fraction: card.$2,
+                              highlight: card.$3 == 'eval-citation-card-validity',
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  key: const Key('eval-citation-validity-correction-note'),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: DesignTokens.maroonWash,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: DesignTokens.maroon.withValues(alpha: 0.28),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Citation validity: original vs. corrected',
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: DesignTokens.ink),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Originally computed as ${data.citationValidityOriginalDefective?.numerator ?? 0}/'
+                        '${data.citationValidityOriginalDefective?.denominator ?? 0} '
+                        '(${(((data.citationValidityOriginalDefective?.value ?? 0)) * 100).toStringAsFixed(0)}%) due to a confirmed defect that compared two unrelated identifier systems. '
+                        'Fixed and independently verified: the corrected value shown above is '
+                        '${data.citationValidityCorrected?.numerator ?? 0}/${data.citationValidityCorrected?.denominator ?? 0} '
+                        '(${(((data.citationValidityCorrected?.value ?? 0)) * 100).toStringAsFixed(0)}%). The other four citation metrics were confirmed unchanged by this fix.',
+                        style: const TextStyle(color: DesignTokens.ink, fontSize: 12, height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  key: const Key('eval-citation-vs-coverage-note'),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Text(
+                    'Do not confuse citation validity (${((data.citationValidityCorrected?.value ?? 0) * 100).toStringAsFixed(0)}%, "was the citation ID real?") with claim support rate '
+                    '(${((data.claimSupportRate?.value ?? 0) * 100).toStringAsFixed(1)}%, "was the claim actually backed by what was cited?"). '
+                    'Separately, Stage 3.4 capture coverage showed ${data.captureCasesWithCitations ?? 0}/${data.captureTotalCases ?? 0} cases had any displayed citation at all -- that is a different measurement again (whether a citation was shown), not citation correctness.',
+                    style: const TextStyle(color: Color(0xFF991B1B), fontSize: 12, height: 1.4),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (data.limitations.isNotEmpty)
+                  Container(
+                    key: const Key('eval-qa-grounding-limitations'),
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: DesignTokens.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Known limitations',
+                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: DesignTokens.ink),
+                        ),
+                        const SizedBox(height: 8),
+                        for (final note in data.limitations) ...[
+                          Text('•  $note', style: const TextStyle(color: DesignTokens.muted, fontSize: 12, height: 1.4)),
+                          const SizedBox(height: 6),
+                        ],
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ScaleMetricCard extends StatelessWidget {
+  const _ScaleMetricCard({
+    required this.cardKey,
+    required this.title,
+    required this.value,
+    required this.scaleMax,
+  });
+
+  final Key cardKey;
+  final String title;
+  final double? value;
+  final double scaleMax;
+
+  @override
+  Widget build(BuildContext context) {
+    final evaluated = value != null;
+    return Container(
+      key: cardKey,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: evaluated ? Colors.white : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: evaluated ? DesignTokens.border : const Color(0xFFE2E8F0)),
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-        EvalComparatorTable(
-          title: 'Retrieval comparator',
-          subtitle: 'Saved 12-question benchmark snapshot from isolated corpus run 131ba7a4. Not live Heroku / production Chroma.',
-          rows: [
-            EvalComparatorRow(
-              label: 'Embedding-only',
-              metrics: [
-                EvalComparatorMetric(name: 'Hit@K', value: reranker?.metric('embedding_hit_at_k') ?? embedding?.metric('embedding_hit_at_k')),
-                EvalComparatorMetric(name: 'MRR', value: reranker?.metric('embedding_mrr') ?? embedding?.metric('embedding_mrr')),
-                EvalComparatorMetric(name: 'nDCG@K', value: reranker?.metric('embedding_ndcg_at_k') ?? embedding?.metric('embedding_ndcg_at_k')),
-                EvalComparatorMetric(name: 'Precision@K', value: reranker?.metric('embedding_precision_at_k') ?? embedding?.metric('embedding_precision_at_k')),
-                EvalComparatorMetric(name: 'Recall@K', value: reranker?.metric('embedding_recall_at_k') ?? embedding?.metric('embedding_recall_at_k')),
-              ],
+          Text(title, style: const TextStyle(color: DesignTokens.muted, fontSize: 11, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Text(
+            evaluated ? '${value!.toStringAsFixed(2)} / ${scaleMax.toStringAsFixed(0)}' : '—',
+            style: TextStyle(
+              color: evaluated ? DesignTokens.ink : const Color(0xFF94A3B8),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
             ),
-            EvalComparatorRow(
-              label: 'Reranked',
-              metrics: [
-                EvalComparatorMetric(name: 'Hit@K', value: reranker?.metric('reranked_hit_at_k')),
-                EvalComparatorMetric(name: 'MRR', value: reranker?.metric('reranked_mrr')),
-                EvalComparatorMetric(name: 'nDCG@K', value: reranker?.metric('reranked_ndcg_at_k')),
-                EvalComparatorMetric(name: 'Precision@K', value: reranker?.metric('reranked_precision_at_k')),
-                EvalComparatorMetric(name: 'Recall@K', value: reranker?.metric('reranked_recall_at_k')),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        EvalBarChartCard(
-          title: 'Retrieval: embedding-only vs reranked',
-          subtitle: 'Same queries/labels for both rankings -- the delta is the reranker\'s measured contribution',
-          bars: [
-            EvalBarEntry(label: 'Hit@K\n(embed)', value: reranker?.metric('embedding_hit_at_k'), color: const Color(0xFF2563EB)),
-            EvalBarEntry(label: 'Hit@K\n(reranked)', value: reranker?.metric('reranked_hit_at_k'), color: DesignTokens.maroon),
-            EvalBarEntry(label: 'MRR\n(embed)', value: reranker?.metric('embedding_mrr'), color: const Color(0xFF2563EB)),
-            EvalBarEntry(label: 'MRR\n(reranked)', value: reranker?.metric('reranked_mrr'), color: DesignTokens.maroon),
-            EvalBarEntry(label: 'nDCG@K\n(embed)', value: reranker?.metric('embedding_ndcg_at_k'), color: const Color(0xFF2563EB)),
-            EvalBarEntry(label: 'nDCG@K\n(reranked)', value: reranker?.metric('reranked_ndcg_at_k'), color: DesignTokens.maroon),
-          ],
-          maxY: 1.0,
-        ),
-        const SizedBox(height: 16),
-        ClassificationOverviewSection(
-          components: components,
-          config: config,
-        ),
-        const SizedBox(height: 16),
-        ClassificationClassifierSections(
-          components: components,
-          matrices: matrices,
-        ),
+          ),
         ],
       ),
     );
   }
 }
 
-// --- Confusion Matrices ------------------------------------------------------
-
-class _ConfusionMatricesTab extends StatelessWidget {
-  const _ConfusionMatricesTab({required this.components, required this.matrices});
-
-  final List<EvaluationComponentResult> components;
-  final Map<String, EvaluationConfusionMatrix> matrices;
-
-  @override
-  Widget build(BuildContext context) {
-    // Confusion matrices are meaningful ONLY for classification components
-    // -- never shown for retrieval/RAG/performance components, even if a
-    // caller somehow passed one in.
-    final classificationComponents = components
-        .where((c) => c.component.startsWith('classify_chunk') || c.component == 'classify_question')
-        .toList();
-    if (classificationComponents.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.grid_on_rounded,
-        title: 'No classification components in this run',
-        description: 'Confusion matrices only apply to classify_chunk/classify_question.',
-      );
-    }
-    return ListView(
-      key: const Key('eval-confusion-tab'),
-      padding: const EdgeInsets.all(20),
-      children: [
-        const EvalNotice(
-          message:
-              'Confusion matrices use this run’s saved classify_question / classify_chunk labels. Retrieval Hit@K / MRR / nDCG live on Overview and Comparison.',
-        ),
-        const SizedBox(height: 16),
-        for (final component in classificationComponents) ...[
-          if (matrices[component.component] != null)
-            ConfusionMatrixGrid(matrix: matrices[component.component]!)
-          else
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: DesignTokens.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(component.component, style: const TextStyle(fontWeight: FontWeight.w800, color: DesignTokens.ink)),
-                  const SizedBox(height: 6),
-                  Text(
-                    component.status == 'evaluated'
-                        ? 'No confusion matrix was returned for this component.'
-                        : 'Not available (${component.status}${component.reason != null ? ": ${component.reason}" : ""}).',
-                    style: const TextStyle(color: DesignTokens.muted, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 16),
-        ],
-      ],
-    );
-  }
-}
-
-// --- Performance --------------------------------------------------------------
-
-class _PerformanceTab extends StatelessWidget {
-  const _PerformanceTab({required this.components});
-
-  final List<EvaluationComponentResult> components;
-
-  @override
-  Widget build(BuildContext context) {
-    final answerLlm = _byName(components, 'answer_generation_llm');
-    final verifierLlm = _byName(components, 'citation_verifier_llm');
-    final hasAny = (answerLlm?.metrics.isNotEmpty ?? false) || (verifierLlm?.metrics.isNotEmpty ?? false);
-    if (!hasAny) {
-      return const _EmptyState(
-        icon: Icons.speed_rounded,
-        title: 'No performance metrics in this run',
-        description: 'Latency/throughput metrics appear once answer_generation_llm or citation_verifier_llm runs.',
-      );
-    }
-    return ListView(
-      key: const Key('eval-performance-tab'),
-      padding: const EdgeInsets.all(20),
-      children: [
-        EvalBarChartCard(
-          title: 'Answer-generation latency (ms)',
-          subtitle: 'Average vs first-call-in-run vs later (warm) calls',
-          bars: [
-            EvalBarEntry(label: 'Average', value: answerLlm?.metric('avg_latency_ms'), color: const Color(0xFF2563EB)),
-            EvalBarEntry(label: 'First call\nin run', value: answerLlm?.metric('first_call_in_run_avg_latency_ms'), color: const Color(0xFFD97706)),
-            EvalBarEntry(label: 'Warm', value: answerLlm?.metric('warm_avg_latency_ms'), color: const Color(0xFF16A34A)),
-          ],
-        ),
-        const SizedBox(height: 16),
-        EvalBarChartCard(
-          title: 'Citation-verifier latency (ms)',
-          subtitle: 'Average vs first-call-in-run vs later (warm) calls',
-          bars: [
-            EvalBarEntry(label: 'Average', value: verifierLlm?.metric('avg_latency_ms'), color: const Color(0xFF2563EB)),
-            EvalBarEntry(label: 'First call\nin run', value: verifierLlm?.metric('first_call_in_run_avg_latency_ms'), color: const Color(0xFFD97706)),
-            EvalBarEntry(label: 'Warm', value: verifierLlm?.metric('warm_avg_latency_ms'), color: const Color(0xFF16A34A)),
-          ],
-        ),
-        const SizedBox(height: 16),
-        EvalBarChartCard(
-          title: 'Success rate',
-          subtitle: 'Fraction of calls that succeeded',
-          bars: [
-            EvalBarEntry(label: 'Answer\ngeneration', value: answerLlm?.metric('success_rate'), color: DesignTokens.maroon),
-            EvalBarEntry(label: 'Citation\nverifier', value: verifierLlm?.metric('success_rate'), color: const Color(0xFF2563EB)),
-          ],
-          maxY: 1.0,
-        ),
-      ],
-    );
-  }
-}
-
-// --- History -----------------------------------------------------------------
-
-class _HistoryTab extends StatelessWidget {
-  const _HistoryTab({
-    required this.history,
-    required this.offset,
-    required this.pageSize,
-    required this.selectedRunId,
-    required this.onSelectRun,
-    required this.onChangePage,
+class _FractionMetricCard extends StatelessWidget {
+  const _FractionMetricCard({
+    required this.cardKey,
+    required this.title,
+    required this.fraction,
+    this.highlight = false,
   });
 
-  final EvaluationRunHistoryPage? history;
-  final int offset;
-  final int pageSize;
-  final String? selectedRunId;
-  final ValueChanged<String> onSelectRun;
-  final ValueChanged<int> onChangePage;
+  final Key cardKey;
+  final String title;
+  final EvalFraction? fraction;
+  final bool highlight;
 
   @override
   Widget build(BuildContext context) {
-    final page = history;
-    if (page == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (page.runs.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.history_rounded,
-        title: 'No evaluation runs yet',
-        description: 'Runs will appear here once you use "Run Evaluation".',
-      );
-    }
-    final canPrev = offset > 0;
-    final canNext = offset + page.runs.length < page.total;
-    return Column(
-      key: const Key('eval-history-tab'),
-      children: [
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.all(20),
-            itemCount: page.runs.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final run = page.runs[index];
-              final selected = run.runId == selectedRunId;
-              return InkWell(
-                key: Key('eval-history-row-${run.runId}'),
-                onTap: () => onSelectRun(run.runId),
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: selected ? const Color(0xFFFCEFF0) : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: selected ? DesignTokens.maroon : DesignTokens.border),
-                  ),
-                  child: Row(
-                    children: [
-                      StatusBadge(status: run.status),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(run.runId, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: DesignTokens.ink)),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Started ${_formatTimestamp(run.startedAt)}'
-                              '${run.completedAt != null ? " · Completed ${_formatTimestamp(run.completedAt!)}" : ""}',
-                              style: const TextStyle(color: DesignTokens.muted, fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Icon(Icons.chevron_right_rounded, color: DesignTokens.muted),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+    final value = fraction?.value;
+    final evaluated = value != null;
+    return Container(
+      key: cardKey,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: !evaluated
+            ? const Color(0xFFF8FAFC)
+            : (highlight ? const Color(0xFFF0FDF4) : Colors.white),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: !evaluated
+              ? const Color(0xFFE2E8F0)
+              : (highlight ? const Color(0xFFBBF7D0) : DesignTokens.border),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('${page.total} run${page.total == 1 ? '' : 's'} total', style: const TextStyle(color: DesignTokens.muted, fontSize: 12)),
-              Row(
-                children: [
-                  TextButton(
-                    onPressed: canPrev ? () => onChangePage((offset - pageSize).clamp(0, 1 << 30)) : null,
-                    child: const Text('Previous'),
-                  ),
-                  TextButton(
-                    onPressed: canNext ? () => onChangePage(offset + pageSize) : null,
-                    child: const Text('Next'),
-                  ),
-                ],
-              ),
-            ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(color: DesignTokens.muted, fontSize: 11, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Text(
+            evaluated ? '${(value * 100).toStringAsFixed(1)}%' : '—',
+            style: TextStyle(
+              color: evaluated ? DesignTokens.ink : const Color(0xFF94A3B8),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: 4),
+          Text(
+            fraction == null ? 'Not computed' : '${fraction!.numerator}/${fraction!.denominator}',
+            style: const TextStyle(color: DesignTokens.muted, fontSize: 11),
+          ),
+        ],
+      ),
     );
   }
 }
 
-// --- Case results dialog ------------------------------------------------------
+// --- Methodology ---------------------------------------------------------
 
-class _CaseResultsDialog extends StatefulWidget {
-  const _CaseResultsDialog({required this.component, required this.fetchPage});
+/// One methodology topic: a plain-language explanation plus the exact
+/// backend file(s)/line(s) it is drawn from, so every claim here is
+/// traceable to the real implementation rather than a generic description.
+class _MethodologyBlock {
+  const _MethodologyBlock({required this.title, required this.body, required this.citations});
 
-  final EvaluationComponentResult component;
-  final Future<EvaluationCaseResultsPage> Function({required int limit, required int offset}) fetchPage;
-
-  @override
-  State<_CaseResultsDialog> createState() => _CaseResultsDialogState();
+  final String title;
+  final String body;
+  final List<String> citations;
 }
 
-class _CaseResultsDialogState extends State<_CaseResultsDialog> {
-  static const int _pageSize = 20;
-  int _offset = 0;
-  EvaluationCaseResultsPage? _page;
-  bool _loading = false;
-  String? _error;
+const List<_MethodologyBlock> _kMethodologyBlocks = [
+  _MethodologyBlock(
+    title: 'Dataset and case selection',
+    body:
+        'Cases belong to experiment family "qa_citation_v1" and fall into exactly two types: '
+        'labeled_student_support (ordinary answerable questions) and insufficient_evidence '
+        '(deliberately unanswerable from the corpus). Only student-facing cases are ever loaded as '
+        'live evaluation cases -- faculty-as-audience cases are rejected, and example/placeholder '
+        'artifacts marked example_only or not_an_evaluation_result are never treated as real cases.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_dataset.py:6-10 (module docstring)',
+      'backend/app/services/evaluation/qa_citation_dataset.py:31 (EXPERIMENT_FAMILY)',
+      'backend/app/services/evaluation/qa_citation_dataset.py:35-39 (CASE_TYPES)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'Dataset and corpus version/digests',
+    body:
+        'All QA/citation runs score against one locked, frozen 691-chunk Chroma extract, identified '
+        'by two digests (an identity digest and a metadata-text digest) -- never the dataset JSON\'s '
+        'own sha256, which is a separate, unrelated hash. Every capture and judging run verifies its '
+        'corpus against these two digests before scoring and records the result; the accepted run used '
+        'dataset version 2026-11-09-v1.1.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_dataset.py:12-14 (module docstring)',
+      'backend/app/services/evaluation/qa_citation_dataset.py:51-58 (LOCKED_CORPUS_*, LOCKED_IDENTITY_DIGEST, LOCKED_METADATA_TEXT_DIGEST)',
+      'backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json (the locked extract artifact)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'Classification evaluation method and metrics',
+    body:
+        'Classification (student-question category, handbook-chunk category) is scored with a pure, '
+        'no-I/O multiclass one-vs-rest implementation: accuracy, macro/weighted precision, recall, and '
+        'F1 per class. A class with a zero denominator (never predicted, or never actually present) '
+        'reports 0.0 by explicit convention -- never a fabricated or omitted value.',
+    citations: [
+      'backend/app/services/evaluation/classification_metrics.py:1-5 (module docstring)',
+      'backend/app/services/evaluation/classification_metrics.py:29-40 (ClassificationMetrics)',
+      'backend/app/services/evaluation/classification_metrics.py:43-49 (_safe_divide)',
+      'backend/app/services/evaluation/classification_metrics.py:52 (evaluate_classification)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'Retrieval benchmark and ranking metrics',
+    body:
+        'Retrieval is scored with pure Hit@K, MRR, Precision@K, Recall@K, and nDCG@K functions that take '
+        'already-retrieved ranked id lists plus labeled relevance judgments -- the exact same metric code '
+        'scores both the embedding-only ranking and the post-reranking ranking, so the ablation comparison '
+        'is an apples-to-apples use of one implementation. The 12 human-labeled questions are scored '
+        'against the isolated 691-chunk evaluation Chroma index (source run 131ba7a4-...), never live '
+        'student Chroma.',
+    citations: [
+      'backend/app/services/evaluation/retrieval_metrics.py:1-9 (module docstring)',
+      'backend/app/services/evaluation/retrieval_metrics.py:41-49 (RetrievalMetrics)',
+      'backend/app/services/evaluation/retrieval_metrics.py:52-60 (nDCG@K: DCG@K / IDCG@K)',
+      'backend/app/services/evaluation/labeled_retrieval_overview.py:1-9 (module docstring)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'Actual QA chatbot execution and dual-AI judging procedure',
+    body:
+        'Each case is a real, live chatbot answer capture (not a canned response). Before ordinary QA '
+        'judging, a fail-closed eligibility check requires execution_status == "ok" AND '
+        'is_genuine_model_output is True AND fallback_used is False AND a non-empty generated answer; '
+        'any missing field excludes the case rather than assuming eligibility. Eligible cases are then '
+        'judged by two independent AI judge calls (never a human rater). The combination rule is the '
+        'same everywhere: both judges succeed -> judged; exactly one succeeds -> judging_failed_partial '
+        '(no combined score; the surviving judge is kept for diagnostics only, never presented as the '
+        'result); both fail -> judging_failed_total. There are no automatic retries.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_eligibility.py:101-171 (classify_eligibility)',
+      'backend/app/services/evaluation/qa_citation_metrics.py:119-159 (JUDGING_STATUS_* definitions)',
+      'backend/app/services/evaluation/qa_citation_judging.py:94-108 (JudgeSlotOutcome, JudgingOutcome)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'QA scoring rubric and aggregation',
+    body:
+        'Every judged case is scored on four criteria -- correctness, completeness, relevance, '
+        'faithfulness -- each an integer 0-4. The reported value per criterion is the arithmetic mean '
+        'of the two judges\' scores (never the maximum, never a single judge standing in); "Overall" is '
+        'the mean of the four criteria means. A case is flagged as a judge disagreement when the two '
+        'judges differ by 1 or more on any single criterion. Faithfulness is judged against retrieved/'
+        'displayed evidence, not similarity to a reference answer.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_metrics.py:66-69 (QA_CRITERIA, QA_DISAGREEMENT_THRESHOLD)',
+      'backend/app/services/evaluation/qa_citation_metrics.py:316-352 (aggregate_dual_ai_qa_scores)',
+      'backend/app/services/evaluation/qa_citation_run_report.py:229-314 (_qa_dimension_means, _qa_disagreement, _build_qa_aggregation)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'Citation claim extraction and dual-judge evaluation',
+    body:
+        'Citation-claim judging is a separate two-judge call from QA scoring, with its own failure '
+        'domain, so a malformed QA response never voids an otherwise-good claim extraction or vice '
+        'versa. Each judge independently extracts the answer\'s factual claims, marks which require a '
+        'citation, and assesses each citation-required claim as supported / unsupported / '
+        'not_assessable against the case\'s own displayed citation ids -- never an id the judge invents. '
+        'Both judges\' claim sets are preserved and scored independently; the run-level aggregation sums '
+        'counts across every (case, judge-slot) data point before computing a fraction, rather than '
+        'averaging two already-computed per-case fractions.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_claim_judging.py:1-50 (module docstring)',
+      'backend/app/services/evaluation/qa_citation_metrics.py:6-53 (claim status definitions)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'Citation validity verification and the Stage 3.6 correction',
+    body:
+        'citation_precision is the share of unique displayed citation ids that back at least one claim. '
+        'citation_completeness is the share of citation-required claims that have at least one '
+        'supporting displayed id. claim_support_rate / unsupported_claim_rate are the shares of '
+        'citation-required claims marked supported / unsupported. citation_validity is the share of '
+        'unique displayed citation ids that resolve against the locked 691-chunk extract\'s own chunk-id '
+        'index. A defect found and fixed in Stage 3.6: the original resolver additionally cross-checked '
+        'an unrelated application-level Document-table UUID against the extract\'s own document id -- two '
+        'unrelated identifier namespaces -- which produced a spurious mismatch for every real citation '
+        '(0/86). The fix removed that cross-check; resolution now uses only the locked extract\'s own '
+        'chunk-id lookup. The corrected value (86/86, 100%) was independently verified against the other '
+        'four citation metrics, confirmed byte-identical before and after the fix.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_metrics.py:407-437 (compute_citation_metrics)',
+      'backend/app/services/evaluation/qa_citation_claim_judging.py:353-399 (resolve_citation_validity, Stage 3.6 fix)',
+      'backend/benchmarks/evaluation/qa_citation_runs/qacj_citation_validity_correction_20261110T112506Z/citation_validity_correction.json',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'Treatment of insufficient evidence, fallback outputs, and partial failures',
+    body:
+        'A generation fallback (a safe canned response substituted for a real model answer) is excluded '
+        'from genuine-output scoring entirely -- it is never scored as if it were a real answer. '
+        'insufficient_evidence cases (deliberately unanswerable from the corpus) are scored on a '
+        'separate binary rubric -- correctly_declined vs. unsupported_claim_detected -- not the 0-4 QA '
+        'scale, since "did the chatbot correctly decline" is a different question from "how good was '
+        'the answer." Eligibility exclusions (missing fields, no result, fallback-not-genuine, refusal '
+        'not QA-scored, empty answer) are recorded by reason, never silently dropped. A single '
+        'surviving judge in a judging_failed_partial case is kept only for diagnostics, never reported '
+        'as a result.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_eligibility.py:101-171 (exclusion reasons)',
+      'backend/app/services/evaluation/qa_citation_insufficient_evidence.py (InsufficientEvidenceJudgeAdapter)',
+      'backend/app/services/evaluation/qa_citation_metrics.py:149-158 (JUDGING_STATUS_FAILED_PARTIAL / _TOTAL)',
+    ],
+  ),
+  _MethodologyBlock(
+    title: 'How run-level metrics are aggregated',
+    body:
+        'run_qa_citation_judging() orchestrates all three rubrics (QA, insufficient-evidence, citation-'
+        'claims) for one capture run in a single pass. Classification, retrieval, and QA/citation each '
+        'have their own independent aggregation; this report never recombines numbers across those three '
+        'systems into one blended score. Denominators are always shown alongside every fraction (e.g. '
+        '78/86) so a percentage is never presented without the counts it came from.',
+    citations: [
+      'backend/app/services/evaluation/qa_citation_run_report.py:410 (run_qa_citation_judging)',
+      'backend/app/services/evaluation/qa_citation_metrics.py:182-206 (FractionMetric.from_counts)',
+    ],
+  ),
+];
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final page = await widget.fetchPage(limit: _pageSize, offset: _offset);
-      if (!mounted) return;
-      setState(() => _page = page);
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _error = friendlyEvalError(error));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
+/// Section 6: "Evaluation Methodology and Computation Process". Static,
+/// hand-written content sourced directly from the backend code and
+/// artifact filenames cited inline -- not a generic description. No
+/// video reference was available to this implementation; this section
+/// follows the written structure of the request instead.
+class _MethodologySection extends StatelessWidget {
+  const _MethodologySection();
 
   @override
   Widget build(BuildContext context) {
-    final page = _page;
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 560),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
+    return Column(
+      key: const Key('eval-methodology-section'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _ReportSectionHeading(
+          number: 6,
+          title: 'Evaluation Methodology and Computation Process',
+          subtitle: 'How each result above was produced, with the exact backend file/line it comes from.',
+          sectionKey: Key('eval-section-6-methodology'),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${widget.component.component} — case results',
-                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: DesignTokens.ink),
-                    ),
-                  ),
-                  IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded)),
-                ],
+              Container(
+                key: const Key('eval-methodology-automated-disclosure'),
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: DesignTokens.border),
+                ),
+                child: const Text(
+                  'QA and citation scores were produced through independent automated '
+                  'model-based assessments. These results are automated evaluations and '
+                  'should not be interpreted as human ratings.',
+                  style: TextStyle(color: DesignTokens.ink, fontSize: 13, height: 1.45, fontWeight: FontWeight.w600),
+                ),
               ),
-              const SizedBox(height: 8),
-              if (_loading) const LinearProgressIndicator(minHeight: 3),
-              if (_error != null) EvalNotice(message: _error!),
-              if (page != null)
-                Expanded(
-                  child: page.caseResults.isEmpty
-                      ? const Center(child: Text('No case results on this page.'))
-                      : ListView.separated(
-                          key: const Key('eval-case-results-list'),
-                          itemCount: page.caseResults.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final item = page.caseResults[index];
-                            return ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(item.caseId, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                              subtitle: Text(
-                                'predicted: ${item.predicted ?? "N/A"}'
-                                '${item.expected != null ? " · expected: ${item.expected}" : ""}'
-                                '${item.correct != null ? " · correct: ${item.correct}" : ""}'
-                                '${item.latencyMs != null ? " · ${item.latencyMs!.toStringAsFixed(0)}ms" : ""}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              if (page != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('${page.total} case${page.total == 1 ? '' : 's'} total', style: const TextStyle(color: DesignTokens.muted, fontSize: 12)),
-                      Row(
-                        children: [
-                          TextButton(
-                            onPressed: _offset > 0
-                                ? () {
-                                    setState(() => _offset = (_offset - _pageSize).clamp(0, 1 << 30));
-                                    _load();
-                                  }
-                                : null,
-                            child: const Text('Previous'),
-                          ),
-                          TextButton(
-                            onPressed: _offset + page.caseResults.length < page.total
-                                ? () {
-                                    setState(() => _offset += _pageSize);
-                                    _load();
-                                  }
-                                : null,
-                            child: const Text('Next'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+              const SizedBox(height: 16),
+              for (var i = 0; i < _kMethodologyBlocks.length; i++) ...[
+                if (i > 0) const SizedBox(height: 10),
+                _MethodologyPanel(block: _kMethodologyBlocks[i], initiallyExpanded: i == 0),
+              ],
             ],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MethodologyPanel extends StatelessWidget {
+  const _MethodologyPanel({required this.block, required this.initiallyExpanded});
+
+  final _MethodologyBlock block;
+  final bool initiallyExpanded;
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        key: Key('eval-methodology-${block.title}'),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: DesignTokens.border),
+        ),
+        child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          title: Text(
+            block.title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: DesignTokens.ink),
+          ),
+          children: [
+            Text(block.body, style: const TextStyle(color: DesignTokens.ink, fontSize: 13, height: 1.5)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final citation in block.citations)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(color: DesignTokens.bgGrey, borderRadius: BorderRadius.circular(6)),
+                    child: Text(
+                      citation,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: DesignTokens.muted),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
     );

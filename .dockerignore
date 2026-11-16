@@ -47,6 +47,13 @@ backend/benchmarks/**
 !backend/benchmarks/evaluation/rag_eval_dataset.json
 !backend/benchmarks/evaluation/human_answer_quality_overview.json
 !backend/benchmarks/evaluation/labeled_retrieval_overview.json
+!backend/benchmarks/evaluation/qa_citation_runs/
+!backend/benchmarks/evaluation/qa_citation_runs/qacj_judging_20261110T060752Z_e9d55993/
+!backend/benchmarks/evaluation/qa_citation_runs/qacj_judging_20261110T060752Z_e9d55993/judging_summary.json
+!backend/benchmarks/evaluation/qa_citation_runs/qacj_citation_judging_20261110T082650Z/
+!backend/benchmarks/evaluation/qa_citation_runs/qacj_citation_judging_20261110T082650Z/judging_summary.json
+!backend/benchmarks/evaluation/qa_citation_runs/qacj_citation_validity_correction_20261110T112506Z/
+!backend/benchmarks/evaluation/qa_citation_runs/qacj_citation_validity_correction_20261110T112506Z/citation_validity_correction.json
 backend/run_server.bat
 
 # Flutter: stage 1 runs its own `flutter pub get` + `flutter build web`

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -25,6 +26,7 @@ from app.models.schemas import (
     EvaluationCaseResultSchema,
     EvaluationComponentSchema,
     EvaluationConfusionMatrixResponse,
+    EvaluationFullReportResponse,
     EvaluationMetricSchema,
     EvaluationModelInfoSchema,
     EvaluationModelsResponse,
@@ -32,13 +34,18 @@ from app.models.schemas import (
     EvaluationRunListResponse,
     EvaluationRunSummarySchema,
     EvaluationSummaryResponse,
+    QaCitationJudgingOverviewResponse,
     StartEvaluationRunResponse,
 )
 from app.routes.admin.knowledge_base import require_admin_only_key
 from app.services.evaluation import persistence
 from app.services.evaluation.evaluation_service import model_inventory
 from app.services.evaluation.human_rag_overview import overlay_case_breakdown
-from app.services.evaluation.labeled_retrieval_overview import overlay_retrieval_metrics_for_component
+from app.services.evaluation.labeled_retrieval_overview import (
+    load_labeled_retrieval_overview,
+    overlay_retrieval_metrics_for_component,
+)
+from app.services.evaluation.qa_citation_judging_overview import load_qa_citation_judging_overview
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +229,87 @@ async def admin_evaluation_history(
     runs, total = persistence.list_runs(session, limit=limit, offset=offset)
     return EvaluationRunListResponse(
         runs=[_run_summary(r) for r in runs], total=total, limit=limit, offset=offset
+    )
+
+
+@router.get(
+    "/qa-citation-overview",
+    response_model=QaCitationJudgingOverviewResponse,
+    summary="[Admin] Stage 3.2B-3.6 QA and citation-claim judging overview (static, read-only)",
+)
+async def admin_qa_citation_overview(
+    _: None = Depends(require_admin_only_key),
+) -> QaCitationJudgingOverviewResponse:
+    """Serves the already-computed dual-AI QA/citation-claim judging
+    artifacts directly -- no DB read, no LLM call, no re-run of any kind.
+    Returns `available=False` (never a fabricated number) if any of the
+    three source artifacts is missing. Registered BEFORE /{run_id} so this
+    static path is never swallowed by that dynamic one."""
+    overview = load_qa_citation_judging_overview()
+    if overview is None:
+        return QaCitationJudgingOverviewResponse(available=False)
+    return QaCitationJudgingOverviewResponse(**overview)
+
+
+@router.get(
+    "/full-report",
+    response_model=EvaluationFullReportResponse,
+    summary="[Admin] Combined read-only evaluation report export (JSON)",
+)
+async def admin_evaluation_full_report(
+    _: None = Depends(require_admin_only_key),
+    session: Session = Depends(get_db_session),
+) -> EvaluationFullReportResponse:
+    """Assembles the consolidated report page's downloadable JSON export
+    by reusing the exact same serializers/loaders the dashboard itself
+    calls for /summary, /qa-citation-overview, and the retrieval overlay
+    -- no metric is recalculated, no LLM call, no Chroma read, no
+    database write. Registered BEFORE /{run_id} so this static path is
+    never swallowed by that dynamic one."""
+    latest = persistence.get_latest_run(session)
+    latest_run_schema = None
+    if latest is not None:
+        config = json.loads(latest.config_json) if latest.config_json else {}
+        latest_run_schema = EvaluationRunDetailSchema(
+            **_run_summary(latest).model_dump(),
+            config=config,
+            components=[_component_schema(session, c) for c in latest.components],
+        )
+
+    qa_citation = load_qa_citation_judging_overview()
+
+    retrieval_overlay = load_labeled_retrieval_overview()
+    retrieval_provenance = None
+    if retrieval_overlay is not None:
+        retrieval_provenance = {
+            "source_run_id": retrieval_overlay.get("source_run_id"),
+            "corpus": retrieval_overlay.get("corpus"),
+            "chunk_count": retrieval_overlay.get("chunk_count"),
+            "case_count": retrieval_overlay.get("case_count"),
+            "k": retrieval_overlay.get("k"),
+            "not_live_chroma": retrieval_overlay.get("not_live_chroma"),
+            "note": retrieval_overlay.get("note"),
+        }
+
+    return EvaluationFullReportResponse(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        latest_run=latest_run_schema,
+        qa_citation_judging=qa_citation,
+        retrieval_provenance=retrieval_provenance,
+        models=[
+            EvaluationModelInfoSchema(
+                component=m.component,
+                model_name=m.model_name,
+                shares_model_with=m.shares_model_with,
+                allow_llm_fallback=m.allow_llm_fallback,
+            )
+            for m in model_inventory()
+        ],
+        scope_notes=[
+            "Performance (latency/throughput) evaluation is excluded from this report's scope by design; no such metrics are included.",
+            "qa_citation_judging is null when any of the three Stage 3.2B-3.6 artifact files is unavailable -- an explicit 'unavailable' marker, never a fabricated result.",
+            "retrieval_provenance is null when the labeled-retrieval overlay artifact is unavailable.",
+        ],
     )
 
 

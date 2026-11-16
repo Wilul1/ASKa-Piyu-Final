@@ -484,3 +484,127 @@ class EvaluationCaseResultsPage {
     );
   }
 }
+
+/// A `{numerator, denominator, value}` fraction metric, matching the
+/// backend's FractionMetric shape exactly. `value` is null only when
+/// `denominator == 0` -- never a fabricated zero.
+class EvalFraction {
+  const EvalFraction({required this.numerator, required this.denominator, this.value});
+
+  final int numerator;
+  final int denominator;
+  final double? value;
+
+  factory EvalFraction.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const EvalFraction(numerator: 0, denominator: 0);
+    final rawValue = json['value'];
+    return EvalFraction(
+      numerator: (json['numerator'] as num?)?.toInt() ?? 0,
+      denominator: (json['denominator'] as num?)?.toInt() ?? 0,
+      value: rawValue == null ? null : (rawValue as num).toDouble(),
+    );
+  }
+}
+
+/// Stage 3.2B-3.6 dual-AI QA and citation-claim judging overview.
+///
+/// Deliberately separate from [EvaluationComponentResult] -- see the
+/// backend's `qa_citation_judging_overview.py` module docstring for why
+/// this is not folded into the existing answer_generation_llm/
+/// citation_verifier_llm overlay. `available == false` is an honest
+/// "not computed" state; every numeric getter below returns null rather
+/// than a fabricated value when the underlying data is missing.
+class QaCitationJudgingOverview {
+  const QaCitationJudgingOverview({
+    required this.available,
+    this.judgeSource,
+    this.judges,
+    this.qa,
+    this.citation,
+    this.captureCoverage,
+    this.sourceRunIds,
+    this.limitations = const [],
+  });
+
+  final bool available;
+  final String? judgeSource;
+  final Map<String, dynamic>? judges;
+  final Map<String, dynamic>? qa;
+  final Map<String, dynamic>? citation;
+  final Map<String, dynamic>? captureCoverage;
+  final Map<String, dynamic>? sourceRunIds;
+  final List<String> limitations;
+
+  static const QaCitationJudgingOverview unavailable = QaCitationJudgingOverview(available: false);
+
+  factory QaCitationJudgingOverview.fromJson(Map<String, dynamic> json) {
+    Map<String, dynamic>? asMap(dynamic value) =>
+        value is Map ? value.cast<String, dynamic>() : null;
+    return QaCitationJudgingOverview(
+      available: json['available'] as bool? ?? false,
+      judgeSource: json['judge_source']?.toString(),
+      judges: asMap(json['judges']),
+      qa: asMap(json['qa']),
+      citation: asMap(json['citation']),
+      captureCoverage: asMap(json['capture_coverage']),
+      sourceRunIds: asMap(json['source_run_ids']),
+      limitations:
+          ((json['limitations'] as List?) ?? const []).map((e) => e.toString()).toList(),
+    );
+  }
+
+  String? get primaryJudgeModel => judges?['primary_model']?.toString();
+  String? get primaryJudgeProvider => judges?['primary_provider']?.toString();
+  String? get secondaryJudgeModel => judges?['secondary_model']?.toString();
+  String? get secondaryJudgeProvider => judges?['secondary_provider']?.toString();
+
+  Map<String, dynamic>? get _qaDimensionMeans =>
+      (qa?['dimension_means'] as Map?)?.cast<String, dynamic>();
+  double? _qaDim(String key) {
+    final v = _qaDimensionMeans?[key];
+    return v == null ? null : (v as num).toDouble();
+  }
+
+  double? get qaCorrectness => _qaDim('correctness');
+  double? get qaCompleteness => _qaDim('completeness');
+  double? get qaRelevance => _qaDim('relevance');
+  double? get qaFaithfulness => _qaDim('faithfulness');
+  double? get qaOverall => _qaDim('overall');
+
+  int? get qaJudgedCount => (qa?['judged_count'] as num?)?.toInt();
+  int? get qaJudgingFailedPartialCount => (qa?['judging_failed_partial_count'] as num?)?.toInt();
+  int? get qaEligibleCount => (qa?['eligible_count'] as num?)?.toInt();
+  int? get qaExcludedCount => (qa?['excluded_count'] as num?)?.toInt();
+  EvalFraction? get qaJudgeDisagreementRate => qa?['judge_disagreement_rate'] == null
+      ? null
+      : EvalFraction.fromJson((qa!['judge_disagreement_rate'] as Map).cast<String, dynamic>());
+
+  Map<String, dynamic>? get insufficientEvidence =>
+      (qa?['insufficient_evidence'] as Map?)?.cast<String, dynamic>();
+  int? get ieTotalCount => (insufficientEvidence?['total_count'] as num?)?.toInt();
+  int? get ieJudgedCount => (insufficientEvidence?['judged_count'] as num?)?.toInt();
+
+  Map<String, dynamic>? get fallbackVsGenuineCounts =>
+      (qa?['fallback_vs_genuine_counts'] as Map?)?.cast<String, dynamic>();
+  int? get fallbackCount => (fallbackVsGenuineCounts?['fallback'] as num?)?.toInt();
+
+  EvalFraction? _citationFraction(String key) {
+    final m = citation?[key];
+    return m == null ? null : EvalFraction.fromJson((m as Map).cast<String, dynamic>());
+  }
+
+  EvalFraction? get citationPrecision => _citationFraction('citation_precision');
+  EvalFraction? get citationCompleteness => _citationFraction('citation_completeness');
+  EvalFraction? get claimSupportRate => _citationFraction('claim_support_rate');
+  EvalFraction? get unsupportedClaimRate => _citationFraction('unsupported_claim_rate');
+  EvalFraction? get citationValidityCorrected => _citationFraction('citation_validity');
+  EvalFraction? get citationValidityOriginalDefective =>
+      _citationFraction('citation_validity_original_defective');
+  int? get citationJudgedCaseCount => (citation?['judged_case_count'] as num?)?.toInt();
+  int? get citationJudgingFailedPartialCount =>
+      (citation?['judging_failed_partial_count'] as num?)?.toInt();
+
+  int? get captureTotalCases => (captureCoverage?['total_cases'] as num?)?.toInt();
+  int? get captureCasesWithCitations =>
+      (captureCoverage?['cases_with_displayed_citations'] as num?)?.toInt();
+}

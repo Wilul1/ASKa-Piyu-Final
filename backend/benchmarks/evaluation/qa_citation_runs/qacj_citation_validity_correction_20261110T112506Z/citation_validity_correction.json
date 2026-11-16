@@ -1,0 +1,60 @@
+{
+  "correction_run_id": "qacj_citation_validity_correction_20261110T112506Z",
+  "corrected_at": "2026-11-10T11:25:06.658519+00:00",
+  "note": "This is a post-run metric correction, NOT a new citation-claim judging run. No chatbot generation, no citation verification, and no judge (LLM) calls occurred while producing this artifact -- it recomputes ONLY the citation_validity fraction from already-recorded claim data, using the Stage 3.6-fixed resolve_citation_validity() in place of the original, confirmed-defective one (which cross-checked an unrelated UUID namespace -- see qa_citation_claim_judging.py's updated docstring for the full explanation).",
+  "original_judging_run_id": "qacj_citation_judging_20261110T082650Z",
+  "original_judging_run_untouched": true,
+  "source_capture_run_id": "qac_capture_20261110T063448Z_f2dfa9d3",
+  "source_capture_file_sha256": "e559c4a453a02c7ea793930de9c17ca9ed3839d9539fd6574ce8cd61aa1d8c92",
+  "dataset_version": "2026-11-09-v1.1",
+  "dataset_json_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "corpus": {
+    "verified_at": "2026-11-10T06:34:48.168782+00:00",
+    "evaluation_path": "backend/data/chroma_evaluation",
+    "evaluation_collection": "aska_evaluation",
+    "evaluation_sqlite_sha256": "4cc40874f660d944a91349b21eba8cbc70633d980b3a89c75f022e52a72ef456",
+    "evaluation_record_count": 691,
+    "evaluation_exclusion_count": 0,
+    "evaluation_identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "evaluation_metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "extract_artifact": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json",
+    "extract_identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "extract_metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "extract_record_count": 691,
+    "extract_source_path_as_recorded": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\chroma\\chroma.sqlite3",
+    "extract_source_collection_as_recorded": "aska_knowledge_base",
+    "extract_source_sqlite_sha256": "d5cbd6d11e98fac5c0de650d98034ff9315b58c5cf25051c91a16df4d4e23ddd",
+    "identity_digest_matches": true,
+    "metadata_text_digest_matches": true,
+    "embedding_id_set_equal": true,
+    "text_exact_match_count": 691,
+    "text_mismatch_count": 0,
+    "document_id_mismatch_count": 0,
+    "metadata_chunk_id_mismatch_count": 0,
+    "chunk_index_mismatch_count": 0,
+    "sqlite_file_hash_equals_extract_source": false,
+    "corresponds": true,
+    "limitations": [
+      "Evaluation sqlite file bytes differ from the extract source sqlite (chroma.sqlite3 vs recorded C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\chroma\\chroma.sqlite3). Collection names also differ (aska_evaluation vs aska_knowledge_base). Correspondence is the recovered records (embedding/chunk IDs, identity metadata, verbatim text) and the two locked digests, not byte-identity of the sqlite files.",
+      "Vectors/HNSW binary files are not hashed. Identity uses the same sqlite metadata+text extraction as the locked artifact."
+    ]
+  },
+  "validity_rule": "valid: the displayed citation id's exact document_id::chunk_index compound key exists in the locked 691-chunk extract (qa_citation_dataset.load_locked_extract_index). unresolved: the id is malformed, or well-formed but does not exist in the locked extract (covers nonexistent document, nonexistent chunk index, and malformed strings uniformly, via a plain dict lookup).",
+  "cases_recomputed": 30,
+  "citation_observations_recomputed": 86,
+  "original_citation_validity": {
+    "numerator": 0,
+    "denominator": 86,
+    "value": 0.0
+  },
+  "corrected_citation_validity": {
+    "numerator": 86,
+    "denominator": 86,
+    "value": 1.0
+  },
+  "denominator_unchanged_from_original": true,
+  "other_four_metrics_verified_unchanged": true,
+  "other_four_metrics_mismatches": [],
+  "implementation_fix_location": "app/services/evaluation/qa_citation_claim_judging.py::resolve_citation_validity",
+  "regression_tests_file": "backend/tests/test_qa_citation_claim_judging.py"
+}

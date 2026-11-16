@@ -147,6 +147,27 @@ Future<EvaluationConfusionMatrix?> fetchEvaluationConfusionMatrix(
   }
 }
 
+Future<QaCitationJudgingOverview> fetchQaCitationJudgingOverview(BuildContext context) async {
+  final data = await _getJson(
+    context,
+    '/admin/evaluation/qa-citation-overview',
+    fallbackError: 'Could not load the QA and citation judging overview.',
+  );
+  return QaCitationJudgingOverview.fromJson(data);
+}
+
+/// Raw JSON for the consolidated report's downloadable export -- returned
+/// as a plain decoded map (not a typed model) since the only consumer is
+/// the "Download full report (JSON)" button, which re-encodes exactly
+/// what the backend returned rather than rendering it field-by-field.
+Future<Map<String, dynamic>> fetchEvaluationFullReport(BuildContext context) async {
+  return _getJson(
+    context,
+    '/admin/evaluation/full-report',
+    fallbackError: 'Could not load the full evaluation report.',
+  );
+}
+
 Future<EvaluationCaseResultsPage> fetchEvaluationCaseResults(
   BuildContext context, {
   required String runId,

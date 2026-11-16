@@ -192,7 +192,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final List<TicketEntry> _tickets = [];
-  final List<_TicketNotification> _notifications = [];
   final TextEditingController _searchCtrl = TextEditingController();
   bool _loading = false;
   String? _error;
@@ -200,7 +199,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
   String _officeFilter = 'All Offices';
   String _categoryFilter = 'All Categories';
   bool _requestedInitialLoad = false;
-  int _unreadNotifications = 0;
   Timer? _listPollTimer;
 
   @override
@@ -219,7 +217,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       if (!mounted || !AuthScope.of(context).isAuthenticated) return;
       if (_tabController.index != 0) return;
       _loadTickets(silent: true);
-      _loadNotifications(silent: true);
     });
   }
 
@@ -232,7 +229,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _loadTickets();
-          _loadNotifications();
         }
       });
     }
@@ -286,44 +282,7 @@ class _MyTicketsPageState extends State<MyTicketsPage>
     }
   }
 
-  Future<void> _loadNotifications({bool silent = false}) async {
-    try {
-      final result = await ApiClient.send(
-        method: 'GET',
-        url: '${AppConfig.resolvedApiBase}/tickets/notifications',
-        headers: AuthScope.of(context).ticketHeaders(),
-      );
-      final data = _decodeObject(result.body);
-      final statusCode = result.statusCode;
-      if (statusCode < 200 || statusCode >= 300) return;
-      final items = data['items'] is List ? data['items'] as List : const [];
-      if (!mounted) return;
-      setState(() {
-        _notifications
-          ..clear()
-          ..addAll(
-            items.whereType<Map>().map(
-              (item) =>
-                  _TicketNotification.fromJson(Map<String, dynamic>.from(item)),
-            ),
-          );
-        _unreadNotifications = _readInt(data['unread_count']);
-      });
-    } catch (_) {
-      // Non-blocking: ticket list still works without notifications.
-    }
-  }
 
-  Future<void> _markAllNotificationsRead() async {
-    try {
-      await ApiClient.send(
-        method: 'POST',
-        url: '${AppConfig.resolvedApiBase}/tickets/notifications/read-all',
-        headers: AuthScope.of(context).ticketHeaders(),
-      );
-      await _loadNotifications();
-    } catch (_) {}
-  }
 
   void _ticketCreated(TicketEntry ticket) {
     setState(() {
@@ -437,7 +396,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
         final listView = RefreshIndicator(
           onRefresh: () async {
             await _loadTickets();
-            await _loadNotifications();
           },
           color: DesignTokens.maroon,
           child: SingleChildScrollView(
@@ -452,18 +410,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
                   onAction: () => _tabController.animateTo(1),
                 ),
                 SizedBox(height: isWide ? 22 : 18),
-                if (_unreadNotifications > 0) ...[
-                  _NotificationsBanner(
-                    notifications:
-                        _notifications
-                            .where((item) => !item.isRead)
-                            .take(3)
-                            .toList(),
-                    unreadCount: _unreadNotifications,
-                    onDismiss: _markAllNotificationsRead,
-                  ),
-                  SizedBox(height: isWide ? 16 : 12),
-                ],
                 _TicketStatsSummary(
                   tickets: _tickets,
                   isWide: isWide,
@@ -3802,106 +3748,6 @@ class _TicketAttachment {
   }
 
   bool get isImage => contentType.toLowerCase().startsWith('image/');
-}
-
-class _TicketNotification {
-  final String id;
-  final String? ticketId;
-  final String type;
-  final String title;
-  final String body;
-  final bool isRead;
-
-  const _TicketNotification({
-    required this.id,
-    required this.ticketId,
-    required this.type,
-    required this.title,
-    required this.body,
-    required this.isRead,
-  });
-
-  factory _TicketNotification.fromJson(Map<String, dynamic> json) {
-    return _TicketNotification(
-      id: (json['id'] ?? '').toString(),
-      ticketId: json['ticket_id']?.toString(),
-      type: (json['type'] ?? '').toString(),
-      title: (json['title'] ?? 'Update').toString(),
-      body: (json['body'] ?? '').toString(),
-      isRead: json['is_read'] == true,
-    );
-  }
-}
-
-class _NotificationsBanner extends StatelessWidget {
-  final List<_TicketNotification> notifications;
-  final int unreadCount;
-  final VoidCallback onDismiss;
-
-  const _NotificationsBanner({
-    required this.notifications,
-    required this.unreadCount,
-    required this.onDismiss,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return StudentPanel(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.notifications_active_rounded,
-                color: DesignTokens.maroon,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '$unreadCount new ticket update${unreadCount == 1 ? '' : 's'}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: DesignTokens.ink,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: onDismiss,
-                child: const Text('Mark all read'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...notifications.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: DesignTokens.ink,
-                    ),
-                  ),
-                  Text(
-                    item.body,
-                    style: const TextStyle(
-                      color: DesignTokens.muted,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 String _extractError(Map<String, dynamic> data, String fallback) {

@@ -62,7 +62,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final pagePad = split
         ? _accountOuterPad
         : (width >= 600 ? 24.0 : 16.0);
+    // Match the public header side inset on both edges so Account content
+    // reaches the same right margin as the nav (no dead grey gutter).
     final leftPad = split ? headerPad : pagePad;
+    final rightPad = split ? headerPad : pagePad;
     final bg = eyeComfort ? EyeComfortColors.bg : _pageBg;
     final line = eyeComfort ? EyeComfortColors.border : _hairline;
 
@@ -111,12 +114,15 @@ class _SettingsPageState extends State<SettingsPage> {
                           Expanded(
                             child: SingleChildScrollView(
                               padding: EdgeInsets.fromLTRB(
-                                24,
+                                28,
                                 22,
-                                pagePad,
+                                rightPad,
                                 40,
                               ),
-                              child: main,
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: main,
+                              ),
                             ),
                           ),
                         ],
@@ -289,17 +295,7 @@ class _AccountMain extends StatelessWidget {
           preferences,
         ],
         const SizedBox(height: 14),
-        if (wide)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: eyeComfort),
-              const SizedBox(width: 14),
-              const Expanded(child: SizedBox.shrink()),
-            ],
-          )
-        else
-          eyeComfort,
+        eyeComfort,
         const SizedBox(height: 14),
         _SignOutCard(onSignOut: onSignOut),
       ],

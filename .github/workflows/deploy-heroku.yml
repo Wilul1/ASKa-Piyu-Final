@@ -1,0 +1,37 @@
+name: Deploy Heroku
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/ticket-kb-coe-incomplete-ui-v90
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Heroku CLI
+        run: curl https://cli-assets.heroku.com/install.sh | sh
+
+      - name: Login to Heroku Container Registry
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          echo "$HEROKU_API_KEY" | docker login --username=_ --password-stdin registry.heroku.com
+
+      - name: Build web image
+        run: |
+          docker build \
+            -f Dockerfile.heroku-web \
+            -t registry.heroku.com/aska-piyu/web \
+            --build-arg ASKA_API_BASE_URL=https://aska-piyu-6b05cafc5bd1.herokuapp.com \
+            .
+
+      - name: Push and release
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          docker push registry.heroku.com/aska-piyu/web
+          heroku container:release web -a aska-piyu

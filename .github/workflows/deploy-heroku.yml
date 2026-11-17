@@ -15,23 +15,19 @@ jobs:
       - name: Install Heroku CLI
         run: curl https://cli-assets.heroku.com/install.sh | sh
 
-      - name: Login to Heroku Container Registry
+      - name: Build, push, and release web container
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
-          echo "$HEROKU_API_KEY" | docker login --username=_ --password-stdin registry.heroku.com
-
-      - name: Build web image
-        run: |
-          docker build \
+          heroku container:login
+          # Heroku registry requires a classic docker image for linux/amd64.
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
             -f Dockerfile.heroku-web \
             -t registry.heroku.com/aska-piyu/web \
             --build-arg ASKA_API_BASE_URL=https://aska-piyu-6b05cafc5bd1.herokuapp.com \
+            --push \
             .
-
-      - name: Push and release
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: |
-          docker push registry.heroku.com/aska-piyu/web
           heroku container:release web -a aska-piyu

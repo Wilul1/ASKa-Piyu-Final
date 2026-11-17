@@ -178,6 +178,59 @@ def test_get_embedding_function_gemini_accepts_google_alias():
         get_embedding_function.cache_clear()
 
 
+def test_get_embedding_function_returns_openrouter_when_configured():
+    from app.services.embeddings import OpenRouterGeminiEmbeddingFunction
+
+    get_embedding_function.cache_clear()
+    try:
+        with patch("app.services.embeddings.settings.embedding_backend", "openrouter"):
+            ef = get_embedding_function()
+        assert isinstance(ef, OpenRouterGeminiEmbeddingFunction)
+    finally:
+        get_embedding_function.cache_clear()
+
+
+def test_openrouter_embedding_batch_parses_openai_shape(monkeypatch):
+    from app.services.embeddings import OpenRouterGeminiEmbeddingFunction
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": [
+                    {"index": 0, "embedding": [3.0, 4.0] + [0.0] * 766},
+                ]
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return _FakeResponse()
+
+    # httpx.post is called as a function in our code, not Client context.
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: _FakeResponse())
+    ef = OpenRouterGeminiEmbeddingFunction(api_key="test-key", dimension=768)
+    vectors = ef(["hello"])
+    assert len(vectors) == 1
+    assert len(vectors[0]) == 768
+    # L2-normalized: 3-4-5 triangle on first two dims => unit length ~1
+    import math
+
+    norm = math.sqrt(sum(float(x) * float(x) for x in vectors[0]))
+    assert abs(norm - 1.0) < 1e-5
+
+
 def test_existing_local_and_huggingface_backends_still_selected_correctly():
     """Adding the local_ec2 branch must not disturb either existing branch."""
     get_embedding_function.cache_clear()

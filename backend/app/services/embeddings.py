@@ -628,6 +628,187 @@ class GeminiEmbeddingFunction:
         )
 
 
+# OpenAI-compatible embeddings API on OpenRouter. Same Gemini embedding model
+# + 768-d as the direct Google backend, so an existing Gemini-indexed Chroma
+# collection can keep working without reingest — billed to OpenRouter credit
+# instead of Google AI Studio free-tier quota.
+DEFAULT_OPENROUTER_EMBEDDING_MODEL = "google/gemini-embedding-001"
+OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings"
+OPENROUTER_EMBED_BATCH_SIZE = 32
+
+
+class OpenRouterGeminiEmbeddingFunction:
+    """Chroma-compatible Gemini embeddings via OpenRouter ``/v1/embeddings``.
+
+    Uses the same OpenRouter credential already configured for chat
+    (``ASKA_GROQ_API_KEY`` / llm path). Requests ``dimensions=768`` to match
+    the production Gemini Chroma space.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_name: str | None = None,
+        api_key: str | None = None,
+        dimension: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        self._model_name = (
+            model_name
+            or getattr(settings, "openrouter_embedding_model", None)
+            or DEFAULT_OPENROUTER_EMBEDDING_MODEL
+        )
+        # Prefer dedicated override, else the OpenRouter key already used for LLM.
+        self._api_key = (
+            api_key
+            if api_key is not None
+            else (
+                getattr(settings, "openrouter_api_key", None)
+                or settings.groq_api_key
+            )
+        )
+        configured_dim = (
+            dimension
+            if dimension is not None
+            else settings.gemini_embedding_dimension
+        )
+        self._dimension = int(configured_dim or GEMINI_EMBEDDING_DIMENSION)
+        self._timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else settings.gemini_embedding_timeout_seconds
+        )
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        return self._encode(input)
+
+    def embed_query(self, input: list[str]) -> list[list[float]]:
+        return self._encode(input)
+
+    def _encode(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        if not self._api_key:
+            raise RemoteEmbeddingError(
+                "OpenRouter embedding backend needs ASKA_GROQ_API_KEY "
+                "(OpenRouter API key) configured."
+            )
+
+        import numpy as np
+
+        prepared = [
+            (text if (text or "").strip() else " ")[:GEMINI_EMBED_MAX_CHARS]
+            for text in texts
+        ]
+        vectors: list[list[float]] = []
+        for start in range(0, len(prepared), OPENROUTER_EMBED_BATCH_SIZE):
+            batch = prepared[start : start + OPENROUTER_EMBED_BATCH_SIZE]
+            vectors.extend(self._encode_batch(batch))
+        return [np.asarray(vector, dtype=np.float32) for vector in vectors]
+
+    def _encode_batch(self, texts: list[str]) -> list[list[float]]:
+        import time
+
+        import httpx
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://aska-piyu-6b05cafc5bd1.herokuapp.com",
+            "X-Title": "ASKa-Piyu",
+        }
+        body = {
+            "model": self._model_name,
+            "input": texts if len(texts) > 1 else texts[0],
+            "dimensions": self._dimension,
+            "encoding_format": "float",
+        }
+        max_attempts = 6
+        response = None
+        for attempt in range(max_attempts):
+            try:
+                response = httpx.post(
+                    OPENROUTER_EMBEDDINGS_URL,
+                    headers=headers,
+                    json=body,
+                    timeout=self._timeout_seconds,
+                )
+            except httpx.TimeoutException:
+                raise RemoteEmbeddingError(
+                    f"OpenRouter embedding request timed out after {self._timeout_seconds}s."
+                ) from None
+            except httpx.HTTPError:
+                raise RemoteEmbeddingError(
+                    "OpenRouter embedding request failed (network/transport error)."
+                ) from None
+
+            if response.status_code != 429:
+                break
+            if attempt < max_attempts - 1:
+                time.sleep(min(60.0, 2.0 * (2**attempt)))
+
+        if response is None:
+            raise RemoteEmbeddingError(
+                "OpenRouter embedding request failed (network/transport error)."
+            )
+        if response.status_code != 200:
+            raise RemoteEmbeddingError(
+                f"OpenRouter embedding request failed with HTTP {response.status_code}."
+            )
+
+        try:
+            payload = response.json()
+        except ValueError:
+            raise RemoteEmbeddingError(
+                "OpenRouter embedding response was not valid JSON."
+            ) from None
+
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or len(rows) != len(texts):
+            raise RemoteEmbeddingError(
+                "OpenRouter embedding response shape was unexpected "
+                f"(expected data list of {len(texts)})."
+            )
+        # OpenAI-style rows are {index, embedding}; sort by index for safety.
+        try:
+            rows = sorted(rows, key=lambda row: int(row.get("index", 0)))
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+        value_rows: list[Any] = []
+        for row in rows:
+            if not isinstance(row, dict) or "embedding" not in row:
+                raise RemoteEmbeddingError(
+                    "OpenRouter embedding response contained a row without 'embedding'."
+                )
+            value_rows.append(row["embedding"])
+
+        vectors = _validate_and_extract_vectors(
+            value_rows,
+            expected_count=len(texts),
+            expected_dimension=self._dimension,
+            provider_label="OpenRouter",
+        )
+        return [_l2_normalize(vector) for vector in vectors]
+
+    @staticmethod
+    def name() -> str:
+        return "aska_piyu_openrouter_gemini"
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "model_name": self._model_name,
+            "dimension": self._dimension,
+        }
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "OpenRouterGeminiEmbeddingFunction":
+        return OpenRouterGeminiEmbeddingFunction(
+            model_name=config.get("model_name"),
+            dimension=config.get("dimension"),
+        )
+
+
 @lru_cache(maxsize=1)
 def get_embedding_function() -> Any:
     """The single chokepoint Chroma calls through (see chroma_store.py).
@@ -640,6 +821,8 @@ def get_embedding_function() -> Any:
         return HFRemoteEmbeddingFunction()
     if backend == "local_ec2":
         return LocalEC2EmbeddingFunction()
+    if backend in ("openrouter", "openrouter_gemini"):
+        return OpenRouterGeminiEmbeddingFunction()
     if backend in ("gemini", "google"):
         return GeminiEmbeddingFunction()
     return E5EmbeddingFunction()
@@ -654,6 +837,13 @@ def current_embedding_model_label() -> str:
         return f"Hugging Face remote: {settings.hf_embedding_model or DEFAULT_EMBEDDING_MODEL}"
     if backend == "local_ec2":
         return f"Local EC2 remote: {DEFAULT_EMBEDDING_MODEL}"
+    if backend in ("openrouter", "openrouter_gemini"):
+        model = (
+            getattr(settings, "openrouter_embedding_model", None)
+            or DEFAULT_OPENROUTER_EMBEDDING_MODEL
+        )
+        dim = settings.gemini_embedding_dimension or GEMINI_EMBEDDING_DIMENSION
+        return f"OpenRouter Gemini remote: {model} ({dim}-d)"
     if backend in ("gemini", "google"):
         model = settings.gemini_embedding_model or DEFAULT_GEMINI_EMBEDDING_MODEL
         dim = settings.gemini_embedding_dimension or GEMINI_EMBEDDING_DIMENSION

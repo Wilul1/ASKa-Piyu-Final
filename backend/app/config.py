@@ -157,10 +157,14 @@ class Settings(BaseSettings):
     # the Generative Language API. Free-tier friendly and always-on, but
     # 768-d (not e5-small's 384-d) — switching requires an explicit Chroma
     # reset + FAQ/document reindex so vectors stay in one embedding space.
+    # "openrouter" / "openrouter_gemini": same gemini-embedding-001 at 768-d
+    # via OpenRouter /v1/embeddings (uses ASKA_GROQ_API_KEY). Compatible with
+    # an existing Gemini-indexed collection — no reingest required.
     gemini_api_key: str | None = None
     gemini_embedding_model: str = "gemini-embedding-001"
     gemini_embedding_dimension: int = 768
     gemini_embedding_timeout_seconds: float = 30.0
+    openrouter_embedding_model: str = "google/gemini-embedding-001"
 
     # --- Student Q&A (retrieval only; no OCR) ---
     rag_top_k: int = 5

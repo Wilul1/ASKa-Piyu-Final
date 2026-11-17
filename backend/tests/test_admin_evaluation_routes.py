@@ -3,13 +3,10 @@ database (see conftest.py). Admin auth is overridden via FastAPI's own
 ``app.dependency_overrides`` (simulating an authenticated admin), not via
 a real admin key, since this file tests routing/persistence wiring, not
 the auth dependency itself (that is covered by test_security_hardening.py).
-``persistence.process_evaluation_run_job`` is always mocked when calling
-POST /run -- TestClient executes FastAPI BackgroundTasks synchronously
-within the request, so leaving it real would make a real Groq/Chroma call.
+POST /admin/evaluation/run is disabled (403) so demos cannot start quota-
+burning runs from the API.
 """
 from __future__ import annotations
-
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -96,23 +93,12 @@ def test_run_endpoint_requires_admin_auth():
     assert resp.status_code in (401, 503)
 
 
-def test_run_endpoint_creates_running_run_and_schedules_job(client_and_session, monkeypatch):
-    client, session, created = client_and_session
-    scheduled: list[str] = []
-    async def _fake_spawn(run_id):
-        scheduled.append(run_id)
-
-    monkeypatch.setattr(persistence, "spawn_evaluation_run_job", _fake_spawn)
-
+def test_run_endpoint_is_disabled(client_and_session):
+    """Starting runs is disabled so demos cannot burn embedding/LLM quota."""
+    client, _session, _created = client_and_session
     resp = client.post("/admin/evaluation/run")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "running"
-    created.append(body["run_id"])
-    deadline = time.time() + 2
-    while scheduled != [body["run_id"]] and time.time() < deadline:
-        time.sleep(0.01)
-    assert scheduled == [body["run_id"]]
+    assert resp.status_code == 403
+    assert "disabled" in resp.json()["detail"].lower()
 
 
 def test_models_endpoint_lists_known_components(client_and_session):

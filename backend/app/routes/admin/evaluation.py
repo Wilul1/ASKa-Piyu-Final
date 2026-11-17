@@ -10,15 +10,14 @@ PostgreSQL (see ``app.services.evaluation.evaluation_service``/
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db_session, get_session_factory
+from app.db.session import get_db_session
 from app.models.db_models import EvaluationComponent, EvaluationResult
 from app.models.schemas import (
     ErrorResponse,
@@ -149,30 +148,22 @@ def _component_schema(session: Session, component_row: EvaluationComponent) -> E
 @router.post(
     "/run",
     response_model=StartEvaluationRunResponse,
-    summary="[Admin] Start a new model evaluation run",
+    summary="[Admin] Start a new model evaluation run (disabled)",
 )
 async def admin_start_evaluation_run(
-    background_tasks: BackgroundTasks,
-    triggered_by_user_id: str | None = Depends(require_admin_only_key),
+    _: str | None = Depends(require_admin_only_key),
 ) -> StartEvaluationRunResponse:
-    """Creates the run row synchronously (status="running") and schedules
-    the real evaluation + persistence as a background task -- mirrors
-    ``POST /admin/knowledge-base/extract``'s own job-creation shape, so
-    this request returns immediately regardless of how long the real
-    Groq/retrieval calls take."""
-
-    def _create_run():
-        session = get_session_factory()()
-        try:
-            return persistence.start_evaluation_run(
-                session, triggered_by_user_id=triggered_by_user_id
-            )
-        finally:
-            session.close()
-
-    run = await asyncio.to_thread(_create_run)
-    background_tasks.add_task(persistence.spawn_evaluation_run_job, run.id)
-    return StartEvaluationRunResponse(run_id=run.id, status=run.status)
+    """Disabled: starting a run calls live embeddings/LLM and can burn
+    provider quota. The Model Evaluation UI is read-only (saved metrics +
+    Refresh). Re-enable deliberately when quota allows a new measured run.
+    """
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Starting a new evaluation run is disabled. "
+            "Open Model Evaluation to view saved results only."
+        ),
+    )
 
 
 @router.get(

@@ -105,24 +105,12 @@ Future<EvaluationRunDetail> fetchEvaluationRunDetail(BuildContext context, Strin
   return EvaluationRunDetail.fromJson(data);
 }
 
+/// Starting a live evaluation run is disabled (UI is read-only metrics).
 Future<String> startEvaluationRun(BuildContext context) async {
-  final result = await ApiClient.send(
-    method: 'POST',
-    url: '${AppConfig.resolvedApiBase}/admin/evaluation/run',
-    headers: AuthScope.of(context).ticketHeaders(),
+  throw EvaluationApiException(
+    'Starting a new evaluation run is disabled. View saved Model Evaluation results only.',
+    statusCode: 403,
   );
-  final data = _decodeObject(result.body);
-  if (!result.ok) {
-    throw EvaluationApiException(
-      ApiClient.extractError(data, fallback: 'Could not start an evaluation run.'),
-      statusCode: result.statusCode,
-    );
-  }
-  final runId = data['run_id']?.toString() ?? '';
-  if (runId.isEmpty) {
-    throw EvaluationApiException('Evaluation run response was missing a run_id.');
-  }
-  return runId;
 }
 
 /// Returns null on a 404 (no confusion matrix for this component -- an

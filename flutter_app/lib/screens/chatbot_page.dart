@@ -16,7 +16,10 @@ import '../widgets/public_site_header.dart';
 import '../widgets/source_pdf_viewer.dart';
 import 'login_page.dart';
 
-const _chatSessionsKey = 'aska_chat_sessions_v1';
+/// Legacy browser-wide key (pre per-account scoping). Kept only so we can
+/// delete it once and stop leaking chats across logins on the same device.
+const _legacyChatSessionsKey = 'aska_chat_sessions_v1';
+const _chatSessionsKeyPrefix = 'aska_chat_sessions_v1_';
 const _maxStoredSessions = 20;
 const _kSidebarWidth = 248.0;
 const _kConversationMaxWidth = 900.0;
@@ -203,6 +206,20 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
   bool get _canUseHistory => AuthScope.of(context).isAuthenticated;
 
+  /// Stable per-account storage id; null for guests / missing profile id.
+  String? get _historyOwnerId {
+    final id = AuthScope.of(context).currentUser?.id.trim() ?? '';
+    return id.isEmpty ? null : id;
+  }
+
+  /// Chat history is scoped per user so Account A never sees Account B's
+  /// Recent Chats on the same browser. Local only — no Gemini/API quota.
+  String? get _sessionsStorageKey {
+    final ownerId = _historyOwnerId;
+    if (ownerId == null) return null;
+    return '$_chatSessionsKeyPrefix$ownerId';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -290,10 +307,14 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
   Future<void> _hydrate() async {
     final canUseHistory = AuthScope.of(context).isAuthenticated;
-    if (canUseHistory) {
+    final storageKey = _sessionsStorageKey;
+    _sessions.clear();
+    if (canUseHistory && storageKey != null) {
       try {
         await LocalStore.init();
-        final raw = LocalStore.getString(_chatSessionsKey);
+        // Drop the old shared key so prior cross-account leakage stops.
+        await LocalStore.remove(_legacyChatSessionsKey);
+        final raw = LocalStore.getString(storageKey);
         if (raw != null && raw.isNotEmpty) {
           final decoded = jsonDecode(raw);
           if (decoded is List) {
@@ -326,6 +347,8 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
   Future<void> _persistSessions() async {
     if (!_canUseHistory) return;
+    final storageKey = _sessionsStorageKey;
+    if (storageKey == null) return;
     try {
       await LocalStore.init();
       final payload = _sessions
@@ -333,7 +356,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
           .take(_maxStoredSessions)
           .map((session) => session.toJson())
           .toList();
-      await LocalStore.setString(_chatSessionsKey, jsonEncode(payload));
+      await LocalStore.setString(storageKey, jsonEncode(payload));
     } catch (_) {
       // Persistence failures should not block chatting.
     }

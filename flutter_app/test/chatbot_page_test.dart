@@ -24,7 +24,8 @@ import 'package:aska_piyu/screens/student_home.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/services/local_store.dart';
 
-const _sessionsKey = 'aska_chat_sessions_v1';
+// Per-account key: AuthUser id in tests is student-1.
+const _sessionsKey = 'aska_chat_sessions_v1_student-1';
 // The removed card's exact background color (0xFFFFFBEB / amber-50) and
 // badge color (0xFFFEF3C7) — asserting these are gone anywhere on the page
 // guards against the card chrome resurfacing under a different label.

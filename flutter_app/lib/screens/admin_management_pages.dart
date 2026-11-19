@@ -338,6 +338,22 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
     return updated;
   }
 
+  Future<_AdminTicketEntry> _resolveTicket(_AdminTicketEntry ticket) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/resolve',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not resolve ticket.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
   void _replaceTicket(_AdminTicketEntry updated) {
     setState(() {
       final index = _tickets.indexWhere((ticket) => ticket.id == updated.id);
@@ -384,6 +400,7 @@ class _OfficeAssignedTicketsPageState extends State<OfficeAssignedTicketsPage> {
         replyHint: 'Write a reply…',
         onUpdate: _patchTicket,
         onReply: _replyToTicket,
+        onResolve: _resolveTicket,
         onTicketChanged: _replaceTicket,
         initialSelectedId: widget.initialSelectedTicketId,
       ),
@@ -1530,31 +1547,31 @@ class _OfficeDashboardStatsRow extends StatelessWidget {
         label: 'Assigned Tickets',
         value: '$assigned',
         subtitle: 'Tickets assigned to your office',
-        accent: const Color(0xFF7A1218),
+        accent: DesignTokens.maroon,
       ),
       _OfficeDashboardStatData(
         label: 'Open Tickets',
         value: '$open',
         subtitle: 'Awaiting action',
-        accent: const Color(0xFF3B82F6),
+        accent: DesignTokens.statusOpen,
       ),
       _OfficeDashboardStatData(
         label: 'In Progress',
         value: '$inProgress',
         subtitle: 'Currently being handled',
-        accent: const Color(0xFFF59E0B),
+        accent: DesignTokens.statusInProgress,
       ),
       _OfficeDashboardStatData(
         label: 'Closed Tickets',
         value: '$closed',
         subtitle: 'Resolved tickets',
-        accent: const Color(0xFF22C55E),
+        accent: DesignTokens.statusClosed,
       ),
       _OfficeDashboardStatData(
         label: 'High Priority',
         value: '$highPriority',
         subtitle: 'Requires immediate attention',
-        accent: const Color(0xFFEF4444),
+        accent: DesignTokens.statusUrgent,
       ),
     ];
 
@@ -2071,6 +2088,8 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
   final Future<_AdminTicketEntry> Function(Map<String, dynamic> payload)
       onUpdate;
   final Future<_AdminTicketEntry> Function(String message) onReply;
+  final Future<_AdminTicketEntry> Function() onResolve;
+  final Future<_AdminTicketEntry> Function() onClose;
 
   const _AdminTicketDetailsDialog({
     required this.ticket,
@@ -2080,6 +2099,8 @@ class _AdminTicketDetailsDialog extends StatefulWidget {
     this.allowReassignment = true,
     required this.onUpdate,
     required this.onReply,
+    required this.onResolve,
+    required this.onClose,
   });
 
   @override
@@ -2208,8 +2229,8 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
       for (final office in widget.officeEntries) office.id: office.name,
     };
     final priorities = _mergeOption(const ['Low', 'Medium', 'High', 'Urgent'], _priority);
-    final statuses =
-        _mergeOption(const ['Open', 'In Progress', 'Resolved', 'Closed'], _status);
+    final canResolve = _status == 'Open' || _status == 'In Progress';
+    final canClose = _status != 'Closed';
 
     return Dialog(
       insetPadding: const EdgeInsets.all(18),
@@ -2285,6 +2306,21 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                             label: 'KB Draft',
                             color: Color(0xFFCA8A04),
                           ),
+                        if (_ticket.kbConversionStatus == 'needs_review')
+                          const _AdminKbBadge(
+                            label: 'KB Needs Review',
+                            color: Color(0xFFD97706),
+                          ),
+                        if (_ticket.kbConversionStatus == 'failed')
+                          const _AdminKbBadge(
+                            label: 'KB Generation Failed',
+                            color: Color(0xFFDC2626),
+                          ),
+                        if (_ticket.kbConversionStatus == 'rejected')
+                          const _AdminKbBadge(
+                            label: 'KB Rejected',
+                            color: Color(0xFF64748B),
+                          ),
                         if (_ticket.kbConversionStatus == 'published')
                           const _AdminKbBadge(
                             label: 'KB Published',
@@ -2292,6 +2328,29 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                           ),
                       ],
                     ),
+                    if (canResolve || canClose) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (canResolve)
+                            OutlinedButton(
+                              onPressed: _saving ? null : _resolveFromDialog,
+                              child: const Text('Resolve'),
+                            ),
+                          if (canClose)
+                            OutlinedButton(
+                              onPressed: _saving ? null : _closeFromDialog,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFB91C1C),
+                                side: const BorderSide(color: Color(0xFFB91C1C)),
+                              ),
+                              child: const Text('Close'),
+                            ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     if (_ticket.needsManualRouting)
                       _AdminNotice(
@@ -2327,11 +2386,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _ticket.kbConversionStatus == 'published'
-                                  ? 'This ticket already has a published knowledge article. Admins can unpublish it from Knowledge Article if it needs revision.'
-                                  : _ticket.kbConversionStatus == 'draft'
-                                      ? 'A draft FAQ already exists for this ticket. You can update it from the approved resolution.'
-                                      : 'Convert the approved office answer into a draft FAQ so future users can get this answer from ASKa-Piyu.',
+                              _kbConversionHelpText(_ticket.kbConversionStatus),
                               style: const TextStyle(
                                 color: DesignTokens.muted,
                                 height: 1.4,
@@ -2361,6 +2416,39 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                                         size: 18,
                                       ),
                                       label: const Text('Open in Knowledge Article'),
+                                    ),
+                                  if (_ticket.kbConversionStatus == 'draft' ||
+                                      _ticket.kbConversionStatus ==
+                                          'needs_review') ...[
+                                    OutlinedButton(
+                                      onPressed: _saving
+                                          ? null
+                                          : () => _postTicketKbAction(
+                                                '/kb-article/approve',
+                                              ),
+                                      child: const Text('Approve article'),
+                                    ),
+                                    OutlinedButton(
+                                      onPressed: _saving
+                                          ? null
+                                          : () => _postTicketKbAction(
+                                                '/kb-article/reject',
+                                                jsonBody: const {
+                                                  'reason': 'rejected by staff',
+                                                },
+                                              ),
+                                      child: const Text('Reject draft'),
+                                    ),
+                                  ],
+                                  if (_ticket.kbConversionStatus == 'failed' ||
+                                      _ticket.kbConversionStatus == 'rejected')
+                                    OutlinedButton(
+                                      onPressed: _saving
+                                          ? null
+                                          : () => _postTicketKbAction(
+                                                '/kb-article/retry',
+                                              ),
+                                      child: const Text('Retry generation'),
                                     ),
                                   if (_ticket.kbConversionStatus != 'published')
                                     ElevatedButton.icon(
@@ -2397,14 +2485,10 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
                             builder: (context, constraints) {
                               final compact = constraints.maxWidth < 680;
                               final fields = [
-                                _AdminFilterDropdown(
-                                  label: 'Status',
-                                  value: _status,
-                                  values: statuses,
-                                  icon: Icons.tune_rounded,
-                                  onChanged: (value) =>
-                                      setState(() => _status = value),
-                                ),
+                                // Status is read-only here -- see the
+                                // _AdminStatusChip above plus the
+                                // Resolve/Close buttons, which replace this
+                                // dropdown entirely.
                                 _AdminFilterDropdown(
                                   label: 'Priority',
                                   value: _priority,
@@ -2530,6 +2614,42 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
     );
   }
 
+  Future<void> _resolveFromDialog() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onResolve();
+      setState(() {
+        _ticket = updated;
+        _status = updated.status;
+      });
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _closeFromDialog() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onClose();
+      setState(() {
+        _ticket = updated;
+        _status = updated.status;
+      });
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _saveChanges() async {
     setState(() {
       _saving = true;
@@ -2539,13 +2659,13 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
       // Only ever send a REAL office id, and only when one has actually
       // been chosen. If the ticket is unresolved and the admin hasn't
       // picked a real office yet, the office key is omitted entirely so
-      // "Save changes" (e.g. just a status update) can never resend the
-      // raw taxonomy label and can never silently re-launder an
-      // unresolved ticket back into a default office.
+      // "Save changes" can never resend the raw taxonomy label and can
+      // never silently re-launder an unresolved ticket back into a
+      // default office. Status is no longer part of this payload at all
+      // -- see _resolveFromDialog/_closeFromDialog.
       final resolvedOfficeId =
           _officeId == _unresolvedOfficeSentinel ? null : _officeId;
       final updated = await widget.onUpdate({
-        'status': _status,
         'priority': _priority,
         if (widget.allowReassignment && resolvedOfficeId != null)
           'assigned_office_id': resolvedOfficeId,
@@ -2581,6 +2701,54 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
         _ticket = updated;
         _replyCtrl.clear();
       });
+    } catch (error) {
+      setState(() => _error = _friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _postTicketKbAction(
+    String path, {
+    Map<String, dynamic>? jsonBody,
+  }) async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final result = await ApiClient.send(
+        method: 'POST',
+        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}$path',
+        headers: {...AuthScope.of(context).ticketHeaders()},
+        jsonBody: jsonBody,
+      );
+      final data = _decodeObject(result.body);
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        throw StateError(_extractError(data, 'Could not update the knowledge article.'));
+      }
+      final refresh = await ApiClient.send(
+        method: 'GET',
+        url: '${AppConfig.resolvedApiBase}/tickets/${_ticket.id}',
+        headers: AuthScope.of(context).ticketHeaders(),
+      );
+      final refreshed = _decodeObject(refresh.body);
+      if (refresh.statusCode >= 200 && refresh.statusCode < 300) {
+        setState(() => _ticket = _AdminTicketEntry.fromJson(refreshed));
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              path.endsWith('/approve')
+                  ? 'Article approved and published to the Knowledge Base.'
+                  : path.endsWith('/reject')
+                      ? 'Generated article draft rejected.'
+                      : 'Article generation retried.',
+            ),
+          ),
+        );
+      }
     } catch (error) {
       setState(() => _error = _friendlyError(error));
     } finally {
@@ -2730,6 +2898,7 @@ class _AdminTicketDetailsDialogState extends State<_AdminTicketDetailsDialog> {
           messages: _ticket.messages,
           kbArticleId: articleId.isEmpty ? _ticket.kbArticleId : articleId,
           kbConversionStatus: status,
+          kbNeedsManualCompletion: data['needs_manual_completion'] == true,
         );
       });
       if (mounted) {
@@ -3201,6 +3370,7 @@ class _AdminTicketEntry {
   final List<_AdminTicketAttachment> attachments;
   final String? kbArticleId;
   final String kbConversionStatus;
+  final bool kbNeedsManualCompletion;
 
   const _AdminTicketEntry({
     required this.id,
@@ -3224,6 +3394,7 @@ class _AdminTicketEntry {
     this.attachments = const [],
     this.kbArticleId,
     this.kbConversionStatus = 'none',
+    this.kbNeedsManualCompletion = false,
   });
 
   /// True when the backend could not resolve this ticket's raw taxonomy
@@ -3271,6 +3442,7 @@ class _AdminTicketEntry {
       kbArticleId: _nullableAdminString(json['kb_article_id']),
       kbConversionStatus:
           (json['kb_conversion_status'] ?? 'none').toString().toLowerCase(),
+      kbNeedsManualCompletion: json['kb_needs_manual_completion'] == true,
     );
   }
 
@@ -3864,6 +4036,23 @@ String _extractError(Map<String, dynamic> data, String fallback) {
   return fallback;
 }
 
+String _kbConversionHelpText(String status) {
+  switch (status) {
+    case 'published':
+      return 'This ticket already has a published knowledge article. Admins can unpublish it from Knowledge Article if it needs revision.';
+    case 'needs_review':
+      return 'A generated FAQ draft needs staff review. Edit any missing steps, then approve it to make it searchable or reject it.';
+    case 'draft':
+      return 'A draft FAQ already exists for this ticket. Review, edit, approve, or reject it before it becomes searchable.';
+    case 'failed':
+      return 'Automatic article generation failed. Retry generation or write the FAQ manually. Ticket resolution is unchanged.';
+    case 'rejected':
+      return 'The generated FAQ draft was rejected. Retry generation or write a new draft if the answer should still be published.';
+    default:
+      return 'Convert the approved office answer into a draft FAQ so future users can get this answer from ASKa-Piyu.';
+  }
+}
+
 String _friendlyError(Object error) {
   final message = error.toString().replaceFirst('Bad state: ', '').trim();
   return message.isEmpty
@@ -3959,10 +4148,10 @@ bool _adminSame(String left, String right) {
 }
 
 Color _adminStatusColor(String status) {
-  if (status == 'Open') return const Color(0xFF2563EB);
-  if (status == 'In Progress') return const Color(0xFFF97316);
-  if (status == 'Resolved') return const Color(0xFF16A34A);
-  if (status == 'Closed') return const Color(0xFF475569);
+  if (status == 'Open') return DesignTokens.statusOpen;
+  if (status == 'In Progress') return DesignTokens.statusInProgress;
+  if (status == 'Resolved') return DesignTokens.statusResolved;
+  if (status == 'Closed') return DesignTokens.statusClosed;
   return DesignTokens.maroon;
 }
 

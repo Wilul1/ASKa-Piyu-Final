@@ -196,6 +196,38 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
     return updated;
   }
 
+  Future<_AdminTicketEntry> _resolveTicket(_AdminTicketEntry ticket) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/resolve',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not resolve ticket.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
+  Future<_AdminTicketEntry> _closeTicket(_AdminTicketEntry ticket) async {
+    final result = await ApiClient.send(
+      method: 'POST',
+      url: '${AppConfig.resolvedApiBase}/tickets/${ticket.id}/close',
+      headers: {...AuthScope.of(context).ticketHeaders()},
+    );
+    final data = _decodeObject(result.body);
+    final statusCode = result.statusCode;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw StateError(_extractError(data, 'Could not close ticket.'));
+    }
+    final updated = _AdminTicketEntry.fromJson(data);
+    _replaceTicket(updated);
+    return updated;
+  }
+
   void _replaceTicket(_AdminTicketEntry updated) {
     setState(() {
       final index = _tickets.indexWhere((ticket) => ticket.id == updated.id);
@@ -216,6 +248,8 @@ class _AdminAllTicketsPageState extends State<AdminAllTicketsPage> {
         officeEntries: _offices,
         onUpdate: (payload) => _patchTicket(ticket, payload),
         onReply: (message) => _replyToTicket(ticket, message),
+        onResolve: () => _resolveTicket(ticket),
+        onClose: () => _closeTicket(ticket),
       ),
     );
   }
@@ -544,8 +578,8 @@ class _AllTicketsStatsRow extends StatelessWidget {
         label: 'In Progress',
         value: '$inProgress',
         key: 'admin-all-tickets-stat-progress',
-        background: const Color(0xFFEFF6FF),
-        valueColor: const Color(0xFF1D4ED8),
+        background: DesignTokens.maroonWash,
+        valueColor: DesignTokens.statusInProgress,
       ),
       (
         label: 'Closed',
@@ -1210,7 +1244,7 @@ class _AllTicketsStatusPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = switch (status) {
       'Open' => (const Color(0xFFFEE2E2), const Color(0xFFB91C1C)),
-      'In Progress' => (const Color(0xFFDBEAFE), const Color(0xFF1D4ED8)),
+      'In Progress' => (DesignTokens.maroonWash, DesignTokens.statusInProgress),
       'Closed' => (const Color(0xFFDCFCE7), const Color(0xFF15803D)),
       'Resolved' => (const Color(0xFFD1FAE5), const Color(0xFF047857)),
       _ => (const Color(0xFFF1F5F9), DesignTokens.muted),

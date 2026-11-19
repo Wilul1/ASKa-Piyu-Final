@@ -1,0 +1,17 @@
+chunk_id: cec01713-c1ba-4061-9404-ffaa1d8e70dd::66
+title: Scholastic Delinquency
+source_section: Sec. 4 > Scholastic Delinquency
+page: 35
+page_start: 35
+page_end: 35
+source_filename: LSPU Student Handbook.pdf
+----- TEXT -----
+Scholastic Delinquency
+
+Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency
+
+The University Academic Council shall promulgate (delinquency) rules and guidelines governing scholastic delinquency, subject to the approv- al of the Board of Regents, and to the following minimum standards:
+4.1. Warning. At the end of the semester, A student who fails 25% to 49% of the total academic units he registered shall be warned by the Dean and advised to improve his/her performance.
+4.2. Probation. At the end of the semester, A student fails 50% to 74% of the total academic units in which he registered shall be placed on probation for the succeeding semester, and the Dean con- cerned shall reduce his/her load accordingly. A student's proba- tion status may be lifted upon passing all the subjects carried dur- ing the term s/he is in probation period.
+----- SOURCE_EXCERPT -----
+Scholastic Delinquency Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency The University Academic Council shall promulgate (delinquency) rules and guidelines governing scholastic delinquency, subject to the approv- al of the Board of Regents, and to the following minimum standards: 4.1. Warning. At the end of the semester, A student who fails 25% to…

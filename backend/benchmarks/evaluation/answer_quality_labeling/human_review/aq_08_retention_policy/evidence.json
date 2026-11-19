@@ -1,0 +1,55 @@
+{
+  "case_id": "aq_08_fail_more_than_75_percent",
+  "source_question_id": "rag_benchmark_08",
+  "phase": "2B_human_review_evidence_only",
+  "pending_dataset_modified": false,
+  "original_question": "What happens if I fail more than 75% of my units?",
+  "source_document_name_and_version": "LSPU Student Handbook 2021 (header Date December 2021; Doc. No. LSPU-PM-LSH-01 Rev 0)",
+  "source_pdf_path": "backend/data/documents/d9bf05ce-fcab-4629-ad4c-4f869481189f/LSPU Student Handbook.pdf",
+  "section": "Undergraduate Academic Policies > Article 5 > Retention Policies",
+  "exact_pdf_page_numbers": {
+    "sec_4_prose_including_4_3_dismissal": {"pdf_index": 35, "printed": "Page: 26 of 183", "chroma_page": 35},
+    "scholastic_delinquency_table": {"pdf_index": 36, "printed": "Page: 27 of 183", "chroma_page_end": 36}
+  },
+  "original_pdf_page_images": [
+    "visual_handbook_pdf035_printed_page_26.png",
+    "visual_handbook_pdf036_printed_page_27_table.png"
+  ],
+  "exact_supporting_passage_4_3": "4.3. Dismissal. Any student who fails in more than seventy-five percent (75%) of the total academic units enrolled shall be subject for dismissal from the College; provided that an incomplete grade shall not be included in the computation of earned units; provided further, that this shall not apply to students who receive final grades in only nine academic units.",
+  "table_headers": ["Percentage (%) of failure", "Number of units enrolled", "Status", "Allowable load for the following semester"],
+  "table_rows": [
+    {"pct": "25% - 49%", "units_enrolled": "any number of academic units", "status": "Warning", "load": "Less three units from the normal load"},
+    {"pct": "50% - 74%", "units_enrolled": "6 academic units or more", "status": "Probation", "load": "15 units only"},
+    {"pct": "75% or more", "units_enrolled": "Nine academic units or more", "status": "Dismissal from the College", "load": "not allowed to enroll"},
+    {"pct": "100%", "units_enrolled": null, "status": "Permanent disqualification from the University", "load": null}
+  ],
+  "dismissal_vs_permanent_disqualification": {
+    "dismissal_from_the_college": "4.3 and table row 75% or more",
+    "permanent_disqualification_from_the_university": "table row 100% only; distinct from college dismissal",
+    "sec_7_exemption": "Permanent disqualification does not apply when Faculty certifies grade of 5.0 is due to unauthorized dropping off the student and not poor academic performance"
+  },
+  "ocr_vs_visual": {
+    "chroma_chunks": [
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+    ],
+    "visual_table_is_authoritative": true,
+    "nine_units_on_visual_table": "Number of units enrolled column, not the failure-percentage column"
+  },
+  "wording_conflict_for_human": {
+    "threshold_4_3": "more than seventy-five percent (75%)",
+    "threshold_table": "75% or more",
+    "nine_units_4_3": "exemption: shall not apply to students who receive final grades in only nine academic units",
+    "nine_units_table": "condition: Nine academic units or more enrolled"
+  },
+  "proposed_reference_answer_from_pending_dataset": "The Student Handbook (Undergraduate Academic Policies > Article 5 > Retention Policies, page 35) scholastic delinquency table states that failing 75% or more (nine academic units or more) results in dismissal from the College and the student is not allowed to enroll. Failing 100% is listed as permanent disqualification from the University. For context in the same article: 25%–49% is Warning; 50%–74% is Probation (load reduced). Human review must confirm the OCR table against the PDF.",
+  "recommended_human_decision": "revise",
+  "questions_to_resolve_before_approving": [
+    "Trigger more than 75% (4.3), 75% or more (table), or both quoted?",
+    "Nine units: exemption, enrollment condition, or both?",
+    "Must gold distinguish dismissal from the College vs permanent disqualification from the University?",
+    "Include INC exclusion, Sec. 5, and/or Sec. 7?",
+    "Cite PDF 35, PDF 36, printed 26-27, or Chroma page 35?"
+  ]
+}

@@ -1,0 +1,1658 @@
+{
+  "live_ocr_ran": true,
+  "used_ocr_fallback": true,
+  "pages": [
+    {
+      "page_number": 1,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 2,
+      "words": [
+        {
+          "text": "Controlled Furniture Fixture",
+          "x0": 137.0,
+          "x1": 535.0,
+          "y0": 371.0,
+          "y1": 409.0,
+          "cy": 390.0,
+          "height": 38.0
+        },
+        {
+          "text": "Characterization fixture. Not a source document:",
+          "x0": 137.0,
+          "x1": 568.0,
+          "y0": 436.0,
+          "y1": 462.0,
+          "cy": 449.0,
+          "height": 26.0
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 2,
+        "multi_token_detections": 2,
+        "single_token_detections": 0
+      },
+      "text_excerpt": "Controlled Furniture Fixture\nCharacterization fixture. Not a source document:",
+      "region_type_counts": {
+        "word": 2,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Controlled Furniture Fixture",
+          "bbox": [
+            137.0,
+            371.0,
+            535.0,
+            409.0
+          ]
+        },
+        {
+          "text": "Characterization fixture. Not a source document:",
+          "bbox": [
+            137.0,
+            436.0,
+            568.0,
+            462.0
+          ]
+        }
+      ]
+    },
+    {
+      "page_number": 2,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 10,
+      "words": [
+        {
+          "text": "Policy Manual Running Header",
+          "x0": 187.0,
+          "x1": 444.0,
+          "y0": 34.0,
+          "y1": 64.0,
+          "cy": 49.0,
+          "height": 30.0
+        },
+        {
+          "text": "Section Overview",
+          "x0": 94.0,
+          "x1": 270.0,
+          "y0": 136.0,
+          "y1": 162.0,
+          "cy": 149.0,
+          "height": 26.0
+        },
+        {
+          "text": "Ordinary",
+          "x0": 91.0,
+          "x1": 176.0,
+          "y0": 194.0,
+          "y1": 224.0,
+          "cy": 209.0,
+          "height": 30.0
+        },
+        {
+          "text": "body",
+          "x0": 171.1657301642471,
+          "x1": 225.8342698357529,
+          "y0": 193.18675371782888,
+          "y1": 225.81324628217112,
+          "cy": 209.5,
+          "height": 32.62649256434224
+        },
+        {
+          "text": "paragraph for content page 2.",
+          "x0": 224.0,
+          "x1": 490.0,
+          "y0": 198.0,
+          "y1": 224.0,
+          "cy": 211.0,
+          "height": 26.0
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "x0": 94.0,
+          "x1": 694.0,
+          "y0": 226.0,
+          "y1": 256.0,
+          "cy": 241.0,
+          "height": 30.0
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "x0": 92.0,
+          "x1": 620.0,
+          "y0": 259.0,
+          "y1": 288.0,
+          "cy": 273.5,
+          "height": 29.0
+        },
+        {
+          "text": "Internal Review",
+          "x0": 189.0,
+          "x1": 319.0,
+          "y0": 1139.0,
+          "y1": 1159.0,
+          "cy": 1149.0,
+          "height": 20.0
+        },
+        {
+          "text": "Only",
+          "x0": 366.0,
+          "x1": 408.0,
+          "y0": 1138.0,
+          "y1": 1162.0,
+          "cy": 1150.0,
+          "height": 24.0
+        },
+        {
+          "text": "Copy",
+          "x0": 315.1600502818496,
+          "x1": 367.8399497181504,
+          "y0": 1135.2145699273442,
+          "y1": 1165.7854300726558,
+          "cy": 1150.5,
+          "height": 30.5708601453116
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 10,
+        "multi_token_detections": 6,
+        "single_token_detections": 4
+      },
+      "text_excerpt": "Policy Manual Running Header\nSection Overview\nOrdinary body paragraph for content page 2.\nThis sentence is unique to the page So recurrence is not accidental\nBody text continues with a complete sentence on this page_\nInternal Review Copy Only",
+      "region_type_counts": {
+        "word": 10,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Policy Manual Running Header",
+          "bbox": [
+            187.0,
+            34.0,
+            444.0,
+            64.0
+          ]
+        },
+        {
+          "text": "Section Overview",
+          "bbox": [
+            94.0,
+            136.0,
+            270.0,
+            162.0
+          ]
+        },
+        {
+          "text": "Ordinary body",
+          "bbox": [
+            91.0,
+            193.18675371782888,
+            225.8342698357529,
+            225.81324628217112
+          ]
+        },
+        {
+          "text": "paragraph for content page 2.",
+          "bbox": [
+            224.0,
+            198.0,
+            490.0,
+            224.0
+          ]
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "bbox": [
+            94.0,
+            226.0,
+            694.0,
+            256.0
+          ]
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "bbox": [
+            92.0,
+            259.0,
+            620.0,
+            288.0
+          ]
+        },
+        {
+          "text": "Internal Review Only",
+          "bbox": [
+            189.0,
+            1138.0,
+            408.0,
+            1162.0
+          ]
+        },
+        {
+          "text": "Copy",
+          "bbox": [
+            315.1600502818496,
+            1135.2145699273442,
+            367.8399497181504,
+            1165.7854300726558
+          ]
+        }
+      ]
+    },
+    {
+      "page_number": 3,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 10,
+      "words": [
+        {
+          "text": "Policy Manual Running Header",
+          "x0": 70.0,
+          "x1": 324.0,
+          "y0": 34.0,
+          "y1": 64.0,
+          "cy": 49.0,
+          "height": 30.0
+        },
+        {
+          "text": "Section Overview",
+          "x0": 94.0,
+          "x1": 270.0,
+          "y0": 136.0,
+          "y1": 162.0,
+          "cy": 149.0,
+          "height": 26.0
+        },
+        {
+          "text": "Ordinary",
+          "x0": 92.0,
+          "x1": 176.0,
+          "y0": 194.0,
+          "y1": 224.0,
+          "cy": 209.0,
+          "height": 30.0
+        },
+        {
+          "text": "body",
+          "x0": 171.1657301642471,
+          "x1": 225.8342698357529,
+          "y0": 193.18675371782888,
+          "y1": 225.81324628217112,
+          "cy": 209.5,
+          "height": 32.62649256434224
+        },
+        {
+          "text": "paragraph for content page 3.",
+          "x0": 224.0,
+          "x1": 490.0,
+          "y0": 198.0,
+          "y1": 224.0,
+          "cy": 211.0,
+          "height": 26.0
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "x0": 94.0,
+          "x1": 694.0,
+          "y0": 226.0,
+          "y1": 256.0,
+          "cy": 241.0,
+          "height": 30.0
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "x0": 92.0,
+          "x1": 620.0,
+          "y0": 259.0,
+          "y1": 288.0,
+          "cy": 273.5,
+          "height": 29.0
+        },
+        {
+          "text": "Internal Review",
+          "x0": 69.0,
+          "x1": 199.0,
+          "y0": 1139.0,
+          "y1": 1159.0,
+          "cy": 1149.0,
+          "height": 20.0
+        },
+        {
+          "text": "Only",
+          "x0": 246.0,
+          "x1": 288.0,
+          "y0": 1138.0,
+          "y1": 1162.0,
+          "cy": 1150.0,
+          "height": 24.0
+        },
+        {
+          "text": "Copy",
+          "x0": 195.16005028184958,
+          "x1": 247.83994971815042,
+          "y0": 1135.2145699273442,
+          "y1": 1165.7854300726558,
+          "cy": 1150.5,
+          "height": 30.5708601453116
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 10,
+        "multi_token_detections": 6,
+        "single_token_detections": 4
+      },
+      "text_excerpt": "Policy Manual Running Header\nSection Overview\nOrdinary body paragraph for content page 3.\nThis sentence is unique to the page So recurrence is not accidental\nBody text continues with a complete sentence on this page_\nInternal Review Copy Only",
+      "region_type_counts": {
+        "word": 10,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Policy Manual Running Header",
+          "bbox": [
+            70.0,
+            34.0,
+            324.0,
+            64.0
+          ]
+        },
+        {
+          "text": "Section Overview",
+          "bbox": [
+            94.0,
+            136.0,
+            270.0,
+            162.0
+          ]
+        },
+        {
+          "text": "Ordinary body",
+          "bbox": [
+            92.0,
+            193.18675371782888,
+            225.8342698357529,
+            225.81324628217112
+          ]
+        },
+        {
+          "text": "paragraph for content page 3.",
+          "bbox": [
+            224.0,
+            198.0,
+            490.0,
+            224.0
+          ]
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "bbox": [
+            94.0,
+            226.0,
+            694.0,
+            256.0
+          ]
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "bbox": [
+            92.0,
+            259.0,
+            620.0,
+            288.0
+          ]
+        },
+        {
+          "text": "Internal Review Only",
+          "bbox": [
+            69.0,
+            1138.0,
+            288.0,
+            1162.0
+          ]
+        },
+        {
+          "text": "Copy",
+          "bbox": [
+            195.16005028184958,
+            1135.2145699273442,
+            247.83994971815042,
+            1165.7854300726558
+          ]
+        }
+      ]
+    },
+    {
+      "page_number": 4,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 19,
+      "words": [
+        {
+          "text": "Policy Manual Running Header",
+          "x0": 187.0,
+          "x1": 444.0,
+          "y0": 34.0,
+          "y1": 64.0,
+          "cy": 49.0,
+          "height": 30.0
+        },
+        {
+          "text": "Section Overview",
+          "x0": 94.0,
+          "x1": 270.0,
+          "y0": 136.0,
+          "y1": 162.0,
+          "cy": 149.0,
+          "height": 26.0
+        },
+        {
+          "text": "Ordinary",
+          "x0": 91.0,
+          "x1": 176.0,
+          "y0": 194.0,
+          "y1": 224.0,
+          "cy": 209.0,
+          "height": 30.0
+        },
+        {
+          "text": "body",
+          "x0": 171.1657301642471,
+          "x1": 225.8342698357529,
+          "y0": 193.18675371782888,
+          "y1": 225.81324628217112,
+          "cy": 209.5,
+          "height": 32.62649256434224
+        },
+        {
+          "text": "paragraph for content page 4.",
+          "x0": 224.0,
+          "x1": 490.0,
+          "y0": 198.0,
+          "y1": 224.0,
+          "cy": 211.0,
+          "height": 26.0
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "x0": 94.0,
+          "x1": 694.0,
+          "y0": 226.0,
+          "y1": 256.0,
+          "cy": 241.0,
+          "height": 30.0
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "x0": 92.0,
+          "x1": 620.0,
+          "y0": 259.0,
+          "y1": 288.0,
+          "cy": 273.5,
+          "height": 29.0
+        },
+        {
+          "text": "Item",
+          "x0": 103.0,
+          "x1": 137.0,
+          "y0": 609.0,
+          "y1": 625.0,
+          "cy": 617.0,
+          "height": 16.0
+        },
+        {
+          "text": "Status",
+          "x0": 243.0,
+          "x1": 291.0,
+          "y0": 609.0,
+          "y1": 625.0,
+          "cy": 617.0,
+          "height": 16.0
+        },
+        {
+          "text": "Notes",
+          "x0": 383.0,
+          "x1": 429.0,
+          "y0": 609.0,
+          "y1": 625.0,
+          "cy": 617.0,
+          "height": 16.0
+        },
+        {
+          "text": "First row",
+          "x0": 383.0,
+          "x1": 449.0,
+          "y0": 639.0,
+          "y1": 657.0,
+          "cy": 648.0,
+          "height": 18.0
+        },
+        {
+          "text": "Alpha",
+          "x0": 103.0,
+          "x1": 147.0,
+          "y0": 639.0,
+          "y1": 659.0,
+          "cy": 649.0,
+          "height": 20.0
+        },
+        {
+          "text": "Open",
+          "x0": 243.0,
+          "x1": 285.0,
+          "y0": 641.0,
+          "y1": 659.0,
+          "cy": 650.0,
+          "height": 18.0
+        },
+        {
+          "text": "Closed",
+          "x0": 243.0,
+          "x1": 297.0,
+          "y0": 671.0,
+          "y1": 689.0,
+          "cy": 680.0,
+          "height": 18.0
+        },
+        {
+          "text": "Beta",
+          "x0": 105.0,
+          "x1": 139.0,
+          "y0": 673.0,
+          "y1": 689.0,
+          "cy": 681.0,
+          "height": 16.0
+        },
+        {
+          "text": "Second row",
+          "x0": 383.0,
+          "x1": 471.0,
+          "y0": 673.0,
+          "y1": 689.0,
+          "cy": 681.0,
+          "height": 16.0
+        },
+        {
+          "text": "Internal Review",
+          "x0": 189.0,
+          "x1": 319.0,
+          "y0": 1139.0,
+          "y1": 1159.0,
+          "cy": 1149.0,
+          "height": 20.0
+        },
+        {
+          "text": "Only",
+          "x0": 366.0,
+          "x1": 408.0,
+          "y0": 1138.0,
+          "y1": 1162.0,
+          "cy": 1150.0,
+          "height": 24.0
+        },
+        {
+          "text": "Copy",
+          "x0": 315.1600502818496,
+          "x1": 367.8399497181504,
+          "y0": 1135.2145699273442,
+          "y1": 1165.7854300726558,
+          "cy": 1150.5,
+          "height": 30.5708601453116
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 19,
+        "multi_token_detections": 8,
+        "single_token_detections": 11
+      },
+      "text_excerpt": "Policy Manual Running Header\nSection Overview\nOrdinary body paragraph for content page 4.\nThis sentence is unique to the page So recurrence is not accidental\nBody text continues with a complete sentence on this page_\nItem | Status | Notes\nAlpha | Open | First row\nBeta | Closed | Second row\nInternal Review Copy Only",
+      "region_type_counts": {
+        "word": 19,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Policy Manual Running Header",
+          "bbox": [
+            187.0,
+            34.0,
+            444.0,
+            64.0
+          ]
+        },
+        {
+          "text": "Section Overview",
+          "bbox": [
+            94.0,
+            136.0,
+            270.0,
+            162.0
+          ]
+        },
+        {
+          "text": "Ordinary body",
+          "bbox": [
+            91.0,
+            193.18675371782888,
+            225.8342698357529,
+            225.81324628217112
+          ]
+        },
+        {
+          "text": "paragraph for content page 4.",
+          "bbox": [
+            224.0,
+            198.0,
+            490.0,
+            224.0
+          ]
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "bbox": [
+            94.0,
+            226.0,
+            694.0,
+            256.0
+          ]
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "bbox": [
+            92.0,
+            259.0,
+            620.0,
+            288.0
+          ]
+        },
+        {
+          "text": "Item Status Notes",
+          "bbox": [
+            103.0,
+            609.0,
+            429.0,
+            625.0
+          ]
+        },
+        {
+          "text": "First row Alpha Open",
+          "bbox": [
+            103.0,
+            639.0,
+            449.0,
+            659.0
+          ]
+        },
+        {
+          "text": "Closed Beta Second row",
+          "bbox": [
+            105.0,
+            671.0,
+            471.0,
+            689.0
+          ]
+        },
+        {
+          "text": "Internal Review Only",
+          "bbox": [
+            189.0,
+            1138.0,
+            408.0,
+            1162.0
+          ]
+        },
+        {
+          "text": "Copy",
+          "bbox": [
+            315.1600502818496,
+            1135.2145699273442,
+            367.8399497181504,
+            1165.7854300726558
+          ]
+        }
+      ]
+    },
+    {
+      "page_number": 5,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 11,
+      "words": [
+        {
+          "text": "Policy Manual Running Header",
+          "x0": 70.0,
+          "x1": 324.0,
+          "y0": 34.0,
+          "y1": 64.0,
+          "cy": 49.0,
+          "height": 30.0
+        },
+        {
+          "text": "Section Overview",
+          "x0": 94.0,
+          "x1": 270.0,
+          "y0": 136.0,
+          "y1": 162.0,
+          "cy": 149.0,
+          "height": 26.0
+        },
+        {
+          "text": "Ordinary",
+          "x0": 92.0,
+          "x1": 176.0,
+          "y0": 194.0,
+          "y1": 224.0,
+          "cy": 209.0,
+          "height": 30.0
+        },
+        {
+          "text": "body",
+          "x0": 171.1657301642471,
+          "x1": 225.8342698357529,
+          "y0": 193.18675371782888,
+          "y1": 225.81324628217112,
+          "cy": 209.5,
+          "height": 32.62649256434224
+        },
+        {
+          "text": "paragraph for content page 5.",
+          "x0": 224.0,
+          "x1": 490.0,
+          "y0": 198.0,
+          "y1": 224.0,
+          "cy": 211.0,
+          "height": 26.0
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "x0": 94.0,
+          "x1": 694.0,
+          "y0": 226.0,
+          "y1": 256.0,
+          "cy": 241.0,
+          "height": 30.0
+        },
+        {
+          "text": "Record attendance at the start of each session.",
+          "x0": 116.0,
+          "x1": 540.0,
+          "y0": 260.0,
+          "y1": 286.0,
+          "cy": 273.0,
+          "height": 26.0
+        },
+        {
+          "text": "Submit the weekly summary before the deadline.",
+          "x0": 116.0,
+          "x1": 550.0,
+          "y0": 290.0,
+          "y1": 320.0,
+          "cy": 305.0,
+          "height": 30.0
+        },
+        {
+          "text": "Internal Review",
+          "x0": 69.0,
+          "x1": 199.0,
+          "y0": 1139.0,
+          "y1": 1159.0,
+          "cy": 1149.0,
+          "height": 20.0
+        },
+        {
+          "text": "Only",
+          "x0": 246.0,
+          "x1": 288.0,
+          "y0": 1138.0,
+          "y1": 1162.0,
+          "cy": 1150.0,
+          "height": 24.0
+        },
+        {
+          "text": "Copy",
+          "x0": 195.16005028184958,
+          "x1": 247.83994971815042,
+          "y0": 1135.2145699273442,
+          "y1": 1165.7854300726558,
+          "cy": 1150.5,
+          "height": 30.5708601453116
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 11,
+        "multi_token_detections": 7,
+        "single_token_detections": 4
+      },
+      "text_excerpt": "Policy Manual Running Header\nSection Overview\nOrdinary body paragraph for content page 5.\nThis sentence is unique to the page So recurrence is not accidental\nRecord attendance at the start of each session.\nSubmit the weekly summary before the deadline.\nInternal Review Copy Only",
+      "region_type_counts": {
+        "word": 11,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Policy Manual Running Header",
+          "bbox": [
+            70.0,
+            34.0,
+            324.0,
+            64.0
+          ]
+        },
+        {
+          "text": "Section Overview",
+          "bbox": [
+            94.0,
+            136.0,
+            270.0,
+            162.0
+          ]
+        },
+        {
+          "text": "Ordinary body",
+          "bbox": [
+            92.0,
+            193.18675371782888,
+            225.8342698357529,
+            225.81324628217112
+          ]
+        },
+        {
+          "text": "paragraph for content page 5.",
+          "bbox": [
+            224.0,
+            198.0,
+            490.0,
+            224.0
+          ]
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "bbox": [
+            94.0,
+            226.0,
+            694.0,
+            256.0
+          ]
+        },
+        {
+          "text": "Record attendance at the start of each session.",
+          "bbox": [
+            116.0,
+            260.0,
+            540.0,
+            286.0
+          ]
+        },
+        {
+          "text": "Submit the weekly summary before the deadline.",
+          "bbox": [
+            116.0,
+            290.0,
+            550.0,
+            320.0
+          ]
+        },
+        {
+          "text": "Internal Review Only",
+          "bbox": [
+            69.0,
+            1138.0,
+            288.0,
+            1162.0
+          ]
+        },
+        {
+          "text": "Copy",
+          "bbox": [
+            195.16005028184958,
+            1135.2145699273442,
+            247.83994971815042,
+            1165.7854300726558
+          ]
+        }
+      ]
+    },
+    {
+      "page_number": 6,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 19,
+      "words": [
+        {
+          "text": "Policy Manual Running Header",
+          "x0": 187.0,
+          "x1": 444.0,
+          "y0": 34.0,
+          "y1": 64.0,
+          "cy": 49.0,
+          "height": 30.0
+        },
+        {
+          "text": "Section Overview",
+          "x0": 94.0,
+          "x1": 270.0,
+          "y0": 136.0,
+          "y1": 162.0,
+          "cy": 149.0,
+          "height": 26.0
+        },
+        {
+          "text": "Ordinary",
+          "x0": 92.0,
+          "x1": 176.0,
+          "y0": 194.0,
+          "y1": 224.0,
+          "cy": 209.0,
+          "height": 30.0
+        },
+        {
+          "text": "body",
+          "x0": 171.1657301642471,
+          "x1": 225.8342698357529,
+          "y0": 193.18675371782888,
+          "y1": 225.81324628217112,
+          "cy": 209.5,
+          "height": 32.62649256434224
+        },
+        {
+          "text": "paragraph for content page 6.",
+          "x0": 223.0,
+          "x1": 490.0,
+          "y0": 197.0,
+          "y1": 225.0,
+          "cy": 211.0,
+          "height": 28.0
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "x0": 94.0,
+          "x1": 694.0,
+          "y0": 226.0,
+          "y1": 256.0,
+          "cy": 241.0,
+          "height": 30.0
+        },
+        {
+          "text": "The applicant must provide-",
+          "x0": 94.0,
+          "x1": 346.0,
+          "y0": 259.0,
+          "y1": 288.0,
+          "cy": 273.5,
+          "height": 29.0
+        },
+        {
+          "text": "Item",
+          "x0": 103.0,
+          "x1": 137.0,
+          "y0": 609.0,
+          "y1": 625.0,
+          "cy": 617.0,
+          "height": 16.0
+        },
+        {
+          "text": "Status",
+          "x0": 243.0,
+          "x1": 291.0,
+          "y0": 609.0,
+          "y1": 625.0,
+          "cy": 617.0,
+          "height": 16.0
+        },
+        {
+          "text": "Notes",
+          "x0": 383.0,
+          "x1": 429.0,
+          "y0": 609.0,
+          "y1": 625.0,
+          "cy": 617.0,
+          "height": 16.0
+        },
+        {
+          "text": "First row",
+          "x0": 383.0,
+          "x1": 449.0,
+          "y0": 639.0,
+          "y1": 657.0,
+          "cy": 648.0,
+          "height": 18.0
+        },
+        {
+          "text": "Alpha",
+          "x0": 103.0,
+          "x1": 147.0,
+          "y0": 639.0,
+          "y1": 659.0,
+          "cy": 649.0,
+          "height": 20.0
+        },
+        {
+          "text": "Open",
+          "x0": 243.0,
+          "x1": 285.0,
+          "y0": 641.0,
+          "y1": 659.0,
+          "cy": 650.0,
+          "height": 18.0
+        },
+        {
+          "text": "Closed",
+          "x0": 243.0,
+          "x1": 297.0,
+          "y0": 671.0,
+          "y1": 689.0,
+          "cy": 680.0,
+          "height": 18.0
+        },
+        {
+          "text": "Beta",
+          "x0": 105.0,
+          "x1": 139.0,
+          "y0": 673.0,
+          "y1": 689.0,
+          "cy": 681.0,
+          "height": 16.0
+        },
+        {
+          "text": "Second row",
+          "x0": 383.0,
+          "x1": 471.0,
+          "y0": 673.0,
+          "y1": 689.0,
+          "cy": 681.0,
+          "height": 16.0
+        },
+        {
+          "text": "Internal Review",
+          "x0": 189.0,
+          "x1": 319.0,
+          "y0": 1139.0,
+          "y1": 1159.0,
+          "cy": 1149.0,
+          "height": 20.0
+        },
+        {
+          "text": "Only",
+          "x0": 366.0,
+          "x1": 408.0,
+          "y0": 1138.0,
+          "y1": 1162.0,
+          "cy": 1150.0,
+          "height": 24.0
+        },
+        {
+          "text": "Copy",
+          "x0": 315.1600502818496,
+          "x1": 367.8399497181504,
+          "y0": 1135.2145699273442,
+          "y1": 1165.7854300726558,
+          "cy": 1150.5,
+          "height": 30.5708601453116
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 19,
+        "multi_token_detections": 8,
+        "single_token_detections": 11
+      },
+      "text_excerpt": "Policy Manual Running Header\nSection Overview\nOrdinary body paragraph for content page 6.\nThis sentence is unique to the page So recurrence is not accidental\nThe applicant must provide-\nItem | Status | Notes\nAlpha | Open | First row\nBeta | Closed | Second row\nInternal Review Copy Only",
+      "region_type_counts": {
+        "word": 19,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Policy Manual Running Header",
+          "bbox": [
+            187.0,
+            34.0,
+            444.0,
+            64.0
+          ]
+        },
+        {
+          "text": "Section Overview",
+          "bbox": [
+            94.0,
+            136.0,
+            270.0,
+            162.0
+          ]
+        },
+        {
+          "text": "Ordinary body",
+          "bbox": [
+            92.0,
+            193.18675371782888,
+            225.8342698357529,
+            225.81324628217112
+          ]
+        },
+        {
+          "text": "paragraph for content page 6.",
+          "bbox": [
+            223.0,
+            197.0,
+            490.0,
+            225.0
+          ]
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "bbox": [
+            94.0,
+            226.0,
+            694.0,
+            256.0
+          ]
+        },
+        {
+          "text": "The applicant must provide-",
+          "bbox": [
+            94.0,
+            259.0,
+            346.0,
+            288.0
+          ]
+        },
+        {
+          "text": "Item Status Notes",
+          "bbox": [
+            103.0,
+            609.0,
+            429.0,
+            625.0
+          ]
+        },
+        {
+          "text": "First row Alpha Open",
+          "bbox": [
+            103.0,
+            639.0,
+            449.0,
+            659.0
+          ]
+        },
+        {
+          "text": "Closed Beta Second row",
+          "bbox": [
+            105.0,
+            671.0,
+            471.0,
+            689.0
+          ]
+        },
+        {
+          "text": "Internal Review Only",
+          "bbox": [
+            189.0,
+            1138.0,
+            408.0,
+            1162.0
+          ]
+        },
+        {
+          "text": "Copy",
+          "bbox": [
+            315.1600502818496,
+            1135.2145699273442,
+            367.8399497181504,
+            1165.7854300726558
+          ]
+        }
+      ]
+    },
+    {
+      "page_number": 7,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 10,
+      "words": [
+        {
+          "text": "Policy Manual Running Header",
+          "x0": 70.0,
+          "x1": 324.0,
+          "y0": 34.0,
+          "y1": 64.0,
+          "cy": 49.0,
+          "height": 30.0
+        },
+        {
+          "text": "Section Overview",
+          "x0": 94.0,
+          "x1": 270.0,
+          "y0": 136.0,
+          "y1": 162.0,
+          "cy": 149.0,
+          "height": 26.0
+        },
+        {
+          "text": "Ordinary",
+          "x0": 92.0,
+          "x1": 176.0,
+          "y0": 194.0,
+          "y1": 224.0,
+          "cy": 209.0,
+          "height": 30.0
+        },
+        {
+          "text": "body",
+          "x0": 171.1657301642471,
+          "x1": 225.8342698357529,
+          "y0": 193.18675371782888,
+          "y1": 225.81324628217112,
+          "cy": 209.5,
+          "height": 32.62649256434224
+        },
+        {
+          "text": "paragraph for content page 7.",
+          "x0": 224.0,
+          "x1": 490.0,
+          "y0": 198.0,
+          "y1": 224.0,
+          "cy": 211.0,
+          "height": 26.0
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "x0": 94.0,
+          "x1": 694.0,
+          "y0": 226.0,
+          "y1": 256.0,
+          "cy": 241.0,
+          "height": 30.0
+        },
+        {
+          "text": "ed supporting documents as listed below.",
+          "x0": 92.0,
+          "x1": 462.0,
+          "y0": 260.0,
+          "y1": 288.0,
+          "cy": 274.0,
+          "height": 28.0
+        },
+        {
+          "text": "Internal Review",
+          "x0": 69.0,
+          "x1": 199.0,
+          "y0": 1139.0,
+          "y1": 1159.0,
+          "cy": 1149.0,
+          "height": 20.0
+        },
+        {
+          "text": "Only",
+          "x0": 246.0,
+          "x1": 288.0,
+          "y0": 1138.0,
+          "y1": 1162.0,
+          "cy": 1150.0,
+          "height": 24.0
+        },
+        {
+          "text": "Copy",
+          "x0": 195.16005028184958,
+          "x1": 247.83994971815042,
+          "y0": 1135.2145699273442,
+          "y1": 1165.7854300726558,
+          "cy": 1150.5,
+          "height": 30.5708601453116
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 10,
+        "multi_token_detections": 6,
+        "single_token_detections": 4
+      },
+      "text_excerpt": "Policy Manual Running Header\nSection Overview\nOrdinary body paragraph for content page 7.\nThis sentence is unique to the page So recurrence is not accidental\ned supporting documents as listed below.\nInternal Review Copy Only",
+      "region_type_counts": {
+        "word": 10,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Policy Manual Running Header",
+          "bbox": [
+            70.0,
+            34.0,
+            324.0,
+            64.0
+          ]
+        },
+        {
+          "text": "Section Overview",
+          "bbox": [
+            94.0,
+            136.0,
+            270.0,
+            162.0
+          ]
+        },
+        {
+          "text": "Ordinary body",
+          "bbox": [
+            92.0,
+            193.18675371782888,
+            225.8342698357529,
+            225.81324628217112
+          ]
+        },
+        {
+          "text": "paragraph for content page 7.",
+          "bbox": [
+            224.0,
+            198.0,
+            490.0,
+            224.0
+          ]
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "bbox": [
+            94.0,
+            226.0,
+            694.0,
+            256.0
+          ]
+        },
+        {
+          "text": "ed supporting documents as listed below.",
+          "bbox": [
+            92.0,
+            260.0,
+            462.0,
+            288.0
+          ]
+        },
+        {
+          "text": "Internal Review Only",
+          "bbox": [
+            69.0,
+            1138.0,
+            288.0,
+            1162.0
+          ]
+        },
+        {
+          "text": "Copy",
+          "bbox": [
+            195.16005028184958,
+            1135.2145699273442,
+            247.83994971815042,
+            1165.7854300726558
+          ]
+        }
+      ]
+    },
+    {
+      "page_number": 8,
+      "method": "ocr",
+      "page_width": 468.0,
+      "page_height": 612.0,
+      "coordinate_width": 936.0,
+      "coordinate_height": 1224.0,
+      "geometry_scale": 2.0,
+      "geometry_page_size": [
+        468.0,
+        612.0
+      ],
+      "table_regions": null,
+      "word_count": 10,
+      "words": [
+        {
+          "text": "Policy Manual Running Header",
+          "x0": 187.0,
+          "x1": 444.0,
+          "y0": 34.0,
+          "y1": 64.0,
+          "cy": 49.0,
+          "height": 30.0
+        },
+        {
+          "text": "Section Overview",
+          "x0": 94.0,
+          "x1": 270.0,
+          "y0": 136.0,
+          "y1": 162.0,
+          "cy": 149.0,
+          "height": 26.0
+        },
+        {
+          "text": "Ordinary",
+          "x0": 91.0,
+          "x1": 176.0,
+          "y0": 194.0,
+          "y1": 224.0,
+          "cy": 209.0,
+          "height": 30.0
+        },
+        {
+          "text": "body",
+          "x0": 171.1657301642471,
+          "x1": 225.8342698357529,
+          "y0": 193.18675371782888,
+          "y1": 225.81324628217112,
+          "cy": 209.5,
+          "height": 32.62649256434224
+        },
+        {
+          "text": "paragraph for content page 8.",
+          "x0": 224.0,
+          "x1": 490.0,
+          "y0": 198.0,
+          "y1": 224.0,
+          "cy": 211.0,
+          "height": 26.0
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "x0": 94.0,
+          "x1": 694.0,
+          "y0": 226.0,
+          "y1": 256.0,
+          "cy": 241.0,
+          "height": 30.0
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "x0": 92.0,
+          "x1": 620.0,
+          "y0": 259.0,
+          "y1": 288.0,
+          "cy": 273.5,
+          "height": 29.0
+        },
+        {
+          "text": "Internal Review",
+          "x0": 189.0,
+          "x1": 319.0,
+          "y0": 1139.0,
+          "y1": 1159.0,
+          "cy": 1149.0,
+          "height": 20.0
+        },
+        {
+          "text": "Only",
+          "x0": 366.0,
+          "x1": 408.0,
+          "y0": 1138.0,
+          "y1": 1162.0,
+          "cy": 1150.0,
+          "height": 24.0
+        },
+        {
+          "text": "Copy",
+          "x0": 315.1600502818496,
+          "x1": 367.8399497181504,
+          "y0": 1135.2145699273442,
+          "y1": 1165.7854300726558,
+          "cy": 1150.5,
+          "height": 30.5708601453116
+        }
+      ],
+      "phrase_vs_word": {
+        "detections": 10,
+        "multi_token_detections": 6,
+        "single_token_detections": 4
+      },
+      "text_excerpt": "Policy Manual Running Header\nSection Overview\nOrdinary body paragraph for content page 8.\nThis sentence is unique to the page So recurrence is not accidental\nBody text continues with a complete sentence on this page_\nInternal Review Copy Only",
+      "region_type_counts": {
+        "word": 10,
+        "block": 0,
+        "table": 0,
+        "cell": 0
+      },
+      "reconstructed_lines": [
+        {
+          "text": "Policy Manual Running Header",
+          "bbox": [
+            187.0,
+            34.0,
+            444.0,
+            64.0
+          ]
+        },
+        {
+          "text": "Section Overview",
+          "bbox": [
+            94.0,
+            136.0,
+            270.0,
+            162.0
+          ]
+        },
+        {
+          "text": "Ordinary body",
+          "bbox": [
+            91.0,
+            193.18675371782888,
+            225.8342698357529,
+            225.81324628217112
+          ]
+        },
+        {
+          "text": "paragraph for content page 8.",
+          "bbox": [
+            224.0,
+            198.0,
+            490.0,
+            224.0
+          ]
+        },
+        {
+          "text": "This sentence is unique to the page So recurrence is not accidental",
+          "bbox": [
+            94.0,
+            226.0,
+            694.0,
+            256.0
+          ]
+        },
+        {
+          "text": "Body text continues with a complete sentence on this page_",
+          "bbox": [
+            92.0,
+            259.0,
+            620.0,
+            288.0
+          ]
+        },
+        {
+          "text": "Internal Review Only",
+          "bbox": [
+            189.0,
+            1138.0,
+            408.0,
+            1162.0
+          ]
+        },
+        {
+          "text": "Copy",
+          "bbox": [
+            315.1600502818496,
+            1135.2145699273442,
+            367.8399497181504,
+            1165.7854300726558
+          ]
+        }
+      ]
+    }
+  ]
+}

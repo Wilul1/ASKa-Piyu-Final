@@ -1,0 +1,22 @@
+{
+  "qualification_run_id": "qacq_qualification_20261110T050229Z",
+  "qualified_at": "2026-11-10T05:02:29.036952+00:00",
+  "capture_run_id": "qac_capture_20261110T014318Z_80d7ddd1",
+  "capture_file_sha256": "bb1b0280b4ffbc188681ebb447228a53d09466b0a65dabe1904760fa38fa2680",
+  "dataset_version": "2026-11-09-v1.1",
+  "dataset_json_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "case_count": 8,
+  "candidate_valid_schema_count": 8,
+  "reference_valid_schema_count": 7,
+  "candidate_valid_schema_rate": 1.0,
+  "reference_valid_schema_rate": 0.875,
+  "candidate_errors": [],
+  "reference_errors": [
+    {
+      "case_id": "qac_033_wifi_password",
+      "evaluation_status": "invalid_response",
+      "validation_error": "Judge response is not valid JSON: Expecting value: line 5 column 20 (char 103)"
+    }
+  ],
+  "note": "This is a small (n=8), hand-selected qualification test, NOT a statistically reliable full model validation. It uses the existing, unmodified qa_citation_judge_v1 and qa_citation_insufficient_evidence_judge_v1 prompts/rubrics against already-captured chatbot answers; no chatbot regeneration occurred."
+}

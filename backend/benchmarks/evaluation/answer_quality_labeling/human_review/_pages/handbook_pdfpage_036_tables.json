@@ -1,0 +1,60 @@
+[
+  {
+    "index": 0,
+    "rows": [
+      [
+        "",
+        "Institution: Laguna State Polytechnic University",
+        "Doc. No.: LSPU-PM-LSH-01",
+        null
+      ],
+      [
+        null,
+        "Type: Policy Manual",
+        "Revision No.: 0",
+        null
+      ],
+      [
+        null,
+        "Title: LSPU Student Handbook 2021",
+        "Date: December 2021",
+        "Page: 27 of 183"
+      ]
+    ]
+  },
+  {
+    "index": 1,
+    "rows": [
+      [
+        "Percentage\n(%)\nof failure",
+        "Number\nof units\nenrolled",
+        "Status",
+        "Allowable\nload\nfor the\nfollowing\nsemester"
+      ],
+      [
+        "25% - 49%",
+        "any number\nof academic\nunits",
+        "Warning",
+        "Less three\nunits\nfrom the nor-\nmal load"
+      ],
+      [
+        "50% - 74%",
+        "6 academic\nunits or\nmore",
+        "Probation",
+        "15 units only"
+      ],
+      [
+        "75% or more",
+        "Nine aca-\ndemic units\nor more",
+        "Dismissal from\nthe College",
+        "not allowed\nto enroll"
+      ],
+      [
+        "100%",
+        "",
+        "Permanent\ndisqualification\nfrom the Univer-\nsity",
+        ""
+      ]
+    ]
+  }
+]

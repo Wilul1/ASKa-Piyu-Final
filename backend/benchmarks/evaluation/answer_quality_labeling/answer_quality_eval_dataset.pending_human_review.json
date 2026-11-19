@@ -1,0 +1,358 @@
+{
+  "dataset_version": "2026-11-04-v1-answer-quality-pending-human-review",
+  "dataset_kind": "answer_quality",
+  "evaluation_ready": false,
+  "labeling_status_of_all_cases": "unlabeled",
+  "notes": "PENDING HUMAN REVIEW — not evaluation-ready. Question text for aq_01–aq_12 is reused from retrieval_relevance_dataset.json (2026-11-04-v2-human-reviewed-rag-benchmark-q1-q12). Retrieval relevant_ids / graded_relevance were NOT copied as answer-quality gold or as gold_citation_ids. Proposed reference answers are drafted only from verified passages in the isolated 691-chunk extraction artifact (chroma_record_extraction_20261104T104214Z.json), which is the same corpus as data/chroma_evaluation. Do not promote any case to labeling_status=labeled in rag_eval_dataset.json until a human confirms the proposed answer against the source PDF. Eventual scoring must use answer_qa_question() against the isolated evaluation corpus, not generate_groq_answer() alone and not production Chroma.",
+  "intended_future_evaluation": {
+    "target_function": "app.services.qa.question_answering.answer_qa_question",
+    "not_the_eval_target": "app.services.qa.groq_answer_service.generate_groq_answer (insufficient: omits facet coverage, table-inversion correction, OOS gating, citation display)",
+    "corpus": "isolated local evaluation index data/chroma_evaluation (691 chunks); do not query production Chroma",
+    "capture": [
+      "student-facing generated answer",
+      "retrieved context actually passed to generation",
+      "traceable citation_ids displayed to the student"
+    ],
+    "do_not_install_ragas_in_this_phase": true,
+    "do_not_run_evaluation_in_this_phase": true
+  },
+  "source_artifacts": {
+    "question_text": "backend/benchmarks/evaluation/retrieval_relevance_dataset.json",
+    "passages": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json",
+    "candidate_review_not_used_as_gold": "backend/benchmarks/results/rag_benchmark_candidate_review_20261104T104800Z.json"
+  },
+  "untouched_on_purpose": [
+    "backend/benchmarks/evaluation/retrieval_relevance_dataset.json",
+    "backend/benchmarks/evaluation/classification_eval_dataset.json",
+    "backend/benchmarks/evaluation/rag_eval_dataset.json",
+    "backend/benchmarks/citation_grounding_benchmark.json",
+    "saved evaluation runs"
+  ],
+  "review_protocol": {
+    "accept": "Human confirms proposed_reference_answer against the named PDF page, then a later promote step may set labeling_status=labeled in rag_eval_dataset.json.",
+    "reject_or_edit": "Rewrite from the PDF; do not invent missing units, fees, or 'current' facts.",
+    "insufficient_evidence": "Leave proposed_reference_answer null. Do not guess.",
+    "out_of_scope": "No LSPU reference answer. Eventual eval should check OOS/refusal behavior, not correctness vs a handbook sentence.",
+    "citation_gold": "Not assigned in this file. Citation Accuracy must reuse the existing citation-grounding workflow, not retrieval relevant_ids."
+  },
+  "cases": [
+    {
+      "case_id": "aq_01_tor_fee",
+      "source_question_id": "rag_benchmark_01",
+      "question": "How much does it cost to get a copy of my Transcript of Records?",
+      "case_type": "direct_factual",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "The Charter fee block mixes TOR, certifications, CAV, and diploma on one card. Undergraduate P75.00/page and Graduate P150/page are printed, but the extraction does not isolate which line is TOR-only versus other documents (P30.00/page, P137).",
+      "proposed_reference_answer": "According to the Citizen's Charter 2026, 1st Edition, a Transcript of Records costs ₱75.00 per page for undergraduate students and ₱150.00 per page for graduate students.",
+      "supporting_passages": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "page": 12,
+          "source_section": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents",
+          "title": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents",
+          "excerpt": "Office / Division\nRegistrar\n\nFees\nUndergraduate: P75.00/page; Graduate: P150/page; P30.00/page; P137; Second copy of diploma: P100.00"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_02_diploma_second_copy_fee",
+      "source_question_id": "rag_benchmark_02",
+      "question": "How much is the fee for a second copy of my diploma?",
+      "case_type": "direct_factual",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "The phrase 'Second copy of diploma: P100.00' is explicit on the same Registrar fee card. Still pending because a human should confirm the PDF line is not an OCR splice.",
+      "proposed_reference_answer": "The Citizen's Charter 2026 1st Edition (Registrar, page 12, Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents) states: Second copy of diploma: P100.00.",
+      "supporting_passages": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "page": 12,
+          "source_section": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents",
+          "title": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents",
+          "excerpt": "Fees\nUndergraduate: P75.00/page; Graduate: P150/page; P30.00/page; P137; Second copy of diploma: P100.00"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_03_enrollment_office",
+      "source_question_id": "rag_benchmark_03",
+      "question": "Which office handles student enrollment?",
+      "case_type": "direct_factual",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "Office/Division is clearly Registrar on the Enrollment charter card. Confirm on PDF page 10.",
+      "proposed_reference_answer": "The Citizen's Charter 2026 1st Edition Enrollment service (page 10) lists Office / Division: Registrar. New college students and transferees proceed to the Office of the Registrar on the scheduled appointment date.",
+      "supporting_passages": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "page": 10,
+          "source_section": "Enrollment",
+          "title": "Enrollment",
+          "excerpt": "Overview\nThis service provides assistance for Enrollment.\n\nOffice / Division\nRegistrar\n\n1. Client Step: New College students Transferees: Proceeds to the Office of the Registrar on the scheduled appointment date"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_04_dropping_fee_multi_document",
+      "source_question_id": "rag_benchmark_04",
+      "question": "How much does it cost to drop a subject?",
+      "case_type": "multi_document",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "Two verified but conflicting fee schedules. Do not treat the retrieval-set note ('Charter is the intended current answer') as answer-quality gold until a human decides which document is in force.",
+      "proposed_reference_answer": "Official LSPU sources list two different dropping fees and do not establish which amount is currently in force. The Citizen's Charter 2026 lists ₱30.00 per unit for new and transferee students. The Student Handbook 2021 requires a dropping fee of ₱20.00 per unit, citing LSPU BOR Resolution 1046, s.2012. Confirm the applicable fee with the Registrar before paying.",
+      "supporting_passages": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "page": 98,
+          "source_section": "Dropping of Subjects",
+          "title": "Dropping of Subjects",
+          "excerpt": "Office / Division\nColleges\n\nFees\nP30.00\n\nTotal Processing Time\n15 minutes"
+        },
+        {
+          "chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "page": 39,
+          "source_section": "4.2 > Dropping Grades Policy",
+          "title": "Dropping Grades Policy",
+          "excerpt": "4.3. A dropping fee of P20/unit is required. (LSPU BOR 1046, s.2012)"
+        }
+      ],
+      "gold_citation_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+      ]
+    },
+    {
+      "case_id": "aq_05_library_overdue_fee",
+      "source_question_id": "rag_benchmark_05",
+      "question": "What is the fee for library circulation service if my book is overdue?",
+      "case_type": "insufficient_evidence",
+      "labeling_status": "unlabeled",
+      "review_status": "insufficient_evidence",
+      "review_reason": "Library Circulation Service (Charter page 23) only extracts '2 pesos per' with the unit missing. The word 'overdue' does not appear in the 691-chunk extraction. Do not invent 'per day' or any other unit.",
+      "proposed_reference_answer": null,
+      "supporting_passages": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::10",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "page": 23,
+          "source_section": "Library Circulation Service",
+          "title": "Library Circulation Service",
+          "excerpt": "Office / Division\nLibrary\n\nFees: 2 pesos per\n\nFees\n2 pesos per\n\nSource Information\nPage: 23"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_06_entrance_exam_duration",
+      "source_question_id": "rag_benchmark_06",
+      "question": "How long does the LSPU entrance examination take, including orientation?",
+      "case_type": "multi_part",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "Orientation (15 minutes) and examination proper (1 and 1/2 hours) are listed separately. Total Processing Time is 'Not specified'. Do not invent a summed official total.",
+      "proposed_reference_answer": "The Citizen's Charter 2026 1st Edition LSPU Entrance Examination service (Guidance and Counseling, page 80) lists: Orientation — 15 minutes; Examination proper — 1 and 1/2 hours; Fees — None. Result issuance is listed as 1-3 days, 1 hr. Total Processing Time is recorded as Not specified, so a combined official duration is not stated in the extraction.",
+      "supporting_passages": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::78",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "page": 80,
+          "source_section": "LSPU Entrance Examination",
+          "title": "LSPU Entrance Examination",
+          "excerpt": "1. Client Step: Orientation\n   Processing Time: 15 minutes\n\n2. Client Step: Examination proper\n   Processing Time: 1 and ½ hours\n\nFees\nNone\n\nTotal Processing Time\nNot specified"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_07_id_validation_process",
+      "source_question_id": "rag_benchmark_07",
+      "question": "What is the process for validating my student ID?",
+      "case_type": "direct_factual",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "Process, office, requirements, and fee are complete on the ID Validation card. Confirm steps against PDF page 27.",
+      "proposed_reference_answer": "The Citizen's Charter 2026 1st Edition ID Validation service (Office of the Student Affairs and Services, page 27) requires a Certificate of Registration from the Registrar's Office and a Student ID from the Business Affairs Office. Steps: (1) Present the Certificate of Registration; OSAS checks it (1 minute). (2) Evaluate OSAS services via an evaluation form (2 minutes). (3) Accept the validated ID (1 minute). Fees: None. Total processing time: 4 minutes.",
+      "supporting_passages": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::14",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "page": 27,
+          "source_section": "ID Validation",
+          "title": "ID Validation",
+          "excerpt": "Office / Division\nOffice of the Student Affairs and Services\n\nRequirements\n- Certificate of Registration (Registrar’s Office)\n- Student ID (Business Affairs Office)\n\n1. Present the Certificate of Registration.\n2. Evaluate the Services rendered by OSAS.\n3. Accept the validated ID.\n\nFees\nNone\n\nTotal Processing Time\n4 minutes"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_08_fail_more_than_75_percent",
+      "source_question_id": "rag_benchmark_08",
+      "question": "What happens if I fail more than 75% of my units?",
+      "case_type": "multi_part",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "The scholastic-delinquency table on Handbook page 35 is OCR-garbled. The readable cells say 75% or more / nine academic units or more → Dismissal from the College (not allowed to enroll), and 100% → Permanent disqualification from the University. Confirm against the PDF table.",
+      "proposed_reference_answer": "The LSPU Student Handbook 2021 retention policy uses two slightly different failure thresholds.\n\nSection 4.3 states that any student who fails in more than 75% of the total academic units enrolled shall be subject for dismissal from the College. An incomplete grade is not included in the computation of earned units. Section 4.3 also states that this shall not apply to students who receive final grades in only nine academic units.\n\nThe scholastic-delinquency table on the following page lists 75% or more, when the student is enrolled in nine academic units or more, as Dismissal from the College (not allowed to enroll). Failing 100% is listed separately as Permanent disqualification from the University, which is not the same as dismissal from the College.\n\nThe nine-unit language therefore appears in two contexts: as an exemption in Section 4.3 for students who receive final grades in only nine academic units, and as an enrollment condition in the table (nine academic units or more) for the 75% or more dismissal row.\n\nBecause Section 4.3 says “more than 75%” and the table says “75% or more,” these pages do not resolve the exact-75% case. Confirm the applicable rule with the Registrar.",
+      "supporting_passages": [
+        {
+          "chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "page": 35,
+          "source_section": "Sec. 7 > Disqualification Exemption",
+          "title": "Disqualification Exemption",
+          "excerpt": "75% or more ... Nine academic units or more | Dismissal from the College | not allowed to enroll\n100% | Permanent disqualification from the University"
+        },
+        {
+          "chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "page": 35,
+          "source_section": "Sec. 4 > Scholastic Delinquency",
+          "title": "Scholastic Delinquency",
+          "excerpt": "4.1. Warning. ... fails 25% to 49% ... shall be warned by the Dean\n4.2. Probation. ... fails 50% to 74% ... shall be placed on probation"
+        }
+      ],
+      "gold_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+      ]
+    },
+    {
+      "case_id": "aq_09_faculty_teaching_load",
+      "source_question_id": "rag_benchmark_09",
+      "question": "How is faculty teaching load determined?",
+      "case_type": "multi_part",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "Answer spans several Faculty Manual pages (who assigns, weekly hours, regular-faculty instruction hours). Confirm the time-allotment table on page 24.",
+      "proposed_reference_answer": "The LSPU Faculty Manual 2020 says the Dean / Associate Dean of the College prepare and assign teaching loads, approved through channels, in the faculty member's field of specialization (page 21). Faculty render 40 service hours a week exclusive of lunch, of which 18 hours is the maximum actual teaching load, with exceptions for supervisory, auxiliary, and administrative assignments (page 20). The regular-faculty time allotment lists Instruction = 18 hrs (page 24).",
+      "supporting_passages": [
+        {
+          "chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::15",
+          "source_filename": "LSPU Faculty Manual 2020.pdf",
+          "page": 21,
+          "source_section": "B. Faculty Attendance and Absences",
+          "title": "B. Faculty Attendance and Absences",
+          "excerpt": "D. Teaching Load Assignment\n1. The Dean / Associate Dean of the College are responsible in the preparation and assignment of teaching loads and approved through channels.\n2. Teaching assignments shall be in line with the faculty’s field of specialization (major and/or minor)."
+        },
+        {
+          "chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::14",
+          "source_filename": "LSPU Faculty Manual 2020.pdf",
+          "page": 20,
+          "source_section": "A. Faculty Official Time",
+          "title": "A. Faculty Official Time",
+          "excerpt": "4. render a total of forty (40) service hours a week, exclusive of time for lunch, where eighteen (18) hours of which shall be the maximum actual teaching load.\n6. perform an eighteen-hour actual teaching load per week, except: supervisory functions; auxiliary service; administrative functions."
+        },
+        {
+          "chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::17",
+          "source_filename": "LSPU Faculty Manual 2020.pdf",
+          "page": 24,
+          "source_section": "1.1 > Regular Faculty",
+          "title": "Regular Faculty",
+          "excerpt": "Research = 10 hrs Extension = 8 hrs Instruction = 18 hrs Preparation = 2 hrs Competitive = 2 hrs"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_10_faculty_responsibilities",
+      "source_question_id": "rag_benchmark_10",
+      "question": "What are the responsibilities of an LSPU faculty member?",
+      "case_type": "direct_factual",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "The supporting chunk body is a teaching-commitment / professional-obligations list, but its stored title is 'II. Historical Development of LSPU - Part 2' (extraction title/body mismatch). A human must open Faculty Manual 2020 around page 13 and confirm the section heading before this is labeled.",
+      "proposed_reference_answer": "According to the LSPU Faculty Manual 2020, Section III, A. Commitment of Faculty, faculty commitments include: treating teaching as a personal commitment, including professional maturity, sharing instructional resources, setting aside personal bias, and preparing for quality teaching; placing the learner at the center of the educative process, including respecting students, supporting growth, not ridiculing or condemning them, inspiring their best effort, grading without personal friendship or vested-group pressure, meeting individual needs, encouraging high individual goals, and keeping confidential student information unless required by authorized agency or law; sharing with parents the responsibility of shaping the student’s future, including cooperative relationships and keeping parents informed of academic progress and deficiencies; and serving as a vanguard of change through public service, research, extension, and community engagement.",
+      "supporting_passages": [
+        {
+          "chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::8",
+          "source_filename": "LSPU Faculty Manual 2020.pdf",
+          "page": 13,
+          "source_section": "II. Historical Development of LSPU",
+          "title": "II. Historical Development of LSPU - Part 2",
+          "excerpt": "1. Teaching is a personal commitment of oneself to others...\n2. Teaching as a commitment recognizes the centrality of the learner...\n2.1. respect learners as person...\n2.8. respect the right of every student to withhold confidential information unless required by authorized agency or by law.\n3. The professor /instructor shall share with parents the responsibility of shaping the student’s future..."
+        }
+      ]
+    },
+    {
+      "case_id": "aq_11_honorable_dismissal",
+      "source_question_id": "rag_benchmark_11",
+      "question": "What is honorable dismissal for a student?",
+      "case_type": "multi_part",
+      "labeling_status": "unlabeled",
+      "review_status": "pending_human_review",
+      "review_reason": "Definition and conditions are in consecutive Handbook chunks of Article 12, page 47. Confirm wording against the PDF (extraction has split words such as 'with drawal').",
+      "proposed_reference_answer": "The Student Handbook (Undergraduate Academic Policies > Article 12 > Honorable Dismissal, page 47) defines Honorable Dismissal as voluntary withdrawal from the college/university with the consent of the Registrar. A student in good standing who wants to withdraw presents a written petition to the Registrar signed by the parent/s or guardian/s; if granted, Honorable Dismissal is issued. All indebtedness to the university must be settled first. The statement indicates good standing as to character and conduct. A student granted honorable dismissal may not be readmitted. A student who leaves because of suspension, dropping, or expulsion for disciplinary action is not entitled to Honorable Dismissal.",
+      "supporting_passages": [
+        {
+          "chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "page": 47,
+          "source_section": "Article 12 > Honorable Dismissal",
+          "title": "Honorable Dismissal",
+          "excerpt": "Honorable Dismissal is voluntary with drawal from the college/university with the consent of the Registrar."
+        },
+        {
+          "chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "page": 47,
+          "source_section": "Article 12 > Honorable Dismissal",
+          "title": "Honorable Dismissal",
+          "excerpt": "Honorable Dismissal Petition: A student of good standing who desires to withdraw ... written petition to the Registrar signed by the parent/s or guardian/s.\nHonorable Dismissal Policy: All indebtedness to the university must be settled...\nA student granted an honorable dismissal may not be readmitted in the university.\nNon-granting of Honorable Dismissal: A student who leaves ... suspension, dropping or expulsion due to disciplinary action/s shall not be entitled to Honorable Dismissal."
+        }
+      ]
+    },
+    {
+      "case_id": "aq_12_university_president",
+      "source_question_id": "rag_benchmark_12",
+      "question": "Who is the current LSPU president?",
+      "case_type": "multi_document",
+      "labeling_status": "unlabeled",
+      "review_status": "insufficient_evidence",
+      "review_reason": "Both the Faculty Manual 2020 (page 11) and the Student Handbook (page 18) name DR. MARIO R. BRIONES as University President. 'Current' as of the evaluation date is not verified from these dated manuals. The two documents disagree on VP for Research (San Agustin vs Agatep), which flags stale administrative lists.",
+      "proposed_reference_answer": null,
+      "supporting_passages": [
+        {
+          "chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::6",
+          "source_filename": "LSPU Faculty Manual 2020.pdf",
+          "page": 11,
+          "source_section": "Administrative Officials",
+          "title": "Administrative Officials",
+          "excerpt": "DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. CORAZON N. SAN AGUSTIN Vice President for Research Development and Extension"
+        },
+        {
+          "chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::10",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "page": 18,
+          "source_section": "Administrative Officials",
+          "title": "Administrative Officials",
+          "excerpt": "DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. ROBERT C. AGATEP Vice President for Research Development and Extension"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_13_out_of_scope_weather_mars",
+      "source_question_id": null,
+      "question": "What is the weather on Mars tomorrow?",
+      "case_type": "out_of_scope",
+      "labeling_status": "unlabeled",
+      "review_status": "out_of_scope",
+      "review_reason": "Not an LSPU policy, office, or document question. Included so eventual chatbot evaluation can check out-of-scope / refusal behavior. No reference answer.",
+      "proposed_reference_answer": null,
+      "supporting_passages": []
+    },
+    {
+      "case_id": "aq_14_insufficient_wifi_password",
+      "source_question_id": null,
+      "question": "What is the LSPU student Wi-Fi password?",
+      "case_type": "insufficient_evidence",
+      "labeling_status": "unlabeled",
+      "review_status": "insufficient_evidence",
+      "review_reason": "No Wi-Fi / wifi-password passage exists in the 691-chunk isolated extraction. Do not invent a password or a 'not published' policy sentence beyond recording that the evaluation corpus has no supporting text.",
+      "proposed_reference_answer": null,
+      "supporting_passages": []
+    }
+  ]
+}

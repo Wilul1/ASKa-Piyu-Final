@@ -1,0 +1,41 @@
+{
+  "run_id": "aq_live_student_chat_20261105T023200Z",
+  "judge_source": "human_verified",
+  "user_role": "student",
+  "not_ragas": true,
+  "not_from_rag_eval_dataset": true,
+  "student_visible_case_count": 12,
+  "role_gated_excluded": ["aq_09_faculty_teaching_load", "aq_10_faculty_responsibilities"],
+  "scoring": {
+    "pass": 1.0,
+    "partial": 0.5,
+    "fail": 0.0,
+    "role_gated": null
+  },
+  "metrics": {
+    "answer_correctness": {
+      "value": 0.5833,
+      "formula": "(5 pass + 4*0.5 partial + 3*0 fail) / 12",
+      "contributing_cases": 12
+    },
+    "faithfulness": {
+      "value": 0.5417,
+      "formula": "(6 faithful + 1*0.5 mixed + 5 invented_or_garbled) / 12",
+      "contributing_cases": 12,
+      "faithful": ["aq_01", "aq_02", "aq_03", "aq_04", "aq_07", "aq_13"],
+      "partial": ["aq_11"],
+      "unfaithful": ["aq_05", "aq_06", "aq_08", "aq_12", "aq_14"]
+    },
+    "answer_relevancy": {
+      "value": 0.9167,
+      "formula": "11/12 addressed the question; aq_08 garbled table did not",
+      "contributing_cases": 12
+    },
+    "citation_set_precision": {
+      "value": 0.9000,
+      "formula": "(1+1+0.5+1+1)/5 source-title match on screenshots that showed sources",
+      "contributing_cases": 5,
+      "note": "Document-title match only. Not gold chunk-id citation_set_precision. Cases: aq_03, aq_06, aq_07, aq_11, aq_12."
+    }
+  }
+}

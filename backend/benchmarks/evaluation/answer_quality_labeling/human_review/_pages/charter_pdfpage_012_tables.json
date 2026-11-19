@@ -1,0 +1,68 @@
+[
+  {
+    "index": 0,
+    "rows": [
+      [
+        "subjects, Opt-\nout,CTP/Foreign,G\nSAR Students:\nProceeds to\nCashier's Office to\npay fees",
+        "",
+        "",
+        "",
+        ""
+      ],
+      [
+        "4. New/old college\nstudents:\nLog in to student\nportal to view the\nCertificate of\nRegistration\n(COR)\nFor College\nStudents who are\nnot qualified to\nFree Higher\nEducation,\nstudents with\nenrolled RLE\nsubjects, Opt-out,\nCTP/Foreign,GSA\nR Students:\nProceeds to the\nOffice of the\nRegistrar to claim\nthe Certificate of\nRegistration\n(COR)",
+        "Issues certificate of\nregistration (COR)",
+        "",
+        "3 minutes",
+        "Registrar’s Staff"
+      ],
+      [
+        "TOTAL:",
+        null,
+        "Fees\nreflected on\nthe\nassessmen\nt form.",
+        "20 minutes",
+        ""
+      ]
+    ]
+  },
+  {
+    "index": 1,
+    "rows": [
+      [
+        "Office or Division:",
+        "Registrar",
+        null
+      ],
+      [
+        "Classification:",
+        "Simple",
+        null
+      ],
+      [
+        "Type of Transaction:",
+        "G2C – Government to Citizen\nG2G – Government to Government",
+        null
+      ],
+      [
+        "",
+        null,
+        null
+      ],
+      [
+        "Who may avail:",
+        "All (Walk-In students & Graduates)",
+        null
+      ],
+      [
+        "CHECKLIST OF REQUIREMENTS",
+        null,
+        "WHERE TO SECURE"
+      ],
+      [
+        "Clearance, Request form",
+        null,
+        "Accounting Office/Office of the Registrar"
+      ]
+    ]
+  }
+]

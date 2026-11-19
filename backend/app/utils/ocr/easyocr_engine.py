@@ -32,20 +32,35 @@ def get_reader() -> easyocr.Reader:
 def extract_text_from_image_bytes(image_bytes: bytes) -> str:
     """Run OCR on raw image bytes (PNG, JPEG, etc.)."""
     image = Image.open(io.BytesIO(image_bytes))
-    text, _boxes = _run_ocr_image(image)
+    text, _boxes, _size = _run_ocr_image(image)
     return text
 
 
 def extract_text_from_pil_image(image: Image.Image) -> str:
-    text, _boxes = _run_ocr_image(image)
+    text, _boxes, _size = _run_ocr_image(image)
     return text
 
 
 def extract_text_and_boxes_from_pil_image(image: Image.Image) -> tuple[str, list[dict]]:
     """Like extract_text_from_pil_image, but also returns word-level bounding boxes.
 
-    Boxes are in the pixel space of the supplied image (e.g. a rendered PDF page
-    pixmap), with keys: text, x0, y0, x1, y1, cy, height.
+    Boxes are in the pixel space of the *winning* EasyOCR candidate (the
+    original pixmap or a preprocessed/resized image). Public signature stays
+    ``(text, boxes)``; callers that need the winner's raster size should use
+    :func:`extract_ocr_result_from_pil_image`.
+    """
+    text, boxes, _size = _run_ocr_image(image)
+    return text, boxes
+
+
+def extract_ocr_result_from_pil_image(
+    image: Image.Image,
+) -> tuple[str, list[dict], tuple[float, float] | None]:
+    """OCR text, boxes, and the winning candidate's ``(width, height)``.
+
+    Boxes are in that candidate's pixel space. ``None`` size means OCR
+    produced no usable result -- the caller must not invent pixmap or
+    zoom-derived dimensions.
     """
     return _run_ocr_image(image)
 
@@ -97,7 +112,9 @@ def _resize_for_ocr(image: Image.Image) -> Image.Image:
     return image.resize(new_size, Image.Resampling.LANCZOS)
 
 
-def _run_ocr_image(image: Image.Image) -> tuple[str, list[dict]]:
+def _run_ocr_image(
+    image: Image.Image,
+) -> tuple[str, list[dict], tuple[float, float] | None]:
     image = ImageOps.exif_transpose(image)
     original = image.convert("RGB")
     candidates = [original]
@@ -112,16 +129,25 @@ def _run_ocr_image(image: Image.Image) -> tuple[str, list[dict]]:
 
     best_results: list | None = None
     best_score = -1.0
+    best_candidate: Image.Image | None = None
     for candidate in candidates:
         results = _read_ocr(np.array(candidate))
         score = _score_ocr_results(results)
         if score > best_score:
             best_results = results
             best_score = score
+            best_candidate = candidate
 
     if not best_results:
-        return "", []
-    return _format_ocr_results(best_results), _boxes_from_results(best_results)
+        return "", [], None
+    width, height = best_candidate.size if best_candidate is not None else (None, None)
+    if width is None or height is None:
+        return _format_ocr_results(best_results), _boxes_from_results(best_results), None
+    return (
+        _format_ocr_results(best_results),
+        _boxes_from_results(best_results),
+        (float(width), float(height)),
+    )
 
 
 def _read_ocr(image_array: np.ndarray) -> list:

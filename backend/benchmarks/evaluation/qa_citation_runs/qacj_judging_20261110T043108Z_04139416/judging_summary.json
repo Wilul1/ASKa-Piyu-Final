@@ -1,0 +1,154 @@
+{
+  "judging_run_id": "qacj_judging_20261110T043108Z_04139416",
+  "report_version": "stage_3_2b_qa_ie_only_v2_fixed_models",
+  "judged_at": "2026-11-10T04:31:08.130155+00:00",
+  "capture_run_id": "qac_capture_20261110T014318Z_80d7ddd1",
+  "capture_file_sha256": "bb1b0280b4ffbc188681ebb447228a53d09466b0a65dabe1904760fa38fa2680",
+  "dataset_version": "2026-11-09-v1.1",
+  "dataset_json_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "corpus": {
+    "path": "backend/data/chroma_evaluation",
+    "collection": "aska_evaluation",
+    "chunk_count": 691,
+    "extract_artifact": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json",
+    "identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "evaluation_sqlite_sha256": "dafead42e74c05832c759c74959ca2356f825949db8e998284137be451e079d3",
+    "corresponds_to_locked_extract": true
+  },
+  "judges": {
+    "qa_rubric": {
+      "primary_model": "cohere/north-mini-code:free",
+      "primary_provider": "cohere",
+      "secondary_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "secondary_provider": "nvidia",
+      "prompt_version": "qa_citation_judge_v1",
+      "prompt_sha256": "8c19f1e491730d749b8adeea601704c94bb60dfe8a78cae4360307a67f4cb3b1"
+    },
+    "insufficient_evidence_rubric": {
+      "primary_model": "cohere/north-mini-code:free",
+      "primary_provider": "cohere",
+      "secondary_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "secondary_provider": "nvidia",
+      "prompt_version": "qa_citation_insufficient_evidence_judge_v1",
+      "prompt_sha256": "2e3af5262736adb23dd64e3ff4b5008f4da032b91d371fbdb0f2c7d84f98f45b"
+    },
+    "citation_claim_rubric": {
+      "status": "pending",
+      "reason": "Citation-claim judging was not invoked this run. The configured citation_verifier_model ('nvidia/nemotron-3-super-120b-a12b:free') returned HTTP 404 Not Found from OpenRouter during the 2026-11-10 capture run (verifier_invoked=true, verifier_succeeded=false for all 36 cases) -- a separate, pre-existing configuration issue. Citation evaluation is recorded as pending rather than attempted or inferred."
+    }
+  },
+  "population_summary": {
+    "answerable_total": 32,
+    "answerable_qa_judged": 23,
+    "answerable_qa_judging_failed_partial": 8,
+    "answerable_qa_judging_failed_total": 0,
+    "answerable_excluded": 1,
+    "answerable_citation_judging": "not_invoked_this_run",
+    "insufficient_evidence_total": 4,
+    "insufficient_evidence_judged": 1,
+    "insufficient_evidence_judging_failed_partial": 3,
+    "insufficient_evidence_judging_failed_total": 0,
+    "insufficient_evidence_excluded": 0,
+    "ineligible_excluded_by_reason": {
+      "fallback_not_genuine": 1
+    },
+    "fallback_vs_genuine_counts": {
+      "genuine": 35,
+      "fallback": 1,
+      "no_result": 0,
+      "fields_missing": 0
+    }
+  },
+  "qa_aggregation": {
+    "eligible_count": 31,
+    "excluded_count": 1,
+    "excluded_counts_by_reason": {
+      "fallback_not_genuine": 1
+    },
+    "judged_count": 23,
+    "judging_failed_partial_count": 8,
+    "judging_failed_total_count": 0,
+    "dimension_means": {
+      "correctness": 2.891304347826087,
+      "completeness": 2.6956521739130435,
+      "relevance": 3.652173913043478,
+      "faithfulness": 2.3260869565217392,
+      "overall": 2.891304347826087
+    },
+    "dimension_distributions": {
+      "correctness": {
+        "0": 8,
+        "1": 4,
+        "2": 2,
+        "3": 3,
+        "4": 29
+      },
+      "completeness": {
+        "0": 9,
+        "1": 3,
+        "2": 5,
+        "3": 5,
+        "4": 24
+      },
+      "relevance": {
+        "0": 2,
+        "1": 1,
+        "2": 2,
+        "3": 1,
+        "4": 40
+      },
+      "faithfulness": {
+        "0": 10,
+        "1": 7,
+        "2": 5,
+        "3": 6,
+        "4": 18
+      }
+    },
+    "judge_disagreement_rate": {
+      "numerator": 13,
+      "denominator": 23,
+      "value": 0.5652173913043478
+    },
+    "disagreement_by_criterion_counts": {
+      "correctness": 4,
+      "completeness": 5,
+      "relevance": 3,
+      "faithfulness": 7
+    },
+    "category_min_sample_size": 5,
+    "by_category": {
+      "Academic Policies": {
+        "judged_count": 6,
+        "dimension_means": {
+          "correctness": 2.5833333333333335,
+          "completeness": 2.0,
+          "relevance": 3.3333333333333335,
+          "faithfulness": 3.1666666666666665,
+          "overall": 2.7708333333333335
+        }
+      }
+    }
+  },
+  "citation_aggregation": {
+    "status": "pending",
+    "reason": "Citation-claim judging was not invoked this run. The configured citation_verifier_model ('nvidia/nemotron-3-super-120b-a12b:free') returned HTTP 404 Not Found from OpenRouter during the 2026-11-10 capture run (verifier_invoked=true, verifier_succeeded=false for all 36 cases) -- a separate, pre-existing configuration issue. Citation evaluation is recorded as pending rather than attempted or inferred."
+  },
+  "insufficient_evidence_aggregation": {
+    "total_count": 4,
+    "eligible_count": 4,
+    "excluded_count": 0,
+    "exclusion_counts_by_reason": {},
+    "judged_count": 1,
+    "judging_failed_partial_count": 3,
+    "judging_failed_total_count": 0,
+    "correctly_declined_agreement_count": 1,
+    "correctly_declined_disagreement_count": 0,
+    "unsupported_claim_detected_agreement_count": 0,
+    "unsupported_claim_detected_disagreement_count": 1
+  },
+  "note_on_empty_citations": "Citation evaluation was not performed this run (see judges.citation_claim_rubric). Missing/empty displayed citations in the underlying capture must NOT be interpreted as evidence that any answer is unsupported -- that determination requires citation-claim judging, which did not run.",
+  "raw_response_envelope_file": "raw_response_envelopes.jsonl",
+  "raw_response_envelope_note": "One row per judge call (including failed calls), credential-free. Each row includes case_id, slot, configured_model/provider, and -- when the HTTP call succeeded -- the response id, resolved model/provider fields (if OpenRouter returned them), created timestamp, finish_reason, usage/token metadata, and parsed content. OpenRouter's response envelope for these calls did not include a distinct 'resolved backend' identity field beyond echoing the requested model string; resolved_model/resolved_provider are recorded as returned (possibly null) rather than fabricated."
+}

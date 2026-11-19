@@ -1,0 +1,56 @@
+[
+  {
+    "case_id": "aq_04_dropping_fee_multi_document",
+    "status": "answer_correctness_passed_citations_pending",
+    "gold_citation_ids": [
+      "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+    ],
+    "metrics": {
+      "answer_correctness": {
+        "judgment": "pass",
+        "satisfactory": true,
+        "numeric_score": null,
+        "note": "Human marked satisfactory: live answer stated Dropping of Subjects fee P30.00 and also included procedure and estimated processing time. No 0-1 numeric score was supplied."
+      },
+      "answer_relevancy": null,
+      "faithfulness": null,
+      "citation_set_precision": null,
+      "citation_set_recall": null,
+      "citation_verification": "pending",
+      "unavailable_reason": {
+        "answer_relevancy": "Not judged in the supplied live review.",
+        "faithfulness": "Not judged in the supplied live review.",
+        "citation_set_precision": "Citation details were not supplied. Live interface IDs were not captured.",
+        "citation_set_recall": "Citation details were not supplied. Live interface IDs were not captured."
+      }
+    }
+  },
+  {
+    "case_id": "aq_08_fail_more_than_75_percent",
+    "status": "answer_correctness_failed_citations_pending",
+    "gold_citation_ids": [
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+    ],
+    "metrics": {
+      "answer_correctness": {
+        "judgment": "fail",
+        "satisfactory": false,
+        "numeric_score": null,
+        "note": "Human marked fail: fragmented table content; did not clearly explain what happens if a student fails more than 75% of units. No policy consequence was invented."
+      },
+      "answer_relevancy": null,
+      "faithfulness": null,
+      "citation_set_precision": null,
+      "citation_set_recall": null,
+      "citation_verification": "pending",
+      "unavailable_reason": {
+        "answer_relevancy": "Not judged in the supplied live review.",
+        "faithfulness": "Not judged in the supplied live review.",
+        "citation_set_precision": "Citation details were not supplied. Live interface IDs were not captured.",
+        "citation_set_recall": "Citation details were not supplied. Live interface IDs were not captured."
+      }
+    }
+  }
+]

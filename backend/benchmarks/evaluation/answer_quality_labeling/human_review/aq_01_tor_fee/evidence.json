@@ -1,0 +1,52 @@
+{
+  "case_id": "aq_01_tor_fee",
+  "source_question_id": "rag_benchmark_01",
+  "phase": "2B_human_review_evidence_only",
+  "pending_dataset_modified": false,
+  "original_question": "How much does it cost to get a copy of my Transcript of Records?",
+  "source_document_name_and_version": "Laguna State Polytechnic University Citizen's Charter 2026, 1st Edition (PDF created 2026-03-31 +08:00)",
+  "source_pdf_path": "backend/data/documents/6c3d0f00-fd53-43be-943f-09e1e7ddbce4/Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+  "exact_pdf_page_numbers": {
+    "service_title": {"pdf_index": 12, "printed_footer": "4", "chroma_page": 12},
+    "fee_table_tor_certifications": {"pdf_index": 13, "printed_footer": "5"},
+    "fee_table_authentication_diploma_total": {"pdf_index": 14, "printed_footer": "6"}
+  },
+  "original_pdf_page_images": [
+    "visual_charter_pdf012_printed_footer_4.png",
+    "visual_charter_pdf013_printed_footer_5_fees.png",
+    "visual_charter_pdf014_printed_footer_6_fees_cont.png"
+  ],
+  "exact_supporting_passage": "Service title PDF 12: Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents. Office: Registrar. Who may avail: All (Walk-In students & Graduates). FEES TO BE PAID PDF 13: Transcript of Records — Undergrad students P75.00/page; Graduate students P150/page. Certifications P30.00/page (Copy of Grades, F137, CAV, Certificate of Transfer, General Weighted Ave., Subject description, SPES, Permit to Study). Authentication heading on PDF 13 continues PDF 14 P30.00/page. 2nd copy of Diploma P100.00. TOTAL: Depends on the document.",
+  "table_headers": ["CLIENT STEPS", "AGENCY ACTIONS", "FEES TO BE PAID", "PROCESSING TIME", "PERSON RESPONSIBLE"],
+  "relevant_fee_rows": [
+    {"item": "Transcript of Records — Undergrad students", "amount": "P75.00/page", "is_tor": true},
+    {"item": "Transcript of Records — Graduate students", "amount": "P150/page", "is_tor": true},
+    {"item": "Certifications (Copy of Grades, F137, CAV, Certificate of Transfer, GWA, Subject description, SPES, Permit to Study)", "amount": "P30.00/page", "is_tor": false},
+    {"item": "Authentication", "amount": "P30.00/page", "is_tor": false},
+    {"item": "2nd copy of Diploma", "amount": "P100.00", "is_tor": false}
+  ],
+  "ocr_vs_visual": {
+    "pymupdf_files": ["ocr_pymupdf_charter_pdf012.txt", "ocr_pymupdf_charter_pdf013.txt", "ocr_pymupdf_charter_pdf014.txt"],
+    "chroma_chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+    "chroma_ocr_file": "chroma_ocr_da4a1832_1.txt",
+    "chroma_mashed_fees": "Undergraduate: P75.00/page; Graduate: P150/page; P30.00/page; P137; Second copy of diploma: P100.00",
+    "visual_correction": "P137 is OCR of Form F137 under Certifications, not a fee. TOR heading groups P75.00/page and P150/page."
+  },
+  "proposed_reference_answer_from_pending_dataset": "The Citizen's Charter 2026 1st Edition service 'Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents' (Registrar, page 12) lists these fees: Undergraduate P75.00/page; Graduate P150/page; P30.00/page; P137; Second copy of diploma P100.00. A human must confirm on the PDF which of those lines is the Transcript of Records fee.",
+  "evidence_supporting_proposed_answer": "Service exists; Registrar; P75.00/page and P150/page appear on the fee table.",
+  "evidence_not_supporting_as_written": "Does not isolate TOR. Treats P30.00/page, P137, and diploma P100.00 as possible TOR fees. P137 is an OCR error. Fee table is PDF 13-14 not page 12.",
+  "ambiguities_conflicts_missing": [
+    "Graduate prints P150/page without .00",
+    "No separate transfer-credentials amount",
+    "Does not check later BOR supersession"
+  ],
+  "recommended_human_decision": "revise",
+  "recommended_revised_reference_answer_NOT_GOLD": "The Citizen's Charter 2026, 1st Edition, service “Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents” (Registrar) lists Transcript of Records at P75.00/page for undergraduate students and P150/page for graduate students. Those TOR amounts are separate from Certifications at P30.00/page (Copy of Grades, F137, CAV, Certificate of Transfer, GWA, Subject description, SPES, Permit to Study), Authentication at P30.00/page, and a 2nd copy of Diploma at P100.00.",
+  "questions_to_resolve_before_approving": [
+    "Accept visual grouping: TOR = undergrad P75.00/page and graduate P150/page?",
+    "Student-facing answer both rates, or undergraduate only unless graduate is named?",
+    "Omit non-TOR fees from the TOR gold answer?",
+    "Confirm P137 must not appear in gold?",
+    "Cite Chroma page 12, PDF 13-14, or printed 5-6?"
+  ]
+}

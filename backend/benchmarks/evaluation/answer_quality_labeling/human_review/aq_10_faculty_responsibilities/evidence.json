@@ -1,0 +1,56 @@
+{
+  "case_id": "aq_10_faculty_responsibilities",
+  "source_question_id": "rag_benchmark_10",
+  "phase": "2B_human_review_evidence_only",
+  "pending_dataset_modified": false,
+  "knowledge_base_chunk_modified": false,
+  "original_question": "What are the responsibilities of an LSPU faculty member?",
+  "source_document_name_and_version": "LSPU Faculty Manual 2020 (header Date March 2021; Doc. No. LSPU-PM-LFM-01 Rev 0; PDF created 2021-06-21 +08:00)",
+  "source_pdf_path": "backend/data/documents/c67bd8c8-81cd-4c8c-bda1-4f7d2039a406/LSPU Faculty Manual 2020.pdf",
+  "exact_pdf_page_numbers": {
+    "cited_page_13_actual_content": {
+      "pdf_index": 13,
+      "printed": "Page: 2 of 92",
+      "heading": "II. Historical Development of LSPU",
+      "supports_proposed_answer": false
+    },
+    "actual_commitment_list": {
+      "pdf_index_start": 16,
+      "pdf_index_end": 17,
+      "printed": "Page: 5 of 92 and Page: 6 of 92",
+      "heading": "III. Commitment of the LSPU Faculty / A. Commitment of Faculty",
+      "supports_proposed_answer_body": true
+    }
+  },
+  "original_pdf_page_images": [
+    "visual_faculty_pdf013_printed_page_2_history.png",
+    "visual_faculty_pdf016_printed_page_5_commitment.png",
+    "visual_faculty_pdf017_printed_page_6_commitment_cont.png"
+  ],
+  "chunk_title_body_mismatch": {
+    "chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::8",
+    "stored_title": "II. Historical Development of LSPU - Part 2",
+    "stored_page": 13,
+    "stored_page_end": 18,
+    "body_matches_pdf_pages": [16, 17],
+    "do_not_modify_kb_chunk": true
+  },
+  "complete_list_heading": "III. Commitment of the LSPU Faculty",
+  "complete_list_subheading": "A. Commitment of Faculty",
+  "list_items": ["1.1-1.4 personal/professional commitment", "2.1-2.8 centrality of the learner", "3.1-3.4 parents", "4.1-4.3 public service / research / extension / community", "B. Code of Ethics begins page 17"],
+  "ocr_files": [
+    "ocr_pymupdf_faculty_pdf013.txt",
+    "ocr_pymupdf_faculty_pdf016.txt",
+    "ocr_pymupdf_faculty_pdf017.txt",
+    "chroma_ocr_97e32a29_8.txt"
+  ],
+  "proposed_reference_answer_from_pending_dataset": "The Faculty Manual 2020 extraction at page 13 lists faculty obligations including: treat teaching as a personal commitment; exemplify professional maturity and share instructional resources; respect learners and avoid ridicule; grade without personal friendship or vested-group pressure; meet individual student needs; keep confidential student information unless required by authorized agency or law; and share with parents the responsibility of shaping the student's future, including keeping parents informed of academic progress. Confirm the PDF section title; the chunk metadata title does not match this body.",
+  "source_supports_proposed_answer": "Page 13 does not. Pages 16-17 do, under Commitment of the LSPU Faculty, not Historical Development.",
+  "recommended_human_decision": "revise",
+  "questions_to_resolve_before_approving": [
+    "Does Commitment of the LSPU Faculty count as an answer to responsibilities?",
+    "Include all of A.1-A.4, the pending shorter summary, or also B. Code of Ethics?",
+    "May gold cite PDF 16-17 while retrieval still returns chunk ::8 tagged page 13?",
+    "Confirm the KB chunk stays unmodified in this evaluation phase?"
+  ]
+}

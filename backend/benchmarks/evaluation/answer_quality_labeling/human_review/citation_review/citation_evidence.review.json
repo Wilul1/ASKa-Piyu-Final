@@ -1,0 +1,175 @@
+{
+  "artifact_kind": "answer_quality_citation_evidence_review",
+  "phase": "2E_citation_evidence_review_read_only",
+  "prepared": "2026-11-05",
+  "evaluation_ready": false,
+  "gold_citation_ids_assigned": false,
+  "pending_dataset_modified": false,
+  "status": "awaiting_human_citation_label_approval",
+  "citation_identity_note": "Student-visible citation_id is metadata.chunk_id when stamped, else {resolved_document_id}::{chunk_index}. That is usually the Chroma chunk ID, not a Postgres document ID and not a page number. Printed pages are not stored. gold_citation_ids, if later labeled, must use this citation_id space.",
+  "cases": [
+    {
+      "case_id": "aq_01_tor_fee",
+      "question": "How much does it cost to get a copy of my Transcript of Records?",
+      "approved_reference_answer": "According to the Citizen's Charter 2026, 1st Edition, a Transcript of Records costs ₱75.00 per page for undergraduate students and ₱150.00 per page for graduate students.",
+      "recommended_human_decision": "revise",
+      "claims": [
+        {
+          "claim": "Undergraduate TOR ₱75.00 per page",
+          "exact_source_passage_pdf_visual": "FEES TO BE PAID / Transcript of Records / Undergrad students P75.00/page",
+          "source_document_id_chroma": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_title_edition": "Citizen's Charter 2026, 1st Edition",
+          "chroma_chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "chroma_page": 12,
+          "pdf_page_index": 13,
+          "printed_page": "5",
+          "student_visible_citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "student_visible_citation_id_verified_live": false,
+          "resolvable_by_implementation": "partial",
+          "passage_clearly_identifies_tor_in_chunk_body": false,
+          "passage_clearly_identifies_tor_on_pdf_page": true
+        },
+        {
+          "claim": "Graduate TOR ₱150/page",
+          "exact_source_passage_pdf_visual": "FEES TO BE PAID / Transcript of Records / Graduate students P150/page",
+          "source_document_id_chroma": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_title_edition": "Citizen's Charter 2026, 1st Edition",
+          "chroma_chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "chroma_page": 12,
+          "pdf_page_index": 13,
+          "printed_page": "5",
+          "student_visible_citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "student_visible_citation_id_verified_live": false,
+          "resolvable_by_implementation": "partial",
+          "passage_clearly_identifies_tor_in_chunk_body": false,
+          "passage_clearly_identifies_tor_on_pdf_page": true
+        }
+      ],
+      "excluded_from_tor_evidence": ["certifications P30.00/page", "authentication P30.00/page", "2nd copy of diploma P100.00", "OCR P137 (F137)"]
+    },
+    {
+      "case_id": "aq_04_dropping_fee_multi_document",
+      "question": "How much does it cost to drop a subject?",
+      "approved_reference_answer": "Official LSPU sources list two different dropping fees and do not establish which amount is currently in force. The Citizen's Charter 2026 lists ₱30.00 per unit for new and transferee students. The Student Handbook 2021 requires a dropping fee of ₱20.00 per unit, citing LSPU BOR Resolution 1046, s.2012. Confirm the applicable fee with the Registrar before paying.",
+      "winning_rate_selected": false,
+      "recommended_human_decision": "revise",
+      "claims": [
+        {
+          "claim": "Charter ₱30.00/unit for new and transferee students",
+          "exact_source_passage_pdf_visual": "Dropping of Subjects; Who may avail: New and Transferee Students; TOTAL P30.00/unit",
+          "source_document_id_chroma": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_title_edition": "Citizen's Charter 2026, 1st Edition",
+          "chroma_chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "chroma_page": 98,
+          "pdf_page_index": 98,
+          "printed_page": "90",
+          "student_visible_citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "independently_citable": true,
+          "resolvable_by_implementation": "partial",
+          "chunk_body_limitation": "Stores Fees P30.00 without /unit"
+        },
+        {
+          "claim": "Handbook ₱20.00/unit citing BOR 1046 s.2012",
+          "exact_source_passage_pdf_visual": "4.3. A dropping fee of P20/unit is required. (LSPU BOR 1046, s.2012)",
+          "source_document_id_chroma": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_title_edition": "LSPU Student Handbook 2021",
+          "chroma_chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+          "chroma_page": 39,
+          "chroma_page_end": 40,
+          "pdf_page_index": 40,
+          "printed_page": "31 of 183",
+          "student_visible_citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+          "independently_citable": true,
+          "resolvable_by_implementation": true,
+          "bor_1046_pdf_chunk_id": null
+        }
+      ]
+    },
+    {
+      "case_id": "aq_08_fail_more_than_75_percent",
+      "question": "What happens if I fail more than 75% of my units?",
+      "approved_reference_answer_present": true,
+      "recommended_human_decision": "revise",
+      "do_not_gold_chunk": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+      "claims": [
+        {
+          "claim": "Section 4.3 more than 75%; INC exclusion; only-nine exemption; dismissal from the College",
+          "chroma_chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+          "chroma_page": 35,
+          "pdf_page_index": 35,
+          "printed_page": "26 of 183",
+          "student_visible_citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+          "resolvable_by_implementation": true
+        },
+        {
+          "claim": "Table 75% or more; nine academic units or more enrolled; Dismissal from the College; not allowed to enroll",
+          "chroma_chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+          "chroma_page": 35,
+          "chroma_page_end": 36,
+          "pdf_page_index": 36,
+          "printed_page": "27 of 183",
+          "student_visible_citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+          "resolvable_by_implementation": "partial",
+          "chunk_title_mismatch": "Disqualification Exemption"
+        },
+        {
+          "claim": "100% permanent disqualification from the University",
+          "chroma_chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+          "pdf_page_index": 36,
+          "printed_page": "27 of 183",
+          "resolvable_by_implementation": "partial"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_10_faculty_responsibilities",
+      "question": "What are the responsibilities of an LSPU faculty member?",
+      "approved_reference_answer_present": true,
+      "recommended_human_decision": "revise",
+      "knowledge_base_chunk_modified": false,
+      "claims": [
+        {
+          "claim": "Faculty Manual 2020 Section III A Commitment of Faculty",
+          "source_document_id_chroma": "97e32a29-fa86-458c-9fe9-dba48f9605ce",
+          "chroma_chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::8",
+          "chroma_title": "II. Historical Development of LSPU - Part 2",
+          "chroma_page": 13,
+          "chroma_page_end": 18,
+          "pdf_page_index_of_body": [16, 17],
+          "printed_page_of_body": ["5 of 92", "6 of 92"],
+          "pdf_page_index_of_metadata_heading": 13,
+          "student_visible_citation_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::8",
+          "system_can_identify_actual_pages_16_17": false,
+          "resolvable_by_implementation": "identity_only_wrong_title_and_page"
+        }
+      ]
+    },
+    {
+      "case_id": "aq_12_university_president",
+      "question": "Who is the current LSPU president?",
+      "approved_reference_answer": null,
+      "recommended_human_decision": "insufficient",
+      "do_not_create_gold_citation_ids": true,
+      "dated_references_not_gold": [
+        {
+          "named": "DR. MARIO R. BRIONES University President",
+          "source_title_edition": "LSPU Faculty Manual 2020, header Date March 2021",
+          "chroma_chunk_id": "97e32a29-fa86-458c-9fe9-dba48f9605ce::6",
+          "chroma_page": 11,
+          "pdf_page_index": 11,
+          "printed_page": "vii of 92",
+          "establishes_current_2026_president": false
+        },
+        {
+          "named": "DR. MARIO R. BRIONES University President",
+          "source_title_edition": "LSPU Student Handbook 2021, header Date December 2021",
+          "chroma_chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::10",
+          "chroma_page": 18,
+          "pdf_page_index": 18,
+          "printed_page": "9 of 183",
+          "establishes_current_2026_president": false
+        }
+      ]
+    }
+  ]
+}

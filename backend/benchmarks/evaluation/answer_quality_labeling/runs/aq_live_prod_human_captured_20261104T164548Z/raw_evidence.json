@@ -1,0 +1,45 @@
+{
+  "run_id": "aq_live_prod_human_captured_20261104T164548Z",
+  "status": "answer_correctness_judged_citations_pending",
+  "verbatim_transcripts_in_this_conversation": false,
+  "note": "Do not treat the human observations as reconstructed full chatbot transcripts. The Cursor message supplied pass/fail judgments and short descriptions, not the exact live wording.",
+  "cases": [
+    {
+      "case_id": "aq_04_dropping_fee_multi_document",
+      "question": "How much does it cost to drop a subject?",
+      "submitted_by_this_agent": false,
+      "chatbot_answer_verbatim": null,
+      "verbatim_available": false,
+      "human_observation": {
+        "fee_stated": "P30.00",
+        "also_included": [
+          "procedure",
+          "estimated processing time"
+        ],
+        "answer_correctness_judgment": "satisfactory"
+      },
+      "student_visible_citations": [],
+      "citation_open_results": [],
+      "citation_details_supplied": false,
+      "visible_errors": []
+    },
+    {
+      "case_id": "aq_08_fail_more_than_75_percent",
+      "question": "What happens if I fail more than 75% of my units?",
+      "submitted_by_this_agent": false,
+      "chatbot_answer_verbatim": null,
+      "verbatim_available": false,
+      "human_observation": {
+        "content_shape": "fragmented table content",
+        "clearly_explained_more_than_75_percent_consequence": false,
+        "answer_correctness_judgment": "fail"
+      },
+      "student_visible_citations": [],
+      "citation_open_results": [],
+      "citation_details_supplied": false,
+      "visible_errors": [
+        "Human reported fragmented table content and no clear 75% failure consequence."
+      ]
+    }
+  ]
+}

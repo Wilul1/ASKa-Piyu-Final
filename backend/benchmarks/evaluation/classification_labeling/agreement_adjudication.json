@@ -1,0 +1,2737 @@
+{
+  "annotation_method": "independent_ai_annotation",
+  "reviewer_1_type": "AI",
+  "reviewer_2_type": "AI",
+  "not_human_reviewed": true,
+  "approval_rule": "Auto-accept only when both AI reviewers assign the same taxonomy subcategory, both evidence_sufficient=true, and neither used MARK_FOR_REVIEW.",
+  "counts": {
+    "total_candidates": 96,
+    "approved": 65,
+    "by_status": {
+      "mark_for_review": 25,
+      "agree": 65,
+      "disagreement": 6
+    },
+    "promoted_by_component": {
+      "classify_chunk": 28,
+      "classify_question": 37
+    },
+    "promoted_by_label": {
+      "Administrative Officials": 3,
+      "Scholarships": 4,
+      "Honorable Dismissal": 3,
+      "College of Agriculture": 1,
+      "Registration": 5,
+      "Graduate Policies": 2,
+      "Undergraduate Programs": 1,
+      "Student Welfare": 2,
+      "Graduate Programs": 1,
+      "LMS": 2,
+      "Transferees": 1,
+      "Counseling": 2,
+      "Retention": 3,
+      "Withdrawal": 4,
+      "Library": 2,
+      "Good Moral": 3,
+      "Entrance Examination": 2,
+      "Transcript of Records": 4,
+      "Grading System": 4,
+      "Fee Refunds": 3,
+      "Certificates": 1,
+      "Validation": 8,
+      "Requests": 2,
+      "Student Organizations": 1,
+      "Graduation": 1
+    }
+  },
+  "cases": [
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__14",
+      "component": "classify_chunk",
+      "text": "A. Faculty Official Time\n\nAll faculty shall:\n1. observe strictly their official time in order to promote efficiency and avoid any disciplinary action as a consequence of non-observance thereof.\n2. use biometrics and other forms of log-in/out devices to indicate the arri- val and departure time.\n3. check computer generated daily time record (DTR) to be approved by the authorized officer for submission to the HRMO/PO office at least one day to two days after the end of each month.\n4. render a total of forty (40) service hours a week, exclusive of time for lunch, where eighteen (18) hours of which shall be the maximum actual teaching load.\n5. be allowed to have flexible working hours subject to the discretion of the head of department or agency. In no case shall the weekly working hours be reduced in the event the department or agency adopts the flexi-time schedule in reporting for work. (Rule XVII, Sec. 6, EO 292)\n6. perform an eighteen-hour actual teaching load per week, except:\n6.1. those designated to perform supervisory functions including deans/associate deans, directors, and program heads;\n6.2. those performing mainly auxiliary service like guidance, library, nurse, canteen management, etc.; and\n6.3. all other assigned in performing administrative functions who are on vacation and sick leave basis.\n7. be required to handle classes of at least three (3) to nine (9) hours per week if they are performing supervisory functions.\n8. be required to work beyond the official hours when the nature of the duties to be performed or the interest of the public service so requires, without reduction in the prescribed working hours.\n9. not be allowed to leave the school premises during official hours of ser- vice without prior approval of the immediate head/supervisor of the department/college. Faculty whose request to leave his/her post for personal reasons and allowed during official duty shall record his/her time of departure and return in the official log book.\n10. perform teaching in excess of the prescribed loads, in case of emergen- cy when a fellow faculty: is on leave that would require redistribution of loads; and resigns, retires, or separates for any cause.\n11. be entitled to payment of overload pay/honorarium for a maximum of six (6) hours teaching in excess of the prescribed loads. However, fac- ulty with supervisory functions shall be entitled to overload pay only after satisfying the prescribed forty (40) hour workload.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__14",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty official time; no faculty-HR subcategory.",
+        "evidence": "All faculty shall: 1. observe strictly their official time"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__14",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty official time, biometrics, and the 40-hour week are faculty-manual time rules, not a student subcategory.",
+        "evidence": "A. Faculty Official Time; render a total of forty (40) service hours a week"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__15",
+      "component": "classify_chunk",
+      "text": "B. Faculty Attendance and Absences\n\n1. Faculty member shall hold classes on time in his/her designated room\nassignments.\n2. Faculty member shall observe official time.\n3. Faculty member shall not be allowed to dismiss his/her classes earlier\nthan the official time.\n4. Substitution of a duly qualified faculty for another teacher shall be done\nonly by the Dean/Associate Dean of the College in case of exigency.\nC. Faculty I.D. and Uniform\n1. Faculty is required to wear the University Identification Card at all times.\nThe identification card shall not be transferable.\n2. Faculty shall wear the prescribed uniform of the university.\nD. Teaching Load Assignment\n1. The Dean / Associate Dean of the College are responsible in the prepa-\nration and assignment of teaching loads and approved through chan-\nnels.\n2. Teaching assignments shall be in line with the faculty\u2019s field of speciali-\nzation (major and/or minor). Retooling is required within two to three\n(2-3) years bounded with Memorandum of Understanding (MOU) for\nthose who are not aligned.\nN.B.\nThe teacher shall be the core faculty of the college based on his/her field of\nspecialization. However, he/she can cut across academic levels (from undergraduate\nto master\u2019s degree to doctorate degree programs) and will be given teaching loads\nbased on aligned degree programs. (Refer to Internal Policy).\n3. Instruction - related assignments such as consultation, tutorial, remedial\nclasses, expert services, etc. are in consonance with faculty workload\nguidelines.\n4. Faculty members may be invited to teach in another college/campus to\ncomplete the required number of hours of teaching load.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__15",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty attendance/absences; not student Attendance.",
+        "evidence": "Faculty member shall hold classes on time"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__15",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty attendance, substitute teachers, and teaching-load assignment are faculty-manual topics.",
+        "evidence": "B. Faculty Attendance and Absences; Substitution of a duly qualified faculty ... shall be done only by the Dean"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__16",
+      "component": "classify_chunk",
+      "text": "E. Internal Policy on Vertical Alignment of Faculty\n\nB. Faculty Attendance and Absences > E. Internal Policy on Vertical Alignment of Faculty\n\n1. Any faculty member who is a graduate of a four-year bachelor\u2019s degree,\nother than Liberal Arts should be under the college where his/her de-\ngree is related, else, s/he belongs to the College of Arts and Sciences\ne.g. BS Nursing \u2013 College of Nursing\nAB Political Science \u2013 College of Arts and Sciences\n2. If one\u2019s Bachelor\u2019s degree is not aligned with his/her Master\u2019s degree,\nhis/her BS degree is considered; still he belongs to the college where s/\nhe seats. But his/her Master\u2019s/Doctorate degree allows him/her to\nteach to the Graduate Program as an affiliate faculty.\n3. Any faculty who is not licensed shall not be allowed to teach the major\nsubjects specifically for programs with Board/Licensure requirement.\n4. If one\u2019s Master\u2019s degree is not aligned with his/her Bachelor\u2019s degree but\naligned with his/her doctorate degree, then there is alignment in the\neducational qualifications.\n5. A graduate of Education course with Master\u2019s degree but not licensed\nshall go to the College of Arts and Sciences, but once passed the (LET)\nLicensure Exam s/he could be absorbed by the College of Teacher Ed-\nucation and or other colleges with programs requiring Board Examina-\ntion.\n6. If the Master\u2019s degree is different or not aligned and needs retooling in\nline with any of the degree earned, e.g. BS Nursing finished MA in Sci-\nence Technology, s/he must retool or bridge the gap by finishing the\ncore and professional subjects required and if wanting to teach in the\nparticular program.\n7. Any faculty who earned doctorate degree from a university / college\nwith SUC level III or higher shall be the only credited institution.\n8. The Faculty about to retire after two to three years shall be given the\nprivilege / consideration to stay in the college they are assigned/\nbelonged in consideration to the number of years of service rendered\nto the college.\nF. Time Allotment for Teaching Loads and other Assignment of Faculty\n1. For sustainable greater work efficiency and productivity of faculty mem-\nbers at all LSPU campuses the following time allotment for regular\nteaching loads and other assignment/activities shall be strictly imple-\nmented and observed.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__16",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty vertical alignment policy; not student taxonomy.",
+        "evidence": "Internal Policy on Vertical Alignment of Faculty"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__16",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Vertical alignment and time allotment for faculty loads are faculty HR rules, not a college-program or student subcategory.",
+        "evidence": "E. Internal Policy on Vertical Alignment of Faculty; F. Time Allotment for Teaching Loads"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__6",
+      "component": "classify_chunk",
+      "text": "Administrative Officials\n\nDR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. CORAZON N. SAN AGUSTIN Vice President for Research Development and Extension I. General Information Santa Cruz Main Campus. It is the second largest university campus of LSPU which is strategically located four (4) kilometers from the own proper.\nAs a key player in education, this campus offers relevant curricular programs with almost 9,000 student population in Engineering, Nursing & Allied Health courses, Hospitality Management & Tourism, Teacher Education, Industrial Technology, Criminal Justice Education, Law, Computer Studies, Arts and Sci- ences, and Business Management and Accountancy.\nSiniloan Host Campus. It lies on a 33-hectare site that is situated in a second class municipality between the plains of Sierra Madre Mountain and Laguna de Bay. It is a center of education serving towns in eastern Laguna and the northern part of Quezon Province. LSPU Siniloan has decided itself to meet the needs of its stakeholders under a shifting educational climate particu- larly in agriculture to which it was originally known.\nSan Pablo Campus. This campus is a eighty-nine (89) kilometers from Manila, resting on approximately 5 hectare land area. It takes pride of its dis- tinctive accomplishments in instruction, research, extension services, linkage program, and community involvement in collaboration with other campuses.\nLos Ba\u00f1os Campus. This campus is situated along the shoreline of La- guna Lake, in the first-class urban municipality, northern slopes of Mt. Maria Makiling. It is sixty-five (65) kilometers from Manila in a 7.5-hectare land area with approximately 4,000 student\u2019s population where majority are registered in Fishery course & sciences and allied courses.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__6",
+        "component": "classify_chunk",
+        "label": "Administrative Officials",
+        "evidence_sufficient": true,
+        "justification": "Lists university president and VPs.",
+        "evidence": "DR. MARIO R. BRIONES University President"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__6",
+        "component": "classify_chunk",
+        "label": "Administrative Officials",
+        "evidence_sufficient": true,
+        "justification": "The chunk names the university president and vice presidents as administrative officials.",
+        "evidence": "DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Administrative Officials"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__7",
+      "component": "classify_chunk",
+      "text": "II. Historical Development of LSPU - Part 1\n\nII. Historical Development of LSPU > II. Historical Development of LSPU\n\nThe Laguna State Polytechnic University (LSPU) was initially estab- lished in 1952 as a provincial secondary school known as Baybay Provincial High School, the first public high school in the shoreline district of Laguna de Bay. In 1957, it was converted into Baybay Agricultural and Vocational School (BNAVS) by Republic Act (RA) No.1807.\nWith the passage of House Bill (HB) 269 into law in June 1971, Rep. Act No. 6327, BNAVS was then converted into Baybay National College of Agri- culture and Technology (BNCAT), followed by its conversion into a state col- lege known as Laguna State Polytechnic College (LSPC) on June 10, 1983.\nLaguna State Polytechnic College grew more prominent and better from then on with the incumbency of Dr. Ricardo A. Wagan as the first College President in 1986. Through Memoranda of Agreements with the local govern- ment officials, Dr. Wagan realized the establishment of satellite campuses such as LSPC Nagcarlan Satellite Campus (S.Y. 1991-1992); LSPC Santa Maria Sat- ellite Campus (S.Y. 1992-1993); and LSPC Cabuyao Campus (S.Y. 1993-1994).\nThe integration phase of three (3) Commission on Higher Education (CHED) Supervised Institutions by the Special Provision No. 2 of the CHED FY 1999 Budget under the General Appropriations Act of 1999 transpired under Dr.\nWagan\u2019s incumbency.\nIn January 1999, the former Laguna College of Arts and Trades in Santa Cruz, Laguna, was integrated to LSPC by R.A. 8745, R.A. 7722, and R.A. 8292, hence known as Laguna State Polytechnic College-Santa Cruz Campus. In the same year, Los Ba\u00f1os College of Fisheries at Los Ba\u00f1os Laguna was also inte- grated to LSPC by R.A. 7722, known as the Higher Education Act of 1994, and R.A. 8292, Higher Education Modernization Act of 1997.\nUnder CHED Memorandum Order No. 27, s. 2000, Implementing Guidelines of the Integration of CHED-Supervised Institutions (CSIs) to State Universities and Colleges (SUCs) Phase II, the formal turn-over ceremony took place relative to the integration of San Pablo City National School of Arts and Trades at San Pablo City to LSPU.\nPresident Wagan marked remarkable and distinctive achievements for LSPC.\nThe established multi-campus institution amplified the number of non-degree and degree curricular programs/offerings that necessitated hiring more teach- ers due to increased enrollment. There was also intensified rehabilitation, re- pairing, and construction of academic buildings and relevant facilities. Gradu- ate programs were launched, which paved the way for acquiring state-of-the-art equipment.\nLikewise, President Wagan opened doors to neighboring Asian countries through academic and cultural exchange and partnership programs. He signed numerous memoranda of agreements (MOAs) and sisterhood agreements with Changwon College and Changwon High School in South Korea and Thai Ngu- yen University of Agriculture and Forestry in Vietnam.\nIn the 13th Congress of the Philippines, during its 3rd Regular Session, R.A. No. 9402 converted Laguna State Polytechnic College into a State Univer- sity, appropriating funds thereof; approved by the Philippine President's Office on March 22, 2007, with Dr. Ricardo A. Wagan as its first University Presi- dent.\nLSPU offers relevant, affordable, and accredited fourteen non-duplicated curricula programs. Nurtured by Dr. Nestor M. De Vera, the 2nd university president, LSPU established an additional satellite campus in Lopez Quezon (S.Y. 2011-2012) with curricular programs in Agriculture and Fisheries and LSPU Extension Magdalena Manpower Training Center (S.Y. 2014-2015).\nIn addition to the existing international academic programs, the excellent and strong leadership of President De Vera had established partnerships with universities along the Asia Pacific Region such as Phnom Penh International University in Cambodia; Saigon Technology University, and Nong Lam Uni- versity in Ho Chi Minh City and Hung Vuong University in Phu Tho Province, SRV; and Yunnan Agricultural University in China.\nSupporting the Philippines ' National Development Agenda of Human Development and Poverty Reduction and Economic Development, LSPU helps the government make education the central strategy for investing in hu- man resources to reduce poverty while inviting economic growth and national competitiveness. The university tries to achieve the center of sustainable devel- opment and higher-level accredited status, under the equally dynamic and inno- vative administration of its 2nd University President, Dr. Nestor M. De Vera.\nToday, LSPU is a SUC Level III Higher Education Institution, while most of the academic programs are accredited by the AACCUP ranging from Level III re-accredited status to preliminary status for new programs. The BSED, BSIE, and Industrial Technology programs are candidates for Level IV re-accreditation status, while the Teacher Education Program of San Pablo City campus is awarded the Center of Development (2016). Likewise, the uni- versity's four campuses received an ISO 9001: 2015 Certification in 2018 for its quality management system while passing the Institutional Accreditation, Level I for its quality institutional operation.\nDr. Eden C. Callo was designated as officer-in-charge, Office of the LSPU President, while the search for the 3rd university president was ongoing.\n(CHED Special Order 26, s.2019) On May 22, 2019, Dr. Mario R. Briones was named as the 3rd LSPU President. (BOR Resolution 1410, s.2019) The leadership of President Briones during the first year had shown the following accomplishments: approval of the enhanced curriculum (CMO PSG\n2017), establishment of the LSPU-LILIW Pilot-extension classes in Liliw, La- guna (BOR Resolution 21, s.2019); nationally recognized as an ISO 9001:2015 government higher education institution, Regional PASUC Chairperson, re- construction of the university\u2019s organizational structure, and review and updat- ing of all the university\u2019s manuals of operations for quality management sys- tem. he The onslaught of the COVID 19 pandemic brought an unprecedented change in the educational landscape of the university. In order to cope with the new normal, President Briones initiated the conceptualization of the LSPU curriculum and instruction framework for the new normal. The LSPU Board of Regents approved the university\u2019s concepts and processes in migrating to the new normal, adopting Flexible Learning as a Delivery Model (BOR Resolu- tion 61, s.2020), and LSPU Pandemic Plan based on a series of institutional studies and workshops for implementation on September 21, 2020.\nIII. Commitment of the LSPU Faculty A. Commitment of Faculty",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__7",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Historical founding narrative is not VMG or officials.",
+        "evidence": "initially estab- lished in 1952 as a provincial"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__7",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "This faculty-manual passage is institutional history, from the 1952 high school through campus integration, and is not one student subcategory.",
+        "evidence": "II. Historical Development of LSPU; established in 1952 as a provincial secondary school"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__8",
+      "component": "classify_chunk",
+      "text": "II. Historical Development of LSPU - Part 2\n\nII. Historical Development of LSPU > II. Historical Development of LSPU\n\n1. Teaching is a personal commitment of oneself to others with the inten- tion to fulfill these obligations to satisfaction. As such, the professor/ instructor shall:\n1.1. exemplify mental, social, emotional and professional maturity where he/she recognizes his/her strengths as well as his/her weaknesses;\n1.2. share ideas, instructional resources to fellow teachers especially those which have been found to be effective;\n1.3. rise above personal feelings and biases in the interest of group ac- tion and group results; and\n1.4. enhance his/her credibility in the classroom through quality teach- ing and adequate preparation.\n2. Teaching as a commitment recognizes the centrality of the learner in the educative process. In recognition of this fact, the professor/instructor shall:\n2.1. respect learners as person and value him/her as such;\n2.2. enhance the learner\u2019s capacity for growth and create the proper climate for that growth;\n2.3 accept the learner as s/he is; when s/he shows ignorance, not ridi- cule him/her, when s/he differs, not to reject him/her, and when s/he is proved wrong, not to condemn him/her;\n2.4. inspire the best effort from his/her students because their standard of performance is in themselves the motivation to do one\u2019s best;\n2.5. deviate from the influence of personal friendship, pressure from vested groups and consider only the achievement of students in giving grades;\n2.6. recognize the differences among students and seek to meet their individual needs;\n2.7. encourage students to formulate and work for high individual goals of their physical, intellectual, creative, socio-emotional and spiritual endowments; and\n2.8. respect the right of every student to withhold confidential infor- mation unless required by authorized agency or by law.\n3. The professor /instructor shall share with parents the responsibility of shaping the student\u2019s future and act towards socially acceptable ends.\nIn recognition of this, the professor/instructor shall:\n3.1. establish friendly and cooperative relationships with the parents;\n3.2. provide the parents with information that shall serve the best inter- ests of their children and to be discreet about information received from parents;\n3.3. keep parents informed about the academic progress/ performance of their children; and\n3.4. exercise tact and utmost sincerity in informing the parents about their children\u2019s academic deficiencies and shortcomings.\n4. The teacher as a vanguard of change should be responsible in the devel- opment of the country and its people. In recognition of this, profes- sor/instructor shall:\n4.1. recognize that the University belongs to the people, therefore, strives to serve the public with genuine concern and dedication;\n4.2. conduct innovative research, initiate sustainable community exten- sion activities, and assume leadership roles; and\n4.3. discuss national concerns in the community in order to transform the lives of the people especially the poor and the disad- vantaged.\nB. Code of Ethics The officials, faculty, and personnel of the Laguna State Polytechnic University shall employ the Code of Ethics to set appropriate guides for ethical conduct.\n1. Every faculty, official and other personnel of the University shall con- stantly uphold the honor and dignity of his/her position in all his/her actions and relationships with all the other members of the University.\nIn fulfilling these obligations, s/he shall:\n1.1. Accept his/her responsibility to maintain a professional level of service. To do this, s/he shall:\n1.1.1. strive to do his/her work to the best of his/her knowledge and ability;\n1.1.2. understand the full range of the responsibility of his/her position and accept the changes and/or added func- tions and responsibilities incumbent upon the position;\n1.1.3. demonstrate a willingness to try new and innovative pro- cedures that will bring about a more efficient and expe- ditious handling of official matters; and\n1.1.4. seek and acquire professional growth by continuous in- volvement in advanced studies, researches, extensions, conferences, seminars, trainings, workshops and attend- ance to meetings and assemblies.\n1.2. Respect the worth and dignity of each member of the university.\nThis means, s/he shall:",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__8",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Teaching-as-commitment prose is not a student class.",
+        "evidence": "Teaching is a personal commitment of oneself to others"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__8",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The title says historical development, but the body is a faculty teaching-commitment code, so title and text do not support one subcategory.",
+        "evidence": "II. Historical Development of LSPU - Part 2; Teaching is a personal commitment of oneself to others"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__10",
+      "component": "classify_chunk",
+      "text": "Administrative Officials\n\nDR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. ROBERT C. AGATEP Vice President for Research Development and Extension",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__10",
+        "component": "classify_chunk",
+        "label": "Administrative Officials",
+        "evidence_sufficient": true,
+        "justification": "Lists university president and VPs.",
+        "evidence": "DR. MARIO R. BRIONES University President"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__10",
+        "component": "classify_chunk",
+        "label": "Administrative Officials",
+        "evidence_sufficient": true,
+        "justification": "The chunk is a list of the university president and vice presidents.",
+        "evidence": "DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Administrative Officials"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__111",
+      "component": "classify_chunk",
+      "text": "Scholarships\n\nUndergraduate Academic Policies > Article 10 > Scholarships\n\nScholarship grants and all other forms of financial assistance shall be awarded in accordance with pertinent rules and regulations.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__111",
+        "component": "classify_chunk",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "Scholarship grants article.",
+        "evidence": "Scholarship grants and all other forms of financial assistance"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__111",
+        "component": "classify_chunk",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "The chunk states that scholarship grants and other financial assistance follow the applicable rules.",
+        "evidence": "Scholarship grants and all other forms of financial assistance shall be awarded in accordance with pertinent rules and regulations."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Scholarships"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__114",
+      "component": "classify_chunk",
+      "text": "Full Scholarship/Training Allowance: SCUAA medalists whether\n\nUndergraduate Academic Policies > Article 10 > Scholarships > 2.1.1 > Full Scholarship/Training Allowance: SCUAA medalists whether\n\ngold, silver or bronze; grade average of 2.0 for the semester immediately proceeding; and possess good moral character",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__114",
+        "component": "classify_chunk",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "SCUAA medalist full scholarship/training allowance.",
+        "evidence": "Full Scholarship/Training Allowance: SCUAA medalists"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__114",
+        "component": "classify_chunk",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "The chunk states the grade and good-moral conditions for a full scholarship or training allowance for SCUAA medalists.",
+        "evidence": "Full Scholarship/Training Allowance: SCUAA medalists; grade average of 2.0; possess good moral character"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Scholarships"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__117",
+      "component": "classify_chunk",
+      "text": "Honorable Dismissal\n\nUndergraduate Academic Policies > Article 12 > Honorable Dismissal\n\nHonorable Dismissal is voluntary with drawal from the college/university with the consent of the Registrar.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__117",
+        "component": "classify_chunk",
+        "label": "Honorable Dismissal",
+        "evidence_sufficient": true,
+        "justification": "Defines honorable dismissal.",
+        "evidence": "Honorable Dismissal is voluntary with drawal from the college/university"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__117",
+        "component": "classify_chunk",
+        "label": "Honorable Dismissal",
+        "evidence_sufficient": true,
+        "justification": "The chunk defines honorable dismissal as voluntary withdrawal with the registrar's consent.",
+        "evidence": "Honorable Dismissal is voluntary with drawal from the college/university with the consent of the Registrar."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Honorable Dismissal"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__118",
+      "component": "classify_chunk",
+      "text": "Honorable Dismissal\n\nUndergraduate Academic Policies > Article 12 > Honorable Dismissal > Article 12 > Honorable Dismissal\n\nHonorable Dismissal Petition: A student of good standing who de sires to withdraw from the college/university shall present a written petition to the Registrar signed by the parent/s or guardian/s. If the petition is granted, the student shall be given Honorable Dismissal.\nHonorable Dismissal Policy: All indebtedness to the university must be settled before a statement of Honorable Dismissal will be issued.\nThe statement indicates that the student who withdraws is of good standing as far as character and conduct are concerned. If the student has been dropped from the roll on account of poor scholarship, a statement to the effect may be added to the Honorable Dismissal. A student granted an honorable dismissal may not be readmitted in the university.\nNon-granting of Honorable Dismissal: A student who leaves the university for the reason of suspension, dropping or expulsion due to disciplinary action/s shall not be entitled to Honorable Dismissal.\nShould the student be permitted to receive the transcript of records or certification of academic status in the university, it shall contain a state- ment of the disciplinary action rendered.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__118",
+        "component": "classify_chunk",
+        "label": "Honorable Dismissal",
+        "evidence_sufficient": true,
+        "justification": "Honorable dismissal petition procedure.",
+        "evidence": "Honorable Dismissal Petition: A student of good standing"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__118",
+        "component": "classify_chunk",
+        "label": "Honorable Dismissal",
+        "evidence_sufficient": true,
+        "justification": "The chunk states the petition, indebtedness, good-standing, and non-grant rules for honorable dismissal.",
+        "evidence": "A student of good standing who desires to withdraw ... shall be given Honorable Dismissal."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Honorable Dismissal"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__123",
+      "component": "classify_chunk",
+      "text": "Approval Sheet\n\nUndergraduate Academic Policies > Article 13 > Undergraduate Thesis > 1.4 > Approval Sheet\n\nOnly the following shall be included for signing in the approval sheet: adviser, panel members, dean/associate dean, and registrar. Research contribution number shall likewise appear.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__123",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Thesis approval-sheet signatories; no thesis subcategory.",
+        "evidence": "signing in the approval sheet: adviser, panel members"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__123",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Who signs an undergraduate thesis approval sheet does not clearly match graduation or another single subcategory.",
+        "evidence": "Only the following shall be included for signing in the approval sheet: adviser, panel members, dean/associate dean, and registrar."
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__136",
+      "component": "classify_chunk",
+      "text": "Gain advanced knowledge and skills in conducting various\n\nGraduate Studies > Article 1 > Graduate Studies and Applied Research Goals and Objectives > 3.2.4 > Gain advanced knowledge and skills in conducting various\n\nkinds of researches in one\u2019s field of study.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__136",
+        "component": "classify_chunk",
+        "label": "Graduate Programs",
+        "evidence_sufficient": true,
+        "justification": "Graduate Studies goals/objectives.",
+        "evidence": "Graduate Studies and Applied Research Goals and Objectives"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__136",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "A single graduate research-objective fragment does not clearly distinguish vision and mission, graduate programs, or graduate policy.",
+        "evidence": "Gain advanced knowledge and skills in conducting various kinds of researches in one's field of study."
+      },
+      "agreement_status": "disagreement",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__138",
+      "component": "classify_chunk",
+      "text": "Curricular Offerings - College of Agriculture\n\nGraduate Studies > Article 2 > Curricular Offerings\n\nPrograms:\n- Doctor of Philosophy in Agriculture\n- Master of Science in Agriculture",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__138",
+        "component": "classify_chunk",
+        "label": "College of Agriculture",
+        "evidence_sufficient": true,
+        "justification": "Curricular offerings of College of Agriculture.",
+        "evidence": "Curricular Offerings - College of Agriculture ... Doctor of Philosophy in Agriculture"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__138",
+        "component": "classify_chunk",
+        "label": "College of Agriculture",
+        "evidence_sufficient": true,
+        "justification": "The chunk lists the agriculture curricular offerings, the doctorate and master's programs in agriculture.",
+        "evidence": "Curricular Offerings - College of Agriculture; Doctor of Philosophy in Agriculture; Master of Science in Agriculture"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "College of Agriculture"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__151",
+      "component": "classify_chunk",
+      "text": "Change of Matriculation\n\nGraduate Studies > Article 4 > Matriculation and Fees > Sec. 1 > Change of Matriculation\n\nIn case of a change in matriculation, a stu dent shall be advised to accomplish the form for change of matriculation to be submitted at first, the accounting office for assessment; then, the office of GSAR for notation and filing. No change of matriculation involving the taking of new subjects shall be allowed after 12% of regular class meetings have been held.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__151",
+        "component": "classify_chunk",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "Change of matriculation form is an enrollment change.",
+        "evidence": "change in matriculation ... form for change of ma"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__151",
+        "component": "classify_chunk",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "Change of matriculation is the process and deadline for changing enrolled subjects with GSAR.",
+        "evidence": "No change of matriculation involving the taking of new subjects shall be allowed after 12% of regular class meetings have been held."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Registration"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__155",
+      "component": "classify_chunk",
+      "text": "Course Requirements\n\nGraduate Studies > Article 5 > Course Load and Requirements > Sec. 2 > Course Requirements\n\nMPA MS MA/ MA PhD PhD EdD\nMAT Ed (Agri) (Mgt)\nCore/Foundation | 9 | 9 | 9 | 9 18 | 18 | 12\nMajor Courses | 18 18 | 15 15 21 | 24 | 18\nElectives/Foreign Language | 6 | 3 | 9\nCognate/Graduate Seminar | 9 | 9 | 12 12 9 | 9 | 12\nThesis/ Dissertation | 6 | 6 | 6 | 6 12 | 12 | 12\nTotal Units | 42 42 | 42 42 66 | 66 | 63",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__155",
+        "component": "classify_chunk",
+        "label": "Graduate Policies",
+        "evidence_sufficient": true,
+        "justification": "Graduate course-load/requirements table.",
+        "evidence": "Graduate Studies > Article 5 > Course Load and Requirements"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__155",
+        "component": "classify_chunk",
+        "label": "Graduate Programs",
+        "evidence_sufficient": true,
+        "justification": "The table gives core, major, cognate, and thesis units for master's and doctorate degrees, which is graduate program structure.",
+        "evidence": "Core/Foundation | Major Courses | Thesis/ Dissertation | Total Units | 42 42 | 42 42 66 | 66 | 63"
+      },
+      "agreement_status": "disagreement",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "reviewers chose different subcategories"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__160",
+      "component": "classify_chunk",
+      "text": "Residence Requirements and Time Limit\n\nGraduate Studies > Article 9 > Residence Requirements and Time Limit\n\nFor most degrees and other qualifications, the University requires the students to spend a set amount of time receiving tuition or carrying out research.\nSec. 1. A master's degree student shall earn a minimum of 18 units within two\n2. semesters, whereas a doctorate aspirant shall complete a minimum of 27 units equivalent to three (3) semesters.\nSec. 2. All curricular requirements for a master's degree shall be completed within five (5) years after the student\u2019s first enrolment in the master's program; those for doctorate shall be completed within seven (7) years after the student\u2019s first enrolment in the doctorate program.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__160",
+        "component": "classify_chunk",
+        "label": "Graduate Policies",
+        "evidence_sufficient": true,
+        "justification": "Graduate residence requirements and time limit.",
+        "evidence": "Residence Requirements and Time Limit"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__160",
+        "component": "classify_chunk",
+        "label": "Graduate Policies",
+        "evidence_sufficient": true,
+        "justification": "Minimum residence units and the five-year and seven-year completion limits are graduate academic policies.",
+        "evidence": "A master's degree student shall earn a minimum of 18 units within two semesters; master's degree shall be completed within five (5) years"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Graduate Policies"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__167",
+      "component": "classify_chunk",
+      "text": "Examination Fee\n\nGraduate Studies > Article 12 > Comprehensive Examination Guidelines > Sec. 4 > Examination Fee\n\n4.1. The comprehensive examination fee is P1,000.00 for master\u2019s de- gree and P2,000.00 for doctorate degree. In some opportune time, the examination fee may be subject to change. (BOR Resolution 1046, s..2012)",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__167",
+        "component": "classify_chunk",
+        "label": "Graduate Policies",
+        "evidence_sufficient": true,
+        "justification": "Graduate comprehensive examination fee.",
+        "evidence": "comprehensive examination fee is P1,000.00 for master\u2019s"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__167",
+        "component": "classify_chunk",
+        "label": "Graduate Policies",
+        "evidence_sufficient": true,
+        "justification": "The stated amounts are the comprehensive examination fees for master's and doctorate degrees under graduate examination guidelines.",
+        "evidence": "The comprehensive examination fee is P1,000.00 for master's degree and P2,000.00 for doctorate degree."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Graduate Policies"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__18",
+      "component": "classify_chunk",
+      "text": "Curricular Offerings - College of Nutrition and Dietetics\n\nCurricular Offerings\n\nCampuses:\n- Los Ba\u00f1os\n\nPrograms:\n- BS Nutrition and Dietetics (CMO 14, s. 2017)\n- BS Food Technology (CMO 7, s.2019)",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__18",
+        "component": "classify_chunk",
+        "label": "Undergraduate Programs",
+        "evidence_sufficient": true,
+        "justification": "BS Nutrition/Food Tech; no Nutrition college in taxonomy.",
+        "evidence": "BS Nutrition and Dietetics ... BS Food Technology"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__18",
+        "component": "classify_chunk",
+        "label": "Undergraduate Programs",
+        "evidence_sufficient": true,
+        "justification": "The chunk lists undergraduate degrees, BS Nutrition and Dietetics and BS Food Technology.",
+        "evidence": "BS Nutrition and Dietetics (CMO 14, s. 2017); BS Food Technology (CMO 7, s.2019)"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Undergraduate Programs"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__200",
+      "component": "classify_chunk",
+      "text": "Disseminate information to students regarding the requirements\n\nGraduate Studies > Article 3 > Institutional Student Programs and Services > 2.1 > Disseminate information to students regarding the requirements\n\nfor scholarship.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__200",
+        "component": "classify_chunk",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "Disseminate scholarship requirements to students.",
+        "evidence": "Disseminate information to students regarding the requirements"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__200",
+        "component": "classify_chunk",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "The sentence assigns dissemination of scholarship requirements.",
+        "evidence": "Disseminate information to students regarding the requirements for scholarship."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Scholarships"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__207",
+      "component": "classify_chunk",
+      "text": "Assist foreign students with proper coordination to concerned\n\nGraduate Studies > Article 3 > Institutional Student Programs and Services > 8.3 > Assist foreign students with proper coordination to concerned\n\ngovernment agencies like Commission on Higher Education, De- partment of Foreign Affairs, and Bureau of Immigration.\n8.4. Supervise and monitor International students\u2019 activities. Provide necessary assistance for visa application.\nSec. 9. Services for students with Special Needs and Persons with Disa- bilities\n9.1. Designed to provide equal opportunities to Persons With Disabili- ties (PWD\u2019s), indigenous peoples, solo parents, and other accom- modation for learners with special needs.\n9.2. Conflict management and counseling or testing referrals shall be done when necessary.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__207",
+        "component": "classify_chunk",
+        "label": "Foreign Students",
+        "evidence_sufficient": true,
+        "justification": "Assist foreign students with government coordination.",
+        "evidence": "Assist foreign students with proper coordination"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__207",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The chunk combines assistance to foreign students with a separate section on learners with special needs, so it does not support one subcategory.",
+        "evidence": "Assist foreign students with proper coordination; Sec. 9. Services for students with Special Needs and Persons with Disabilities"
+      },
+      "agreement_status": "disagreement",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__212",
+      "component": "classify_chunk",
+      "text": "Major Offense\n\nGraduate Studies > Article 2 > Major Offense > Article 2 > Major Offense\n\nActs of Cybercrime: (Stipulated by RA 10175 or the Cyber- crime Prevention Act of 2012).\nCyber bullying or bullying Suspension Suspension Expulsion: done through the use of tech- for one (1) for one (1) from the nology or any | electronic month | semester University means\nIllegal access or hacking to the: whole or any part of one\u2019s Suspension Suspension Expulsion online accounts including e for one (1) for one (1) from the\n-mail, social media profiles, month | semester University etc.\nIllegal interception or listening: to, recording, monitoring or surveillance of the content of communications, either direct- Suspension Suspension Expulsion ly through the access and use for one (1) for one (1) from the of computer systems, or indi- month | semester University rectly through the use of elec- tronic eavesdropping or tap- ping devices\nData interference or the inten: tional or reckless alteration, damaging, deletion or deterio- Suspension Suspension Expulsion ration of computer data, elec- for one (1) for one (1) from the tronic document or electronic month | semester University message, without right, includ- ing introduction or transmis- sion of viruses",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__212",
+        "component": "classify_chunk",
+        "label": "Student Welfare",
+        "evidence_sufficient": true,
+        "justification": "Major offenses including cybercrime/cyberbullying.",
+        "evidence": "Acts of Cybercrime ... Cyber bullying or bullying"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__212",
+        "component": "classify_chunk",
+        "label": "Student Welfare",
+        "evidence_sufficient": true,
+        "justification": "Cybercrime, cyberbullying, and hacking are major student offenses with suspension and expulsion penalties.",
+        "evidence": "Major Offense; Acts of Cybercrime; Cyber bullying; Expulsion from the University"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Student Welfare"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__233",
+      "component": "classify_chunk",
+      "text": "Vandalism or Destruc\n\nGraduate Studies > Article 2 > Major Offense > Sec. 15 > Vandalism or Destruc\n\ntion of Public Properties. De-\nstroying property which includes break- Suspension Suspension\nage of glass windows; chairs dragging; for one (1) for one (1)\nmisuse of tools and equipment; draw- month and semester Expulsion\ning on the walls and pieces of furniture; demand and de- | from the\nact of tearing off or defacing any library payment mand pay- University\nbooks, magazines and periodicals; post- for damag- ment for\ning illegal/unauthorized notices; pick- es | damages\ning of fruits, uprooting and cutting of\nplant; arson and any other form of de-\nstructions.\nSection/Title/Definition | 1st | 2nd | 3rd\nOffense | Offense | Offense",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__233",
+        "component": "classify_chunk",
+        "label": "Student Welfare",
+        "evidence_sufficient": true,
+        "justification": "Major offense vandalism/destruction of property.",
+        "evidence": "Vandalism or Destruc tion of Public Properties"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__233",
+        "component": "classify_chunk",
+        "label": "Student Welfare",
+        "evidence_sufficient": true,
+        "justification": "Vandalism and destruction of public property are listed as a major student offense with suspension and expulsion penalties.",
+        "evidence": "Vandalism or Destruction of Public Properties; Suspension; Expulsion"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Student Welfare"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__26",
+      "component": "classify_chunk",
+      "text": "Curricular Offerings - College of Fisheries\n\nCurricular Offerings\n\nCampuses:\n- Los Ba\u00f1os\n\nPrograms:\n- Master of Science in Fisheries major in Aquaculture\n- Master of Science in Fisheries major in Post-Harvest",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__26",
+        "component": "classify_chunk",
+        "label": "Graduate Programs",
+        "evidence_sufficient": true,
+        "justification": "MS Fisheries offerings; no Fisheries college in taxonomy.",
+        "evidence": "Master of Science in Fisheries major in Aquaculture"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__26",
+        "component": "classify_chunk",
+        "label": "Graduate Programs",
+        "evidence_sufficient": true,
+        "justification": "The chunk lists Master of Science in Fisheries majors, which are graduate programs.",
+        "evidence": "Master of Science in Fisheries major in Aquaculture; Master of Science in Fisheries major in Post-Harvest"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Graduate Programs"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__290",
+      "component": "classify_chunk",
+      "text": "Non-academic Awards\n\nGraduate Studies > Article 3 > Non-academic Awards > Article 3 > Non-academic Awards\n\nCriteria for Evaluation: The nominee of this award shall be evaluat ed according to the following:\nService Awardee: 3.3.1.1. The student journalist actively participates in the production of publications: Newsletter, Magazine, Tabloid, Broadsheet and Literary Folio. This also includes covering of events, editing of articles/ pages and other publication-related tasks.\n3.3.1.2. Evidence of involvement in the annuals is based on the publication of articles, photographs and/or art- works with the name of the student journalist indi- cated in the by-line. The number of credited works for the whole year must not be less than five (5).\nEvidence of participation in covering/documenting: of events is based on the attendance sheet/log pro- vided every meeting/event.\nAs an official recognition of active participation, the: student journalist must also be included in the edito- rial board.\n3.3.2. Student Journalist of the Year. Apart from the policies and guidelines indicated in 1.3.1., the student journalist must have received three or more awards in any of the following competitions: university wide press conference (1st-3rd place), regional press conference (1st to 5th place), and/or luzon- wide/national press conference (1st to 10th place).",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__290",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Non-academic awards criteria; no awards subcategory.",
+        "evidence": "Non-academic Awards ... Criteria for Evaluation"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__290",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Criteria for a student-journalist non-academic award do not clearly support graduation, student organizations, or another single subcategory.",
+        "evidence": "Non-academic Awards; Student Journalist of the Year"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__328",
+      "component": "classify_chunk",
+      "text": "Medals and Certificates\n\nGraduate Studies > Article 5 > Medals and Certificates > Article 5 > Medals and Certificates\n\nLaboratory: It refers to a private or government facility that is capa ble of testing a specimen to determine the presence of dangerous drugs therein.\nMandatory drug testing: It refers to compulsory submission of a stu dent for drug testing as required by R.A. 9165.\nPrevention: It refers to the promotion of the drug-free lifestyle thru strategies such as advocacy, information, dissemination, and capa- bility building through training\nScreening drug test: It refers to a rapid test performed to establish po tential or presumptive positive result. It refers to the immunoassay test to eliminate a \u201cnegative\u201d specimen, i.e. one without the pres- ence of dangerous drug from further consideration and to identify the presumptively positive specimen that requires confirmatory test.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__328",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Title medals/certificates but body is laboratory-specimen text; insufficient.",
+        "evidence": "Laboratory: It refers to a private or government facility that is capa ble of testing a specimen"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__328",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The title is Medals and Certificates, but the body defines laboratory drug testing, so title and text do not match one subcategory.",
+        "evidence": "Medals and Certificates; Laboratory: It refers to a private or government facility that is capable of testing a specimen"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__37",
+      "component": "classify_chunk",
+      "text": "IBE (International Baccalaureate Diploma)\n\nUndergraduate Academic Policies > Article 2 > Admission Requirements > 2.2.3.3 > IBE (International Baccalaureate Diploma)\n\n2.2.4. The foreign student applicant who is not a native English speaker is required to have at least earned a minimum score of 500 in the Test of English as Foreign Language (TOEFL) or completion of the Intensive English Language Course (IELP) at LSPU or another reputable English Lan- guage training institution to equip the students with their Basic Interpersonal Language Skills (BICS) and Cognitive Academic Language Proficiency (CALP).\n2.2.5 Students who can present proof of adequate English profi- ciency, e.g., IELTS Certificate or related certificates, may not need to enroll in the IELP Course.\n2.2.6 Filipinos who graduate from a secondary school abroad ap- plying for freshman admission must satisfy the same require- ments as those for international students.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__37",
+        "component": "classify_chunk",
+        "label": "Admission Requirements",
+        "evidence_sufficient": true,
+        "justification": "IB diploma / foreign-student admission requirements.",
+        "evidence": "Admission Requirements > ... IBE (International Baccalaureate Diploma)"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__37",
+        "component": "classify_chunk",
+        "label": "Foreign Students",
+        "evidence_sufficient": true,
+        "justification": "The provisions require TOEFL or English training for foreign applicants and apply the same rules to Filipinos educated abroad.",
+        "evidence": "The foreign student applicant who is not a native English speaker is required to have at least earned a minimum score of 500 in the Test of English as Foreign Language (TOEFL)"
+      },
+      "agreement_status": "disagreement",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "reviewers chose different subcategories"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__378",
+      "component": "classify_chunk",
+      "text": "Encourages student interns to develop their personality and\n\nGraduate Studies > Article 5 > Requirements, Obligations, and Responsibilities > 4.2.2 > Encourages student interns to develop their personality and\n\nprofessionalism, and to extent possible, protect them from physical or moral danger;",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__378",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Student-intern personality development; no internship class.",
+        "evidence": "Encourages student interns to develop their personality"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__378",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "A fragment about intern personality and protection from danger does not clearly support one subcategory.",
+        "evidence": "Encourages student interns to develop their personality and professionalism, and to extent possible, protect them from physical or moral danger"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__425",
+      "component": "classify_chunk",
+      "text": "Target Delivery Mode for Flexible Learning\n\nGraduate Studies > Article 3 > LSPU Flexible Learning Delivery > Sec. 2 > Target Delivery Mode for Flexible Learning\n\nThe LSPU Flexible Learning is an institutional response to the current\nand future challenges in instructional delivery. Using the results of the survey\nof the OVPAA and CIDQA Unit, flexible learning is contextually categorized:\n2.1. Synchronous Online \u2013 learning is real-time via Internet\n2.2. Asynchronous Online \u2013 students learn at different times and loca-\ntions, no real-time interactions with Internet requirements (via\nLMS, discussion forum, self-guided materials, prerecorded videos)\n2.3. E-Learning Offline \u2013 students are using digital learning resources\npackage offline while NOT connected to Internet (using hard\nDescription of each Mode of Delivering Instruction\nHow do we | Implications\nMode | Context | address it in this | To Faculty\nPlan | Preparation\na. E-Learning | The faculty either has Modular | 1. Modules would\noffline delivery little or no training or | have to be prepared\nexperience in the | Self-paced course and be ready for distri-\ndelivery of an online packs | bution upon student\nlearning. | enrolment.\n2. The Faculty uses\nthe LSPU LMS at the\nbeginning of the term\n(to upload all course\nrequirements and syl-\nlabus), end of term\n(for final requirement\nsubmission OR final\nlesson).\nb. E-learning | The faculty can | The faculty will | 1. All course require-\nOnline syn- | spend the full 2 | be using Google ments and IMs are\nchronous and hours per course of | Classroom) in | ready for electronic\nonline asyn- | contact period | delivering the | distribution to stu-\nchronous | online: synchronous elearning lessons dents upon enroll-\n(maximum of 30 | provided by the ment.\nminutes) and asyn- | policies on course\nchronous (90 | scheduling and | 2. Faculty uses LMS as\nminutes). | programming of primary platform and\nthe university. | must use it in a mini-\nmum of 4 sessions\n(synchronous and\nasynchronous) for the\nwhole semester.\nDescription of each Mode of Delivering Instruction\nHow do we | Implications\nMode | Context | address it in this | To Faculty\nPlan | Preparation\nc. Combination | The faculty can spend LSPU will max- 1. All course require-\nof E-learning | a portion of the full 2 imize the use of ments and IMs are\nOnline syn- | hours per course of | Google Class- | ready for electronic\nchronous and contact period online: room. This plat- distribution to stu-\nFull offline | synchronous | form will be | dents upon enroll-\n(maximum of 30 | available to the | ment.\nminutes) and the rest community at\nof the lesson will be the earliest time, 2. Faculty uses LMS as\nleft for the student to so that the mi- | primary platform and\nspend using modules gration from | must use it in a mini-\nor other self-directed F2F to e-learning mum of 4 sessions\nlearning | may be utilized | (synchronous and\nmaterials/activities | and implement- asynchronous) for the\ned. | whole semester.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__425",
+        "component": "classify_chunk",
+        "label": "LMS",
+        "evidence_sufficient": true,
+        "justification": "Flexible learning delivery mode.",
+        "evidence": "LSPU Flexible Learning Delivery ... Target Delivery Mode"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__425",
+        "component": "classify_chunk",
+        "label": "LMS",
+        "evidence_sufficient": true,
+        "justification": "The chunk defines flexible learning modes and requires faculty to use the LSPU LMS and Google Classroom.",
+        "evidence": "Asynchronous Online \u2013 students learn at different times and locations ... (via LMS); The Faculty uses the LSPU LMS"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "LMS"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__428",
+      "component": "classify_chunk",
+      "text": "LSPU Self-Paced Learning Module\n\nGraduate Studies > Article 3 > LSPU Flexible Learning Delivery > 4.2 > LSPU Self-Paced Learning Module\n\nThe university shall adopt the Self-Paced Learning Module (SLM) which was crafted during the Webinar Workshop. These e-learning materials, designed both for online and offline modes, are based on the essential competencies identified in a course.\nIn the preparation of SLM, an established and unique identity for LSPU shall be adopted. Hence, its acronym could be described as:\nLearning Outcomes. These pertain to the identified high essential learning competencies lifted from the OBE course syllabus that the teacher wishes students to perform after finishing the learning course or unit.\nStudent Learning Strategies. Flexible learning is self-paced and self- directed, the IMs to be produced shall characterize as personalized learning by using it as a tool to adapt to student capabilities. The teacher determines the approach for achieving the learning objec- tives and are included in the pre-instructional activities, and lesson presentation adopting flexible learning options.\nPerformance Tasks. These are the activities that require the learners to perform the task or activity to standards. It will give students an experience for engagement attuned to the community of practice.\nUnderstanding directed assessment. Assessment is done through faculty marked exams, portfolios, reflective/synthesis papers, re- search papers, projects, and innovative tools, among others.\nStep 5. Google Classroom will be institutionalized as primary LSPU LMS plat- form and parameters on its use to support course delivery will be made available to faculty.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__428",
+        "component": "classify_chunk",
+        "label": "LMS",
+        "evidence_sufficient": true,
+        "justification": "Self-paced learning module for flexible learning.",
+        "evidence": "adopt the Self-Paced Learning Module (SLM)"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__428",
+        "component": "classify_chunk",
+        "label": "LMS",
+        "evidence_sufficient": true,
+        "justification": "The self-paced learning module is an e-learning material, and the chunk names Google Classroom as the primary LSPU LMS.",
+        "evidence": "The university shall adopt the Self-Paced Learning Module (SLM); Google Classroom will be institutionalized as primary LSPU LMS platform"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "LMS"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__45",
+      "component": "classify_chunk",
+      "text": "Student Transferees\n\nUndergraduate Academic Policies > Article 2 > Admission Requirements > 2.11.2 > Student Transferees\n\n- Transfer Credential/Honorable Dismissal from the schoollast attended\n- Transcript of Records or a copy of Academic Records for\nevaluation purposes\n- physical, medical, and drug testing examinations certified\nby a government physician, certifying the applicant\u2019s fitness\nto do University work\n- Certificate of Good Moral Character (the last school at-\ntended)\n- three (3) latest 2x2 pictures\n- photocopy of authenticated birth certificate/marriage cer-\ntificate (for married female students only) issued by the Phil-\nippine Statistics Authority (PSA), formerly NSO\n2.13. Other requirements/s may be added as deemed necessary to any\nof the programs offered by the College/Department. Likewise,\npayment for accomplishing requirements (i.e., medical test, drug\ntest, etc.) should be shouldered by the student/applicant, especially\nfor testing done in an outside facility.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__45",
+        "component": "classify_chunk",
+        "label": "Transferees",
+        "evidence_sufficient": true,
+        "justification": "Admission requirements for student transferees.",
+        "evidence": "Student Transferees ... Transfer Credential/Honorable Dismissal"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__45",
+        "component": "classify_chunk",
+        "label": "Transferees",
+        "evidence_sufficient": true,
+        "justification": "The chunk lists admission documents required of student transferees.",
+        "evidence": "Student Transferees; Transfer Credential/Honorable Dismissal from the school last attended; Transcript of Records"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Transferees"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__452",
+      "component": "classify_chunk",
+      "text": "Safeguarding Students, Faculty, Staff, and Guests\n\nGraduate Studies > Article 11 > Safeguarding Students, Faculty, Staff, and Guests\n\nHealth and safety protocols shall strictly be implemented when stu- dents, faculty, staff and guests shall be allowed to enter the University premis- es, subject to existing and applicable guidelines, directives and policies pre- scribed by the proper authorities.\nSec. 1. If not feeling well, stay home.\nStudents, faculty, and staff who have fever or with flu-like symptoms are advised not go to the school premises. LSPU shall monitor their health status.\nFor continuity of learning, LSPU shall implement the appropriate flexi- ble learning mode for the affected students.\nThe LSPU shall allow work from home arrangement for the affected faculty and staff.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__452",
+        "component": "classify_chunk",
+        "label": "Health Services",
+        "evidence_sufficient": true,
+        "justification": "Health and safety protocols when on campus.",
+        "evidence": "Health and safety protocols shall strictly be implemented"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__452",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The passage mixes campus health screening, flexible learning for affected students, and work-from-home, so it does not support one subcategory.",
+        "evidence": "If not feeling well, stay home. LSPU shall implement the appropriate flexible learning mode"
+      },
+      "agreement_status": "disagreement",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__464",
+      "component": "classify_chunk",
+      "text": "Identification of Mental Concerns and Issues\n\nGraduate Studies > Article 4 > Identification of Mental Concerns and Issues\n\n- Anxiety Disorders (e.g., Generalized Anxiety Disorder and Panic Disor- ders). A mental illness characterized by excessive worry or fear of some- thing which make the individual avoid doing everyday activities like school or work which if ignored may worsen manifested symptoms.\n- Suicide and Mental Illness. People with risk factors for mental illness may contemplate suicide or self-harm and attempt to end their lives.\n- Depression. Symptoms of depression include a constant feeling of sad- ness and a lack of interest in everyday tasks. Depression is a common and serious medical illness that has a negative impact on one's mental, emotion- al, and behavioral health if not treated.\n- Post-Traumatic Stress Disorder. It is possible for an individual to suffer from Post-Traumatic Stress Disorder (PTSD) after experiencing or wit- nessing a horrifying ordeal such as natural disaster, accident, or threatened sexual violence involving physical harm.\n- Schizophrenia. Mental illness such as schizophrenia alters a person's abil- ity to think clearly, act rationally, express their feelings, and form relation- ships with those around them.\n- Borderline Personality Disorder. Borderline Personality Disorder is a severe mental illness that is marked by self-image issues, difficulty control- ling emotions and behavior, and unstable relationships.\nLGBTQ people are more likely to suffer from mental health issues such as depression, anxiety, and mood disorders because of discrimination. Isola- tion and a negative view of one's own sexual and gender identity result from these experiences. Anxiety, depression, and other mental illnesses can develop over time if those feelings are not addressed.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__464",
+        "component": "classify_chunk",
+        "label": "Counseling",
+        "evidence_sufficient": true,
+        "justification": "Identification of mental health concerns.",
+        "evidence": "Anxiety Disorders (e.g., Generalized Anxiety Disorder"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__464",
+        "component": "classify_chunk",
+        "label": "Counseling",
+        "evidence_sufficient": true,
+        "justification": "The chunk identifies mental health concerns such as anxiety, depression, PTSD, and suicide risk, which is counseling.",
+        "evidence": "Identification of Mental Concerns and Issues; Anxiety Disorders; Depression; Suicide and Mental Illness"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Counseling"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__478",
+      "component": "classify_chunk",
+      "text": "Scope of Service\n\nGraduate Studies > Article 11 > Scope of Service\n\nThe mental health services policy applies to students, faculty, non- teaching personnel, officials, and Board of Regents.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__478",
+        "component": "classify_chunk",
+        "label": "Counseling",
+        "evidence_sufficient": true,
+        "justification": "Mental health services policy scope.",
+        "evidence": "The mental health services policy applies to students"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__478",
+        "component": "classify_chunk",
+        "label": "Counseling",
+        "evidence_sufficient": true,
+        "justification": "The sentence states who the mental health services policy covers, which is counseling.",
+        "evidence": "The mental health services policy applies to students, faculty, non-teaching personnel, officials, and Board of Regents."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Counseling"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__488",
+      "component": "classify_chunk",
+      "text": "Appendix L\n\nGraduate Studies > Article 12 > Funding > Appendix L\n\nRequired Fields:\n- s Name\n- s ID Number\n- I,\n- Guardian Of\n- LSPU\n- Ing Termination Of\n- I choose to decline\n- Daughter At This Time\n- I may request\n- Contact Number\n- Email address\n\nInstructions:\nhave read, understood, and agreed to the terms of\n(service, activity, or program).\nPlease Check:\nI give permission for my son/daughter to receive\n(service, activity, or program) while in\nprogram).\ngram) at a later date if needed.\n|\nSignature over printed name | Date",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__488",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Garbled Appendix L form fields; cannot assign a class.",
+        "evidence": "I choose to decline - Daughter At This Time"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__488",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Appendix L is a garbled permission-form fragment and does not clearly support one subcategory.",
+        "evidence": "Appendix L; I give permission for my son/daughter to receive"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__66",
+      "component": "classify_chunk",
+      "text": "Scholastic Delinquency\n\nUndergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency\n\nThe University Academic Council shall promulgate (delinquency) rules and guidelines governing scholastic delinquency, subject to the approv- al of the Board of Regents, and to the following minimum standards:\n4.1. Warning. At the end of the semester, A student who fails 25% to 49% of the total academic units he registered shall be warned by the Dean and advised to improve his/her performance.\n4.2. Probation. At the end of the semester, A student fails 50% to 74% of the total academic units in which he registered shall be placed on probation for the succeeding semester, and the Dean con- cerned shall reduce his/her load accordingly. A student's proba- tion status may be lifted upon passing all the subjects carried dur- ing the term s/he is in probation period.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__66",
+        "component": "classify_chunk",
+        "label": "Retention",
+        "evidence_sufficient": true,
+        "justification": "Scholastic delinquency under Retention Policies.",
+        "evidence": "Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__66",
+        "component": "classify_chunk",
+        "label": "Retention",
+        "evidence_sufficient": true,
+        "justification": "Warning and probation for failing 25 to 74 percent of units are retention rules on scholastic delinquency.",
+        "evidence": "Retention Policies > Sec. 4 > Scholastic Delinquency; A student who fails 25% to 49% of the total academic units"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Retention"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__69",
+      "component": "classify_chunk",
+      "text": "Disqualification Exemption\n\nUndergraduate Academic Policies > Article 5 > Retention Policies > Sec. 7 > Disqualification Exemption\n\nPermanent disqualification does not\napply to cases, where on the recommendation of the Faculty con-\ncerned, s/he certifies that the grade of 5.0 is due to the unauthorized\ndropping off the student and not to poor academic performance.\nAllowable\nPercentage | Number | load\n(%) | of units | Status | for the\nof failure | enrolled | following\nsemester\nany number | Less three\n25% - 49% of academic | Warning | from units the nor-\nunits | mal load\n6 academic\n50% - 74% | units or | Probation | 15 units only\nmore\nNine aca- | Dismissal from not allowed\n75% or more demic units | the College | to enroll\nor more\nPermanent\n100% | disqualification\nfrom the Univer-\nsity\nSec. 8. Monitoring and Assessing of the Students\u2019 Status",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__69",
+        "component": "classify_chunk",
+        "label": "Retention",
+        "evidence_sufficient": true,
+        "justification": "Disqualification exemption under Retention Policies.",
+        "evidence": "Retention Policies > Sec. 7 > Disqualification Exemption"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__69",
+        "component": "classify_chunk",
+        "label": "Retention",
+        "evidence_sufficient": true,
+        "justification": "Disqualification, dismissal at 75 percent failure, and permanent disqualification are retention consequences.",
+        "evidence": "Retention Policies > Sec. 7 > Disqualification Exemption; 75% or more ... Dismissal from the College"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Retention"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__82",
+      "component": "classify_chunk",
+      "text": "Dropping Grades Policy\n\nUndergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.2 > Dropping Grades Policy\n\n4.2.1. If a subject is dropped after the first day of the midterm ex- aminations, the instructors concerned shall indicate in the form whether or not the student shall be given a grade of \u201c5.0\u201d for the course based on his/her class standing in that subject.\n4.2.2. Any student who drops a course without the College Dean's approval shall be given an automatic grade of \u201c5.0\u201d for the course of his/her registration privileges is curtailed or entire- ly drawn.\n4.2.3. If a student is dropped from the roll by his/her instructor/ professor due to the Attendance Rule, a student is given a grade of \u201c5.0\u201d and if class standing is below \u201c3.0\u201d.\n4.3. A dropping fee of P20/unit is required. (LSPU BOR 1046, s.2012)",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__82",
+        "component": "classify_chunk",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "Dropping grades policy after dropping a subject.",
+        "evidence": "If a subject is dropped after the first day of the midterm"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__82",
+        "component": "classify_chunk",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "The policy states grades and a fee when a student drops a subject.",
+        "evidence": "If a subject is dropped after the first day of the midterm examinations; A dropping fee of P20/unit is required."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Withdrawal"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__0",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for Enrollment.\n\nOffice / Division\nRegistrar\n\nWho May Avail\nAll\n\nRequirements\n- Requirement: New Students/Transferees Admission\n  Where to Secure: Office\n- Requirement: 1. Enrolment Slip from Admission Office School\n  Where to Secure: previously attended/graduated\n- Requirement: 2. Original Certificate of Good Moral Character School 3. Original Report Card (For New Students\n  Where to Secure: previously attended/graduated\n- Requirement: Only PSA 4. Photocopy of PSA Birth\n  Where to Secure: office\n- Requirement: Certificate/Marriage Contract for Married School Female\n  Where to Secure: previously attended/graduated\n- Requirement: 5. Original/authenticated Form 137 (For New Accredited\n  Where to Secure: DOH\n- Requirement: Students Only)\n  Where to Secure: Not specified\n- Requirement: 6. Medical slip/Certificate from LSPU School\n  Where to Secure: previously attended/graduated\n- Requirement: 1. Clearance 1.\n  Where to Secure: Accounting Office\n- Requirement: 2. Student ID 2.\n  Where to Secure: OSAS\n- Requirement: 3. Evaluation of Grades 3.\n  Where to Secure: Registrar/College\n\nSteps\n1. Client Step: New College students Transferees: Proceeds to the Office of the Registrar on the scheduled appointment date to submit the hard copy of enrolment requirements.\n   Agency Action: Validates the authenticity of the submitted hard copy of enrolment requirements. Enlists subjects to the system and Issues Request for SF10/F137 Validates the authenticity of the submitted hard copy\n   Fees: None\n   Processing Time: 8 minutes\n   Person Responsible: Registrar\u2019s Staff\n\n2. Client Step: New GSAR Students: Proceeds to the Office of the Registrar on the scheduled appointment date to submit the hard copy of enrolment requirements and Preenrolment form from the Dean's Office. All old College\n   Agency Action: of enrolment requirements. Evaluates the subjects to be credited and enlists the subjects to be enrolled. Validates the authenticity of the submitted hard copy of enrolment requirements. Enlists subjects listed in the PreEnrolment Form. Evaluates and\n   Fees: None\n   Processing Time: 3 minutes\n   Person Responsible: Registrar\u2019s Staff\n\n3. Client Step: Students, Old GSAR Students: Login to the Student Web Portal and enlists the subjects to be enrolled.\n   Agency Action: finalizes the enlisted subjects of each student on the Student Web Portal.\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\n4. Client Step: For College\n   Agency Action: Assess tuition and\n   Fees: None\n   Processing Time: 3 minutes\n   Person Responsible: Accounting Staff\n\n5. Client Step: Students who are not qualified to Free Higher Education, students with enrolled RLE subjects, Optout,CTP/Foreign,G SAR Students: Proceeds to Accounting Office on the scheduled appointment for assessment of\n   Agency Action: other school fees.\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\n6. Client Step: For College\n   Agency Action: Receives payment\n   Fees: Not specified\n   Processing Time: 3 minutes\n   Person Responsible: Cashier\u2019s Staff\n\n7. Client Step: Students who are not qualified to Free Higher\n   Agency Action: and Issues official reflected receipts assessment\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\n8. Client Step: Education, students with enrolled RLE subjects, Optout,CTP/Foreign,G SAR Students: Proceeds to Cashier's Office to pay fees\n   Agency Action: Not specified\n   Fees: form. 3\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\n9. Client Step: New/old college students: Log in to student portal to view the Certificate of Registration\n   Agency Action: Issues certificate of registration (COR)\n   Fees: Not specified\n   Processing Time: 3 minutes\n   Person Responsible: Registrar\u2019s Staff\n\n10. Client Step: (COR) For College Students who are not qualified to Free Higher Education, students with enrolled RLE subjects, Opt-out, CTP/Foreign,GSA R Students: Proceeds to the Office of the Registrar to claim the Certificate of Registration (COR)\n   Agency Action: reflected\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\nFees\nform. 3\n\nTotal Processing Time\n20 minutes\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: Enrollment\nOffice: Registrar\nPage: 10",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__0",
+        "component": "classify_chunk",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "Charter Enrollment service at Registrar.",
+        "evidence": "This service provides assistance for Enrollment."
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__0",
+        "component": "classify_chunk",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "The titled service is Enrollment, and the steps submit requirements and enlist subjects for registration.",
+        "evidence": "This service provides assistance for Enrollment."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Registration"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__1",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents.\n\nOffice / Division\nRegistrar\n\nWho May Avail\nAll (Walk-In students & Graduates)\n\nRequirements\n- Requirement: Clearance, Request form Accounting\n  Where to Secure: Office/Office of the Registrar\n\nSteps\n1. Client Step: A. For undergraduate students\n   Agency Action: Issue request slip (LSPU-REG-SF011) Review and check\n   Fees: None\n   Processing Time: 5 minutes\n   Person Responsible: Registrar\u2019s Staff\n\n2. Client Step: Fill out request slip with clearance (LSPU-REGSF011) and secure signatures of Head of offices B. For graduates - Fill out request slip (LSPUREGSF-011)\n   Agency Action: accomplished request of students Assess corresponding fees of requested documents\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\n3. Client Step: Pay required fees. Proceed to the Cashier\u2019s office.\n   Agency Action: Receives payment and issues official receipt Certificatio ns Copy Grades F CAV Certificate of General Weighted Ave. Subject description SPES Permit Study Authenticat ion nd\n   Fees: P75.00/page; P150/page; P30.00/page; P137; Second copy of diploma: P100.00\n   Processing Time: 2 minutes\n   Person Responsible: Cashier\u2019s Staff\n\n4. Client Step: Submit filled out request slip and official receipt of payment and get the claim stub with date of release\n   Agency Action: \u23af Receives and reviews the presented receipts and request slip \u23af Schedule the date of release of requested document. Issues claim stub \u23af Locates the permanent record of student concerned \u23af Prepares and encodes the requested document \u23af Reviews and counterchec ks entries on the prepared draft of requested document \u23af Final printing of requested document \u23af Affixes college \u23af seal Signs the document\n   Fees: None\n   Processing Time: 2 minutes (Inactive files \u2013 1 day) Active files \u2013 15 minutes 25 minutes 5 minutes 1 minute 1 minute 1 minute\n   Person Responsible: Registrar\u2019s Staff\n\n5. Client Step: Claims the requested documents on the scheduled data indicated in the claim stub\n   Agency Action: Records and releases document\n   Fees: Not specified\n   Processing Time: 2 minutes Active Files\n   Person Responsible: Registrar\u2019s Staff\n\nFees\nUndergraduate: P75.00/page; Graduate: P150/page; P30.00/page; P137; Second copy of diploma: P100.00\n\nTotal Processing Time\n59 minutes\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents\nOffice: Registrar\nPage: 12",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__1",
+        "component": "classify_chunk",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "Charter service for issuance of TOR/transfer credentials/certifications.",
+        "evidence": "Issuance of Transcript of Records/Transfer Credentials/Certifications"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__1",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The charter bundles transcript of records, transfer credentials, certifications, CAV, copy of grades, and a second diploma copy, so it does not support one subcategory.",
+        "evidence": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents; Second copy of diploma: P100.00"
+      },
+      "agreement_status": "disagreement",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__10",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for Library Circulation Service.\n\nOffice / Division\nLibrary\n\nWho May Avail\nStudents, Faculty, Outside Researchers\n\nRequirements\n- Requirement: LSPU ID; Borrower\u2019s Card BAO\n  Where to Secure: Library\n\nSteps\n1. Client Step: \u2022 Search database and sources\n   Agency Action: Search the catalog\n   Fees: Not specified\n   Processing Time: 5 minutes\n   Person Responsible: Not specified\n\n2. Client Step: \u2022 Retrieval of articles, books or material\n   Agency Action: Process actual material to be\n   Fees: 2 pesos per\n   Processing Time: 5 minutes\n   Person Responsible: Librarian\n\n3. Client Step: \u2022 Recording of borrowing or return\n   Agency Action: borrowed or returned; provide due dates or\n   Fees: Not specified\n   Processing Time: 2 minutes\n   Person Responsible: Not specified\n\n4. Client Step: \u2022 Ask for feedback\n   Agency Action: date of actual return Record the transaction\n   Fees: 2 pesos per\n   Processing Time: 12 minutes\n   Person Responsible: Not specified\n\nFees\n2 pesos per\n\nTotal Processing Time\n12 minutes\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: Library Circulation Service\nOffice: Library\nPage: 23",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__10",
+        "component": "classify_chunk",
+        "label": "Library",
+        "evidence_sufficient": true,
+        "justification": "Library Circulation Service.",
+        "evidence": "assistance for Library Circulation Service"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__10",
+        "component": "classify_chunk",
+        "label": "Library",
+        "evidence_sufficient": true,
+        "justification": "The service is library circulation: searching, borrowing, and returning materials through the library.",
+        "evidence": "This service provides assistance for Library Circulation Service. Office / Division Library"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Library"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__14",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for ID Validation.\n\nOffice / Division\nOffice of the Student Affairs and Services\n\nWho May Avail\nAll\n\nRequirements\n- Requirement: Certificate of Registration\n  Where to Secure: Registrar\u2019s Office\n- Requirement: Student ID\n  Where to Secure: Business Affairs Office\n\nSteps\n1. Client Step: Present the Certificate of Registration.\n   Agency Action: Check Certificate of Registration.\n   Fees: None\n   Processing Time: 1 minute\n   Person Responsible: OSAS Director/Chairperson/Staff\n\n2. Client Step: Evaluate the Services rendered by OSAS.\n   Agency Action: Issue Evaluation Form\n   Fees: None\n   Processing Time: 2 minutes\n   Person Responsible: OSAS Director/Chairperson/Staff\n\n3. Client Step: Accept the validated ID.\n   Agency Action: Release validated ID.\n   Fees: None\n   Processing Time: 1 minute\n   Person Responsible: OSAS Director/Chairperson/Staff\n\nFees\nNone\n\nTotal Processing Time\n4 minutes\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: ID Validation\nOffice: Office of the Student Affairs and Services\nPage: 27",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__14",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "ID Validation is ID-card service, not course Validation.",
+        "evidence": "assistance for ID Validation"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__14",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "ID Validation is validation of a student identification card, not course-credit Validation.",
+        "evidence": "This service provides assistance for ID Validation. Present the Certificate of Registration. Release validated ID."
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__17",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for Issuance of Good Moral Certificate (Transferee).\n\nOffice / Division\nOffice of the Student Affairs and Services\n\nWho May Avail\nAll\n\nRequirements\n- Requirement: Certificate of Transfer\n  Where to Secure: Registrar\u2019s Office\n- Requirement: Student ID\n  Where to Secure: Business Affairs Office\n\nSteps\n1. Client Step: Present the Certificate of Transfer.\n   Agency Action: Receive and check submitted documents. Issue Good Moral payment slip.\n   Fees: None\n   Processing Time: OSAS 5 Minutes OSAS\n   Person Responsible: Director/Staff\n\n2. Client Step: Payment of fees\n   Agency Action: Check Official\n   Fees: Not specified\n   Processing Time: Cashier\n   Person Responsible: Not specified\n\n3. Client Step: (Certification Fee and Documentary Stamp if applicable). Submit\n   Agency Action: Receipt. \u2013\n   Fees: None\n   Processing Time: 40 minutes\n   Person Responsible: Not specified\n\n4. Client Step: Processing of Good\n   Agency Action: Check correctness\n   Fees: Not specified\n   Processing Time: OSAS\n   Person Responsible: Director\n\n5. Client Step: Moral Certificate.\n   Agency Action: of documents submitted. Check disciplinary records. Preparation of Good Moral Certificate. Affix Documentary Stamp. Affix signature on the certification. 21\n   Fees: None\n   Processing Time: 20 minutes\n   Person Responsible: Chairperson OSAS Staff\n\n6. Client Step: Evaluate the Services rendered by OSAS.\n   Agency Action: e Confirm fulfillment of evaluation.\n   Fees: None\n   Processing Time: OSAS 5 minutes Chairperson\n   Person Responsible: Director/Staff\n\n7. Client Step: Accept the Good Moral\n   Agency Action: Release Good\n   Fees: Not specified\n   Processing Time: OSAS\n   Person Responsible: Director\n\n8. Client Step: Certificate. Signing in the Logbook.\n   Agency Action: Moral Certificate.\n   Fees: None\n   Processing Time: 5 minutes\n   Person Responsible: Chairperson OSAS Staff\n\nFees\nNone\n\nTotal Processing Time\n1 hour\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: Issuance of Good Moral Certificate (Transferee)\nOffice: Office of the Student Affairs and Services\nPage: 29",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__17",
+        "component": "classify_chunk",
+        "label": "Good Moral",
+        "evidence_sufficient": true,
+        "justification": "Issuance of Good Moral Certificate (Transferee).",
+        "evidence": "Issuance of Good Moral Certificate (Transferee)"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__17",
+        "component": "classify_chunk",
+        "label": "Good Moral",
+        "evidence_sufficient": true,
+        "justification": "The service issues a Good Moral Certificate, including payment, disciplinary-record check, and release.",
+        "evidence": "This service provides assistance for Issuance of Good Moral Certificate (Transferee)."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Good Moral"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__39",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for Maintenance of Buildings and Facilities (Job Order Request).\n\nOffice / Division\nGeneral Services Unit\n\nWho May Avail\nInternal Clients within the LSPU System\n\nRequirements\n- Requirement: Job Order Request Form LSPU\n  Where to Secure: Nexus\n\nSteps\n1. Client Step: Job Request\n   Agency Action: Accomplish Job Order Form with Attached photos of requested job item Inspection/ Material Estimates/ Initial Approval Perusal/Review/ Recommending Approval Final Perusal and Approval\n   Fees: Not specified\n   Processing Time: 5 minutes 3 days 1 day 1 day\n   Person Responsible: Field Coordinator Unit Head Campus Director\n\nFees\nNone\n\nTotal Processing Time\n5 days\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: Maintenance of Buildings and Facilities (Job Order Request)\nOffice: General Services Unit\nPage: 56",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__39",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Building maintenance job orders; no facilities subcategory.",
+        "evidence": "Maintenance of Buildings and Facilities (Job Order Request)"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__39",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "A facilities job-order for internal clients is building maintenance, not a student request subcategory.",
+        "evidence": "Maintenance of Buildings and Facilities (Job Order Request); General Services Unit"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__49",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for Facilitation of Employees\u2019 Official Travels for Conference/Training.\n\nOffice / Division\nNot specified\n\nWho May Avail\nNot specified\n\nRequirements\nNo additional requirements specified in the Citizen's Charter.\n\nSteps\n1. Client Step: Not specified\n   Agency Action: Not specified\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\nFees\nNone\n\nTotal Processing Time\nNot specified\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: Facilitation of Employees\u2019 Official Travels for Conference/Training\nOffice: Not specified\nPage: 69",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__49",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Employee official travel is staff HR, not student taxonomy.",
+        "evidence": "Facilitation of Employees\u2019 Official Travels"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__49",
+        "component": "classify_chunk",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Employee official-travel facilitation is an empty staff service record and is outside the student subcategory set.",
+        "evidence": "Facilitation of Employees' Official Travels for Conference/Training; Agency Action: Not specified"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__78",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for LSPU Entrance Examination.\n\nOffice / Division\nGuidance and Counseling\n\nWho May Avail\nStudent-applicants\n\nRequirements\n- Requirement: Online application form LSPU\n  Where to Secure: Online Admission\n- Requirement: Certified True Copy (Report Card and/or TOR) Client\n  Where to Secure: Not specified\n\nSteps\n1. Client Step: Orientation\n   Agency Action: Inform the clients about the college entrance examination (flow, time)\n   Fees: None\n   Processing Time: 15 minutes\n   Person Responsible: Guidance Staff\n\n2. Client Step: Examination proper\n   Agency Action: Monitoring of the desktop during the examination.\n   Fees: None\n   Processing Time: 1 and \u00bd hours Guidance\n   Person Responsible: Staff and/Interns\n\n3. Client Step: Examination result\n   Agency Action: Issuance of the official result to examinees\n   Fees: None\n   Processing Time: 1-3 days, 1 hr\n   Person Responsible: Guidance Staff\n\nFees\nNone\n\nTotal Processing Time\nNot specified\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: LSPU Entrance Examination\nOffice: Guidance and Counseling\nPage: 80",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__78",
+        "component": "classify_chunk",
+        "label": "Entrance Examination",
+        "evidence_sufficient": true,
+        "justification": "LSPU Entrance Examination service.",
+        "evidence": "assistance for LSPU Entrance Examination"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__78",
+        "component": "classify_chunk",
+        "label": "Entrance Examination",
+        "evidence_sufficient": true,
+        "justification": "The service is the LSPU entrance examination, covering orientation, the exam proper, and release of results.",
+        "evidence": "This service provides assistance for LSPU Entrance Examination."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Entrance Examination"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__97",
+      "component": "classify_chunk",
+      "text": "Overview\nThis service provides assistance for Dropping of Subjects.\n\nOffice / Division\nColleges\n\nWho May Avail\nNew and Transferee Students\n\nRequirements\n- Requirement: Dropping Form\n  Where to Secure: Registrar\u2019s Office\n\nSteps\n1. Client Step: Student Application for Dropping\n   Agency Action: Release of dropping form\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: RESPONSIBLE/Registrar\u2019s Office/Cashier\u2019s Office\n\n2. Client Step: Request for the dropping of subjects from the faculty-in-charge\n   Agency Action: Approval of the faculty-in-charge\n   Fees: None\n   Processing Time: 5 minutes\n   Person Responsible: Faculty-in-charge\n\n3. Client Step: Request for Deans\n   Agency Action: Approval from the\n   Fees: None\n   Processing Time: 5 Minutes\n   Person Responsible: Dean/Associate/Dean\n\n4. Client Step: Approval Submit approved\n   Agency Action: Dean Receives approved\n   Fees: None\n   Processing Time: 2 minutes\n   Person Responsible: Registrar\u2019s Office\n\n5. Client Step: Dropping Form\n   Agency Action: dropping form\n   Fees: Not specified\n   Processing Time: Not specified\n   Person Responsible: Not specified\n\nFees\nP30.00\n\nTotal Processing Time\n15 minutes\n\nSource Information\nDocument: Laguna State Polytechnic University-CC_2026-1st Edition\nService: Dropping of Subjects\nOffice: Colleges\nPage: 98",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__97",
+        "component": "classify_chunk",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "Charter Dropping of Subjects service.",
+        "evidence": "assistance for Dropping of Subjects"
+      },
+      "reviewer_2": {
+        "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__97",
+        "component": "classify_chunk",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "The citizen's charter service is Dropping of Subjects, including the dropping form and fee.",
+        "evidence": "This service provides assistance for Dropping of Subjects."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Withdrawal"
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_enroll_t0",
+      "component": "classify_question",
+      "text": "How do I enroll?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_cert_final_enroll_t0",
+        "component": "classify_question",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "How to enroll is registration.",
+        "evidence": "How do I enroll?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_cert_final_enroll_t0",
+        "component": "classify_question",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "How to enroll is a registration question.",
+        "evidence": "How do I enroll?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Registration"
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_good_moral_fee",
+      "component": "classify_question",
+      "text": "How much does a Good Moral Certificate cost?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_cert_final_good_moral_fee",
+        "component": "classify_question",
+        "label": "Good Moral",
+        "evidence_sufficient": true,
+        "justification": "Good Moral Certificate fee.",
+        "evidence": "How much does a Good Moral Certificate cost?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_cert_final_good_moral_fee",
+        "component": "classify_question",
+        "label": "Good Moral",
+        "evidence_sufficient": true,
+        "justification": "The question asks the fee for a Good Moral Certificate.",
+        "evidence": "How much does a Good Moral Certificate cost?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Good Moral"
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_oos_stale",
+      "component": "classify_question",
+      "text": "Who is the president of the Philippines?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_cert_final_oos_stale",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "National politics; out of LSPU taxonomy.",
+        "evidence": "Who is the president of the Philippines?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_cert_final_oos_stale",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The president of the Philippines is outside LSPU student-service scope.",
+        "evidence": "Who is the president of the Philippines?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_switch_tor_followup",
+      "component": "classify_question",
+      "text": "Now tell me about TOR.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_cert_final_switch_tor_followup",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "Follow-up about TOR.",
+        "evidence": "Now tell me about TOR."
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_cert_final_switch_tor_followup",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "TOR in this university context is the Transcript of Records.",
+        "evidence": "Now tell me about TOR."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Transcript of Records"
+    },
+    {
+      "case_id": "cls_q_cg_gate3_grading_gwa",
+      "component": "classify_question",
+      "text": "What is the passing grade and how is GWA computed?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_gate3_grading_gwa",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "Passing grade and GWA computation.",
+        "evidence": "passing grade and how is GWA computed"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_gate3_grading_gwa",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "Passing grade and GWA computation are grading-system rules.",
+        "evidence": "What is the passing grade and how is GWA computed?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Grading System"
+    },
+    {
+      "case_id": "cls_q_cg_grade_correction_full_candidate_pool_repro",
+      "component": "classify_question",
+      "text": "A faculty member needs to correct grades for 30% of a class. Explain the complete approval process, including who must approve it, whether an Academic Council meeting is required, and every deadline stated in the policy.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_grade_correction_full_candidate_pool_repro",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "Faculty grade-correction approval is still grading policy.",
+        "evidence": "correct grades for 30% of a class"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_grade_correction_full_candidate_pool_repro",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "Correcting grades, including approval and deadlines, is a grading-system process.",
+        "evidence": "A faculty member needs to correct grades for 30% of a class."
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Grading System"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_drop_subject_no_evidence",
+      "component": "classify_question",
+      "text": "How do I drop a subject and what happens to my grades if I drop late?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_merged_chat_drop_subject_no_evidence",
+        "component": "classify_question",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "Dropping a subject and late-drop grade effects.",
+        "evidence": "How do I drop a subject and what happens to my grades if I drop late?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_merged_chat_drop_subject_no_evidence",
+        "component": "classify_question",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "Dropping a subject and the grade effect of a late drop are withdrawal rules.",
+        "evidence": "How do I drop a subject and what happens to my grades if I drop late?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Withdrawal"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_institutional_identity",
+      "component": "classify_question",
+      "text": "What is Laguna State Polytechnic University?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_merged_chat_institutional_identity",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "What is LSPU is institutional identity; VMG would be a stretch.",
+        "evidence": "What is Laguna State Polytechnic University?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_merged_chat_institutional_identity",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Asking what the university is does not clearly select vision and mission, history, or another single subcategory.",
+        "evidence": "What is Laguna State Polytechnic University?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_request_tor",
+      "component": "classify_question",
+      "text": "How do I request a Transcript of Records?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_merged_chat_request_tor",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "Requesting TOR.",
+        "evidence": "How do I request a Transcript of Records?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_merged_chat_request_tor",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "The question asks how to request a Transcript of Records.",
+        "evidence": "How do I request a Transcript of Records?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Transcript of Records"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_scholarship_surprising_top_source",
+      "component": "classify_question",
+      "text": "How do I apply for a scholarship at LSPU?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_merged_chat_scholarship_surprising_top_source",
+        "component": "classify_question",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "How to apply for a scholarship.",
+        "evidence": "How do I apply for a scholarship at LSPU?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_merged_chat_scholarship_surprising_top_source",
+        "component": "classify_question",
+        "label": "Scholarships",
+        "evidence_sufficient": true,
+        "justification": "The question asks how to apply for a scholarship at LSPU.",
+        "evidence": "How do I apply for a scholarship at LSPU?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Scholarships"
+    },
+    {
+      "case_id": "cls_q_cg_val_active_service_enroll_t0",
+      "component": "classify_question",
+      "text": "How do I enroll as a new student at LSPU?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_cg_val_active_service_enroll_t0",
+        "component": "classify_question",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "Enrolling as a new student is still enrollment/registration.",
+        "evidence": "How do I enroll as a new student at LSPU?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_cg_val_active_service_enroll_t0",
+        "component": "classify_question",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "Enrolling as a new student asks for the enrollment process, which is registration.",
+        "evidence": "How do I enroll as a new student at LSPU?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Registration"
+    },
+    {
+      "case_id": "cls_q_fg_a1_refund_schedule_exact",
+      "component": "classify_question",
+      "text": "If I'm granted a Leave of Absence during the third week of classes, what percentage of my paid fees will be refunded?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_a1_refund_schedule_exact",
+        "component": "classify_question",
+        "label": "Fee Refunds",
+        "evidence_sufficient": true,
+        "justification": "LOA week-3 refund percentage.",
+        "evidence": "percentage of my paid fees will be refunded"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_a1_refund_schedule_exact",
+        "component": "classify_question",
+        "label": "Fee Refunds",
+        "evidence_sufficient": true,
+        "justification": "The question asks what percentage of fees is refunded for a leave of absence in the third week.",
+        "evidence": "If I'm granted a Leave of Absence during the third week of classes, what percentage of my paid fees will be refunded?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Fee Refunds"
+    },
+    {
+      "case_id": "cls_q_fg_a2_coe_fee_exact",
+      "component": "classify_question",
+      "text": "Is there a fee to request a Certificate of Employment, and how long does it take?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_a2_coe_fee_exact",
+        "component": "classify_question",
+        "label": "Certificates",
+        "evidence_sufficient": true,
+        "justification": "Certificate of Employment fee and time.",
+        "evidence": "Certificate of Employment"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_a2_coe_fee_exact",
+        "component": "classify_question",
+        "label": "Certificates",
+        "evidence_sufficient": true,
+        "justification": "A Certificate of Employment request, including its fee and processing time, is a certificate service.",
+        "evidence": "Is there a fee to request a Certificate of Employment, and how long does it take?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Certificates"
+    },
+    {
+      "case_id": "cls_q_fg_b1_grade_correction_paraphrase",
+      "component": "classify_question",
+      "text": "My professor gave me a grade I think has an error \u2014 how many days do I have to formally dispute it after grades come out?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_b1_grade_correction_paraphrase",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "Student dispute window after grades release.",
+        "evidence": "how many days do I have to formally dispute it after grades come out"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_b1_grade_correction_paraphrase",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "The deadline to dispute an erroneous grade is a grade-correction rule.",
+        "evidence": "how many days do I have to formally dispute it after grades come out?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Grading System"
+    },
+    {
+      "case_id": "cls_q_fg_b2_validation_paraphrase",
+      "component": "classify_question",
+      "text": "I already have a bachelor's degree from another school and I'm now enrolling at LSPU \u2014 will I have to retake subjects I already passed?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_b2_validation_paraphrase",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Prior degree / whether to retake vs credit is validation/crediting.",
+        "evidence": "bachelor's degree from another school ... retake subjects I already passed"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_b2_validation_paraphrase",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Whether previously passed subjects must be retaken is a transfer-credit and validation question.",
+        "evidence": "will I have to retake subjects I already passed?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_fg_c1_fifty_percent_refund_trap",
+      "component": "classify_question",
+      "text": "What percentage of fees do I get back if I withdraw during the third week of the semester?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_c1_fifty_percent_refund_trap",
+        "component": "classify_question",
+        "label": "Fee Refunds",
+        "evidence_sufficient": true,
+        "justification": "Withdraw week-3 fee refund percent.",
+        "evidence": "percentage of fees do I get back if I withdraw"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_c1_fifty_percent_refund_trap",
+        "component": "classify_question",
+        "label": "Fee Refunds",
+        "evidence_sufficient": true,
+        "justification": "The question asks the refund percentage for withdrawal in the third week.",
+        "evidence": "What percentage of fees do I get back if I withdraw during the third week of the semester?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Fee Refunds"
+    },
+    {
+      "case_id": "cls_q_fg_c2_junior_standing_trap",
+      "component": "classify_question",
+      "text": "How many units do I need to have earned to be classified as a Junior student?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_c2_junior_standing_trap",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Class standing (Junior) has no taxonomy subcategory; Freshmen is admissions.",
+        "evidence": "classified as a Junior student"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_c2_junior_standing_trap",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Junior class standing by units earned is not a clearly supported subcategory.",
+        "evidence": "How many units do I need to have earned to be classified as a Junior student?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_fg_d1_transcript_vs_enrollment_office",
+      "component": "classify_question",
+      "text": "What do I need to submit to request my Transcript of Records, and is there a fee?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_d1_transcript_vs_enrollment_office",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "TOR requirements and fee.",
+        "evidence": "request my Transcript of Records, and is there a fee"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_d1_transcript_vs_enrollment_office",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "The question asks the submissions and fee for a Transcript of Records request.",
+        "evidence": "What do I need to submit to request my Transcript of Records, and is there a fee?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Transcript of Records"
+    },
+    {
+      "case_id": "cls_q_fg_d2_oup_vs_ocd_request_letter",
+      "component": "classify_question",
+      "text": "If I want to submit a request letter to the Office of the University President for approval, what's the first step?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_d2_oup_vs_ocd_request_letter",
+        "component": "classify_question",
+        "label": "Requests",
+        "evidence_sufficient": true,
+        "justification": "Submitting a request letter for presidential approval.",
+        "evidence": "submit a request letter to the Office of the University President"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_d2_oup_vs_ocd_request_letter",
+        "component": "classify_question",
+        "label": "Requests",
+        "evidence_sufficient": true,
+        "justification": "The first step for a request letter to the Office of the University President is a request procedure.",
+        "evidence": "submit a request letter to the Office of the University President for approval"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Requests"
+    },
+    {
+      "case_id": "cls_q_fg_e1_request_letter_vocabulary_collision",
+      "component": "classify_question",
+      "text": "What do I need to submit to the Budget Office to get funding approved for a request letter from my student organization?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_e1_request_letter_vocabulary_collision",
+        "component": "classify_question",
+        "label": "Student Organizations",
+        "evidence_sufficient": true,
+        "justification": "Student organization funding via Budget Office.",
+        "evidence": "request letter from my student organization"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_e1_request_letter_vocabulary_collision",
+        "component": "classify_question",
+        "label": "Student Organizations",
+        "evidence_sufficient": true,
+        "justification": "Funding approval for a student-organization request is a student-organization budget matter.",
+        "evidence": "get funding approved for a request letter from my student organization"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Student Organizations"
+    },
+    {
+      "case_id": "cls_q_fg_e2_application_vocabulary_collision",
+      "component": "classify_question",
+      "text": "What form do I need to submit if I want to substitute one of my course subjects for another?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_e2_application_vocabulary_collision",
+        "component": "classify_question",
+        "label": "Requests",
+        "evidence_sufficient": true,
+        "justification": "Form to substitute one course subject for another.",
+        "evidence": "substitute one of my course subjects for another"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_e2_application_vocabulary_collision",
+        "component": "classify_question",
+        "label": "Requests",
+        "evidence_sufficient": true,
+        "justification": "The form used to substitute one course subject for another is a request form.",
+        "evidence": "What form do I need to submit if I want to substitute one of my course subjects for another?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Requests"
+    },
+    {
+      "case_id": "cls_q_fg_f1_validation_multiclaim_singlesource",
+      "component": "classify_question",
+      "text": "As a transferee with a previous degree, can I skip validation for equivalent subjects, and if so what's the cap?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_f1_validation_multiclaim_singlesource",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Skip validation for equivalent subjects and cap.",
+        "evidence": "skip validation for equivalent subjects"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_f1_validation_multiclaim_singlesource",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Skipping validation for equivalent subjects and the credit cap are validation rules.",
+        "evidence": "can I skip validation for equivalent subjects, and if so what's the cap?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_fg_g1_multiclaim_multisource",
+      "component": "classify_question",
+      "text": "If I'm transferring to LSPU with credits to validate, what grade requirement applies to my transfer, and what's the cap on how many credits I can carry over without validation?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_g1_multiclaim_multisource",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Transfer credit validation grade requirement and cap.",
+        "evidence": "credits to validate ... cap on how many credits"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_g1_multiclaim_multisource",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "The grade requirement and the cap on credits carried without validation are transfer-credit validation rules.",
+        "evidence": "what's the cap on how many credits I can carry over without validation?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_fg_h1_partially_unsupported",
+      "component": "classify_question",
+      "text": "Is there a fee for subject validation, and how many days does the validation process take?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_h1_partially_unsupported",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Subject validation fee and processing days.",
+        "evidence": "fee for subject validation"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_h1_partially_unsupported",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "A fee and processing time for subject validation refer to course validation, not student-ID validation.",
+        "evidence": "Is there a fee for subject validation, and how many days does the validation process take?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_fg_j1_good_moral_near_duplicate",
+      "component": "classify_question",
+      "text": "I'm an LSPU alumnus and I need a Good Moral Certificate \u2014 what do I need to bring?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_j1_good_moral_near_duplicate",
+        "component": "classify_question",
+        "label": "Good Moral",
+        "evidence_sufficient": true,
+        "justification": "Alumnus Good Moral Certificate requirements.",
+        "evidence": "Good Moral Certificate \u2014 what do I need to bring"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_j1_good_moral_near_duplicate",
+        "component": "classify_question",
+        "label": "Good Moral",
+        "evidence_sufficient": true,
+        "justification": "The question asks what an alumnus must bring to obtain a Good Moral Certificate.",
+        "evidence": "I need a Good Moral Certificate \u2014 what do I need to bring?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Good Moral"
+    },
+    {
+      "case_id": "cls_q_fg_k1_class_standing_percentage_range",
+      "component": "classify_question",
+      "text": "What percentage of total units must I have completed to be considered a Sophomore instead of a Freshman?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_k1_class_standing_percentage_range",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Sophomore vs Freshman unit standing is not the Freshmen admissions class.",
+        "evidence": "considered a Sophomore instead of a Freshman"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_k1_class_standing_percentage_range",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The unit percentage that separates sophomore from freshman standing is not a single supported subcategory.",
+        "evidence": "What percentage of total units must I have completed to be considered a Sophomore instead of a Freshman?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_fg_l1_refund_deadline_window",
+      "component": "classify_question",
+      "text": "By what week of the semester do I need to withdraw to get any refund at all, even a partial one?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_l1_refund_deadline_window",
+        "component": "classify_question",
+        "label": "Fee Refunds",
+        "evidence_sufficient": true,
+        "justification": "Last week to withdraw and still get any refund.",
+        "evidence": "withdraw to get any refund at all"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_l1_refund_deadline_window",
+        "component": "classify_question",
+        "label": "Fee Refunds",
+        "evidence_sufficient": true,
+        "justification": "The question asks the last week in which any fee refund, including a partial refund, is still available.",
+        "evidence": "By what week of the semester do I need to withdraw to get any refund at all, even a partial one?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Fee Refunds"
+    },
+    {
+      "case_id": "cls_q_fg_m1_crediting_approval_chain",
+      "component": "classify_question",
+      "text": "Who reviews and signs off on which of my previous subjects get credited when I transfer to LSPU?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_m1_crediting_approval_chain",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Who approves crediting of previous subjects on transfer.",
+        "evidence": "previous subjects get credited when I transfer"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_m1_crediting_approval_chain",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Who signs off on crediting previous subjects is the approval chain for transfer-credit validation.",
+        "evidence": "Who reviews and signs off on which of my previous subjects get credited when I transfer to LSPU?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_fg_n1_out_of_scope_recipe",
+      "component": "classify_question",
+      "text": "Can you give me a recipe for adobo?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_n1_out_of_scope_recipe",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Cooking recipe is out of scope.",
+        "evidence": "recipe for adobo"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_n1_out_of_scope_recipe",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "A cooking recipe is outside university student-service scope.",
+        "evidence": "Can you give me a recipe for adobo?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_fg_n2_out_of_scope_unrelated_school",
+      "component": "classify_question",
+      "text": "What are the admission requirements at the University of the Philippines?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_n2_out_of_scope_unrelated_school",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "University of the Philippines admissions, not LSPU.",
+        "evidence": "admission requirements at the University of the Philippines"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_n2_out_of_scope_unrelated_school",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Admission requirements of the University of the Philippines are outside LSPU scope.",
+        "evidence": "What are the admission requirements at the University of the Philippines?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_fg_o1_role_student_baseline",
+      "component": "classify_question",
+      "text": "What's the retention/good moral standard I need to maintain as a student?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_o1_role_student_baseline",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Asks both retention and good moral in one question; do not force one class.",
+        "evidence": "retention/good moral standard"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_o1_role_student_baseline",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "The question jointly asks for a retention standard and a good-moral standard, so it does not support one subcategory.",
+        "evidence": "What's the retention/good moral standard I need to maintain as a student?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_fg_o2_role_faculty_substitution",
+      "component": "classify_question",
+      "text": "If I can't make it to my class on time, who is allowed to arrange a substitute instructor for me?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_fg_o2_role_faculty_substitution",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Substitute instructor is faculty operations, not a student class.",
+        "evidence": "arrange a substitute instructor"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_fg_o2_role_faculty_substitution",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Arranging a substitute instructor is a faculty staffing matter and is outside the student subcategory set.",
+        "evidence": "who is allowed to arrange a substitute instructor for me?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p1_previous_degree_transfer_credit",
+      "component": "classify_question",
+      "text": "I'm transferring to LSPU with a previous degree. How much of my previous coursework can be credited without validation?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_pilot_pilot_p1_previous_degree_transfer_credit",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "How much prior coursework can be credited without validation.",
+        "evidence": "credited without validation"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_pilot_pilot_p1_previous_degree_transfer_credit",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "How much previous coursework can be credited without validation is a transfer-credit validation limit.",
+        "evidence": "How much of my previous coursework can be credited without validation?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p2_grade_correction_after_30_days",
+      "component": "classify_question",
+      "text": "What should I do if I want to request correction of a grade after more than 30 days?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_pilot_pilot_p2_grade_correction_after_30_days",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "Grade correction after 30 days.",
+        "evidence": "correction of a grade after more than 30 days"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_pilot_pilot_p2_grade_correction_after_30_days",
+        "component": "classify_question",
+        "label": "Grading System",
+        "evidence_sufficient": true,
+        "justification": "Requesting correction of a grade after more than 30 days is a grade-correction rule.",
+        "evidence": "What should I do if I want to request correction of a grade after more than 30 days?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Grading System"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p3_paraphrased_transfer_credit",
+      "component": "classify_question",
+      "text": "If I've already completed a college degree before entering LSPU, is there a limit on how many equivalent subjects from that degree can count toward my new program without taking validation exams?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_pilot_pilot_p3_paraphrased_transfer_credit",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Cap on equivalent subjects without validation exams.",
+        "evidence": "count toward my new program without taking validation exams"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_pilot_pilot_p3_paraphrased_transfer_credit",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "The limit on equivalent subjects credited from a prior degree without validation exams is a validation rule.",
+        "evidence": "is there a limit on how many equivalent subjects from that degree can count toward my new program without taking validation exams?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p4_multiple_policy_facts",
+      "component": "classify_question",
+      "text": "For a student who already holds a degree and is transferring to LSPU, explain both whether equivalent subjects can be credited without validation and the maximum amount of the new program that can be credited this way.",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_pilot_pilot_p4_multiple_policy_facts",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Degree-holder transfer: credit without validation and maximum amount.",
+        "evidence": "credited without validation and the maximum amount"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_pilot_pilot_p4_multiple_policy_facts",
+        "component": "classify_question",
+        "label": "Validation",
+        "evidence_sufficient": true,
+        "justification": "Both whether equivalent subjects can be credited without validation and the maximum share of the new program are validation rules.",
+        "evidence": "whether equivalent subjects can be credited without validation and the maximum amount of the new program that can be credited this way"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Validation"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p5_out_of_scope_mars",
+      "component": "classify_question",
+      "text": "What is the weather on Mars?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_pilot_pilot_p5_out_of_scope_mars",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Weather on Mars is out of scope.",
+        "evidence": "weather on Mars"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_pilot_pilot_p5_out_of_scope_mars",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Weather on Mars is outside university student-service scope.",
+        "evidence": "What is the weather on Mars?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_01",
+      "component": "classify_question",
+      "text": "How much does it cost to get a copy of my Transcript of Records?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_01",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "Asks TOR copy fee.",
+        "evidence": "How much does it cost to get a copy of my Transcript of Records?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_01",
+        "component": "classify_question",
+        "label": "Transcript of Records",
+        "evidence_sufficient": true,
+        "justification": "The question asks the cost of obtaining a copy of a Transcript of Records, which is a TOR request.",
+        "evidence": "How much does it cost to get a copy of my Transcript of Records?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Transcript of Records"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_02",
+      "component": "classify_question",
+      "text": "How much is the fee for a second copy of my diploma?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_02",
+        "component": "classify_question",
+        "label": "Graduation",
+        "evidence_sufficient": true,
+        "justification": "Asks diploma (graduation credential) second-copy fee, not TOR.",
+        "evidence": "fee for a second copy of my diploma"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_02",
+        "component": "classify_question",
+        "label": "Graduation",
+        "evidence_sufficient": true,
+        "justification": "A fee for a second copy of a diploma is a graduation-document request, not a transcript request.",
+        "evidence": "How much is the fee for a second copy of my diploma?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Graduation"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_03",
+      "component": "classify_question",
+      "text": "Which office handles student enrollment?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_03",
+        "component": "classify_question",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "Enrollment office is registration/enrollment.",
+        "evidence": "Which office handles student enrollment?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_03",
+        "component": "classify_question",
+        "label": "Registration",
+        "evidence_sufficient": true,
+        "justification": "The question asks which office handles student enrollment, which is registration.",
+        "evidence": "Which office handles student enrollment?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Registration"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_04",
+      "component": "classify_question",
+      "text": "How much does it cost to drop a subject?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_04",
+        "component": "classify_question",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "Dropping a subject is withdrawal/dropping.",
+        "evidence": "How much does it cost to drop a subject?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_04",
+        "component": "classify_question",
+        "label": "Withdrawal",
+        "evidence_sufficient": true,
+        "justification": "The question asks the cost of dropping a subject, which is a withdrawal transaction.",
+        "evidence": "How much does it cost to drop a subject?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Withdrawal"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_05",
+      "component": "classify_question",
+      "text": "What is the fee for library circulation service if my book is overdue?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_05",
+        "component": "classify_question",
+        "label": "Library",
+        "evidence_sufficient": true,
+        "justification": "Library circulation overdue fee.",
+        "evidence": "library circulation service if my book is overdue"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_05",
+        "component": "classify_question",
+        "label": "Library",
+        "evidence_sufficient": true,
+        "justification": "The question asks the overdue fee for library circulation service.",
+        "evidence": "What is the fee for library circulation service if my book is overdue?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Library"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_06",
+      "component": "classify_question",
+      "text": "How long does the LSPU entrance examination take, including orientation?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_06",
+        "component": "classify_question",
+        "label": "Entrance Examination",
+        "evidence_sufficient": true,
+        "justification": "Entrance exam duration including orientation.",
+        "evidence": "How long does the LSPU entrance examination take"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_06",
+        "component": "classify_question",
+        "label": "Entrance Examination",
+        "evidence_sufficient": true,
+        "justification": "The question asks how long the LSPU entrance examination, including orientation, takes.",
+        "evidence": "How long does the LSPU entrance examination take, including orientation?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Entrance Examination"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_07",
+      "component": "classify_question",
+      "text": "What is the process for validating my student ID?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_07",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Student ID validation is not course Validation; no ID-card subcategory.",
+        "evidence": "process for validating my student ID"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_07",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Student ID validation is a different process from course-credit Validation, and no single in-scope subcategory is clearly supported.",
+        "evidence": "What is the process for validating my student ID?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_08",
+      "component": "classify_question",
+      "text": "What happens if I fail more than 75% of my units?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_08",
+        "component": "classify_question",
+        "label": "Retention",
+        "evidence_sufficient": true,
+        "justification": "Failing >75% of units is scholastic delinquency/retention.",
+        "evidence": "if I fail more than 75% of my units"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_08",
+        "component": "classify_question",
+        "label": "Retention",
+        "evidence_sufficient": true,
+        "justification": "Failing more than 75 percent of enrolled units is a scholastic-delinquency and retention consequence.",
+        "evidence": "What happens if I fail more than 75% of my units?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Retention"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_09",
+      "component": "classify_question",
+      "text": "How is faculty teaching load determined?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_09",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty teaching load is faculty-manual HR, not a student subcategory.",
+        "evidence": "How is faculty teaching load determined?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_09",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty teaching-load determination is a faculty HR matter and is outside the student subcategory set.",
+        "evidence": "How is faculty teaching load determined?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_10",
+      "component": "classify_question",
+      "text": "What are the responsibilities of an LSPU faculty member?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_10",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty member duties are not Administrative Officials (officer list).",
+        "evidence": "responsibilities of an LSPU faculty member"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_10",
+        "component": "classify_question",
+        "label": "MARK_FOR_REVIEW",
+        "evidence_sufficient": false,
+        "justification": "Faculty member responsibilities are an HR and faculty-manual topic, not a student subcategory.",
+        "evidence": "What are the responsibilities of an LSPU faculty member?"
+      },
+      "agreement_status": "mark_for_review",
+      "adjudication_status": "needs_manual_adjudication",
+      "approved": false,
+      "reason": "one or both reviewers marked insufficient/OOS/ambiguous"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_11",
+      "component": "classify_question",
+      "text": "What is honorable dismissal for a student?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_11",
+        "component": "classify_question",
+        "label": "Honorable Dismissal",
+        "evidence_sufficient": true,
+        "justification": "Asks definition of honorable dismissal.",
+        "evidence": "What is honorable dismissal for a student?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_11",
+        "component": "classify_question",
+        "label": "Honorable Dismissal",
+        "evidence_sufficient": true,
+        "justification": "The question asks for the meaning of honorable dismissal for a student.",
+        "evidence": "What is honorable dismissal for a student?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Honorable Dismissal"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_12",
+      "component": "classify_question",
+      "text": "Who is the current LSPU president?",
+      "annotation_method": "independent_ai_annotation",
+      "reviewer_1_type": "AI",
+      "reviewer_2_type": "AI",
+      "reviewer_1": {
+        "case_id": "cls_q_rag_benchmark_12",
+        "component": "classify_question",
+        "label": "Administrative Officials",
+        "evidence_sufficient": true,
+        "justification": "Asks current university president.",
+        "evidence": "Who is the current LSPU president?"
+      },
+      "reviewer_2": {
+        "case_id": "cls_q_rag_benchmark_12",
+        "component": "classify_question",
+        "label": "Administrative Officials",
+        "evidence_sufficient": true,
+        "justification": "Asking who the current LSPU president is asks for an administrative official.",
+        "evidence": "Who is the current LSPU president?"
+      },
+      "agreement_status": "agree",
+      "adjudication_status": "auto_accepted_dual_ai_agreement",
+      "approved": true,
+      "true_label": "Administrative Officials"
+    }
+  ]
+}

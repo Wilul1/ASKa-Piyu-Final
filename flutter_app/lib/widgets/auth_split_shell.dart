@@ -89,10 +89,11 @@ class _FormPane extends StatelessWidget {
         // panel -- the panel itself is already comfortably narrower than
         // the full white area on large desktop widths.
         final maxFieldWidth = constraints.maxWidth >= 700 ? 560.0 : 500.0;
+        final horizontalPad = constraints.maxWidth < 480 ? 20.0 : 32.0;
         return SingleChildScrollView(
           padding: EdgeInsets.symmetric(
-            horizontal: 32,
-            vertical: keyboardOpen ? 16 : 32,
+            horizontal: horizontalPad,
+            vertical: keyboardOpen ? 16 : (constraints.maxWidth < 480 ? 20 : 32),
           ),
           child: ConstrainedBox(
             constraints: BoxConstraints(

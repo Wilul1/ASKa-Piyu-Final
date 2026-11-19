@@ -1,0 +1,564 @@
+{
+  "stage": "3.1C",
+  "original_dataset_version": "2026-11-09-v1",
+  "corrected_dataset_version": "2026-11-09-v1.1",
+  "original_dataset_path": "backend/benchmarks/evaluation/qa_citation_eval_dataset.2026-11-09-v1.json",
+  "live_dataset_path": "backend/benchmarks/evaluation/qa_citation_eval_dataset.json",
+  "original_generation_audit_path": "backend/benchmarks/evaluation/qa_citation_eval_dataset.generation_audit.json",
+  "preserved_generation_audit_path": "backend/benchmarks/evaluation/qa_citation_eval_dataset.generation_audit.2026-11-09-v1.json",
+  "original_dataset_sha256": "34d9885bac22a1ecbc903acdd32876a796db7bc83a055829a506bdf017f34d50",
+  "corrected_dataset_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "annotation_method": "ai_assisted_grounded_generation",
+  "human_verified": false,
+  "generation_provenance_retained": true,
+  "generation_model": "cursor-grok-4.6",
+  "generation_prompt_version": "qac-gen-v1-stage3.1b-20261109",
+  "cases_corrected": [
+    "qac_004_clinic_walkin_fee",
+    "qac_005_accounting_clearance",
+    "qac_008_latin_cum_laude",
+    "qac_009_counseling_office",
+    "qac_014_refund_schedule",
+    "qac_017_uniform_schedule",
+    "qac_018_scholarship_requirements",
+    "qac_019_free_higher_education",
+    "qac_020_transferee_documents",
+    "qac_021_student_id_processing_office",
+    "qac_022_unscheduled_subject",
+    "qac_023_refund_and_nonrefundable_fees",
+    "qac_025_four_point_zero_and_inc",
+    "qac_027_graduate_loa",
+    "qac_028_honorable_dismissal_petition",
+    "qac_029_absence_drop_threshold_conflict",
+    "qac_030_library_reference_who",
+    "qac_032_enrollment_old_students_portal"
+  ],
+  "cases_unchanged": [
+    "qac_001_tor_undergrad_fee",
+    "qac_002_enrollment_office",
+    "qac_003_id_validation_requirements",
+    "qac_006_grade_excellent",
+    "qac_007_cross_enrollee",
+    "qac_010_honorable_dismissal_meaning",
+    "qac_011_tor_fee_levels",
+    "qac_012_good_moral_by_status",
+    "qac_013_shifting_conditions",
+    "qac_015_scholastic_warning_probation",
+    "qac_016_overload_limit",
+    "qac_024_retention_warning_to_dismissal",
+    "qac_026_graduation_requirements",
+    "qac_031_graduate_max_load",
+    "qac_033_wifi_password",
+    "qac_034_campus_shuttle",
+    "qac_035_lost_id_fee",
+    "qac_036_library_hours"
+  ],
+  "insufficient_evidence_cases_untouched": true,
+  "supporting_chunks_added": false,
+  "changelog": [
+    {
+      "case_id": "qac_004_clinic_walkin_fee",
+      "correction_groups": [
+        "trim_gold"
+      ],
+      "reason": "Question asks only whether routine clinic services require payment. Drop office, who-may-avail, and processing time from the gold.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::8"
+      ],
+      "old_reference_answer": "The Citizen's Charter Routine Medical and Dental Services card is under University Health Service. Who may avail is All. Fees are listed as None. Total processing time is 10-38 minutes.",
+      "new_reference_answer": "The Citizen's Charter Routine Medical and Dental Services card lists Fees as None.",
+      "old_excerpts": [
+        "Office / Division\nUniversity Health Service\n\nWho May Avail\nAll",
+        "Fees\nNone\n\nTotal Processing Time\n10-38 minutes"
+      ],
+      "new_excerpts": [
+        "Fees\nNone"
+      ],
+      "old_reviewer_notes": "Office, who-may-avail, fee, and processing time are on the University Health Service card.",
+      "new_reviewer_notes": "Stage 3.1C: gold trimmed to the fee question. Office, who-may-avail, and processing time remain on the same card but are not part of the reference answer.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_008_latin_cum_laude",
+      "correction_groups": [
+        "trim_gold"
+      ],
+      "reason": "Question asks only the cum laude range for a degree course. Sibling honors stay in the excerpt as table context but are removed from the gold.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::274"
+      ],
+      "old_reference_answer": "For a degree course, cum laude is listed as a final grade of 1.46 to 1.75. The same table lists summa cum laude as 1.00 to 1.20 and magna cum laude as 1.21 to 1.45.",
+      "new_reference_answer": "For a degree course, cum laude is listed as a final grade of 1.46 to 1.75.",
+      "old_excerpts": [
+        "Summa cum laude | 1.00 to 1.20\nMagna cum laude | 1.21 to 1.45\nCum laude | 1.46 to 1.75"
+      ],
+      "new_excerpts": [
+        "Summa cum laude | 1.00 to 1.20\nMagna cum laude | 1.21 to 1.45\nCum laude | 1.46 to 1.75"
+      ],
+      "old_reviewer_notes": "Degree-course row only. Non-degree honors use different award names on the same card.",
+      "new_reviewer_notes": "Stage 3.1C: gold trimmed to the asked cum laude range. The same table also lists summa cum laude and magna cum laude, and non-degree honors use different award names.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_009_counseling_office",
+      "correction_groups": [
+        "trim_gold"
+      ],
+      "reason": "Question asks which office provides counseling and whether walk-in is possible. Drop requirements and processing time from the gold.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::80"
+      ],
+      "old_reference_answer": "Counseling is under Guidance and Counseling. Client steps include endorsement, referral, or walk-in. Requirements listed are Data Privacy Consent and a Client Identification Card. Total processing time is 1-2 hours.",
+      "new_reference_answer": "Counseling is under Guidance and Counseling. Client steps include endorsement, referral, or walk-in.",
+      "old_excerpts": [
+        "Office / Division\nGuidance and Counseling",
+        "1. Client Step: Endorsement, referral, walk-in",
+        "- Requirement: Data Privacy Consent Client Identification Card Guidance",
+        "Total Processing Time\n1-2 hours"
+      ],
+      "new_excerpts": [
+        "Office / Division\nGuidance and Counseling",
+        "1. Client Step: Endorsement, referral, walk-in"
+      ],
+      "old_reviewer_notes": "Office, walk-in, requirements, and total time are on the Counseling card.",
+      "new_reviewer_notes": "Stage 3.1C: gold trimmed to office and walk-in. Requirements and total processing time are on the same card but are not part of the reference answer.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_021_student_id_processing_office",
+      "correction_groups": [
+        "trim_gold"
+      ],
+      "reason": "Question asks where a student ID is processed and who may avail. Drop COR, fee, and processing time from the gold.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::7"
+      ],
+      "old_reference_answer": "Processing of Student ID is under the Business Affairs Office. Who may avail is Students, Employees and Alumni. A COR from the Registrar is listed as a requirement. The listed fee is None and total processing time is 4 minutes.",
+      "new_reference_answer": "Processing of Student ID is under the Business Affairs Office. Who may avail is Students, Employees and Alumni.",
+      "old_excerpts": [
+        "Office / Division\nBusiness Affairs Office\n\nWho May Avail\nStudents, Employees and Alumni",
+        "- Requirement: COR Registrar",
+        "Fees\nNone\n\nTotal Processing Time\n4 minutes"
+      ],
+      "new_excerpts": [
+        "Office / Division\nBusiness Affairs Office\n\nWho May Avail\nStudents, Employees and Alumni"
+      ],
+      "old_reviewer_notes": "This is student ID processing, not ID validation at OSAS.",
+      "new_reviewer_notes": "Stage 3.1C: gold trimmed to office and who-may-avail. This is student ID processing, not ID validation at OSAS.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_030_library_reference_who",
+      "correction_groups": [
+        "trim_gold"
+      ],
+      "reason": "Question asks who may use library reference assistance and what ID is required. Drop fee and processing time from the gold.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::9"
+      ],
+      "old_reference_answer": "Library Reference Assistance is a Library service. Who may avail is Students, Faculty, Outside Researchers. The listed requirement is an LSPU ID. The listed fee is None and total processing time is 10 minutes.",
+      "new_reference_answer": "Library Reference Assistance is a Library service. Who may avail is Students, Faculty, Outside Researchers. The listed requirement is an LSPU ID.",
+      "old_excerpts": [
+        "Who May Avail\nStudents, Faculty, Outside Researchers\n\nRequirements\n- Requirement: LSPU ID BAO",
+        "Fees\nNone\n\nTotal Processing Time\n10 minutes"
+      ],
+      "new_excerpts": [
+        "Office / Division\nLibrary\n\nWho May Avail\nStudents, Faculty, Outside Researchers\n\nRequirements\n- Requirement: LSPU ID BAO"
+      ],
+      "old_reviewer_notes": "Student inquiry about a student-available library service. The Charter who-may-avail line lists students among the listed client groups.",
+      "new_reviewer_notes": "Stage 3.1C: gold trimmed to who-may-avail and the listed ID. Student inquiry about a student-available library service whose Charter client list also names other groups.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_005_accounting_clearance",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold already states ID presentation; add the requirement and client-step sentences from the cited clearance chunk.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::3"
+      ],
+      "old_reference_answer": "Releasing of Clearance is an Accounting service. The student presents an ID so the student number can be verified. If there are unsettled accounts, the student must settle them at the Cashier's Office. If there is no outstanding balance, clearance is issued. The listed fee is None.",
+      "new_reference_answer": "Releasing of Clearance is an Accounting service. The student presents an ID so the student number can be verified. If there are unsettled accounts, the student must settle them at the Cashier's Office. If there is no outstanding balance, clearance is issued. The listed fee is None.",
+      "old_excerpts": [
+        "Office / Division\nAccounting",
+        "Checks if the Student have unsettled accounts in the system, require them to settle accounts in the Cashier's Office. • If the Student have no outstanding balance in the system, clearance will be issued.",
+        "Fees\nNone"
+      ],
+      "new_excerpts": [
+        "Office / Division\nAccounting",
+        "- Requirement: Student ID for Student Number Verification Client/Student",
+        "Student to present his/her ID for verification of student number in the system",
+        "Checks if the Student have unsettled accounts in the system, require them to settle accounts in the Cashier's Office. • If the Student have no outstanding balance in the system, clearance will be issued.",
+        "Fees\nNone"
+      ],
+      "old_reviewer_notes": "Do not invent a clearance fee; the card lists Fees None.",
+      "new_reviewer_notes": "Stage 3.1C: added ID-verification excerpts from the already-cited Accounting clearance chunk. Do not invent a clearance fee; the card lists Fees None.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_014_refund_schedule",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold includes the HD/LOA entitlement and the matriculation/registration exception; excerpt that lead-in from the cited refund chunk.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::52"
+      ],
+      "old_reference_answer": "A student who paid enrolment fees and is granted Honorable Dismissal/Transfer Credentials or Leave of Absence is entitled to a refund of fees except matriculation or registration fee: 75% within the week from the opening of classes; 50% from the second to the fourth week; and no refund after the fourth week from the opening of classes.",
+      "new_reference_answer": "A student who paid enrolment fees and is granted Honorable Dismissal/Transfer Credentials or Leave of Absence is entitled to a refund of fees except matriculation or registration fee: 75% within the week from the opening of classes; 50% from the second to the fourth week; and no refund after the fourth week from the opening of classes.",
+      "old_excerpts": [
+        "3.1. seventy-five percent (75%): within the week from the opening of classes\n3.2. fifty percent (50%): within the period from the second to the fourth week\n3.3. No refund: after the fourth week from the opening of classes"
+      ],
+      "new_excerpts": [
+        "A student who has paid the enrolment fees and who is granted Honorable Dismissal/Transfer Credentials or Leave of Absence (LOA) is entitled to a refund of their fees, except matricula- tion or registration fee, in accordance with the following schedule:",
+        "3.1. seventy-five percent (75%): within the week from the opening of classes\n3.2. fifty percent (50%): within the period from the second to the fourth week\n3.3. No refund: after the fourth week from the opening of classes"
+      ],
+      "old_reviewer_notes": "Does not cover laboratory or miscellaneous non-refund rules; those are a later multi-chunk case.",
+      "new_reviewer_notes": "Stage 3.1C: added the entitlement/exception sentence from the already-cited refund chunk. Does not cover laboratory or miscellaneous non-refund rules.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_017_uniform_schedule",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold already includes 1.1 and jeans; excerpt those sentences from the already-cited uniforms chunk.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::246"
+      ],
+      "old_reference_answer": "P.E. uniforms shall be worn only during P.E. classes; students wearing a P.E. uniform will not be allowed to enter academic classes. The university t-shirt shall be worn every Wednesday, and the department shirt every Friday. Blue jeans or maong trousers following the dress code are acceptable. The prescribed uniform shall be worn in all classroom sessions, with proper field or laboratory attire as prescribed for those activities.",
+      "new_reference_answer": "P.E. uniforms shall be worn only during P.E. classes; students wearing a P.E. uniform will not be allowed to enter academic classes. The university t-shirt shall be worn every Wednesday, and the department shirt every Friday. Blue jeans or maong trousers following the dress code are acceptable. The prescribed uniform shall be worn in all classroom sessions, with proper field or laboratory attire as prescribed for those activities.",
+      "old_excerpts": [
+        "1.2. P.E. uniforms shall be worn only during P.E. classes. Students wearing P.E. uniform will not be allowed to enter academic classes.\n1.3. University t-shirt shall be worn every Wednesday while department shirt shall be worn every Friday."
+      ],
+      "new_excerpts": [
+        "1.1. The prescribed uniform shall be worn in all classroom sessions and the proper field/laboratory attire or work clothes for the field/ laboratory activities and/or as prescribed by the instructor/ profes- sors-in-charge.",
+        "1.2. P.E. uniforms shall be worn only during P.E. classes. Students wearing P.E. uniform will not be allowed to enter academic classes.\n1.3. University t-shirt shall be worn every Wednesday while department shirt shall be worn every Friday. Blue jeans and/or maong trouser (pants) following the dress code will be acceptable."
+      ],
+      "old_reviewer_notes": "The prohibited-attire list is not in this chunk after the colon; do not invent items.",
+      "new_reviewer_notes": "Stage 3.1C: excerpts expanded to cover the prescribed-uniform and jeans sentences already used in the gold. The prohibited-attire list after the colon is incomplete in this chunk; do not invent items.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_020_transferee_documents",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold includes PSA birth/marriage and other-requirement lines that follow on the same cited chunk; extend the excerpt.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::45"
+      ],
+      "old_reference_answer": "Student transferees are listed as needing transfer credential or honorable dismissal from the last school attended; transcript of records or academic records for evaluation; physical, medical, and drug testing examinations certified by a government physician; a certificate of good moral character from the last school attended; three latest 2x2 pictures; and a photocopy of an authenticated PSA birth certificate, or marriage certificate for married female students. Other program-specific requirements may be added, and the student shoulders payment for tests done in an outside facility.",
+      "new_reference_answer": "Student transferees are listed as needing transfer credential or honorable dismissal from the last school attended; transcript of records or academic records for evaluation; physical, medical, and drug testing examinations certified by a government physician; a certificate of good moral character from the last school attended; three latest 2x2 pictures; and a photocopy of an authenticated PSA birth certificate, or marriage certificate for married female students. Other program-specific requirements may be added, and the student shoulders payment for tests done in an outside facility.",
+      "old_excerpts": [
+        "- Transfer Credential/Honorable Dismissal from the schoollast attended\n- Transcript of Records or a copy of Academic Records for\nevaluation purposes\n- physical, medical, and drug testing examinations certified\nby a government physician, certifying the applicant’s fitness\nto do University work\n- Certificate of Good Moral Character (the last school at-\ntended)\n- three (3) latest 2x2 pictures"
+      ],
+      "new_excerpts": [
+        "- Transfer Credential/Honorable Dismissal from the schoollast attended\n- Transcript of Records or a copy of Academic Records for\nevaluation purposes\n- physical, medical, and drug testing examinations certified\nby a government physician, certifying the applicant’s fitness\nto do University work\n- Certificate of Good Moral Character (the last school at-\ntended)\n- three (3) latest 2x2 pictures\n- photocopy of authenticated birth certificate/marriage cer-\ntificate (for married female students only) issued by the Phil-\nippine Statistics Authority (PSA), formerly NSO\n2.13. Other requirements/s may be added as deemed necessary to any\nof the programs offered by the College/Department. Likewise,\npayment for accomplishing requirements (i.e., medical test, drug\ntest, etc.) should be shouldered by the student/applicant, especially\nfor testing done in an outside facility."
+      ],
+      "old_reviewer_notes": "PSA birth/marriage lines follow on the same chunk.",
+      "new_reviewer_notes": "Stage 3.1C: excerpt extended through the PSA birth/marriage line and 2.13 extras already used in the gold.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_022_unscheduled_subject",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold describes verification, forwarding, and informing the student; excerpt those agency-action sentences from the cited card.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91"
+      ],
+      "old_reference_answer": "Offering of Unscheduled Subject/s is a Colleges service for irregular students. Requirements are a request letter and a copy of evaluation of grades from the Registrar. The student submits those documents; the request is verified and forwarded for approval; then the student is informed whether the subject has been offered and proceeds to enrolment or adding of the subject. The listed fee is None and total processing time is 30 minutes.",
+      "new_reference_answer": "Offering of Unscheduled Subject/s is a Colleges service for irregular students. Requirements are a request letter and a copy of evaluation of grades from the Registrar. The student submits those documents; the request is verified and forwarded for approval; then the student is informed whether the subject has been offered and proceeds to enrolment or adding of the subject. The listed fee is None and total processing time is 30 minutes.",
+      "old_excerpts": [
+        "Who May Avail\nIrregular Students\n\nRequirements\n- Requirement: Request Letter Client Copy of Evaluation of Grades Registrar",
+        "2. Client Step: Proceeds to enrolment/ adding of subject",
+        "Fees\nNone\n\nTotal Processing Time\n30 minutes"
+      ],
+      "new_excerpts": [
+        "Office / Division\nColleges",
+        "Who May Avail\nIrregular Students\n\nRequirements\n- Requirement: Request Letter Client Copy of Evaluation of Grades Registrar",
+        "Submits letter request for the offering of unscheduled subject/s and copy of evaluation of grades from the Office of the Registrar to the Office of the",
+        "Receives the letter request and verifies the need for the offering of unscheduled subject/s Forward request to the Office of the Registrar Forwards the request to the OVPAA for approval Informs the student requested has been offered (or not) upon receipt of approves request",
+        "2. Client Step: Proceeds to enrolment/ adding of subject",
+        "Fees\nNone\n\nTotal Processing Time\n30 minutes"
+      ],
+      "old_reviewer_notes": "Adding of subject is the next client step on the same card.",
+      "new_reviewer_notes": "Stage 3.1C: added the submit/verify/forward/inform sentences from the already-cited unscheduled-subject card.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_023_refund_and_nonrefundable_fees",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold restates the 75/50/none schedule; excerpt those numbered lines from already-cited chunk ::52.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::52",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::53"
+      ],
+      "old_reference_answer": "If enrollment fees were paid and Honorable Dismissal/Transfer Credentials or Leave of Absence is granted, fees except matriculation or registration fee follow the 75% / 50% / no-refund schedule by week from the opening of classes. Separately, laboratory fees will not be refunded after one week from the opening of classes where a voluntary change is made from one course to another, and no refund for registration, library, and miscellaneous fees will be made to any student who withdraws anytime after registration.",
+      "new_reference_answer": "If enrollment fees were paid and Honorable Dismissal/Transfer Credentials or Leave of Absence is granted, fees except matriculation or registration fee follow the 75% / 50% / no-refund schedule by week from the opening of classes. Separately, laboratory fees will not be refunded after one week from the opening of classes where a voluntary change is made from one course to another, and no refund for registration, library, and miscellaneous fees will be made to any student who withdraws anytime after registration.",
+      "old_excerpts": [
+        "A student who has paid the enrolment fees and who is granted Honorable Dismissal/Transfer Credentials or Leave of Absence (LOA) is entitled to a refund of their fees, except matricula- tion or registration fee, in accordance with the following schedule:",
+        "Laboratory fees will not be refunded after one week from the opening of classes where voluntary change is made from one course to another. No refund for registration, library, and mis- cellaneous fees will be made to any student who withdraws any- time after registration."
+      ],
+      "new_excerpts": [
+        "A student who has paid the enrolment fees and who is granted Honorable Dismissal/Transfer Credentials or Leave of Absence (LOA) is entitled to a refund of their fees, except matricula- tion or registration fee, in accordance with the following schedule:",
+        "3.1. seventy-five percent (75%): within the week from the opening of classes\n3.2. fifty percent (50%): within the period from the second to the fourth week\n3.3. No refund: after the fourth week from the opening of classes",
+        "Laboratory fees will not be refunded after one week from the opening of classes where voluntary change is made from one course to another. No refund for registration, library, and mis- cellaneous fees will be made to any student who withdraws any- time after registration."
+      ],
+      "old_reviewer_notes": "Two handbook sections. Do not collapse them into a single percentage.",
+      "new_reviewer_notes": "Stage 3.1C: added the 75%/50%/no-refund schedule from the already-cited refund chunk. Two handbook sections; do not collapse them into a single percentage.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_025_four_point_zero_and_inc",
+      "correction_groups": [
+        "expand_excerpts",
+        "preserve_ocr_ambiguity"
+      ],
+      "reason": "Add 5.3.1/5.3.2 and the full special-removal sentence; keep 5.3.1 as stored OCR rather than smoothing it into a clean one-year rule.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::101",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::104"
+      ],
+      "old_reference_answer": "A grade of 4.00 may be removed by repeating the subject or by re-examination. The highest grade obtainable upon re-examination is 3.00; failing the removal examination gives 5.00. Only one removal examination is allowed and it must be taken within one academic year or the grade becomes 5.00. If the subject is a prerequisite for the next semester, removal must be accomplished before the next enrolment. The removal fee is P20 per unit. A special removal examination may be given upon the College Dean's written-petition approval and is charged P100 per unit. If INC is not completed within the prescribed period of one year, it is automatically changed to 5.0.",
+      "new_reference_answer": "A grade of 4.00 may be removed by repeating the subject or by re-examination. The highest grade a student must obtain upon re-examination is 3.00. If the removal examination is failed, a student is given a grade of 5.00. Section 5.3.1 as stored says a student is allowed only one (1) removal examination, which must be taken within one (1) academic year from the removed within the prescribed period, it will be automatically changed to 5.00. That 5.3.1 sentence is OCR-broken and is not rewritten into a cleaner rule. If the subject for removal of grade is a pre-requisite for the succeeding semester, it must be accomplished before the next enrolment, superseding the one-year time frame stipulated in 5.3.1. The removal fee is P20 per unit. Special removal examination may also be given upon approval of a written petition from the College Dean; a fee of P100 per unit is charged for this removal. If INC is not completed within the prescribed period (one year), a grade of incomplete will automatically be changed to 5.0.",
+      "old_excerpts": [
+        "A grade of “4.00” may be removed by re peating the subject or by re-examination. The highest grade a stu- dent must obtain upon re-examination is “3.00”. If the removal examination is failed, a student is given a grade of “5.00”.",
+        "5.4. INC and Automatic “5”. If not completed within the prescribed peri- od (one year), a grade of “incomplete” will automatically be changed to “5.0”.",
+        "5.5. Removal Fee. The removal fee is P20 per unit. (BOR Reso.1046, s.2012)",
+        "A fee of P100 per unit is charged for this removal."
+      ],
+      "new_excerpts": [
+        "A grade of “4.00” may be removed by re peating the subject or by re-examination. The highest grade a stu- dent must obtain upon re-examination is “3.00”. If the removal examination is failed, a student is given a grade of “5.00”.",
+        "5.3.1. A student is allowed only one (1) removal examination, which must be taken within one (1) academic year from the removed within the prescribed period, it will be automatically changed to “5.00”.",
+        "5.3.2. If the subject for removal of grade is a pre-requisite for the succeeding semester, it must be accomplished before the next enrolment, superseding the one-year time frame stipulated in\n5.3.1.",
+        "5.4. INC and Automatic “5”. If not completed within the prescribed peri- od (one year), a grade of “incomplete” will automatically be changed to “5.0”.",
+        "5.5. Removal Fee. The removal fee is P20 per unit. (BOR Reso.1046, s.2012)",
+        "5.2.3. Special removal examination may also be given upon approval of a written petition from the College Dean. A fee of P100 per unit is charged for this removal."
+      ],
+      "old_reviewer_notes": "101 already contains the P20 removal fee. 104 adds the P100 special-removal fee. Do not treat P20 and P100 as the same fee.",
+      "new_reviewer_notes": "Stage 3.1C: excerpts expanded for 5.3.1, 5.3.2, and the special-removal Dean-petition sentence. Gold keeps the stored 5.3.1 wording instead of reconstructing it. P20 and P100 remain distinct fees.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_027_graduate_loa",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold already requires the LOA form; excerpt that sentence from the cited graduate LOA chunk.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::179"
+      ],
+      "old_reference_answer": "A graduate student who intends to take a leave of absence must accomplish a Leave of Absence form stating the reason and the length of time. The length of time for LOA should not exceed two (2) years and is considered part of the residency. An extension beyond the prescribed maximum residency requires one penalty subject for every year of the extension. Failure to submit a LOA would mean absence without official leave (AWOL).",
+      "new_reference_answer": "A graduate student who intends to take a leave of absence must accomplish a Leave of Absence form stating the reason and the length of time. The length of time for LOA should not exceed two (2) years and is considered part of the residency. An extension beyond the prescribed maximum residency requires one penalty subject for every year of the extension. Failure to submit a LOA would mean absence without official leave (AWOL).",
+      "old_excerpts": [
+        "The length of time for LOA, which should not exceed two (2) years, is considered a part of the residency. Should there be an extension beyond the prescribed max- imum residency, the student shall take one (1) penalty subject (additional course not yet taken) for every year of the extension. Failure to submit a LOA would mean absence without official leave (AWOL)"
+      ],
+      "new_excerpts": [
+        "A graduate student who intends to take a leave of absence must accomplish a Leave of Absence (LOA) form, indi- cating the reason for the request and the length of time for the absence. The length of time for LOA, which should not exceed two (2) years, is considered a part of the residency. Should there be an extension beyond the prescribed max- imum residency, the student shall take one (1) penalty subject (additional course not yet taken) for every year of the extension. Failure to submit a LOA would mean absence without official leave (AWOL)"
+      ],
+      "old_reviewer_notes": "Graduate Studies article. Do not apply the two-year cap to undergraduate LOA.",
+      "new_reviewer_notes": "Stage 3.1C: excerpt expanded to include the LOA-form sentence from the already-cited graduate LOA chunk. Do not apply the two-year cap to undergraduate LOA.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_028_honorable_dismissal_petition",
+      "correction_groups": [
+        "expand_excerpts"
+      ],
+      "reason": "Gold already states debt settlement and disciplinary exclusion; excerpt those sentences from the cited HD chunk.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118"
+      ],
+      "old_reference_answer": "A student of good standing who wants to withdraw shall present a written petition to the Registrar signed by the parent or guardian. If granted, the student is given Honorable Dismissal. All indebtedness to the university must be settled before the statement is issued. A student granted Honorable Dismissal may not be readmitted in the university. A student who leaves because of suspension, dropping, or expulsion due to disciplinary action is not entitled to Honorable Dismissal.",
+      "new_reference_answer": "A student of good standing who wants to withdraw shall present a written petition to the Registrar signed by the parent or guardian. If granted, the student is given Honorable Dismissal. All indebtedness to the university must be settled before the statement is issued. A student granted Honorable Dismissal may not be readmitted in the university. A student who leaves because of suspension, dropping, or expulsion due to disciplinary action is not entitled to Honorable Dismissal.",
+      "old_excerpts": [
+        "Honorable Dismissal Petition: A student of good standing who de sires to withdraw from the college/university shall present a written petition to the Registrar signed by the parent/s or guardian/s. If the petition is granted, the student shall be given Honorable Dismissal.",
+        "A student granted an honorable dismissal may not be readmitted in the university."
+      ],
+      "new_excerpts": [
+        "Honorable Dismissal Petition: A student of good standing who de sires to withdraw from the college/university shall present a written petition to the Registrar signed by the parent/s or guardian/s. If the petition is granted, the student shall be given Honorable Dismissal.",
+        "Honorable Dismissal Policy: All indebtedness to the university must be settled before a statement of Honorable Dismissal will be issued.",
+        "A student granted an honorable dismissal may not be readmitted in the university.",
+        "Non-granting of Honorable Dismissal: A student who leaves the university for the reason of suspension, dropping or expulsion due to disciplinary action/s shall not be entitled to Honorable Dismissal."
+      ],
+      "old_reviewer_notes": "Same chunk can supply both excerpts; keep both because they answer distinct parts of the question.",
+      "new_reviewer_notes": "Stage 3.1C: added indebtedness and disciplinary-exclusion sentences from the already-cited Honorable Dismissal chunk.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_018_scholarship_requirements",
+      "correction_groups": [
+        "preserve_ocr_ambiguity"
+      ],
+      "reason": "Stop reconstructing OCR-broken scholarship requirement labels into clean document names.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::18"
+      ],
+      "old_reference_answer": "Processing of Scholarship and Financial Assistance is under the Scholarship and Financial Assistance Unit, who may avail is ALL, and the listed fee is None. Listed requirements include an application form for scholarship and financial assistance, a CHED application form, a certified true copy of grades, a certified true copy of the Certificate of Registration, financial documents from DSWD and BIR, a notarized certificate of no employment, and a copy of ID with three specimen signatures.",
+      "new_reference_answer": "Processing of Scholarship and Financial Assistance is under the Scholarship and Financial Assistance Unit, who may avail is ALL, and the listed fee is None. The stored requirement lines are OCR-broken and are not reconstructed here. As stored they read: Application Form for Scholarship and Financial Scholarship; Assistance Page Application Form (CHED Form) CHED; Assistance Certified True Copy of Grades Registrar; Certified True Copy of Certificate of Registration Registrar Financial Documents DSWD (where to secure: and BIR Office); Notarized Certificate of No Employment and No Law Scholarship; and Copy of ID with 3 specimen/Signature BAO.",
+      "old_excerpts": [
+        "Office / Division\nScholarship and Financial Assistance Unit\n\nWho May Avail\nALL",
+        "- Requirement: Application Form for Scholarship and Financial Scholarship",
+        "- Requirement: Assistance Page Application Form (CHED Form) CHED",
+        "- Requirement: Assistance Certified True Copy of Grades Registrar",
+        "- Requirement: Certified True Copy of Certificate of Registration Registrar Financial Documents DSWD",
+        "- Requirement: Notarized Certificate of No Employment and No Law Scholarship",
+        "- Requirement: Copy of ID with 3 specimen/Signature BAO",
+        "Fees\nNone"
+      ],
+      "new_excerpts": [
+        "Office / Division\nScholarship and Financial Assistance Unit\n\nWho May Avail\nALL",
+        "- Requirement: Application Form for Scholarship and Financial Scholarship",
+        "- Requirement: Assistance Page Application Form (CHED Form) CHED",
+        "- Requirement: Assistance Certified True Copy of Grades Registrar",
+        "- Requirement: Certified True Copy of Certificate of Registration Registrar Financial Documents DSWD\n  Where to Secure: and BIR Office",
+        "- Requirement: Notarized Certificate of No Employment and No Law Scholarship",
+        "- Requirement: Copy of ID with 3 specimen/Signature BAO",
+        "Fees\nNone"
+      ],
+      "old_reviewer_notes": "Requirement lines are OCR-broken on the Charter card; the reference answer does not invent missing form names beyond those lines.",
+      "new_reviewer_notes": "Stage 3.1C: gold quotes the stored OCR-broken requirement lines instead of cleaning them into separate form names.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_019_free_higher_education",
+      "correction_groups": [
+        "preserve_ocr_ambiguity"
+      ],
+      "reason": "Preserve the garbled currently-enrolled / shall-enroll-after dual wording and stored RA numbering.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::35"
+      ],
+      "old_reference_answer": "The Student Handbook Free Higher Education paragraph states that students who enroll in a course leading to a bachelor’s degree in the University shall be exempt from paying tuition and other school fees for units enrolled in, in connection with the Universal Access to Quality Tertiary Education Act of 2017 or UniFAST. Students are eligible for those benefits provided they qualify under the admission and retention policies of the University.",
+      "new_reference_answer": "The stored Free Higher Education paragraph says all students who are either currently enrolled at the time of the affectivity of the Universal Access to Quality Tertiary Education Act of 2017 or Unified Financial Assistance System for Tertiary Education Act, or UniFAST (Republic Act No. 10687. shall enroll at any time after that in a course leading to a bachelor's degree in the University shall be exempt from paying tuition and other school fees for units enrolled in. That sentence is OCR-broken, including the statute numbering and the join between currently enrolled and shall enroll at any time after that, so the corpus does not establish a single clean eligibility rule. Students are eligible to receive the benefits stipulated in 1.2. provided that they qualify the admission and re- tention policies of the University.",
+      "old_excerpts": [
+        "Universal Access to Quality Tertiary Education Act of 2017 or Unified Financial Assistance System for Tertiary Education Act, or UniFAST",
+        "shall be exempt from paying tuition and other school fees for units enrolled in.",
+        "Students are eligible to receive the benefits stipulated in 1.2. provided that they qualify the admission and re- tention policies of the University."
+      ],
+      "new_excerpts": [
+        "Free Higher Education: All students who are either currently enrolled at the time of the affectivity of the Universal Access to Quality Tertiary Education Act of 2017 or Unified Financial Assistance System for Tertiary Education Act, or UniFAST (Republic Act No.\n10687. shall enroll at any time after that in a course leading to a bachelor’s degree in the University shall be exempt from paying tuition and other school fees for units enrolled in.",
+        "Students are eligible to receive the benefits stipulated in 1.2. provided that they qualify the admission and re- tention policies of the University."
+      ],
+      "old_reviewer_notes": "Do not quote the accommodation-capacity sentence. Do not resolve the garbled statute numbering in this chunk against RA 10931 on the Assessment of Fees card.",
+      "new_reviewer_notes": "Stage 3.1C: gold preserves the garbled Free Higher Education sentence instead of smoothing it. Do not resolve the stored RA numbering against RA 10931.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_029_absence_drop_threshold_conflict",
+      "correction_groups": [
+        "preserve_ocr_ambiguity"
+      ],
+      "reason": "Reframe gold as three context-distinct stored passages, including the internal twenty percent (25%) wording, without picking a winner.",
+      "supporting_chunk_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::107",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::162"
+      ],
+      "old_reference_answer": "The Student Handbook contains two different numeric thresholds. The undergraduate Absence section says a student accumulating unexcused absences equivalent to twenty percent (25%) of the total number of hours per day session for a particular subject shall be dropped from that subject, and time lost due to late enrolment counts as absence. The Dropping section says students shall be dropped if they have an accumulated absence of at least 25% of the total number of class hours in a semester. The graduate Attendance policy says absences equivalent to twenty percent (20%) of the total number of hour per day session for a particular subject shall cause the student to be dropped. The corpus therefore does not present a single consistent percentage for all students.",
+      "new_reference_answer": "The Student Handbook does not state one absence-drop threshold that applies to every student. The undergraduate Attendance / Absence section says a student accumulating unexcused absences equivalent to twenty percent (25%) of the total number of hours per day session for a particular subject shall be dropped from that subject or class. That sentence writes the words twenty percent next to (25%). Time lost due to late enrolment is treated as absence. The undergraduate Dropping section says students shall be dropped if they have an accumulated absence of at least 25% of the total number of class hours in a semester. That is a semester class-hours measure, not the same wording as the per-day-session Absence section. The graduate Attendance policy says a student accumulating absences equivalent to twenty percent (20%) of the total number of hour per day session for a particular subject shall be dropped from that subject or class. That rule is in the Graduate Studies attendance article. These passages are different sections and, for the graduate card, a different student population. The corpus does not say which statement supersedes another.",
+      "old_excerpts": [
+        "A student accumulating unexcused absences from class, equivalent to twenty percent (25%) of the total number of hours per day session for a particular subject, shall be dropped from the roll of students for the particular subject or class, as the case may be.",
+        "Students shall be dropped if they have an accumulated absence of at least 25% of the total number of class hours in a semester.",
+        "A student accumulating absences from class which is equivalent to twenty percent (20%) of the total number of hour per day session for a partic- ular subject shall be dropped from the roll of students for the particular subject or class."
+      ],
+      "new_excerpts": [
+        "A student accumulating unexcused absences from class, equivalent to twenty percent (25%) of the total number of hours per day session for a particular subject, shall be dropped from the roll of students for the particular subject or class, as the case may be. Time lost due to late enrolment shall be considered as a time lost by absence.",
+        "Students shall be dropped if they have an accumulated absence of at least 25% of the total number of class hours in a semester.",
+        "A student accumulating absences from class which is equivalent to twenty percent (20%) of the total number of hour per day session for a partic- ular subject shall be dropped from the roll of students for the particular subject or class."
+      ],
+      "old_reviewer_notes": "Genuine corpus conflict, including an internal wording clash of 'twenty percent (25%)' on the undergraduate absence card versus 20% on the graduate attendance card. The reference answer reports both figures and does not pick a winner.",
+      "new_reviewer_notes": "Stage 3.1C: gold reports three distinct stored passages (undergraduate day-session wording clash, undergraduate semester-hours dropping, graduate 20%) and does not treat them as two competing thresholds for the same student group.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    },
+    {
+      "case_id": "qac_032_enrollment_old_students_portal",
+      "correction_groups": [
+        "preserve_ocr_ambiguity"
+      ],
+      "reason": "Do not join OCR-split Enrollment steps into a claim that returning college students enlist on the portal.",
+      "supporting_chunk_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0"
+      ],
+      "old_reference_answer": "On the Enrollment card, old college students log in to the Student Web Portal and enlist subjects. New and old college students log in to the student portal to view the Certificate of Registration, and Registrar’s staff issues the COR. College students who are not qualified for Free Higher Education, and some other listed groups, proceed to the Office of the Registrar to claim the COR.",
+      "new_reference_answer": "The Enrollment card is OCR-broken across numbered steps. One stored client-step fragment ends All old College and the next begins Students, Old GSAR Students: Login to the Student Web Portal and enlists the subjects to be enrolled. The stored text does not cleanly establish that returning college students, as a labeled group, enlist on the portal. Separately, New/old college students: Log in to student portal to view the Certificate of Registration, and the card lists Issues certificate of registration (COR). Another stored line says college students who are not qualified for Free Higher Education, and other listed groups including GSA R Students, proceed to the Office of the Registrar to claim the COR.",
+      "old_excerpts": [
+        "Students, Old GSAR Students: Login to the Student Web Portal and enlists the subjects to be enrolled.",
+        "New/old college students: Log in to student portal to view the Certificate of Registration",
+        "Agency Action: Issues certificate of registration (COR)",
+        "For College Students who are not qualified to Free Higher Education, students with enrolled RLE subjects, Opt-out, CTP/Foreign,GSA R Students: Proceeds to the Office of the Registrar to claim the Certificate of Registration (COR)"
+      ],
+      "new_excerpts": [
+        "Preenrolment form from the Dean's Office. All old College",
+        "Students, Old GSAR Students: Login to the Student Web Portal and enlists the subjects to be enrolled.",
+        "New/old college students: Log in to student portal to view the Certificate of Registration",
+        "Agency Action: Issues certificate of registration (COR)",
+        "For College Students who are not qualified to Free Higher Education, students with enrolled RLE subjects, Opt-out, CTP/Foreign,GSA R Students: Proceeds to the Office of the Registrar to claim the Certificate of Registration (COR)"
+      ],
+      "old_reviewer_notes": "Portal enlistment and COR viewing are on the Enrollment card.",
+      "new_reviewer_notes": "Stage 3.1C: gold keeps the split Enrollment OCR lines instead of joining All old College with Students, Old GSAR Students into a returning-college portal-enlistment rule.",
+      "question_unchanged": true,
+      "category_unchanged": true,
+      "difficulty_unchanged": true,
+      "supporting_chunk_ids_unchanged": true
+    }
+  ],
+  "notes": "Targeted corrections after Stage 3.1B DO NOT APPROVE. Loader membership is not semantic correctness. Gold remains AI-assisted and not human-verified."
+}

@@ -1,0 +1,126 @@
+[
+  {
+    "case_id": "aq_01_tor_fee",
+    "question": "How much does it cost to get a copy of my Transcript of Records?",
+    "judgment": "pass",
+    "satisfactory": true,
+    "numeric_score": null,
+    "note": "Undergraduate P75.00/page and graduate P150.00/page match the pending Charter fee lines. Extra process/time not PDF-checked. No sources visible."
+  },
+  {
+    "case_id": "aq_02_diploma_second_copy_fee",
+    "question": "How much is the fee for a second copy of my diploma?",
+    "judgment": "pass",
+    "satisfactory": true,
+    "numeric_score": null,
+    "note": "P100.00 matches the Charter second-copy-of-diploma line. Extra process/time not PDF-checked."
+  },
+  {
+    "case_id": "aq_03_enrollment_office",
+    "question": "Which office handles student enrollment?",
+    "judgment": "pass",
+    "satisfactory": true,
+    "numeric_score": null,
+    "note": "Office of the Registrar is correct. Four duplicate Citizen's Charter Enrollment source chips.",
+    "visible_sources": ["LSPU Citizen's Charter, Enrollment (x4)"]
+  },
+  {
+    "case_id": "aq_04_dropping_fee_multi_document",
+    "question": "How much does it cost to drop a subject?",
+    "judgment": "fail",
+    "satisfactory": false,
+    "numeric_score": null,
+    "note": "Stated only Charter P30.00. Missed student-visible Handbook P20/unit conflict required by the pending multi-document case."
+  },
+  {
+    "case_id": "aq_05_library_overdue_fee",
+    "question": "What is the fee for library circulation service if my book is overdue?",
+    "judgment": "fail",
+    "satisfactory": false,
+    "numeric_score": null,
+    "note": "Invented unit 'per day'. Extraction only has '2 pesos per' with unit missing."
+  },
+  {
+    "case_id": "aq_06_entrance_exam_duration",
+    "question": "How long does the LSPU entrance examination take, including orientation?",
+    "judgment": "partial",
+    "satisfactory": false,
+    "numeric_score": null,
+    "note": "15 minutes + 1.5 hours match. Invented official total 1 hour 45 minutes; Charter total processing time is Not specified.",
+    "visible_sources": ["LSPU Citizen's Charter, LSPU Entrance Examination"]
+  },
+  {
+    "case_id": "aq_07_id_validation_process",
+    "question": "What is the process for validating my student ID?",
+    "judgment": "pass",
+    "satisfactory": true,
+    "numeric_score": null,
+    "note": "COR, BAO student ID, OSAS steps, 4 minutes, no fee match the ID Validation card. Visible source title looks like neighboring Student ID Processing.",
+    "visible_sources": ["LSPU Citizen's Charter, Processing of Student ID ID Processing"]
+  },
+  {
+    "case_id": "aq_08_fail_more_than_75_percent",
+    "question": "What happens if I fail more than 75% of my units?",
+    "judgment": "fail",
+    "satisfactory": false,
+    "numeric_score": null,
+    "note": "OCR-garbled table dump. Did not state dismissal / nine-unit condition / 100% permanent disqualification."
+  },
+  {
+    "case_id": "aq_09_faculty_teaching_load",
+    "question": "How is faculty teaching load determined?",
+    "judgment": "role_gated_expected",
+    "satisfactory": null,
+    "numeric_score": null,
+    "note": "Student-role refusal. Faculty Manual is faculty-audience only. Stock student message hides that a Faculty Manual exists. Not counted as a generator error."
+  },
+  {
+    "case_id": "aq_10_faculty_responsibilities",
+    "question": "What are the responsibilities of an LSPU faculty member?",
+    "judgment": "role_gated_expected",
+    "satisfactory": null,
+    "numeric_score": null,
+    "note": "Same student-role gate as aq_09. Faculty Manual Section III.A is not student-visible."
+  },
+  {
+    "case_id": "aq_11_honorable_dismissal",
+    "question": "What is honorable dismissal for a student?",
+    "judgment": "partial",
+    "satisfactory": false,
+    "numeric_score": null,
+    "note": "Voluntary withdrawal + Registrar is correct. Missed parent petition, debts, no readmission, and disciplinary exclusion. Mixed in withdrawal guidelines.",
+    "visible_sources": [
+      "LSPU Student Handbook, Article 12 > Honorable Dismissal",
+      "LSPU Student Handbook, 1.2 > Withdrawal Guidelines",
+      "LSPU Student Handbook, 1.3 > Withdrawal Conditions"
+    ]
+  },
+  {
+    "case_id": "aq_12_university_president",
+    "question": "Who is the current LSPU president?",
+    "judgment": "partial",
+    "satisfactory": false,
+    "numeric_score": null,
+    "note": "Named Dr. Mario R. Briones as in dated manuals, but asserted current and added unsourced 2019 / Flexible Learning / ISO biography. Pending case is insufficient_evidence for 'current'.",
+    "visible_sources": [
+      "LSPU Student Handbook, Administrative Officials",
+      "LSPU Student Handbook, Mission"
+    ]
+  },
+  {
+    "case_id": "aq_13_out_of_scope_weather_mars",
+    "question": "What is the weather on Mars tomorrow?",
+    "judgment": "pass",
+    "satisfactory": true,
+    "numeric_score": null,
+    "note": "Refused. Did not invent weather. Stock student insufficient-information / OOS message."
+  },
+  {
+    "case_id": "aq_14_insufficient_wifi_password",
+    "question": "What is the LSPU student Wi-Fi password?",
+    "judgment": "partial",
+    "satisfactory": false,
+    "numeric_score": null,
+    "note": "Did not invent a password. Added Portal URL and IT Support instructions not present in the evaluation corpus."
+  }
+]

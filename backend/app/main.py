@@ -62,6 +62,7 @@ logging.getLogger("app.services.qa.citation_verification_jobs").setLevel(
 logger = logging.getLogger(__name__)
 
 from app.db.session import get_database_health, initialize_database, safe_database_url
+from app.routes.admin.evaluation import router as admin_evaluation_router
 from app.routes.admin.knowledge_base import (
     chroma_router,
     kb_tools_router,
@@ -266,6 +267,7 @@ app.add_middleware(
 )
 
 app.include_router(admin_kb_router)
+app.include_router(admin_evaluation_router)
 app.include_router(kb_tools_router)
 app.include_router(chroma_router)
 app.include_router(kb_browser_router)

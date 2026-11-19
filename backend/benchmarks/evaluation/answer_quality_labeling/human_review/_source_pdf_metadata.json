@@ -1,0 +1,59 @@
+{
+  "charter": {
+    "path": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\documents\\6c3d0f00-fd53-43be-943f-09e1e7ddbce4\\Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+    "exists": true,
+    "page_count": 102,
+    "metadata": {
+      "format": "PDF 1.7",
+      "title": "",
+      "author": "Mervin Jommel De Jesus",
+      "subject": "",
+      "keywords": "",
+      "creator": "Microsoft\u00ae Word for Microsoft 365",
+      "producer": "Microsoft\u00ae Word for Microsoft 365",
+      "creationDate": "D:20260331161142+08'00'",
+      "modDate": "D:20260331161142+08'00'",
+      "trapped": "",
+      "encryption": null
+    },
+    "filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf"
+  },
+  "handbook": {
+    "path": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\documents\\d9bf05ce-fcab-4629-ad4c-4f869481189f\\LSPU Student Handbook.pdf",
+    "exists": true,
+    "page_count": 198,
+    "metadata": {
+      "format": "PDF 1.7",
+      "title": "",
+      "author": "Kevin Amante",
+      "subject": "",
+      "keywords": "",
+      "creator": "Microsoft\u00ae Publisher 2016",
+      "producer": "Microsoft\u00ae Publisher 2016",
+      "creationDate": "D:20220125101703+08'00'",
+      "modDate": "D:20220125101703+08'00'",
+      "trapped": "",
+      "encryption": null
+    },
+    "filename": "LSPU Student Handbook.pdf"
+  },
+  "faculty": {
+    "path": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\documents\\c67bd8c8-81cd-4c8c-bda1-4f7d2039a406\\LSPU Faculty Manual 2020.pdf",
+    "exists": true,
+    "page_count": 106,
+    "metadata": {
+      "format": "PDF 1.7",
+      "title": "",
+      "author": "Kevin Amante",
+      "subject": "",
+      "keywords": "",
+      "creator": "Microsoft\u00ae Publisher 2016",
+      "producer": "Microsoft\u00ae Publisher 2016",
+      "creationDate": "D:20210621150032+08'00'",
+      "modDate": "D:20210621150032+08'00'",
+      "trapped": "",
+      "encryption": null
+    },
+    "filename": "LSPU Faculty Manual 2020.pdf"
+  }
+}

@@ -63,8 +63,9 @@ class _MyAppState extends State<MyApp> {
           navigatorObservers: [appRouteObserver],
           title: 'ASKa-Piyu',
           theme: ThemeData(
+            useMaterial3: true,
             primaryColor: DesignTokens.maroon,
-            scaffoldBackgroundColor: DesignTokens.bgGrey,
+            scaffoldBackgroundColor: DesignTokens.pageBg,
             pageTransitionsTheme: softPageTransitionsTheme,
             colorScheme: ColorScheme.fromSeed(
               seedColor: DesignTokens.maroon,
@@ -75,10 +76,52 @@ class _MyAppState extends State<MyApp> {
             appBarTheme: const AppBarTheme(
               backgroundColor: Colors.white,
               foregroundColor: DesignTokens.maroon,
-              elevation: 0.5,
+              elevation: 0,
+              scrolledUnderElevation: 0.5,
+              centerTitle: false,
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: DesignTokens.primaryButtonStyle(),
+            ),
+            outlinedButtonTheme: OutlinedButtonThemeData(
+              style: DesignTokens.secondaryButtonStyle(),
+            ),
+            filledButtonTheme: FilledButtonThemeData(
+              style: DesignTokens.primaryButtonStyle(),
+            ),
+            inputDecorationTheme: DesignTokens.inputDecorationTheme(),
+            chipTheme: ChipThemeData(
+              backgroundColor: DesignTokens.maroonWash,
+              selectedColor: DesignTokens.maroonWash,
+              disabledColor: DesignTokens.bgGrey,
+              labelStyle: const TextStyle(
+                color: DesignTokens.maroon,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+              side: BorderSide.none,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+            ),
+            cardTheme: CardThemeData(
+              color: DesignTokens.cardBg,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(DesignTokens.radius),
+                side: const BorderSide(color: DesignTokens.border),
+              ),
+            ),
+            dividerTheme: const DividerThemeData(
+              color: DesignTokens.border,
+              thickness: 1,
+              space: 1,
             ),
             textTheme: const TextTheme(
               headlineLarge: DesignTokens.h1,
+              headlineMedium: DesignTokens.h2,
+              titleMedium: DesignTokens.subtitle,
               bodyMedium: DesignTokens.body,
             ),
           ),

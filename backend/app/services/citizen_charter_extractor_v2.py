@@ -106,10 +106,43 @@ def extract_citizen_charter_services_v2(pages: list[PageExtraction]) -> list[Cha
 # ---------------------------------------------------------------------------
 
 
+def _table_wrapped_fragment_texts(table_regions: list[dict] | None) -> frozenset[str]:
+    """Normalized, casefolded text of every line-wrapped segment of a
+    MULTIline native table cell on this page (PyMuPDF `table.extract()`
+    preserves a visually-wrapped cell as one string with internal
+    newlines -- see `PageExtraction.table_regions`).
+
+    Single-line cells never contribute anything here (splitting on "\\n"
+    yields exactly one segment), so this can only ever suppress a line that
+    is itself one physical row of an already-wrapped cell -- it cannot
+    reject a genuine, standalone service heading, which by construction
+    sits above the table as its own line, not inside any cell.
+    """
+    if not table_regions:
+        return frozenset()
+    fragments: set[str] = set()
+    for region in table_regions:
+        rows = region.get("rows") if isinstance(region, dict) else None
+        if not rows:
+            continue
+        for row in rows:
+            for cell in row or []:
+                cell_text = str(cell or "")
+                if "\n" not in cell_text:
+                    continue
+                segments = [_normalize_space(part) for part in cell_text.split("\n")]
+                segments = [part for part in segments if part]
+                if len(segments) < 2:
+                    continue
+                fragments.update(part.casefold() for part in segments)
+    return frozenset(fragments)
+
+
 def _flatten_pages(pages: list[PageExtraction]) -> list[dict]:
     flat: list[dict] = []
     for page in pages:
         strategy, lines = _build_page_lines(page)
+        wrapped_fragments = _table_wrapped_fragment_texts(getattr(page, "table_regions", None))
         for line in lines:
             flat.append(
                 {
@@ -117,6 +150,7 @@ def _flatten_pages(pages: list[PageExtraction]) -> list[dict]:
                     "text": line["text"],
                     "words": line["words"],
                     "strategy": strategy,
+                    "table_wrapped_fragment": _normalize_space(line["text"]).casefold() in wrapped_fragments,
                 }
             )
     return flat
@@ -271,9 +305,20 @@ def _is_table_noise_cell(text: str) -> bool:
     return bool(_TABLE_NOISE_CELL_RE.match(_normalize_space(text)))
 
 
-def _looks_like_field_or_fragment_line(text: str) -> bool:
+def _looks_like_field_or_fragment_line(
+    text: str, *, allow_step_verb_opener: bool = False
+) -> bool:
     """True for table field labels, OCR crumbs, sentence fragments, page
-    numbers, office-only names, or requirement/time-only fragments."""
+    numbers, office-only names, or requirement/time-only fragments.
+
+    ``allow_step_verb_opener`` suppresses ONLY the step-verb-opener check
+    below (e.g. "Request of X", "Apply for Y") -- every other independent
+    fragment signal (comma, trailing punctuation, TOTAL residue, field
+    labels, brackets, etc.) still applies unconditionally. Used by
+    `_line_is_heading_candidate`'s numbered branch when strong, independent
+    structural evidence (`_has_service_header_cues`) confirms a real
+    service heading follows -- see Phase 6.15/6.16. Defaults to False so
+    every existing caller's behavior is unchanged."""
     cleaned = _normalize_space(text)
     if not cleaned:
         return True
@@ -315,7 +360,7 @@ def _looks_like_field_or_fragment_line(text: str) -> bool:
     # Full sentence / trailing period usually means a step row, not a title.
     if cleaned.endswith("."):
         return True
-    if _STEP_LIKE_TITLE_RE.match(cleaned):
+    if not allow_step_verb_opener and _STEP_LIKE_TITLE_RE.match(cleaned):
         return True
     if re.search(r"\b(?:and|or|of|the|to|in|for|including|with)\s*$", lower):
         return True
@@ -326,15 +371,26 @@ def _looks_like_field_or_fragment_line(text: str) -> bool:
     return False
 
 
-def _has_service_header_cues(idx: int, flat: list[dict]) -> bool:
-    """Real Citizen's Charter services open with a full header + table cues.
-
-    Required nearby signals (same service block, not the whole document):
-    Office/Division, Classification, Type of Transaction, Who May Avail, and
-    either Checklist of Requirements or Client Steps.
+def _service_header_cue_count(idx: int, flat: list[dict]) -> int:
+    """Count (0-5) of how many distinct service-header signals genuinely
+    appear near line `idx`: Office/Division, Classification, Type of
+    Transaction, Who May Avail, and either Checklist of Requirements or
+    Client Steps.
 
     Scanning stops at TOTAL or the next numbered service-looking line so
     mid-table rows cannot borrow the *next* service's header cues.
+
+    A real service page's header block can itself suffer an unrelated
+    label-split reconstruction defect on exactly one field (see
+    Phase 6.17-6.19: "Office or"/"Division:" and "Type of"/"Transaction:"
+    rendered as two separate physical lines with a value wedged between
+    them) without the service itself being bogus -- Phase 6.20 deliberately
+    exposes the cue COUNT, not just an all-5 boolean, so a numbered title
+    that is otherwise completely unambiguous can still be distinguished
+    from genuine non-service noise (e.g. a table-of-contents entry, which
+    carries ZERO of these five signals -- verified empirically against
+    every TOC-area numbered line in this document) even when exactly one
+    header field's own reconstruction failed.
     """
     pieces: list[str] = []
     end = min(idx + 1 + _HEADER_LOOKAHEAD, len(flat))
@@ -355,7 +411,7 @@ def _has_service_header_cues(idx: int, flat: list[dict]) -> bool:
         pieces.append(text)
     window = " ".join(pieces)
     if not window:
-        return False
+        return 0
     has_office = bool(
         re.search(r"office\s*(?:/|or)?\s*division\s*:", window, flags=re.I)
         or re.search(r"(?i)\boffice\s*:", window)
@@ -369,7 +425,14 @@ def _has_service_header_cues(idx: int, flat: list[dict]) -> bool:
         re.search(r"checklist\s+of\s+requirements", window, flags=re.I)
         or re.search(r"client\s+steps?", window, flags=re.I)
     )
-    return has_office and has_class and has_txn and has_who and has_table
+    return sum([has_office, has_class, has_txn, has_who, has_table])
+
+
+def _has_service_header_cues(idx: int, flat: list[dict]) -> bool:
+    """Real Citizen's Charter services open with a full header + table cues:
+    Office/Division, Classification, Type of Transaction, Who May Avail, and
+    either Checklist of Requirements or Client Steps, all five present."""
+    return _service_header_cue_count(idx, flat) == 5
 
 
 def _line_is_heading_candidate(idx: int, flat: list[dict]) -> str | None:
@@ -377,15 +440,78 @@ def _line_is_heading_candidate(idx: int, flat: list[dict]) -> str | None:
     raw = _normalize_space(flat[idx]["text"])
     if not raw:
         return None
+    # A line that is itself one physical row of an already line-wrapped
+    # native table cell (see `_table_wrapped_fragment_texts`) can never be an
+    # independent service title, numbered or not -- a genuine heading is its
+    # own standalone line above the table, never a fragment reconstructed
+    # from splitting one wrapped cell across several geometry-clustered rows.
+    if flat[idx].get("table_wrapped_fragment"):
+        return None
     text_no_pipes = re.sub(r"\s*\|\s*", " ", raw)
 
     numbered = re.match(r"^(\d{1,3})[\.\)]\s+(.{2,90})$", text_no_pipes)
     if numbered:
         title = _normalize_space(numbered.group(2))
-        if _looks_like_field_or_fragment_line(title) or _looks_like_generic_description_title(title):
+        # A narrative description sentence (e.g. "This service provides...")
+        # is never the title itself, regardless of what follows -- allowing
+        # it through here would recreate the Phase 6.11/6.12 class of defect
+        # (a description line being promoted into its own service entry), so
+        # this rejection is never overridden by header-cue evidence.
+        if _looks_like_generic_description_title(title):
             return None
-        if not _has_service_header_cues(idx, flat):
+        # A numbered heading whose own text shape opens with a step-verb
+        # (see `_STEP_LIKE_TITLE_RE`, e.g. "Request of X", "Apply for Y") is
+        # NOT rejected on that basis alone when the surrounding document
+        # structure genuinely supports it being a real service heading:
+        # `_has_service_header_cues` requires Office/Division,
+        # Classification, Type of Transaction, Who May Avail, AND a
+        # Checklist/Client-Steps block to all appear before the next TOTAL
+        # or next real numbered heading -- evidence no incidental table-step
+        # row plausibly carries (verified empirically against every
+        # numbered line in this document's own table of contents: zero
+        # false positives).
+        #
+        # Phase 6.20 correction: the amount of header-cue evidence required
+        # depends on WHY this title would otherwise be rejected.
+        #
+        # A title rejected by any non-step-verb signal (comma, trailing
+        # punctuation, TOTAL residue, field labels, brackets,
+        # generic-description, etc.) is never overridable by header-cue
+        # evidence, regardless of what follows -- those signals are
+        # independent of this logic and must stay unconditional.
+        rejected_ignoring_step_verb = _looks_like_field_or_fragment_line(
+            title, allow_step_verb_opener=True
+        )
+        if rejected_ignoring_step_verb:
             return None
+        is_step_verb_ambiguous = _looks_like_field_or_fragment_line(
+            title, allow_step_verb_opener=False
+        )
+        cue_count = _service_header_cue_count(idx, flat)
+        if is_step_verb_ambiguous:
+            # The ONLY reason this title is in question is its step-verb
+            # opener (e.g. "Request of X") -- require the FULL, unambiguous
+            # 5/5 header block before trusting it, exactly as Phase 6.16
+            # intended (verified empirically: zero false positives against
+            # every numbered line in this document's own table of contents).
+            if cue_count < 5:
+                return None
+        else:
+            # This title is already clean on every independent text-shape
+            # signal -- it was never step-verb-ambiguous in the first place.
+            # Still require STRONG (not necessarily complete) structural
+            # evidence, not zero: a table-of-contents entry is equally clean
+            # on text shape alone but carries ZERO header-cue signals
+            # (verified empirically against this document's own TOC area),
+            # so accepting on text shape alone would reopen exactly that
+            # false-positive class. Requiring at least 4 of 5 signals
+            # tolerates the ONE known, unrelated label-split reconstruction
+            # defect (Office/Division or Type of Transaction rendered as two
+            # physical lines with a value wedged between them -- see
+            # Phase 6.17-6.19) on a genuine service page, while still
+            # rejecting content with no real structural evidence at all.
+            if cue_count < 4:
+                return None
         return title
 
     if len(text_no_pipes) > 90 or len(text_no_pipes.split()) > 14:
@@ -512,6 +638,29 @@ _SECTION_BOUNDARY_TITLE_RE = re.compile(
     r"non-?frontline|chapter\s+\d+|article\s+\d+)\b",
     re.I,
 )
+
+# A document-level chapter/division divider (e.g. "XXV. CENTER FOR INNOVATION
+# AND EMERGING TECHNOLOGIES") is sometimes mis-detected as its own placeholder
+# "service" by _detect_service_blocks -- a separate, pre-existing issue this
+# function does not fix. What matters for _merge_title_bound_placeholder_
+# services is that such a heading's own text must never be adopted as a real
+# service's merged title: structural signal only (roman-numeral prefix +
+# substantially uppercase remainder), never a specific phrase/office denylist,
+# so it generalizes to any chapter heading the document happens to contain.
+_CHAPTER_OR_SECTION_HEADING_RE = re.compile(r"^[IVXLCDM]{1,6}\.\s+(.+)$")
+
+
+def _looks_like_chapter_or_section_heading(title: str) -> bool:
+    cleaned = _normalize_space(title)
+    match = _CHAPTER_OR_SECTION_HEADING_RE.match(cleaned)
+    if not match:
+        return False
+    remainder = match.group(1)
+    letters = [c for c in remainder if c.isalpha()]
+    if len(letters) < 3:
+        return False
+    upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
+    return upper_ratio >= 0.9
 
 
 def _strip_heading_number(title: str) -> str:
@@ -978,6 +1127,26 @@ def _merge_title_bound_placeholder_services(
     i = 0
     while i < len(services):
         cur = services[i]
+        # A bare chapter/section divider (e.g. "XXIII. NATIONAL SERVICE
+        # TRAINING PROGRAM") is sometimes mis-detected by
+        # _detect_service_blocks as its own standalone candidate. It is never
+        # a service, so it must not survive as one -- but it is also never
+        # merged into a neighbor (it carries no real content worth keeping,
+        # unlike a genuine placeholder heading whose own title names a real
+        # service). Detected purely structurally (roman-numeral prefix +
+        # substantially-uppercase remainder, see
+        # _looks_like_chapter_or_section_heading) and only when it has no
+        # structured body of its own -- never because it merely lacks a
+        # body, and never by matching a specific phrase, office name, or page
+        # number (Phase 6.14). A chapter-looking title that genuinely DOES
+        # carry real office/requirements/steps content is left untouched,
+        # since that would be surprising, unverified evidence of an actual
+        # service rather than a divider.
+        if _looks_like_chapter_or_section_heading(
+            cur.service_title
+        ) and not _service_has_structured_body(cur):
+            i += 1
+            continue
         if i + 1 < len(services):
             nxt = services[i + 1]
             pages_adjacent = (
@@ -994,6 +1163,21 @@ def _merge_title_bound_placeholder_services(
                     or _looks_like_field_or_fragment_line(nxt.service_title)
                     or not _filled(nxt.service_title)
                     or _titles_look_like_wrapped_heading(cur.service_title, nxt.service_title)
+                    # General case: a placeholder heading whose OWN title is
+                    # already a real, specific-looking service name (not a
+                    # chapter/section divider, not generic narrative text, not
+                    # a field/fragment line) is itself sufficient evidence that
+                    # the following well-formed title is actually that
+                    # heading's own one-line description, mis-promoted into an
+                    # independent candidate (e.g. a source line with no
+                    # trailing period). This does not require nxt's title to
+                    # look suspicious on its own -- see Phase 6.11/6.12.
+                    or (
+                        _filled(cur.service_title)
+                        and not _looks_like_chapter_or_section_heading(cur.service_title)
+                        and not _looks_like_generic_description_title(cur.service_title)
+                        and not _looks_like_field_or_fragment_line(cur.service_title)
+                    )
                 )
             ):
                 # Prefer composed title when the sibling heading is a wrap continuation

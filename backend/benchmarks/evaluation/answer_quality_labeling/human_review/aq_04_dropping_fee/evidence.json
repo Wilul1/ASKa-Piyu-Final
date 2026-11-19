@@ -1,0 +1,64 @@
+{
+  "case_id": "aq_04_dropping_fee_multi_document",
+  "source_question_id": "rag_benchmark_04",
+  "phase": "2B_human_review_evidence_only",
+  "pending_dataset_modified": false,
+  "winner_source_selected": false,
+  "original_question": "How much does it cost to drop a subject?",
+  "sources": [
+    {
+      "document_name_and_version": "Citizen's Charter 2026, 1st Edition (PDF created 2026-03-31 +08:00)",
+      "source_pdf_path": "backend/data/documents/6c3d0f00-fd53-43be-943f-09e1e7ddbce4/Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+      "pdf_index": 98,
+      "printed_footer": "90",
+      "chroma_page": 98,
+      "exact_fee": "P30.00/unit",
+      "charging_unit": "per unit",
+      "who_may_avail": "New and Transferee Students",
+      "office_or_division": "Colleges",
+      "visual": "visual_charter_pdf098_printed_footer_90.png"
+    },
+    {
+      "document_name_and_version": "LSPU Student Handbook 2021 (header Date December 2021; Doc. No. LSPU-PM-LSH-01 Rev 0)",
+      "source_pdf_path": "backend/data/documents/d9bf05ce-fcab-4629-ad4c-4f869481189f/LSPU Student Handbook.pdf",
+      "section_start_pdf_index": 39,
+      "section_start_printed": "Page: 30 of 183",
+      "fee_sentence_pdf_index": 40,
+      "fee_sentence_printed": "Page: 31 of 183",
+      "chroma_page_start": 39,
+      "chroma_page_end": 40,
+      "exact_statement": "4.3. A dropping fee of P20/unit is required. (LSPU BOR 1046, s.2012)",
+      "charging_unit": "per unit",
+      "visual": [
+        "visual_handbook_pdf039_printed_page_30.png",
+        "visual_handbook_pdf040_printed_page_31.png"
+      ]
+    }
+  ],
+  "table_headers_charter": ["CLIENT STEPS", "AGENCY ACTIONS", "FEES TO BE PAID", "PROCESSING TIME", "PERSON RESPONSIBLE"],
+  "ocr_vs_visual": {
+    "chroma_charter_chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+    "chroma_charter_fees_field": "P30.00",
+    "visual_charter_total": "P30.00/unit",
+    "ocr_error": "Chroma dropped /unit; pending proposed answer inherited flat P30.00",
+    "chroma_handbook_chunk_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+    "handbook_ocr_matches_visual": true,
+    "same_page_other_service": "Enrollment Advising fee printed 60 is not the dropping fee"
+  },
+  "conflict_analysis": {
+    "apparent_flat_P30_vs_P20_per_unit": "OCR artifact; not real",
+    "real_conflict": "P30.00/unit (Charter 2026) vs P20/unit (Handbook 2021 / BOR 1046 s.2012)",
+    "possible_different_circumstances": "Charter Who may avail is New and Transferee Students; Handbook 4.3 is in the general dropping-from-a-course section",
+    "winner_selected": false
+  },
+  "proposed_reference_answer_from_pending_dataset": "Two official LSPU sources disagree. The Citizen's Charter 2026 1st Edition Dropping of Subjects card (Colleges, page 98) lists Fees: P30.00. The Student Handbook Dropping Grades Policy (page 39) states a dropping fee of P20/unit (LSPU BOR 1046, s.2012). A human reviewer must choose the in-force figure; this draft does not pick a winner.",
+  "recommended_human_decision": "revise",
+  "recommended_revised_reference_answer_NOT_GOLD": "Two official LSPU sources state different per-unit dropping fees and do not, by themselves, establish a single in-force amount. The Citizen's Charter 2026, 1st Edition, Dropping of Subjects (Colleges; Who may avail: New and Transferee Students) lists P30.00/unit. The Student Handbook 2021, Sec. 4.3, states P20/unit is required (LSPU BOR 1046, s.2012). A later authoritative fee schedule is required before this can be a single-number gold answer.",
+  "questions_to_resolve_before_approving": [
+    "Accept Charter P30.00/unit from the page image (not flat P30.00)?",
+    "Does Who may avail: New and Transferee Students limit the Charter fee?",
+    "Is Handbook P20/unit still in force, superseded, or unknown?",
+    "Should gold be a conflict statement, a single fee, or insufficient evidence?",
+    "Which page numbers for citations (PDF 98 vs printed 90; PDF 40 vs Chroma 39)?"
+  ]
+}

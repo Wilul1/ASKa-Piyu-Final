@@ -7,8 +7,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.session import initialize_database
-from app.models.db_models import Office
-from app.services.ticket_office_resolver import UnresolvedOfficeLabelError, resolve_office_for_ticket
+from app.models.db_models import Office, Ticket, User
+from app.services.ticket_office_resolver import (
+    UnresolvedOfficeLabelError,
+    backfill_unresolved_ticket_offices,
+    resolve_office_for_ticket,
+)
 from app.services.ticketing import triage_ticket
 
 
@@ -376,5 +380,147 @@ def test_unresolved_specific_office_is_distinguishable_from_genuine_osa_default(
         # The two must be clearly distinguishable, not silently identical.
         assert unresolved["assigned_office_id"] != general["assigned_office_id"]
         assert unresolved["assigned_office"] != general["assigned_office"]
+    finally:
+        session.close()
+
+
+# Live campus office names as of 2026-11-08 (heroku aska-piyu). Keep this in
+# sync with production so a new taxonomy office without a seeded match fails
+# CI instead of silently becoming Needs Routing.
+_LIVE_CAMPUS_OFFICE_NAMES = (
+    "Accounting Unit",
+    "Admission and Testing Services",
+    "Cashier Unit",
+    "College of Arts and Sciences",
+    "College of Business Administration and Accountancy",
+    "College of Computer Studies",
+    "College of Engineering",
+    "College of Hospitality Management and Tourism",
+    "College of Industrial Technology",
+    "College of Teacher Education",
+    "Guidance Office",
+    "Human Resource Management Office",
+    "ICT Office",
+    "Information and Communications Technology Services",
+    "Library",
+    "Medical Clinic",
+    "Office of Student Affairs",
+    "Registrar",
+    "Scholarship and Financial Assistance Office",
+)
+
+# Taxonomy labels with no seeded campus office. They must stay unrouted
+# (Needs Routing) rather than being silently assigned to OSA.
+_UNSEEDED_TAXONOMY_OFFICES = {
+    "College of Agriculture",
+    "Graduate Studies Office",
+    "Office of the President",
+}
+
+
+def test_scholarship_office_resolves_to_sfa():
+    session = _session_with_offices(*_LIVE_CAMPUS_OFFICE_NAMES)
+    try:
+        office_id, office_name = resolve_office_for_ticket(
+            session, "Scholarship Office", allow_default_fallback=False
+        )
+        assert office_name == "Scholarship and Financial Assistance Office"
+        assert office_id
+    finally:
+        session.close()
+
+
+def test_scholarship_question_triages_to_sfa_end_to_end():
+    session = _session_with_offices(*_LIVE_CAMPUS_OFFICE_NAMES)
+    try:
+        result = triage_ticket(
+            "How do I apply for a scholarship grant?",
+            "I need the requirements for student financial assistance this semester.",
+            session=session,
+        )
+        assert result["assigned_office"] == "Scholarship and Financial Assistance Office"
+        assert result["assigned_office_id"]
+        assert "Student Affairs" not in result["assigned_office"]
+    finally:
+        session.close()
+
+
+def test_admissions_office_resolves_to_admission_and_testing_services():
+    session = _session_with_offices(*_LIVE_CAMPUS_OFFICE_NAMES)
+    try:
+        office_id, office_name = resolve_office_for_ticket(
+            session, "Admissions Office", allow_default_fallback=False
+        )
+        assert office_name == "Admission and Testing Services"
+        assert office_id
+    finally:
+        session.close()
+
+
+def test_every_taxonomy_office_is_mapped_or_explicitly_unseeded():
+    """Fail CI when taxonomy gains an office label that production cannot route."""
+    from app.services.knowledge_taxonomy import load_taxonomy
+
+    load_taxonomy.cache_clear()
+    labels = {sub.office for category in load_taxonomy() for sub in category.subcategories}
+    assert labels, "taxonomy produced no office labels"
+
+    session = _session_with_offices(*_LIVE_CAMPUS_OFFICE_NAMES)
+    try:
+        unexpected_unresolved: list[str] = []
+        unexpected_resolved: list[str] = []
+        for label in sorted(labels):
+            try:
+                _, office_name = resolve_office_for_ticket(
+                    session, label, allow_default_fallback=False
+                )
+            except UnresolvedOfficeLabelError:
+                if label not in _UNSEEDED_TAXONOMY_OFFICES:
+                    unexpected_unresolved.append(label)
+                continue
+            if label in _UNSEEDED_TAXONOMY_OFFICES:
+                unexpected_resolved.append(f"{label} -> {office_name}")
+        assert not unexpected_unresolved, unexpected_unresolved
+        assert not unexpected_resolved, unexpected_resolved
+    finally:
+        session.close()
+
+
+def test_backfill_attaches_scholarship_ticket_to_sfa():
+    session = _session_with_offices(*_LIVE_CAMPUS_OFFICE_NAMES)
+    try:
+        student = User(
+            email="student-sfa@example.com",
+            password_hash="unused",
+            full_name="SFA Student",
+            role="student",
+        )
+        session.add(student)
+        session.flush()
+        ticket = Ticket(
+            id="TK-20261104-5FF042",
+            user_id=student.id,
+            original_question="About scholarships",
+            description="Need scholarship information.",
+            category="Scholarships & Financial Policies",
+            assigned_office="Scholarship Office",
+            assigned_office_id=None,
+            priority="Low",
+            status="Open",
+        )
+        session.add(ticket)
+        session.commit()
+
+        updated = backfill_unresolved_ticket_offices(session)
+        session.commit()
+
+        assert updated == [
+            (ticket.id, "Scholarship Office", "Scholarship and Financial Assistance Office")
+        ]
+        session.refresh(ticket)
+        assert ticket.assigned_office == "Scholarship and Financial Assistance Office"
+        assert ticket.assigned_office_id
+        sfa = session.query(Office).filter(Office.name == "Scholarship and Financial Assistance Office").one()
+        assert ticket.assigned_office_id == sfa.id
     finally:
         session.close()

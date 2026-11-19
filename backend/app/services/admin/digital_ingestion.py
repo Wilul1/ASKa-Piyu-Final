@@ -37,6 +37,7 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -57,9 +58,19 @@ from app.services.admin.knowledge_base_pipeline import (
     suspicious_unit_diagnostics,
     validation_report,
 )
+from app.services.admin.handbook_lightweight_extraction import (
+    STATUS_ATTEMPTED_NO_MATCH,
+    STATUS_ELIGIBLE,
+    STATUS_ERROR,
+    extract_structured_handbook_data,
+    reconstruct_page_extractions,
+)
 from app.services.admin.ocr_worker_client import OcrWorkerError, call_ocr_worker
 from app.services.chroma_store import KnowledgeBaseStore, get_knowledge_base_store
-from app.services.chunking import DocumentChunk, chunk_document_text
+from app.services.chunking import DocumentChunk
+from app.services.common_representation.adapters import adapt_generic_text, adapt_handbook_document
+from app.services.common_representation.chunker import chunk_document_record
+from app.services.handbook_policy_processor import build_handbook_policy_document, is_handbook_policy_text
 from app.services.knowledge_taxonomy import enrich_chunks_with_category_metadata
 from app.services.text_cleaner import (
     _ARTICLE_CHAPTER_HEADING_RE,
@@ -103,6 +114,24 @@ class DigitalIngestionReconciliationError(RuntimeError):
     wrongly imply it's simply safe to retry) and never silently
     'published'. The message always carries whatever document_id a human
     needs to find the leftover chunks.
+    """
+
+
+class DigitalIngestionHandbookReviewRequiredError(DigitalIngestionError):
+    """Raised by build_lightweight_publish (2026-10-27 audit fix) when the
+    uploaded document looks like a structured, disciplinary-table-shaped
+    policy/handbook document and no reviewed_text override was supplied.
+
+    This legacy synchronous route (POST /admin/knowledge-base/ingest) only
+    ever applies generic chunking and has no job/review/warning mechanism
+    of its own (unlike the /extract -> /jobs/{id}/index workflow, which
+    attempts structured extraction and surfaces an explicit warning via
+    status_detail if it can't confirm the table). Silently publishing such
+    a document here would skip the structured correction with no record of
+    that having happened. A subclass of DigitalIngestionError specifically
+    so the existing route handler's `except DigitalIngestionError` already
+    maps this to an HTTP 422 with this exception's message, with no route
+    change required.
     """
 
 
@@ -699,6 +728,46 @@ def _attach_section_headings(chunks: list[DocumentChunk], cleaned_text: str) -> 
     return updated
 
 
+def _apply_lightweight_compat_metadata(
+    chunks: list[DocumentChunk],
+    *,
+    document_type: str,
+    title: str,
+    source_filename: str,
+) -> list[DocumentChunk]:
+    """Non-destructive compatibility fill for metadata keys the shared
+    global chunker (app.services.common_representation.chunker) doesn't
+    itself produce, but this module's own downstream consumers --
+    knowledge_units_for_extraction/chunk_preview/validation_report (via
+    knowledge_base_pipeline.py, reused unchanged here) and, on the
+    generic path only, enrich_chunks_with_category_metadata -- read
+    directly. Every key is filled only where missing/falsy, never
+    overwriting a value the chunker, an adapter, or an earlier step
+    (e.g. _attach_section_headings) already set correctly. section_heading
+    specifically: the Handbook adapter's chunker output already carries
+    the equivalent signal under "section"/"article"/"chapter" (chunker.py's
+    own _build_metadata); this mirrors it into "section_heading" too, the
+    exact key this module's Handbook branch has always set, so no
+    consumer that reads that literal key name loses the signal."""
+    result: list[DocumentChunk] = []
+    for chunk in chunks:
+        metadata = dict(chunk.metadata or {})
+        metadata.setdefault("document_type", document_type)
+        if not metadata.get("title"):
+            metadata["title"] = title
+        metadata.setdefault("source_document", source_filename)
+        if "page_number" not in metadata and metadata.get("page_start") is not None:
+            metadata["page_number"] = metadata["page_start"]
+        if not metadata.get("section_heading"):
+            fallback_heading = metadata.get("section") or metadata.get("article") or metadata.get("chapter")
+            if fallback_heading:
+                metadata["section_heading"] = fallback_heading
+        result.append(
+            DocumentChunk(text=chunk.text, chunk_index=chunk.chunk_index, char_start=chunk.char_start, metadata=metadata)
+        )
+    return result
+
+
 def build_chunks_with_pages(
     page_texts: list[str],
     page_offsets: list[int],
@@ -713,23 +782,34 @@ def build_chunks_with_pages(
     if not cleaned.strip():
         raise DigitalIngestionError("No usable text remained after cleaning.")
 
-    raw_chunks = chunk_document_text(cleaned, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    # Stage 4B: reuses the shared global chunker (app.services.
+    # common_representation) instead of calling chunk_document_text
+    # directly, so this path gets the same hard_max_chars ceiling the
+    # full/local pipeline already enforces (Stage 4A Task 4/6) -- this
+    # path had no size cap at all before. target_chars=chunk_size (this
+    # function's existing parameter, always settings.chunk_max_chars at
+    # every call site) keeps normal packing behavior unchanged;
+    # max_chars=settings.chunk_hard_max_chars is the new hard ceiling.
+    record = adapt_generic_text(cleaned, document_id=source_filename, source_filename=source_filename)
+    raw_chunks = chunk_document_record(
+        record,
+        target_chars=chunk_size,
+        max_chars=settings.chunk_hard_max_chars,
+        overlap_chars=chunk_overlap,
+    )
     chunks = [
         DocumentChunk(
             text=c.text,
             chunk_index=c.chunk_index,
             char_start=c.char_start,
-            metadata={
-                **(c.metadata or {}),
-                "document_type": "information",
-                "title": title,
-                "source_document": source_filename,
-                "page_number": _page_for_offset(c.char_start, page_offsets),
-            },
+            metadata={**(c.metadata or {}), "page_number": _page_for_offset(c.char_start, page_offsets)},
         )
         for c in raw_chunks
     ]
     chunks = _attach_section_headings(chunks, cleaned)
+    chunks = _apply_lightweight_compat_metadata(
+        chunks, document_type="information", title=title, source_filename=source_filename
+    )
     # allow_llm=False: this path must stay fast and free of per-chunk LLM
     # calls (classify_chunk's Groq fallback can take minutes and cost real
     # API usage across a multi-page document) -- rule/similarity-only
@@ -747,10 +827,19 @@ def _mirror_page_range_metadata(chunks: list[DocumentChunk]) -> list[DocumentChu
     read page_start/page_end; this pipeline's chunks only carry page_number
     (consumed separately by citation grounding -- see chroma_store.py /
     question_answering.py). Purely additive: page_number is left untouched.
+
+    Checks the VALUE of page_start, not merely whether the key is present
+    (Stage 4B): the shared global chunker (app.services.common_representation)
+    always sets page_start explicitly -- None when no real page range is
+    known, e.g. for generic text -- unlike this pipeline's own pre-Stage-4B
+    chunks, which simply omitted the key. A key-presence check would treat
+    an explicit None as "already set" and skip the mirror, silently losing
+    page_number's value. A real, already-present page_start (e.g. a
+    Handbook unit's true page range) is left exactly as-is either way.
     """
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        if "page_number" in metadata and "page_start" not in metadata:
+        if "page_number" in metadata and metadata.get("page_start") is None:
             metadata["page_start"] = metadata["page_number"]
             metadata["page_end"] = metadata["page_number"]
     return chunks
@@ -844,36 +933,58 @@ def _attach_unit_diagnostics(units: list[dict], page_texts: list[str]) -> list[d
     return units
 
 
+def _structuring_method_from_chunks(chunks: list[DocumentChunk]) -> str:
+    """Reads back the structuring_method _tag_structuring_method() already
+    stamped onto every chunk from a single chunks_from_pages_or_reviewed_text()
+    call (all chunks from one call share the same tag) -- so callers report
+    what actually ran (generic / structured_handbook_v1 / the fallback-from-
+    structured-failure variant) instead of a hardcoded label that could go
+    stale the moment the structured path is exercised."""
+    if not chunks:
+        return STRUCTURING_METHOD_GENERIC
+    return str((chunks[0].metadata or {}).get("structuring_method") or STRUCTURING_METHOD_GENERIC)
+
+
 def assemble_preview_payload(
     page_texts: list[str],
     *,
     title: str,
     source_filename: str,
     extraction_method: str,
+    handbook_structured: dict | None = None,
 ) -> dict[str, Any]:
     """Pure (page_texts -> ExtractDocumentResponse-shaped dict) assembly --
     cleaning, chunking, and the cheap preview/validation/pipeline-stage
     helpers. No network/OCR call, no Chroma write. Shared by:
       - build_lightweight_preview (digital-fast synchronous path, where
-        page_texts was just extracted/OCR'd in the same call), and
+        page_texts was just extracted/OCR'd in the same call -- never has a
+        handbook_structured payload yet, so this stays on the generic path), and
       - build_preview_from_job (rebuilds the SAME shape on demand from a
         review_ready/indexing/published job's persisted extracted_pages_json
         -- see that function's docstring for why this is cheap enough to
-        never need to be persisted itself).
+        never need to be persisted itself; now also passes through that
+        job's persisted handbook_structured, if any).
+
+    handbook_structured is optional and defaults to None, which keeps this
+    function's chunk-building byte-for-byte on the existing generic path for
+    every caller that doesn't have one. When present and eligible,
+    chunks_from_pages_or_reviewed_text() (the same, already-published-path-
+    tested function process_indexing_job uses) builds real Handbook logical
+    units instead of fixed-size generic chunks -- reused here, not
+    duplicated, and with its own built-in fallback-to-generic safety net on
+    any structured-build failure.
     """
-    page_offsets = _page_offsets_from_texts(page_texts)
     full_text = "\n".join(page_texts)
     cleaned = clean_extracted_text(full_text, page_texts=page_texts)
 
-    chunks = build_chunks_with_pages(
+    chunks = chunks_from_pages_or_reviewed_text(
         page_texts,
-        page_offsets,
-        chunk_size=settings.chunk_max_chars,
-        chunk_overlap=settings.chunk_overlap,
+        None,
         title=title,
         source_filename=source_filename,
+        handbook_structured=handbook_structured,
     )
-    chunks = _mirror_page_range_metadata(chunks)
+    structuring_method = _structuring_method_from_chunks(chunks)
 
     units = knowledge_units_for_extraction(None, chunks, kb_document_type=None)
     units = _attach_unit_diagnostics(units, page_texts)
@@ -881,7 +992,7 @@ def assemble_preview_payload(
     validation = validation_report(document_type="information", units=units, chunks=chunks)
     stages = pipeline_stages(
         extraction_method=extraction_method,
-        structuring_method="generic_chunking",
+        structuring_method=structuring_method,
         indexed=False,
     )
 
@@ -897,13 +1008,18 @@ def assemble_preview_payload(
         "extracted_text": cleaned,
         "page_count": len(page_texts),
         "extraction_method": extraction_method,
-        "structuring_method": "generic_chunking",
+        "structuring_method": structuring_method,
         "pipeline_stages": stages,
         "structured": _lightweight_structured_response(cleaned),
         "diagnostic_report": None,
         "validation_report": validation,
         "detected_document_type": _lightweight_detected_document_type(
-            reason="Lightweight cloud-safe pipeline: generic chunking, no document-type detection."
+            reason=(
+                "Lightweight cloud-safe pipeline: structured handbook chunking, "
+                "no document-type detection."
+                if structuring_method == STRUCTURING_METHOD_HANDBOOK_V1
+                else "Lightweight cloud-safe pipeline: generic chunking, no document-type detection."
+            )
         ),
         "knowledge_units": units,
         "chunk_preview": previews,
@@ -939,22 +1055,120 @@ def build_lightweight_preview(
     )
 
 
+STRUCTURING_METHOD_GENERIC = "generic_chunking"
+STRUCTURING_METHOD_HANDBOOK_V1 = "structured_handbook_v1"
+# Distinct from STRUCTURING_METHOD_GENERIC: this document WAS eligible for
+# structured handbook processing, but it raised and generic chunking was
+# used as a safe fallback -- never reported as if it were the normal,
+# intentional generic case (non-handbook document, or an explicit
+# reviewed_text override). See chunks_from_pages_or_reviewed_text's except
+# branch and process_indexing_job's durable-warning handling below.
+STRUCTURING_METHOD_GENERIC_FALLBACK = "generic_chunking_fallback_from_structured_failure"
+
+
+def _structured_fallback_warning(chunks: list[DocumentChunk]) -> str | None:
+    """Returns a durable, admin-readable warning if any published chunk is
+    tagged STRUCTURING_METHOD_GENERIC_FALLBACK (structured handbook
+    processing was eligible but failed, and generic chunking was used
+    instead), or None for every other case (not a handbook, or structured
+    processing succeeded, or a reviewed_text override intentionally chose
+    generic chunking) -- those remain exactly as unremarkable as before.
+    Checking all chunks, not just the first, since _tag_structuring_method
+    always tags a batch uniformly, but this must never assume that rather
+    than verify it.
+    """
+    if any((c.metadata or {}).get("structuring_method") == STRUCTURING_METHOD_GENERIC_FALLBACK for c in chunks):
+        return (
+            "Structured handbook-table processing was attempted for this document but failed "
+            "during indexing; generic chunking was published instead (see server logs for the "
+            "exact error). The disciplinary-offense table correction was NOT applied. Review and "
+            "re-index via Extract & Structure once the underlying issue is resolved."
+        )
+    return None
+
+
+def _tag_structuring_method(chunks: list[DocumentChunk], method: str) -> list[DocumentChunk]:
+    """DocumentChunk is a frozen dataclass; mutate the metadata dict's
+    contents in place (never reassign the frozen `metadata` attribute
+    itself) when it already exists, or replace the chunk via
+    dataclasses.replace in the (not currently observed) case it's None."""
+    tagged: list[DocumentChunk] = []
+    for chunk in chunks:
+        if chunk.metadata is None:
+            tagged.append(replace(chunk, metadata={"structuring_method": method}))
+            continue
+        chunk.metadata["structuring_method"] = method
+        tagged.append(chunk)
+    return tagged
+
+
+def _chunks_from_handbook_document(handbook, *, title: str, source_filename: str) -> list[DocumentChunk]:
+    """Converts a HandbookPolicyDocument's units into DocumentChunks via
+    the shared global chunker (app.services.common_representation),
+    reusing adapt_handbook_document unmodified -- the same adapter the
+    (unrelated, local/Docker-only) "full" pipeline already uses (Stage
+    4A Task 4). This module's import graph still never picks up
+    knowledge_document_types/structured_document_parser: that dependency
+    boundary is unaffected, since adapt_handbook_document/
+    chunk_document_record only need app.services.chunking and
+    app.services.handbook_policy_processor, both already imported here.
+
+    Unlike the pre-Stage-4B one-chunk-per-unit construction this replaces,
+    an oversized unit is now split at settings.chunk_hard_max_chars --
+    this path had no size cap at all before.
+    """
+    record = adapt_handbook_document(handbook, document_id=source_filename)
+    # Preserve the one existing per-unit tag adapt_handbook_document
+    # doesn't itself carry: a unit originally tagged with some
+    # document_type other than "information" (e.g. a form embedded in a
+    # handbook). record.units is a plain, non-frozen dataclass list in
+    # the same order as handbook.units (confirmed: adapt_handbook_document
+    # builds it via a single enumerate() pass) -- mutated here, before
+    # chunking, so chunk_document_record's per-unit searchable_fields
+    # passthrough carries it onto every resulting chunk from that unit.
+    for structural_unit, raw_unit in zip(record.units, handbook.units, strict=True):
+        previous_type = raw_unit.metadata.get("document_type")
+        if previous_type and previous_type != "information":
+            structural_unit.searchable_fields["source_document_type"] = previous_type
+
+    chunks = chunk_document_record(
+        record,
+        target_chars=settings.chunk_max_chars,
+        max_chars=settings.chunk_hard_max_chars,
+        overlap_chars=settings.chunk_overlap,
+    )
+    return _apply_lightweight_compat_metadata(
+        chunks, document_type="information", title=title, source_filename=source_filename
+    )
+
+
 def chunks_from_pages_or_reviewed_text(
     page_texts: list[str],
     reviewed_text: str | None,
     *,
     title: str,
     source_filename: str,
+    handbook_structured: dict | None = None,
 ) -> list[DocumentChunk]:
     """Build chunks either from the original (possibly OCR'd) page texts, or
     from the admin's edited reviewed_text when provided -- shared by
     build_lightweight_publish (legacy-shaped, re-OCRs/re-extracts upstream of
-    this) and process_indexing_job (reuses persisted page texts, never
-    re-OCRs). The admin's free-text edit has no page boundaries of its own,
-    so it's treated as a single page, exactly like the legacy /ingest path's
-    equivalent reviewed_text override already accepts (see
-    knowledge_base_pipeline._best_review_text) -- page_number/page_start/
-    page_end all collapse to 1 for every resulting chunk in that case.
+    this, never passes handbook_structured) and process_indexing_job (reuses
+    persisted page texts, never re-OCRs, passes the job's persisted
+    handbook_structured payload when present). The admin's free-text edit
+    has no page boundaries of its own, so it's treated as a single page,
+    exactly like the legacy /ingest path's equivalent reviewed_text override
+    already accepts (see knowledge_base_pipeline._best_review_text) --
+    page_number/page_start/page_end all collapse to 1 for every resulting
+    chunk in that case. A reviewed_text override also means the admin's
+    free-text edit, not the table structure, is authoritative, so the
+    structured path is never used when reviewed_text is non-empty,
+    regardless of handbook_structured.
+
+    Every resulting chunk's metadata carries a "structuring_method" tag
+    ("generic_chunking" or "structured_handbook_v1") so what actually ran is
+    verifiable from the published chunk itself, never merely assumed from
+    which code path was attempted.
     """
     reviewed = (reviewed_text or "").strip()
     if reviewed:
@@ -966,16 +1180,58 @@ def chunks_from_pages_or_reviewed_text(
             title=title,
             source_filename=source_filename,
         )
-    else:
-        chunks = build_chunks_with_pages(
-            page_texts,
-            _page_offsets_from_texts(page_texts),
-            chunk_size=settings.chunk_max_chars,
-            chunk_overlap=settings.chunk_overlap,
-            title=title,
-            source_filename=source_filename,
-        )
-    return _mirror_page_range_metadata(chunks)
+        return _tag_structuring_method(_mirror_page_range_metadata(chunks), STRUCTURING_METHOD_GENERIC)
+
+    if handbook_structured is not None and handbook_structured.get("status") == STATUS_ELIGIBLE:
+        try:
+            pdf_pages = reconstruct_page_extractions(page_texts, handbook_structured)
+            raw = "\n\n".join(
+                f"--- Page {i + 1} ---\n{(text or '').strip()}"
+                for i, text in enumerate(page_texts)
+                if (text or "").strip()
+            )
+            handbook = build_handbook_policy_document(
+                raw_text=raw,
+                page_texts=page_texts,
+                source_title=title,
+                pdf_pages=pdf_pages,
+            )
+            chunks = _chunks_from_handbook_document(handbook, title=title, source_filename=source_filename)
+            if not chunks:
+                raise DigitalIngestionError("Structured handbook processing produced zero units.")
+            return _tag_structuring_method(chunks, STRUCTURING_METHOD_HANDBOOK_V1)
+        except Exception:
+            # Never let a partially-built structured result reach the
+            # caller -- fall straight through to the generic path below,
+            # but tagged distinctly from the normal/intentional generic
+            # case (STRUCTURING_METHOD_GENERIC_FALLBACK, not
+            # STRUCTURING_METHOD_GENERIC) so this is never indistinguishable
+            # from "this document was never eligible for structured
+            # processing in the first place" -- see process_indexing_job's
+            # durable status_detail handling, which reads this exact tag.
+            logger.exception(
+                "Structured handbook chunk-building failed for %s; falling back to generic chunking.",
+                source_filename,
+            )
+            chunks = build_chunks_with_pages(
+                page_texts,
+                _page_offsets_from_texts(page_texts),
+                chunk_size=settings.chunk_max_chars,
+                chunk_overlap=settings.chunk_overlap,
+                title=title,
+                source_filename=source_filename,
+            )
+            return _tag_structuring_method(_mirror_page_range_metadata(chunks), STRUCTURING_METHOD_GENERIC_FALLBACK)
+
+    chunks = build_chunks_with_pages(
+        page_texts,
+        _page_offsets_from_texts(page_texts),
+        chunk_size=settings.chunk_max_chars,
+        chunk_overlap=settings.chunk_overlap,
+        title=title,
+        source_filename=source_filename,
+    )
+    return _tag_structuring_method(_mirror_page_range_metadata(chunks), STRUCTURING_METHOD_GENERIC)
 
 
 def build_lightweight_publish(
@@ -1004,6 +1260,33 @@ def build_lightweight_publish(
     source_document = filename or "Untitled document"
 
     page_texts, _page_offsets, extraction_method = _extract_or_ocr(file_bytes)
+
+    # 2026-10-27 audit fix: this route has no job/review/warning mechanism
+    # of its own (see DigitalIngestionHandbookReviewRequiredError), so a
+    # detected handbook/policy document with a disciplinary-offense table
+    # must not be silently published with generic chunking through here.
+    # Only the cheap, pure-text classification is run (never find_tables()/
+    # word-box extraction) -- no risk of recreating the H12 timeout. Scoped
+    # to the pure-digital extraction method and no reviewed_text, exactly
+    # like process_extraction_preview_job's own structured-extraction gate,
+    # so an explicit reviewed_text override (an intentional admin choice)
+    # and OCR-required documents (never eligible for structured processing
+    # either way) are both unaffected.
+    reviewed = (reviewed_text or "").strip()
+    if (
+        not reviewed
+        and extraction_method == "pymupdf_digital"
+        and is_handbook_policy_text("\n".join(page_texts))
+    ):
+        raise DigitalIngestionHandbookReviewRequiredError(
+            "This document looks like a structured policy/handbook document (e.g. the LSPU "
+            "Student Handbook) with a disciplinary-offense table. This endpoint only applies "
+            "generic chunking and cannot preserve that table's structure. Use the Extract & "
+            "Structure workflow instead: POST /admin/knowledge-base/extract, review the result, "
+            "then POST /admin/knowledge-base/jobs/{job_id}/index, which supports structured "
+            "extraction for this document type. If you intentionally want generic chunking for "
+            "this document, resubmit with an explicit reviewed_text value."
+        )
 
     chunks = chunks_from_pages_or_reviewed_text(
         page_texts, reviewed_text, title=display_title, source_filename=source_document
@@ -1082,11 +1365,18 @@ def build_lightweight_publish(
 # rather than stored.
 
 
-def extracted_pages_payload(page_texts: list[str], extraction_method: str) -> str:
-    return json.dumps({"pages": page_texts, "extraction_method": extraction_method})
+def extracted_pages_payload(
+    page_texts: list[str],
+    extraction_method: str,
+    handbook_structured: dict | None = None,
+) -> str:
+    payload: dict[str, object] = {"pages": page_texts, "extraction_method": extraction_method}
+    if handbook_structured is not None:
+        payload["handbook_structured"] = handbook_structured
+    return json.dumps(payload)
 
 
-def load_extracted_pages(job: IngestionJob) -> tuple[list[str], str]:
+def load_extracted_pages(job: IngestionJob) -> tuple[list[str], str, dict | None]:
     if not job.extracted_pages_json:
         raise DigitalIngestionError(
             f"Job {job.id} has no persisted extraction result yet (status={job.status})."
@@ -1095,9 +1385,10 @@ def load_extracted_pages(job: IngestionJob) -> tuple[list[str], str]:
         data = json.loads(job.extracted_pages_json)
         pages = data["pages"]
         extraction_method = data.get("extraction_method", "unknown")
+        handbook_structured = data.get("handbook_structured")
     except (ValueError, KeyError, TypeError) as exc:
         raise DigitalIngestionError(f"Job {job.id}'s persisted extraction result is corrupt.") from exc
-    return pages, extraction_method
+    return pages, extraction_method, handbook_structured
 
 
 def build_preview_from_job(job: IngestionJob) -> dict[str, Any]:
@@ -1106,10 +1397,14 @@ def build_preview_from_job(job: IngestionJob) -> dict[str, Any]:
     extracted_pages_json -- no OCR, no Chroma access beyond the existing
     read-only knowledge_base_statistics() call inside assemble_preview_payload.
     """
-    page_texts, extraction_method = load_extracted_pages(job)
+    page_texts, extraction_method, handbook_structured = load_extracted_pages(job)
     title = (job.source_filename or "Untitled document").rsplit(".", 1)[0]
     return assemble_preview_payload(
-        page_texts, title=title, source_filename=job.source_filename, extraction_method=extraction_method
+        page_texts,
+        title=title,
+        source_filename=job.source_filename,
+        extraction_method=extraction_method,
+        handbook_structured=handbook_structured,
     )
 
 
@@ -1252,9 +1547,47 @@ def process_extraction_preview_job(job_id: str) -> None:
             session.commit()
             return
 
-        job.extracted_pages_json = extracted_pages_payload(page_texts, extraction_method)
+        # Structured handbook-table extraction: only ever attempted when
+        # extraction_method is the pure-digital path -- never after the
+        # remote-OCR-worker branch above ran for this document. See
+        # handbook_lightweight_extraction's module docstring for why this
+        # is a document-level, not page-level, decision.
+        handbook_structured: dict | None = None
+        review_warning: str | None = None
+        if extraction_method == "pymupdf_digital":
+            try:
+                handbook_structured = extract_structured_handbook_data(job.pdf_bytes, page_texts)
+            except Exception:
+                logger.exception(
+                    "Structured handbook extraction raised unexpectedly for job %s; "
+                    "falling back to generic chunking for this document.",
+                    job_id,
+                )
+                handbook_structured = {
+                    "status": STATUS_ERROR,
+                    "candidate_pages": [],
+                    "matched_pages": [],
+                    "table_regions_by_page": {},
+                    "words_by_page": {},
+                }
+
+        if handbook_structured is not None and handbook_structured.get("status") in (
+            STATUS_ATTEMPTED_NO_MATCH,
+            STATUS_ERROR,
+        ):
+            review_warning = (
+                "This document looks like the LSPU Student Handbook, but the "
+                "disciplinary-offense table structure could not be confirmed "
+                "during extraction. It will be indexed with standard generic "
+                "chunking (the table-specific correction will NOT be applied) "
+                "unless this is investigated before indexing."
+            )
+
+        job.extracted_pages_json = extracted_pages_payload(
+            page_texts, extraction_method, handbook_structured=handbook_structured
+        )
         job.status = "review_ready"
-        job.status_detail = None
+        job.status_detail = review_warning
         session.commit()
     except Exception:
         logger.exception("Unhandled error processing extraction preview job %s", job_id)
@@ -1308,7 +1641,7 @@ def process_indexing_job(job_id: str, reviewed_text: str | None) -> None:
             return
 
         try:
-            page_texts, _extraction_method = load_extracted_pages(job)
+            page_texts, _extraction_method, handbook_structured = load_extracted_pages(job)
         except DigitalIngestionError as exc:
             job.status = "failed"
             job.error_message = str(exc)
@@ -1318,7 +1651,11 @@ def process_indexing_job(job_id: str, reviewed_text: str | None) -> None:
         title = (job.source_filename or "Untitled document").rsplit(".", 1)[0]
         try:
             chunks = chunks_from_pages_or_reviewed_text(
-                page_texts, reviewed_text, title=title, source_filename=job.source_filename
+                page_texts,
+                reviewed_text,
+                title=title,
+                source_filename=job.source_filename,
+                handbook_structured=handbook_structured,
             )
         except DigitalIngestionError as exc:
             job.status = "failed"
@@ -1398,7 +1735,16 @@ def process_indexing_job(job_id: str, reviewed_text: str | None) -> None:
         job.status = "published"
         job.document_id = new_document_id
         job.chunks_indexed = indexed
-        job.status_detail = None
+        # Durable warning (2026-10-27 audit fix): if structured handbook
+        # processing was eligible but raised and generic chunking was used
+        # as a fallback (see chunks_from_pages_or_reviewed_text's except
+        # branch, tagged STRUCTURING_METHOD_GENERIC_FALLBACK), that must
+        # remain visible after this job reaches published -- never
+        # silently cleared as if nothing unusual happened. Reuses the
+        # existing status_detail column/API field (no schema change); the
+        # normal case (no fallback) is unaffected and still clears to None
+        # exactly as before.
+        job.status_detail = _structured_fallback_warning(chunks)
         session.commit()
     except Exception:
         logger.exception("Unhandled error processing indexing job %s", job_id)

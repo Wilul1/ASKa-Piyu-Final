@@ -1906,16 +1906,18 @@ class _ReasonChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
+        color: DesignTokens.maroonWash,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFBFDBFE)),
+        border: Border.all(
+          color: DesignTokens.maroon.withValues(alpha: 0.28),
+        ),
       ),
       child: Text(
         label.replaceAll('_', ' '),
         style: const TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF1D4ED8)),
+            color: DesignTokens.maroon),
       ),
     );
   }

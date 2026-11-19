@@ -1,0 +1,60 @@
+{
+  "example_only": true,
+  "not_an_evaluation_result": true,
+  "dataset_version": "2026-11-09-v1-qa-citation-contract-example",
+  "experiment_family": "qa_citation_v1",
+  "annotation_method": "ai_assisted_grounded_generation",
+  "judge_source_for_later_scoring": "ai_evaluator",
+  "evaluation_ready": false,
+  "notes": "Contract example. Grounded in the isolated Charter extract already used by retrieval labels. Not a labeled scoring set.",
+  "corpus": {
+    "path": "backend/data/chroma_evaluation",
+    "collection": "aska_evaluation",
+    "expected_chunk_count": 691,
+    "extract_artifact": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json"
+  },
+  "generation": {
+    "model": "example-generator-not-executed",
+    "prompt_version": "qac-gen-v1"
+  },
+  "cases": [
+    {
+      "case_id": "qac_001_tor_fee",
+      "question": "How much does it cost to get a copy of my Transcript of Records?",
+      "category": "Student Records",
+      "difficulty": "easy",
+      "labeling_status": "labeled",
+      "reference_answer": "According to the Citizen's Charter 2026, 1st Edition, a Transcript of Records costs P75.00 per page for undergraduate students and P150 per page for graduate students.",
+      "supporting_document_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf"],
+      "supporting_chunk_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+      "reference_evidence": [
+        {
+          "chunk_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "title": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents",
+          "source_section": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents",
+          "page": 12,
+          "excerpt": "Undergraduate: P75.00/page; Graduate: P150/page"
+        }
+      ],
+      "generation_model": "example-generator-not-executed",
+      "generation_prompt_version": "qac-gen-v1",
+      "reviewer_notes": "Do not treat certification, diploma, or P137 lines on the same card as TOR fees."
+    },
+    {
+      "case_id": "qac_013_mars_weather",
+      "question": "What is the weather like on Mars this week?",
+      "category": "General",
+      "difficulty": "out_of_scope",
+      "labeling_status": "unlabeled",
+      "reference_answer": null,
+      "supporting_document_ids": [],
+      "supporting_chunk_ids": [],
+      "reference_evidence": [],
+      "generation_model": "example-generator-not-executed",
+      "generation_prompt_version": "qac-gen-v1",
+      "reviewer_notes": "OOS: no LSPU reference answer. Later scoring checks refusal, not handbook correctness."
+    }
+  ]
+}

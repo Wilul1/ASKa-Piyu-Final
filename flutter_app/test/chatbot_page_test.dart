@@ -19,6 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/models/auth_models.dart';
 import 'package:aska_piyu/screens/chatbot_page.dart';
+import 'package:aska_piyu/screens/student_home.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/services/local_store.dart';
 
@@ -97,7 +98,7 @@ Future<void> _pumpChatbotWithSeededAnswer(
   required String answerText,
   required String confidence,
   required List<Map<String, dynamic>> sources,
-  Size size = const Size(1200, 900),
+  Size size = const Size(1648, 928),
 }) async {
   LocalStore.resetForTest();
   SharedPreferences.setMockInitialValues({
@@ -514,6 +515,80 @@ void main() {
       expect(controllerAfter.offset, greaterThan(0));
     });
   });
+
+  group('Ask Assistant workspace chrome', () {
+    testWidgets('guest empty chat matches the workspace layout', (tester) async {
+      await _pumpGuestChatbot(tester);
+
+      expect(find.text('Ask Assistant'), findsWidgets);
+      expect(find.text('Hello! How can I assist you today?'), findsOneWidget);
+      expect(find.text('Back to home'), findsOneWidget);
+      expect(find.text('New Chat'), findsOneWidget);
+      expect(find.text('New chat'), findsOneWidget);
+      expect(find.text('Recent Chats'), findsOneWidget);
+      expect(
+        find.textContaining('Your conversations'),
+        findsOneWidget,
+      );
+      expect(find.text('Ask anything...'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Ask questions about university services, policies, requirements, and student concerns.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Guests can ask a few questions.'),
+        findsOneWidget,
+      );
+      expect(find.text('Sign in for more.'), findsOneWidget);
+      expect(
+        find.text('AI can make mistakes. Please double-check responses.'),
+        findsOneWidget,
+      );
+      expect(find.bySemanticsLabel('ASKa-Piyu home'), findsOneWidget);
+      expect(find.text('Admissions and Enrollment'), findsNothing);
+
+      final greetingLeft =
+          tester.getTopLeft(find.text('Hello! How can I assist you today?')).dx;
+      expect(greetingLeft, lessThan(1648 * 0.40));
+      expect(greetingLeft, greaterThan(248));
+    });
+
+    testWidgets('Back to home opens the public homepage', (tester) async {
+      await _pumpGuestChatbot(tester);
+
+      await tester.tap(find.text('Back to home'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(StudentHomePage), findsOneWidget);
+    });
+  });
+}
+
+Future<void> _pumpGuestChatbot(
+  WidgetTester tester, {
+  Size size = const Size(1648, 928),
+}) async {
+  LocalStore.resetForTest();
+  SharedPreferences.setMockInitialValues(const {});
+
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+
+  await tester.pumpWidget(
+    AuthScope(
+      controller: AuthController(service: _FakeAuthService(_studentUser())),
+      child: const MaterialApp(home: ChatbotPage()),
+    ),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 50));
+  await tester.pump(const Duration(milliseconds: 50));
 }
 
 class _FakeAuthService extends AuthService {

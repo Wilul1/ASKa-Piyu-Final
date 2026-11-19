@@ -1,0 +1,70 @@
+{
+  "experiment_family": "qa_citation_v1",
+  "judge_source": "ai_evaluator",
+  "never_human_verified": true,
+  "zero_denominator": "null_not_computed",
+  "invalid_citations_remain_in_denominators": true,
+  "duplicate_citation_ids": "count_once_per_answer",
+  "failed_executions": "record_and_exclude_from_metric_numerators_and_denominators_but_keep_in_run_case_count",
+  "qa_rubric": {
+    "scale": [0, 1, 2, 3, 4],
+    "criteria": ["correctness", "completeness", "relevance", "faithfulness"],
+    "faithfulness_evidence": "retrieved_context_and_displayed_citations_not_reference_similarity",
+    "per_judge_overall": "(correctness + completeness + relevance + faithfulness) / 4",
+    "dual_ai_reported_criterion": "mean(primary, secondary) when both evaluation_status=evaluated; else null",
+    "dual_ai_reported_overall": "mean of the four dual-AI reported criteria",
+    "disagreement": "true if any criterion differs by >= 1; still use the mean; never max()"
+  },
+  "citation_metrics": {
+    "unit_displayed": "unique displayed citation_id values on the answer (document_id::chunk_index)",
+    "unit_claim": "extracted claim with requires_citation=true",
+    "answer_level_citations": "ASKa-Piyu currently displays sources at answer level; every claim on that answer inherits the answer displayed_citation_ids",
+    "citation_precision": {
+      "numerator": "unique displayed citation_ids that support at least one requires_citation claim (citation_relevance=supports for that pair)",
+      "denominator": "unique displayed citation_ids including unresolved and wrong_document ids",
+      "invalid_in_denominator": true
+    },
+    "citation_completeness": {
+      "numerator": "requires_citation claims with at least one supporting displayed citation_id",
+      "denominator": "requires_citation claims"
+    },
+    "claim_support_rate": {
+      "numerator": "requires_citation claims with claim_support=supported",
+      "denominator": "requires_citation claims including not_assessable",
+      "not_assessable": "counted in the denominator only, never as supported or unsupported"
+    },
+    "unsupported_claim_rate": {
+      "numerator": "requires_citation claims with claim_support=unsupported",
+      "denominator": "requires_citation claims including not_assessable",
+      "not_assessable": "counted in the denominator only, never as supported or unsupported"
+    },
+    "citation_validity_rate": {
+      "numerator": "unique displayed citation_ids with citation_validity=valid (resolves to a chunk in the 691-chunk evaluation corpus)",
+      "denominator": "unique displayed citation_ids including unresolved and wrong_document ids",
+      "invalid_in_denominator": true
+    }
+  },
+  "claim_statuses": {
+    "supported": "citation-required claim backed by at least one displayed citation",
+    "unsupported": "citation-required claim not backed by displayed citation evidence",
+    "not_assessable": "support cannot be determined; counted in claim-level denominators only"
+  },
+  "execution": {
+    "successful_statuses": ["ok", "oos_or_refusal"],
+    "failed_statuses": ["error", "incomplete"],
+    "status_definitions": {
+      "ok": "Answer capture completed. This does not establish answer correctness.",
+      "oos_or_refusal": "Refusal or out-of-scope handling completed. Counts as execution completion, not as a correct answer.",
+      "error": "Capture failed.",
+      "incomplete": "Capture did not complete or produced an incomplete result."
+    },
+    "case_count": "all unique case_ids in the run, including failed executions",
+    "failed_executions_are_not_scored": true,
+    "retry_policy": "Stage 2 keeps one final execution record per case_id per run. Duplicate case_ids are rejected, not overwritten. Retry history is not supported; a later stage must add a distinct attempt/execution identifier if attempts are retained. Completion rate uses those unique cases and does not treat retries as extra dataset cases.",
+    "completion_rate": {
+      "numerator": "successful_executions",
+      "denominator": "total_cases",
+      "zero_denominator": "null"
+    }
+  }
+}

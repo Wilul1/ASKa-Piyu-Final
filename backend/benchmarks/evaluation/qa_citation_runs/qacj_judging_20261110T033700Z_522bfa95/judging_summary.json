@@ -1,0 +1,162 @@
+{
+  "judging_run_id": "qacj_judging_20261110T033700Z_522bfa95",
+  "report_version": "stage_3_2b_qa_ie_only_v1",
+  "judged_at": "2026-11-10T03:37:00.507847+00:00",
+  "capture_run_id": "qac_capture_20261110T014318Z_80d7ddd1",
+  "capture_file_sha256": "bb1b0280b4ffbc188681ebb447228a53d09466b0a65dabe1904760fa38fa2680",
+  "dataset_version": "2026-11-09-v1.1",
+  "dataset_json_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "corpus": {
+    "path": "backend/data/chroma_evaluation",
+    "collection": "aska_evaluation",
+    "chunk_count": 691,
+    "extract_artifact": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json",
+    "identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "evaluation_sqlite_sha256": "dafead42e74c05832c759c74959ca2356f825949db8e998284137be451e079d3",
+    "corresponds_to_locked_extract": true
+  },
+  "judges": {
+    "qa_rubric": {
+      "primary_model": "openrouter/free",
+      "primary_provider": "openrouter",
+      "secondary_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "secondary_provider": "nvidia",
+      "prompt_version": "qa_citation_judge_v1",
+      "prompt_sha256": "8c19f1e491730d749b8adeea601704c94bb60dfe8a78cae4360307a67f4cb3b1"
+    },
+    "insufficient_evidence_rubric": {
+      "primary_model": "openrouter/free",
+      "primary_provider": "openrouter",
+      "secondary_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "secondary_provider": "nvidia",
+      "prompt_version": "qa_citation_insufficient_evidence_judge_v1",
+      "prompt_sha256": "2e3af5262736adb23dd64e3ff4b5008f4da032b91d371fbdb0f2c7d84f98f45b"
+    },
+    "citation_claim_rubric": {
+      "status": "pending",
+      "reason": "Citation-claim judging was not invoked this run. The configured citation_verifier_model ('nvidia/nemotron-3-super-120b-a12b:free') returned HTTP 404 Not Found from OpenRouter during the 2026-11-10 capture run (verifier_invoked=true, verifier_succeeded=false for all 36 cases) -- a separate, pre-existing configuration issue. Citation evaluation is recorded as pending rather than attempted or inferred."
+    }
+  },
+  "population_summary": {
+    "answerable_total": 32,
+    "answerable_qa_judged": 27,
+    "answerable_qa_judging_failed_partial": 4,
+    "answerable_qa_judging_failed_total": 0,
+    "answerable_excluded": 1,
+    "answerable_citation_judging": "not_invoked_this_run",
+    "insufficient_evidence_total": 4,
+    "insufficient_evidence_judged": 2,
+    "insufficient_evidence_judging_failed_partial": 2,
+    "insufficient_evidence_judging_failed_total": 0,
+    "insufficient_evidence_excluded": 0,
+    "ineligible_excluded_by_reason": {
+      "fallback_not_genuine": 1
+    },
+    "fallback_vs_genuine_counts": {
+      "genuine": 35,
+      "fallback": 1,
+      "no_result": 0,
+      "fields_missing": 0
+    }
+  },
+  "qa_aggregation": {
+    "eligible_count": 31,
+    "excluded_count": 1,
+    "excluded_counts_by_reason": {
+      "fallback_not_genuine": 1
+    },
+    "judged_count": 27,
+    "judging_failed_partial_count": 4,
+    "judging_failed_total_count": 0,
+    "dimension_means": {
+      "correctness": 2.9074074074074074,
+      "completeness": 2.7962962962962963,
+      "relevance": 3.6666666666666665,
+      "faithfulness": 2.4074074074074074,
+      "overall": 2.9444444444444446
+    },
+    "dimension_distributions": {
+      "correctness": {
+        "0": 9,
+        "1": 4,
+        "2": 4,
+        "3": 3,
+        "4": 34
+      },
+      "completeness": {
+        "0": 11,
+        "1": 3,
+        "2": 3,
+        "3": 6,
+        "4": 31
+      },
+      "relevance": {
+        "0": 1,
+        "1": 1,
+        "2": 4,
+        "3": 3,
+        "4": 45
+      },
+      "faithfulness": {
+        "0": 9,
+        "1": 6,
+        "2": 12,
+        "3": 8,
+        "4": 19
+      }
+    },
+    "judge_disagreement_rate": {
+      "numerator": 17,
+      "denominator": 27,
+      "value": 0.6296296296296297
+    },
+    "disagreement_by_criterion_counts": {
+      "correctness": 7,
+      "completeness": 4,
+      "relevance": 6,
+      "faithfulness": 13
+    },
+    "category_min_sample_size": 5,
+    "by_category": {
+      "Fees and Payment": {
+        "judged_count": 5,
+        "dimension_means": {
+          "correctness": 2.6,
+          "completeness": 2.3,
+          "relevance": 3.5,
+          "faithfulness": 3.0,
+          "overall": 2.85
+        }
+      },
+      "Academic Policies": {
+        "judged_count": 7,
+        "dimension_means": {
+          "correctness": 2.357142857142857,
+          "completeness": 2.2142857142857144,
+          "relevance": 3.2857142857142856,
+          "faithfulness": 2.7857142857142856,
+          "overall": 2.6607142857142856
+        }
+      }
+    }
+  },
+  "citation_aggregation": {
+    "status": "pending",
+    "reason": "Citation-claim judging was not invoked this run. The configured citation_verifier_model ('nvidia/nemotron-3-super-120b-a12b:free') returned HTTP 404 Not Found from OpenRouter during the 2026-11-10 capture run (verifier_invoked=true, verifier_succeeded=false for all 36 cases) -- a separate, pre-existing configuration issue. Citation evaluation is recorded as pending rather than attempted or inferred."
+  },
+  "insufficient_evidence_aggregation": {
+    "total_count": 4,
+    "eligible_count": 4,
+    "excluded_count": 0,
+    "exclusion_counts_by_reason": {},
+    "judged_count": 2,
+    "judging_failed_partial_count": 2,
+    "judging_failed_total_count": 0,
+    "correctly_declined_agreement_count": 2,
+    "correctly_declined_disagreement_count": 0,
+    "unsupported_claim_detected_agreement_count": 2,
+    "unsupported_claim_detected_disagreement_count": 0
+  },
+  "note_on_empty_citations": "Citation evaluation was not performed this run (see judges.citation_claim_rubric). Missing/empty displayed citations in the underlying capture must NOT be interpreted as evidence that any answer is unsupported -- that determination requires citation-claim judging, which did not run."
+}

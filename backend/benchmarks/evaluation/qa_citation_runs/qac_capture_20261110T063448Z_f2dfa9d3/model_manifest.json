@@ -1,0 +1,6 @@
+{
+  "verifier_model": "dots-studio/dots-3-note-preview:free",
+  "verifier_configured_provider_label": "atlascloud",
+  "verifier_expected_resolved_provider": "AtlasCloud",
+  "note": "KNOWN LIMITATION: the production citation_verification.py module (unmodified by this capture) does not record resolved model/provider identity, a response id, or a call timestamp for verifier calls -- only `usage` and parsed `content` are captured in citation_v2_sink/VerificationOutcome. Full verifier-response-envelope traceability is NOT claimed for this capture. Resolved-provider confirmation for dots-studio/dots-3-note-preview:free exists only from the separate Stage 3.3 qualification test (qacv_citation_qual_20261110T061915Z), which called the OpenRouter API directly outside the production module."
+}

@@ -757,20 +757,22 @@ class _KnowledgeArticleCreatePageState
             key: const Key('knowledge-article-create-publish-info'),
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
+              color: DesignTokens.maroonWash,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFBFDBFE)),
+              border: Border.all(
+                color: DesignTokens.maroon.withValues(alpha: 0.28),
+              ),
             ),
             child: const Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.info_outline, size: 18, color: Color(0xFF1D4ED8)),
+                Icon(Icons.info_outline, size: 18, color: DesignTokens.maroon),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Drafts stay in Knowledge Article until you publish. Published articles become visible in the public Knowledge Base. There is no administrator review step.',
                     style: TextStyle(
-                      color: Color(0xFF1E3A8A),
+                      color: DesignTokens.maroon,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       height: 1.4,

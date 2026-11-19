@@ -1,0 +1,22 @@
+{
+  "case_count": 0,
+  "questions_submitted": 0,
+  "llm_generation_succeeded_case_count": 0,
+  "answers_are_live_generated": false,
+  "answers_are_local_fallback": false,
+  "answer_correctness": null,
+  "answer_relevancy": null,
+  "faithfulness": null,
+  "claim_support_rate": null,
+  "citation_set_precision": null,
+  "citation_set_recall": null,
+  "metric_contributing_counts": {
+    "faithfulness": 0,
+    "answer_relevancy": 0,
+    "answer_correctness": 0,
+    "citation_set_precision": 0,
+    "citation_set_recall": 0
+  },
+  "null_means_unavailable_not_zero": true,
+  "note": "No live answers were captured. Aggregate metrics are unavailable, not zero. This is not the local fallback run aq_subset_20261104T163426Z."
+}

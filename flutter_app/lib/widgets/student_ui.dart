@@ -198,3 +198,87 @@ class StudentResponsiveWrap extends StatelessWidget {
     );
   }
 }
+
+class StudentPrimaryButton extends StatelessWidget {
+  final String label;
+  final VoidCallback? onPressed;
+  final bool expand;
+
+  const StudentPrimaryButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    this.expand = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final button = ElevatedButton(
+      onPressed: onPressed,
+      style: DesignTokens.primaryButtonStyle(),
+      child: Text(label),
+    );
+    if (!expand) return button;
+    return SizedBox(width: double.infinity, child: button);
+  }
+}
+
+class StudentEmptyState extends StatelessWidget {
+  final String title;
+  final String message;
+  final IconData icon;
+  final Widget? action;
+
+  const StudentEmptyState({
+    super.key,
+    required this.title,
+    required this.message,
+    this.icon = Icons.inbox_outlined,
+    this.action,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StudentPanel(
+      shadow: false,
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+      child: Column(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: DesignTokens.maroonWash,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, color: DesignTokens.maroon, size: 26),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: DesignTokens.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: DesignTokens.muted,
+            ),
+          ),
+          if (action != null) ...[
+            const SizedBox(height: 16),
+            action!,
+          ],
+        ],
+      ),
+    );
+  }
+}

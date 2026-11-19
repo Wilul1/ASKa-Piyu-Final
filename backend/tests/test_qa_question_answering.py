@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.config import settings
 from app.services.chroma_store import RetrievedChunk
 from app.services.qa.groq_answer_service import GroqAnswerError
 from app.services.qa.question_answering import (
@@ -37,6 +38,17 @@ from app.services.qa.question_answering import (
     select_context_chunks,
 )
 from app.services.knowledge_taxonomy import ClassificationResult
+
+
+@pytest.fixture(autouse=True)
+def _default_citation_verification_mode(monkeypatch):
+    """This file's tests assert on V1 (lexical) `result.sources` throughout
+    and never exercise async_llm/async_shadow/llm modes themselves (that's
+    covered by test_qa_async_citation_verification.py and the other
+    citation_verification_mode-aware test files). Pin the mode here so these
+    tests are correct regardless of what ASKA_CITATION_VERIFICATION_MODE
+    happens to be set to in a given local environment."""
+    monkeypatch.setattr(settings, "citation_verification_mode", "lexical")
 
 
 def chunk(

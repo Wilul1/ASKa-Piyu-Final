@@ -1,0 +1,83 @@
+{
+  "run_id": "qac_capture_20261109T095436Z_892ed650",
+  "experiment_family": "qa_citation_v1",
+  "pipeline": "answer_qa_question",
+  "user_role": "student",
+  "captured_at": "2026-11-09T09:54:36.556367+00:00",
+  "dataset_path": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\benchmarks\\evaluation\\qa_citation_eval_dataset.json",
+  "dataset_version": "2026-11-09-v1.1",
+  "dataset_json_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "case_count": 36,
+  "successful_executions": 36,
+  "failed_executions": 0,
+  "status_counts": {
+    "ok": 36,
+    "oos_or_refusal": 0,
+    "error": 0,
+    "incomplete": 0
+  },
+  "completion_rate": {
+    "numerator": 36,
+    "denominator": 36,
+    "value": 1.0
+  },
+  "corpus": {
+    "verified_at": "2026-11-09T09:54:35.977744+00:00",
+    "evaluation_path": "backend/data/chroma_evaluation",
+    "evaluation_collection": "aska_evaluation",
+    "evaluation_sqlite_sha256": "859f54175d7134a082160b19ed4aef8786418f48d408f8bb6b908ef0632b7c9e",
+    "evaluation_record_count": 691,
+    "evaluation_exclusion_count": 0,
+    "evaluation_identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "evaluation_metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "extract_artifact": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json",
+    "extract_identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "extract_metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "extract_record_count": 691,
+    "extract_source_path_as_recorded": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\chroma\\chroma.sqlite3",
+    "extract_source_collection_as_recorded": "aska_knowledge_base",
+    "extract_source_sqlite_sha256": "d5cbd6d11e98fac5c0de650d98034ff9315b58c5cf25051c91a16df4d4e23ddd",
+    "identity_digest_matches": true,
+    "metadata_text_digest_matches": true,
+    "embedding_id_set_equal": true,
+    "text_exact_match_count": 691,
+    "text_mismatch_count": 0,
+    "document_id_mismatch_count": 0,
+    "metadata_chunk_id_mismatch_count": 0,
+    "chunk_index_mismatch_count": 0,
+    "sqlite_file_hash_equals_extract_source": false,
+    "corresponds": true,
+    "limitations": [
+      "Evaluation sqlite file bytes differ from the extract source sqlite (chroma.sqlite3 vs recorded C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\chroma\\chroma.sqlite3). Collection names also differ (aska_evaluation vs aska_knowledge_base). Correspondence is the recovered records (embedding/chunk IDs, identity metadata, verbatim text) and the two locked digests, not byte-identity of the sqlite files.",
+      "Vectors/HNSW binary files are not hashed. Identity uses the same sqlite metadata+text extraction as the locked artifact."
+    ]
+  },
+  "model": {
+    "answer_generation_model": "openrouter/free",
+    "embedding_model": "sentence-transformers: intfloat/multilingual-e5-small",
+    "embedding_backend": "local",
+    "citation_verification_mode": "async_llm",
+    "citation_verifier_model": "nvidia/nemotron-3-super-120b-a12b:free",
+    "config_snapshot": {
+      "pipeline": "answer_qa_question",
+      "store": "LabeledRetrievalStore",
+      "store_adapter": "EvaluationStudentStore",
+      "not_generate_groq_answer": true,
+      "user_role": "student",
+      "citation_verification_mode": "async_llm",
+      "llm_base_url_host": "openrouter.ai",
+      "system_prompt_name": "ASKA_PIYU_SYSTEM_PROMPT",
+      "system_prompt_sha256": "1d4f7a3a0c63e11a659bf02f736ca4001ed5aadca666fee73bcd435652b7134e"
+    }
+  },
+  "locked_corpus": {
+    "path": "backend/data/chroma_evaluation",
+    "collection": "aska_evaluation",
+    "expected_chunk_count": 691,
+    "extract_artifact": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json",
+    "identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7"
+  },
+  "live_benchmark_executed": true,
+  "notes": "Successful execution (ok / oos_or_refusal) does not mean the answer is correct. Stage 3.1 does not judge."
+}

@@ -185,7 +185,7 @@ void main() {
     expect(find.text('Subject'), findsOneWidget);
     expect(find.text('Description'), findsOneWidget);
     expect(find.text('Attachment (optional)'), findsOneWidget);
-    expect(find.text('Clear'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
     expect(find.text('Submit Ticket'), findsOneWidget);
   });
 }

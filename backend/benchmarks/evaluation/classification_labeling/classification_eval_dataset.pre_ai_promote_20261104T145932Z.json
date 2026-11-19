@@ -1,0 +1,5 @@
+{
+  "dataset_version": "2026-11-04-v1-empty-template",
+  "notes": "Labeled dataset for classify_chunk/classify_question evaluation. No prior labeled set exists for this component -- this ships empty on purpose (see Model Evaluation System Phase 2 plan, risk #2): fabricating true_label values here would violate the 'no fabricated ground truth' requirement. Each case must be added by a human reviewer who has manually decided the correct category/subcategory/office for that text. Schema per labeled case: {\"case_id\": str, \"text\": str, \"true_label\": str, \"component\": \"classify_chunk\"|\"classify_question\", \"labeling_status\": \"labeled\"}. An unlabeled placeholder only needs {\"labeling_status\": \"unlabeled\"} plus whatever fields are already known.",
+  "cases": []
+}

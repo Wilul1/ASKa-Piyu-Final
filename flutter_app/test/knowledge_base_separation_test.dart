@@ -19,7 +19,11 @@ void main() {
     );
     expect(
       source,
-      contains('Browse published articles by category'),
+      contains('Browse articles, policies, or search for the information you need.'),
+    );
+    expect(
+      source,
+      contains('Find relevant articles by selecting a category.'),
     );
   });
 

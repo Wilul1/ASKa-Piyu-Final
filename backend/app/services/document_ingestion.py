@@ -175,6 +175,7 @@ def _ingest_pdf(file_bytes: bytes, *, filename: str | None = None) -> IngestionR
             raw_text=raw,
             page_texts=page_texts,
             source_title=_title_from_filename(filename),
+            pdf_pages=pdf_result.pages,
         )
         return _finalize_extraction(
             document_type=DocumentType.PDF,

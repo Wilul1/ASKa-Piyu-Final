@@ -711,8 +711,8 @@ class _UsersRolesStatsRow extends StatelessWidget {
         label: 'Office Staff',
         value: '$officeStaff',
         key: 'admin-users-stat-office',
-        background: const Color(0xFFEFF6FF),
-        valueColor: const Color(0xFF1D4ED8),
+        background: DesignTokens.maroonWash,
+        valueColor: DesignTokens.maroon,
       ),
       (
         label: 'Admins',
@@ -1352,7 +1352,7 @@ class _UsersRolesRolePill extends StatelessWidget {
     final colors = switch (role) {
       'student' => (const Color(0xFFFEE2E2), const Color(0xFFB91C1C)),
       'faculty' => (const Color(0xFFFEF3C7), const Color(0xFFB45309)),
-      'office' => (const Color(0xFFDBEAFE), const Color(0xFF1D4ED8)),
+      'office' => (DesignTokens.maroonWash, DesignTokens.maroon),
       'admin' => (const Color(0xFFEDE9FE), const Color(0xFF6D28D9)),
       _ => (const Color(0xFFF1F5F9), DesignTokens.muted),
     };

@@ -1,0 +1,291 @@
+[
+  {
+    "case_id": "aq_04_dropping_fee_multi_document",
+    "status": "evaluated",
+    "metrics": {
+      "answer_correctness": {
+        "value": 0.0,
+        "unavailable": false,
+        "detail": {
+          "methodology": "Deterministic presence of required facts copied from the human-approved reference answer. This is not RAGAS answer_correctness.",
+          "score": 0.0,
+          "present_fact_ids": [],
+          "missing_fact_ids": [
+            "charter_30_per_unit",
+            "handbook_20_per_unit",
+            "new_transferee_limitation",
+            "bor_1046",
+            "conflict_or_confirm"
+          ],
+          "facts": [
+            {
+              "id": "charter_30_per_unit",
+              "from_approved_answer": "Citizen's Charter 2026 lists \u20b130.00 per unit",
+              "present": false
+            },
+            {
+              "id": "handbook_20_per_unit",
+              "from_approved_answer": "Student Handbook 2021 requires a dropping fee of \u20b120.00 per unit",
+              "present": false
+            },
+            {
+              "id": "new_transferee_limitation",
+              "from_approved_answer": "Charter fee is for new and transferee students",
+              "present": false
+            },
+            {
+              "id": "bor_1046",
+              "from_approved_answer": "Handbook cites LSPU BOR Resolution 1046, s.2012",
+              "present": false
+            },
+            {
+              "id": "conflict_or_confirm",
+              "from_approved_answer": "Do not choose a winning rate; confirm with the Registrar",
+              "present": false
+            }
+          ]
+        }
+      },
+      "answer_relevancy": {
+        "value": 0.6667,
+        "unavailable": false,
+        "detail": {
+          "methodology": "Fraction of distinctive question tokens present in the chatbot answer. This is not RAGAS answer_relevancy.",
+          "score": 0.6667,
+          "distinctive_tokens": [
+            "much",
+            "drop",
+            "subject"
+          ],
+          "matched_token_count": 2
+        }
+      },
+      "evidence_in_generation_context": {
+        "gold_context_recall": 0.5,
+        "gold_ids_in_generation_context": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+        ],
+        "generation_context_ids": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::108",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::84"
+        ]
+      },
+      "evidence_in_retrieval": {
+        "gold_retrieval_recall": 0.5,
+        "gold_ids_in_retrieval": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+        ]
+      },
+      "student_visible_citation_quality": {
+        "citation_set_precision": 0.25,
+        "citation_set_recall": 0.5,
+        "intersection_ids": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+        ],
+        "predicted_ids": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92"
+        ],
+        "gold_ids": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+        ],
+        "unavailable_reason": null
+      },
+      "llm_verifier_faithfulness": {
+        "faithfulness": null,
+        "claim_support_rate": null,
+        "citation_set_precision": null,
+        "citation_set_recall": null,
+        "verifier_invoked": true,
+        "verifier_succeeded": false,
+        "failure_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401",
+        "verified_citation_ids": [],
+        "claims": [
+          {
+            "claim_id": "c1",
+            "text": "The listed fee for Dropping of Subjects is P30.00 (Laguna State Polytechnic University CC 2026 1st Edition)"
+          }
+        ],
+        "per_claim_verified_ids": {},
+        "latency_ms": null,
+        "unavailable_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401"
+      },
+      "ragas": {
+        "installed": false,
+        "answer_correctness": null,
+        "answer_relevancy": null,
+        "faithfulness": null,
+        "note": "RAGAS was not installed and was not used."
+      }
+    },
+    "displayed_citation_ids": [
+      "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+      "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+      "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92"
+    ],
+    "gold_citation_ids": [
+      "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+    ]
+  },
+  {
+    "case_id": "aq_08_fail_more_than_75_percent",
+    "status": "evaluated",
+    "metrics": {
+      "answer_correctness": {
+        "value": 0.0,
+        "unavailable": false,
+        "detail": {
+          "methodology": "Deterministic presence of required facts copied from the human-approved reference answer. This is not RAGAS answer_correctness.",
+          "score": 0.0,
+          "present_fact_ids": [],
+          "missing_fact_ids": [
+            "section_43_more_than_75",
+            "table_75_or_more",
+            "dismissal_from_college",
+            "permanent_disqualification",
+            "inc_exclusion",
+            "nine_unit_language",
+            "exact_75_unresolved_or_confirm"
+          ],
+          "facts": [
+            {
+              "id": "section_43_more_than_75",
+              "from_approved_answer": "Section 4.3: fails in more than 75%",
+              "present": false
+            },
+            {
+              "id": "table_75_or_more",
+              "from_approved_answer": "Table lists 75% or more",
+              "present": false
+            },
+            {
+              "id": "dismissal_from_college",
+              "from_approved_answer": "Dismissal from the College",
+              "present": false
+            },
+            {
+              "id": "permanent_disqualification",
+              "from_approved_answer": "100% is permanent disqualification from the University",
+              "present": false
+            },
+            {
+              "id": "inc_exclusion",
+              "from_approved_answer": "Incomplete grade is not included in the computation",
+              "present": false
+            },
+            {
+              "id": "nine_unit_language",
+              "from_approved_answer": "Nine academic units exemption and/or enrollment condition",
+              "present": false
+            },
+            {
+              "id": "exact_75_unresolved_or_confirm",
+              "from_approved_answer": "Exact-75% unresolved; confirm with the Registrar",
+              "present": false
+            }
+          ]
+        }
+      },
+      "answer_relevancy": {
+        "value": 1.0,
+        "unavailable": false,
+        "detail": {
+          "methodology": "Fraction of distinctive question tokens present in the chatbot answer. This is not RAGAS answer_relevancy.",
+          "score": 1.0,
+          "distinctive_tokens": [
+            "fail",
+            "units"
+          ],
+          "matched_token_count": 2
+        }
+      },
+      "evidence_in_generation_context": {
+        "gold_context_recall": 0.5,
+        "gold_ids_in_generation_context": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+        ],
+        "generation_context_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::68",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::162",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+        ]
+      },
+      "evidence_in_retrieval": {
+        "gold_retrieval_recall": 1.0,
+        "gold_ids_in_retrieval": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+        ]
+      },
+      "student_visible_citation_quality": {
+        "citation_set_precision": 0.0,
+        "citation_set_recall": 0.0,
+        "intersection_ids": [],
+        "predicted_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66"
+        ],
+        "gold_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+        ],
+        "unavailable_reason": null
+      },
+      "llm_verifier_faithfulness": {
+        "faithfulness": null,
+        "claim_support_rate": null,
+        "citation_set_precision": null,
+        "citation_set_recall": null,
+        "verifier_invoked": true,
+        "verifier_succeeded": false,
+        "failure_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401",
+        "verified_citation_ids": [],
+        "claims": [
+          {
+            "claim_id": "c1",
+            "text": "At the end of the semester, A student who fails 25% to 49% of the total academic units he registered shall be warned by the Dean and advised to improve his/her performance"
+          },
+          {
+            "claim_id": "c2",
+            "text": "At the end of the semester, A student fails 50% to 74% of the total academic units in which he registered shall be placed on probation for the succeeding semester, and the Dean con- cerned shall reduce his/her load accordingly"
+          },
+          {
+            "claim_id": "c3",
+            "text": "A student's\u2026"
+          }
+        ],
+        "per_claim_verified_ids": {},
+        "latency_ms": null,
+        "unavailable_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401"
+      },
+      "ragas": {
+        "installed": false,
+        "answer_correctness": null,
+        "answer_relevancy": null,
+        "faithfulness": null,
+        "note": "RAGAS was not installed and was not used."
+      }
+    },
+    "displayed_citation_ids": [
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66"
+    ],
+    "gold_citation_ids": [
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+    ]
+  }
+]

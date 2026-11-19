@@ -1,0 +1,78 @@
+{
+  "example_only": true,
+  "not_an_evaluation_result": true,
+  "run_id": "run_example_qa_citation_0001",
+  "case_id": "qac_001_tor_fee",
+  "answer_id": "run_example_qa_citation_0001:qac_001_tor_fee",
+  "note": "Sources are answer-level in ASKa-Piyu, so both claims inherit the same displayed_citation_ids. Invalid ids stay in validity/precision denominators.",
+  "claims": [
+    {
+      "claim_id": "qac_001_tor_fee:c1",
+      "run_id": "run_example_qa_citation_0001",
+      "case_id": "qac_001_tor_fee",
+      "answer_id": "run_example_qa_citation_0001:qac_001_tor_fee",
+      "claim_text": "A Transcript of Records costs P75.00 per page for undergraduate students.",
+      "requires_citation": true,
+      "displayed_citation_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+      "resolved_chunk_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+      "supporting_evidence_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+      "citation_validity_by_id": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": "valid"
+      },
+      "citation_relevance_by_id": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": "supports"
+      },
+      "claim_support": "supported",
+      "missing_citation": false,
+      "evaluator_slot": "primary",
+      "judge_source": "ai_evaluator",
+      "evaluator_model": "example-judge-a-not-executed",
+      "prompt_version": "qac-cite-v1",
+      "explanation": "Chunk excerpt contains Undergraduate: P75.00/page under the TOR service card.",
+      "raw_json": {}
+    },
+    {
+      "claim_id": "qac_001_tor_fee:c2",
+      "run_id": "run_example_qa_citation_0001",
+      "case_id": "qac_001_tor_fee",
+      "answer_id": "run_example_qa_citation_0001:qac_001_tor_fee",
+      "claim_text": "Graduate TOR copies cost P150.00 per page.",
+      "requires_citation": true,
+      "displayed_citation_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+      "resolved_chunk_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+      "supporting_evidence_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+      "citation_validity_by_id": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": "valid"
+      },
+      "citation_relevance_by_id": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": "supports"
+      },
+      "claim_support": "supported",
+      "missing_citation": false,
+      "evaluator_slot": "primary",
+      "judge_source": "ai_evaluator",
+      "evaluator_model": "example-judge-a-not-executed",
+      "prompt_version": "qac-cite-v1",
+      "explanation": "Chunk excerpt contains Graduate: P150/page. The extra .00 is formatting, not a different amount.",
+      "raw_json": {}
+    }
+  ],
+  "invalid_citation_denominator_example": {
+    "displayed_citation_ids": [
+      "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+      "not-a-real-doc::99"
+    ],
+    "citation_validity_rate": {
+      "numerator": 1,
+      "denominator": 2,
+      "value": 0.5,
+      "note": "not-a-real-doc::99 is unresolved and remains in the denominator"
+    },
+    "citation_precision": {
+      "numerator": 1,
+      "denominator": 2,
+      "value": 0.5,
+      "note": "unresolved id cannot support a claim and is not dropped from precision"
+    }
+  }
+}

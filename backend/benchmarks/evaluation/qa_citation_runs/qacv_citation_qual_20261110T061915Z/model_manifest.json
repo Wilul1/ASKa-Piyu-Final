@@ -1,0 +1,7 @@
+{
+  "replacement_verifier_model": "dots-studio/dots-3-note-preview:free",
+  "replacement_verifier_configured_provider_label": "atlascloud",
+  "resolved_providers_seen": [],
+  "original_failing_model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "original_failure_root_cause": "Model ID does not exist on OpenRouter -- the base model nvidia/nemotron-3-super-120b-a12b exists without a ':free' variant, confirmed via GET /api/v1/models. Separately, the citation verifier requires structured_outputs support, which the QA secondary judge (nvidia/nemotron-3-ultra-550b-a55b:free) does not have."
+}

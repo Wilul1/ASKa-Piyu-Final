@@ -48,6 +48,9 @@ deploy/web/*
 **/.ruff_cache/
 backend/venv/
 backend/.venv/
+# Local throwaway venvs used for Heroku image debugging / one-off Alembic checks
+backend/.heroku-web-venv/
+backend/.migration-venv*/
 *.egg-info/
 dist/
 backend/ci_alembic_check.db
@@ -62,6 +65,9 @@ flutter_app/.packages
 **/.DS_Store
 
 # Local runtime data (Postgres-backed app still uses these dirs)
+# Local generated development credentials (never commit)
+backend/.local/
+
 backend/data/
 backend/.EasyOCR/
 
@@ -99,10 +105,13 @@ docs/
 /aska_*.json
 /flutter_web_deploy_*.tgz
 /probe_out*
+/_web_only_cleanup_*.sh
+/layout_inspect/
 deploy/_*.py
 deploy/_*.sh
 deploy/_*.json
 deploy/_*.txt
+deploy/_flutter_web_3fcde48.tgz
 
 # Custom pytest tmp dirs left behind by ad hoc first-failure/regression debug runs
 backend/.pytest-tmp-*/

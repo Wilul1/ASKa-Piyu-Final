@@ -9,11 +9,18 @@ Required env (or prompts via args):
 
 Optional:
   ASKA_SEED_ADMIN_NAME=ASKa Admin
+
+If neither --password nor ASKA_SEED_ADMIN_PASSWORD is supplied, the script
+prompts for the password interactively via getpass (hidden input, never
+echoed, never logged) -- run it directly in your own terminal for this path,
+since a prompt launched through an automation/CI/tool-mediated shell has no
+live keyboard attached and will hang or fail on EOF.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import re
 import sys
@@ -53,8 +60,14 @@ def main() -> None:
             "ERROR: Set ASKA_SEED_ADMIN_EMAIL or pass --email (e.g. admin@aska.local)."
         )
     if not password:
+        # Only reached when neither --password nor ASKA_SEED_ADMIN_PASSWORD
+        # supplied one -- existing CLI/env behavior above is otherwise
+        # unchanged, and this keeps the original email-before-password
+        # error ordering intact.
+        password = getpass.getpass("Admin password (input hidden, not echoed): ").strip()
+    if not password:
         raise SystemExit(
-            "ERROR: Set ASKA_SEED_ADMIN_PASSWORD or pass --password."
+            "ERROR: Set ASKA_SEED_ADMIN_PASSWORD, pass --password, or enter it at the prompt."
         )
     _validate_password(password)
 

@@ -14,6 +14,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -110,7 +111,7 @@ class Ticket(Base):
         ),
         CheckConstraint("status IN ('Open', 'In Progress', 'Resolved', 'Closed')", name="ck_tickets_status"),
         CheckConstraint(
-            "kb_conversion_status IN ('none', 'draft', 'published')",
+            "kb_conversion_status IN ('none', 'draft', 'needs_review', 'published', 'failed', 'rejected')",
             name="ck_tickets_kb_conversion_status",
         ),
     )
@@ -221,6 +222,62 @@ class Notification(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True, nullable=False)
+    # Precise link back to the exact transfer request this notification was
+    # raised for -- nullable (every pre-existing notification type, and the
+    # ambiguous shared types "ticket_assigned"/"office_reassigned", leave
+    # this NULL) so a decision can mark read exactly the rows it caused,
+    # never inferring identity from ticket_id alone (which multiple distinct
+    # transfer requests, and multiple recipients, can share).
+    transfer_request_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("ticket_transfer_requests.id"), index=True, nullable=True
+    )
+
+
+class TicketTransferRequest(Base):
+    """Office-to-office ticket transfer request/history.
+
+    A request starts Pending and never immediately reassigns the ticket --
+    only accept_ticket_transfer() does that, and only while the request is
+    still Pending at that moment. source_office_id/destination_office_id
+    are always real Office ids (never raw office-name strings, unlike the
+    legacy Ticket.assigned_office column) so a request can never be
+    ambiguous about which offices it concerns. A completed (Accepted/
+    Rejected) row is never overwritten -- this table doubles as the
+    append-only transfer history.
+
+    The partial unique index below enforces "at most one Pending request
+    per ticket" at the database level (not just in application code), so
+    two concurrent create-attempts can't both succeed even under a race.
+    """
+
+    __tablename__ = "ticket_transfer_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('Pending', 'Accepted', 'Rejected')",
+            name="ck_ticket_transfer_requests_status",
+        ),
+        Index(
+            "ux_ticket_transfer_requests_one_pending_per_ticket",
+            "ticket_id",
+            unique=True,
+            postgresql_where=text("status = 'Pending'"),
+            sqlite_where=text("status = 'Pending'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ticket_id: Mapped[str] = mapped_column(String(32), ForeignKey("tickets.id"), index=True, nullable=False)
+    source_office_id: Mapped[str] = mapped_column(String(36), ForeignKey("offices.id"), index=True, nullable=False)
+    destination_office_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("offices.id"), index=True, nullable=False
+    )
+    initiated_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="Pending", index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AuthEvent(Base):
@@ -258,6 +315,10 @@ class PublishedArticle(Base):
             "content_format IN ('plain', 'html')",
             name="ck_published_articles_content_format",
         ),
+        CheckConstraint(
+            "review_status IS NULL OR review_status IN ('pending', 'approved', 'rejected')",
+            name="ck_published_articles_review_status",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -285,6 +346,9 @@ class PublishedArticle(Base):
     chunk_count: Mapped[int | None] = mapped_column(CheckConstraint("chunk_count >= 0"), nullable=True)
     published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    needs_manual_completion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    generation_notes: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -467,3 +531,145 @@ class Announcement(Base):
         onupdate=utc_now,
         nullable=False,
     )
+
+
+class EvaluationRun(Base):
+    """One execution of the Model Evaluation System
+    (``app.services.evaluation.evaluation_service.run_evaluation``).
+
+    Local-only, additive feature: never touches production ChromaDB/
+    chatbot behavior -- this and the four tables below only record what
+    an evaluation run computed. ``config_json`` is a JSON snapshot (model
+    ids, embedding model, dataset versions/sha256, retrieval settings,
+    app commit) captured at run time, for reproducibility.
+    """
+
+    __tablename__ = "evaluation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="ck_evaluation_runs_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True, nullable=False)
+    triggered_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    components: Mapped[list["EvaluationComponent"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class EvaluationComponent(Base):
+    """One evaluated (or ``not_evaluable``/``failed``) AI component within
+    one run (e.g. "classify_chunk(allow_llm=True)", "reranker",
+    "citation_verifier_llm") -- see ``evaluation_service.
+    ComponentEvaluationResult``, which this mirrors field for field."""
+
+    __tablename__ = "evaluation_components"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('evaluated', 'not_evaluable', 'failed')",
+            name="ck_evaluation_components_status",
+        ),
+        UniqueConstraint("run_id", "component", name="uq_evaluation_components_run_component"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    shares_model_with: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    allow_llm_fallback: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    case_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_unlabeled_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    run: Mapped[EvaluationRun] = relationship(back_populates="components")
+    results: Mapped[list["EvaluationResult"]] = relationship(
+        back_populates="component_row", cascade="all, delete-orphan"
+    )
+    confusion_matrix: Mapped["EvaluationConfusionMatrix | None"] = relationship(
+        back_populates="component_row", cascade="all, delete-orphan", uselist=False
+    )
+    case_results: Mapped[list["EvaluationCaseResult"]] = relationship(
+        back_populates="component_row", cascade="all, delete-orphan"
+    )
+
+
+class EvaluationResult(Base):
+    """One metric_name -> metric_value row for one component. ``metric_value``
+    is NULL when that metric genuinely was not computed for this component
+    (e.g. a metric with zero contributing cases) -- never a fabricated 0.0.
+    """
+
+    __tablename__ = "evaluation_results"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("evaluation_components.id"), index=True, nullable=False
+    )
+    metric_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    component_row: Mapped[EvaluationComponent] = relationship(back_populates="results")
+
+
+class EvaluationConfusionMatrix(Base):
+    """One confusion matrix for one classification component
+    (``classify_chunk``/``classify_question`` only -- never persisted for
+    a non-classification component)."""
+
+    __tablename__ = "evaluation_confusion_matrices"
+    __table_args__ = (
+        UniqueConstraint("component_id", name="uq_evaluation_confusion_matrices_component_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("evaluation_components.id"), index=True, nullable=False
+    )
+    labels_json: Mapped[str] = mapped_column(Text, nullable=False)
+    matrix_json: Mapped[str] = mapped_column(Text, nullable=False)
+    case_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    component_row: Mapped[EvaluationComponent] = relationship(back_populates="confusion_matrix")
+
+
+class EvaluationCaseResult(Base):
+    """One case's raw prediction for one component -- reproducibility
+    record, not a transcript store. ``raw_response_json`` (when present)
+    is sanitized before persistence: never an API key/token/authorization
+    header (see ``app.services.evaluation.persistence._sanitize_raw_response``).
+    """
+
+    __tablename__ = "evaluation_case_results"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("evaluation_runs.id"), index=True, nullable=False)
+    component_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("evaluation_components.id"), index=True, nullable=False
+    )
+    case_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    predicted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    component_row: Mapped[EvaluationComponent] = relationship(back_populates="case_results")

@@ -1,0 +1,354 @@
+{
+  "qualification_run_id": "qacv_citation_qual_20261110T061915Z",
+  "qualified_at": "2026-11-10T06:19:15.821517+00:00",
+  "dataset_version": "2026-11-09-v1.1",
+  "dataset_json_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "corpus": {
+    "identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "corresponds": true
+  },
+  "selected_case_ids": [
+    "qac_001_tor_undergrad_fee",
+    "qac_008_latin_cum_laude",
+    "qac_013_shifting_conditions"
+  ],
+  "case_count": 3,
+  "cases_with_displayed_citations": 2,
+  "all_displayed_ids_correspond_to_retrieved_sources_overall": true,
+  "per_case_results": [
+    {
+      "case_id": "qac_001_tor_undergrad_fee",
+      "execution_status": "ok",
+      "is_genuine_model_output": true,
+      "fallback_used": false,
+      "fallback_reason": null,
+      "generated_answer": "For an undergraduate student, a Transcript of Records costs **₱75.00 per page**. This fee is listed in the Citizen's Charter for the Issuance of Transcript of Records service handled by the Registrar's Office.",
+      "displayed_citation_ids": [],
+      "displayed_citation_count": 0,
+      "all_displayed_ids_correspond_to_retrieved_sources": true,
+      "retrieved_chunk_ids_count": 14,
+      "citation_v2_sink": {
+        "mode": "llm",
+        "claims": [
+          {
+            "claim_id": "c1",
+            "text": "For an undergraduate student, a Transcript of Records costs **₱75.00 per page**"
+          },
+          {
+            "claim_id": "c2",
+            "text": "This fee is listed in the Citizen's Charter for the Issuance of Transcript of Records service handled by the Registrar's Office"
+          }
+        ],
+        "candidate_citation_ids": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::16",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::56",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::59",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::15",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::57"
+        ],
+        "verifier_invoked": true,
+        "verifier_succeeded": true,
+        "failure_reason": null,
+        "per_claim_verified_ids": {
+          "c1": [],
+          "c2": []
+        },
+        "verified_citation_ids": [],
+        "v1_displayed_citation_ids": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::15",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::16",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::56",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::57",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::59",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93"
+        ],
+        "latency_ms": 13439.098800001375,
+        "usage": {
+          "prompt_tokens": 2405,
+          "completion_tokens": 986,
+          "total_tokens": 3391,
+          "cost": 0,
+          "is_byok": false,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 939,
+            "image_tokens": 0,
+            "audio_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "case_id": "qac_008_latin_cum_laude",
+      "execution_status": "ok",
+      "is_genuine_model_output": true,
+      "fallback_used": false,
+      "fallback_reason": null,
+      "generated_answer": "The retrieved table lists these records. Status labels apply only to the identifier and range on the same row:\n\n- 1.00 — 99-100 — Excellent\n- 1.25 — 96-98\n- 1.50 — 93-95 — Very Satisfactory\n- 1.75 — 90-92\n- 2.00 — 87-89 — Satisfactory\n- 2.25 — 84-86\n- 2.50 — 81-83 — Fairly Satisfactory\n- 2.75 — 78-80\n- 3.00 — 75-77\n- 4.00 — 70-74 — Conditional Failure\n- 5.00 — 69 and below — Failed\n- INC — Incomplete\n- DRP — Officially Dropped\nThe source does not state a passing threshold in those words. Do not treat a larger identifier as 'above' or as a passing outcome.",
+      "displayed_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+      ],
+      "displayed_citation_count": 1,
+      "all_displayed_ids_correspond_to_retrieved_sources": true,
+      "retrieved_chunk_ids_count": 18,
+      "citation_v2_sink": {
+        "mode": "llm",
+        "claims": [
+          {
+            "claim_id": "c1",
+            "text": "The retrieved table lists these records"
+          },
+          {
+            "claim_id": "c2",
+            "text": "- Status labels apply only to the identifier and range on the same row: 1.00 — 99-100 — Excellent"
+          },
+          {
+            "claim_id": "c3",
+            "text": "- Status labels apply only to the identifier and range on the same row: 1.25 — 96-98"
+          },
+          {
+            "claim_id": "c4",
+            "text": "- Status labels apply only to the identifier and range on the same row: 1.50 — 93-95 — Very Satisfactory"
+          },
+          {
+            "claim_id": "c5",
+            "text": "- Status labels apply only to the identifier and range on the same row: 1.75 — 90-92"
+          },
+          {
+            "claim_id": "c6",
+            "text": "- Status labels apply only to the identifier and range on the same row: 2.00 — 87-89 — Satisfactory"
+          },
+          {
+            "claim_id": "c7",
+            "text": "- Status labels apply only to the identifier and range on the same row: 2.25 — 84-86"
+          },
+          {
+            "claim_id": "c8",
+            "text": "- Status labels apply only to the identifier and range on the same row: 2.50 — 81-83 — Fairly Satisfactory"
+          },
+          {
+            "claim_id": "c9",
+            "text": "- Status labels apply only to the identifier and range on the same row: 2.75 — 78-80"
+          },
+          {
+            "claim_id": "c10",
+            "text": "- Status labels apply only to the identifier and range on the same row: 3.00 — 75-77"
+          },
+          {
+            "claim_id": "c11",
+            "text": "- Status labels apply only to the identifier and range on the same row: 4.00 — 70-74 — Conditional Failure"
+          },
+          {
+            "claim_id": "c12",
+            "text": "- Status labels apply only to the identifier and range on the same row: 5.00 — 69 and below — Failed"
+          },
+          {
+            "claim_id": "c13",
+            "text": "DRP — Officially Dropped: The source does not state a passing threshold in those words"
+          },
+          {
+            "claim_id": "c14",
+            "text": "DRP — Officially Dropped: Do not treat a larger identifier as 'above' or as a passing outcome"
+          }
+        ],
+        "candidate_citation_ids": [
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::47",
+          "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::89",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::99",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::94",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::102"
+        ],
+        "verifier_invoked": true,
+        "verifier_succeeded": true,
+        "failure_reason": null,
+        "per_claim_verified_ids": {
+          "c1": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c2": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c3": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c4": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c5": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c6": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c7": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c8": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c9": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c10": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c11": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c12": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c13": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ],
+          "c14": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+          ]
+        },
+        "verified_citation_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+        ],
+        "v1_displayed_citation_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::91"
+        ],
+        "latency_ms": 26441.393799999787,
+        "usage": {
+          "prompt_tokens": 2596,
+          "completion_tokens": 2241,
+          "total_tokens": 4837,
+          "cost": 0,
+          "is_byok": false,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1350,
+            "image_tokens": 0,
+            "audio_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "case_id": "qac_013_shifting_conditions",
+      "execution_status": "ok",
+      "is_genuine_model_output": true,
+      "fallback_used": false,
+      "fallback_reason": null,
+      "generated_answer": "Sure — you can switch to a different BS program at LSPU, but there are a few rules you need to follow before doing so.\n\n**Conditions to shift to another BS program**\n\n- **Unit‑failure limit:** You must not fail more than **six (6) units** in any single semester (condition 2.10.1).\n- **Course/major requirements:** You must not fail any course or major‑related subject that appears in the **retention policy** for the target BS’s curriculum (condition 2.10.2).\n- **Shift form:** You need to complete and submit a **filled‑out shifting form** to the **Office of the Registrar** (condition 2.10.3).\n\nIn short, once your enrollment status allows it, you can enroll in any undergraduate BS program, provided you stay within the 6‑unit semester limit, meet all major‑subject retention requirements for that program, and send the official shifting form through the Registrar’s office.",
+      "displayed_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43"
+      ],
+      "displayed_citation_count": 1,
+      "all_displayed_ids_correspond_to_retrieved_sources": true,
+      "retrieved_chunk_ids_count": 18,
+      "citation_v2_sink": {
+        "mode": "llm",
+        "claims": [
+          {
+            "claim_id": "c1",
+            "text": "Sure — you can switch to a different BS program at LSPU, but there are a few rules you need to follow before doing so"
+          },
+          {
+            "claim_id": "c2",
+            "text": "- Conditions to shift to another BS program: Unit‑failure limit:** You must not fail more than **six (6) units** in any single semester (condition 2.10.1)"
+          },
+          {
+            "claim_id": "c3",
+            "text": "- Conditions to shift to another BS program: Course/major requirements:** You must not fail any course or major‑related subject that appears in the **retention policy** for the target BS’s curriculum (condition 2.10.2)"
+          },
+          {
+            "claim_id": "c4",
+            "text": "- Conditions to shift to another BS program: Shift form:** You need to complete and submit a **filled‑out shifting form** to the **Office of the Registrar** (condition 2.10.3)"
+          }
+        ],
+        "candidate_citation_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::199",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::146",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::150",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::310",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::156",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::201"
+        ],
+        "verifier_invoked": true,
+        "verifier_succeeded": true,
+        "failure_reason": null,
+        "per_claim_verified_ids": {
+          "c1": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43"
+          ],
+          "c2": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43"
+          ],
+          "c3": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43"
+          ],
+          "c4": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43"
+          ]
+        },
+        "verified_citation_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43"
+        ],
+        "v1_displayed_citation_ids": [
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::150",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::156",
+          "cec01713-c1ba-4061-9404-ffaa1d8e70dd::310"
+        ],
+        "latency_ms": 13671.066200000496,
+        "usage": {
+          "prompt_tokens": 2094,
+          "completion_tokens": 1209,
+          "total_tokens": 3303,
+          "cost": 0,
+          "is_byok": false,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1107,
+            "image_tokens": 0,
+            "audio_tokens": 0
+          }
+        }
+      }
+    }
+  ],
+  "note": "This is a small (n=3) real-capture qualification test, NOT a full citation capture or full citation judging run. Uses the unmodified Stage 2/3.1 prompts, rubric, and capture_one_case() orchestration; only citation_verification_mode and citation_verifier_model were overridden, both evaluation-only and restored after this run."
+}

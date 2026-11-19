@@ -8,7 +8,7 @@ from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.db.session import get_db_session
 from app.models.db_models import PublishedArticle, User
@@ -52,6 +52,102 @@ class ArticleIdentity:
     parent_title: str
 
 
+# Browse/list payloads only need these columns. Loading `content` (large HTML)
+# plus per-row SourceDocument lookups (which can pull `pdf_data`) is what made
+# `/kb/categories` and `/kb/articles` take ~1–2s on Heroku for a handful of
+# published articles.
+_BROWSE_COLUMNS = (
+    PublishedArticle.title,
+    PublishedArticle.category,
+    PublishedArticle.subcategory,
+    PublishedArticle.path,
+    PublishedArticle.summary,
+    PublishedArticle.office,
+    PublishedArticle.source_filename,
+    PublishedArticle.source_document_id,
+    PublishedArticle.audience,
+    PublishedArticle.published,
+    PublishedArticle.published_at,
+    PublishedArticle.updated_at,
+    PublishedArticle.content_format,
+)
+
+
+def _load_published_articles(
+    session: Session,
+    *,
+    include_content: bool,
+) -> list[PublishedArticle]:
+    cols = list(_BROWSE_COLUMNS)
+    if include_content:
+        cols.append(PublishedArticle.content)
+    try:
+        return (
+            session.query(PublishedArticle)
+            .options(load_only(*cols))
+            .filter(PublishedArticle.published.is_(True))
+            .order_by(PublishedArticle.updated_at.desc(), PublishedArticle.title.asc())
+            .all()
+        )
+    except Exception as e:
+        logger.warning("PublishedArticle query failed: %s", e)
+        return []
+
+
+def _published_article_browse_item(article: PublishedArticle) -> dict[str, Any]:
+    """List/browse JSON without parsing article HTML or opening source PDFs."""
+    from app.services.document_storage import source_page_url, source_view_url
+
+    summary_text = (article.summary or "").strip()
+    path = article.path or f"{article.category} > {article.subcategory or ''}".strip(" >")
+    document_id = str(getattr(article, "source_document_id", None) or "").strip() or None
+    source_label = str(article.source_filename or "").strip() or None
+    preview = _text_preview(summary_text)
+    return {
+        "id": f"pub:{article.id}",
+        "chunk_id": "",
+        "title": (article.title or "").strip() or "Untitled Article",
+        "path": path,
+        "category": article.category,
+        "subcategory": article.subcategory or "",
+        "article_key": f"pub:{article.id}",
+        "derived_article_title": article.title,
+        "derived_section_title": "",
+        "matched_aliases": [],
+        "grouping_reason": "published",
+        "office": article.office or "",
+        "page": None,
+        "page_range": None,
+        "page_number": None,
+        "source_document": source_label or "",
+        "source_filename": article.source_filename or "",
+        "source_section": "",
+        "document_id": document_id,
+        "source_label": source_label,
+        "source_view_url": source_view_url(document_id) if document_id else None,
+        "source_page_url": source_page_url(document_id) if document_id else None,
+        "document_type": "information",
+        "summary": summary_text,
+        "short_summary": summary_text,
+        "body": summary_text,
+        "content_preview": preview,
+        "article_type": "published",
+        "keywords": [],
+        "updated_at": article.updated_at.isoformat() if article.updated_at else None,
+        "published_at": article.published_at.isoformat() if article.published_at else None,
+        "_search_blob": " ".join(
+            [
+                article.title or "",
+                article.category or "",
+                article.subcategory or "",
+                article.office or "",
+                summary_text,
+                article.source_filename or "",
+            ]
+        ),
+    }
+
+
 @router.get("/articles", summary="List published Knowledge Base articles")
 async def list_articles(
     q: str | None = Query(default=None),
@@ -66,20 +162,16 @@ async def list_articles(
 
     ChromaDB chunks remain for Ask ASKa-Piyu retrieval and are never returned here.
     """
-    try:
-        rows = (
-            session.query(PublishedArticle)
-            .filter(PublishedArticle.published.is_(True))
-            .order_by(PublishedArticle.updated_at.desc(), PublishedArticle.title.asc())
-            .all()
-        )
-    except Exception as e:
-        logger.warning("PublishedArticle query failed: %s", e)
-        rows = []
-
+    searching = bool(q and q.strip())
+    rows = _load_published_articles(session, include_content=searching)
     role = current_user.role if current_user is not None else None
     rows = [art for art in rows if _article_visible_for_role(art, role)]
-    articles = [_published_article_summary(art) for art in rows]
+    if searching:
+        articles = [
+            _published_article_summary(art, resolve_source=False) for art in rows
+        ]
+    else:
+        articles = [_published_article_browse_item(art) for art in rows]
     filtered = _filter_published_articles(articles, q=q, category=category)
     displayed = list(filtered)
     # Identity debug fields are admin-only.
@@ -125,7 +217,11 @@ def _article_visible_for_role(article: PublishedArticle, role: str | None) -> bo
     return audience in {"student", "both"}
 
 
-def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
+def _published_article_summary(
+    article: PublishedArticle,
+    *,
+    resolve_source: bool = True,
+) -> dict[str, Any]:
     from app.services.article_content_formatter import extract_embedded_article_metadata
     from app.services.document_storage import (
         find_source_document_by_filename,
@@ -162,12 +258,15 @@ def _published_article_summary(article: PublishedArticle) -> dict[str, Any]:
         or ""
     ).strip() or None
     source_row = None
-    if document_id:
-        source_row = get_source_document(document_id)
-    if source_row is None and article.source_filename:
-        source_row = find_source_document_by_filename(article.source_filename)
-        if source_row is not None:
-            document_id = source_row.id
+    # List/search must not open a SourceDocument session per article.
+    # Filename fallback can SELECT every source row including pdf_data.
+    if resolve_source:
+        if document_id:
+            source_row = get_source_document(document_id)
+        if source_row is None and article.source_filename:
+            source_row = find_source_document_by_filename(article.source_filename)
+            if source_row is not None:
+                document_id = source_row.id
 
     source_label = None
     if source_row is not None:
@@ -322,15 +421,7 @@ async def list_categories(
     current_user: User | None = Depends(get_optional_user),
 ) -> dict[str, Any]:
     """Category cards are derived from published PostgreSQL articles only."""
-    try:
-        rows = (
-            session.query(PublishedArticle)
-            .filter(PublishedArticle.published.is_(True))
-            .all()
-        )
-    except Exception as e:
-        logger.warning("PublishedArticle category query failed: %s", e)
-        rows = []
+    rows = _load_published_articles(session, include_content=False)
 
     role = current_user.role if current_user is not None else None
     rows = [art for art in rows if _article_visible_for_role(art, role)]

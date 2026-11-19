@@ -1,0 +1,228 @@
+[
+  {
+    "index": 0,
+    "rows": [
+      [
+        "Office or Division:",
+        "Colleges",
+        null,
+        null,
+        null
+      ],
+      [
+        "Classification:",
+        "Simple",
+        null,
+        null,
+        null
+      ],
+      [
+        "Type of Transaction:",
+        "G2C - Government to Citizen",
+        null,
+        null,
+        null
+      ],
+      [
+        "Who may avail:",
+        "New and Transferee Students",
+        null,
+        null,
+        null
+      ],
+      [
+        "CHECKLIST OF REQUIREMENTS",
+        null,
+        "WHERE TO SECURE",
+        null,
+        null
+      ],
+      [
+        "Dropping Form",
+        null,
+        "Registrar’s Office",
+        null,
+        null
+      ],
+      [
+        "CLIENT STEPS",
+        "AGENCY ACTIONS",
+        "FEES TO\nBE PAID",
+        "PROCESSING\nTIME",
+        "PERSON\nRESPONSIBLE"
+      ],
+      [
+        "Student Application for\nDropping",
+        "Release of dropping\nform",
+        "30/unit",
+        "3 min",
+        "Registrar’s Office\nCashier’s Office"
+      ],
+      [
+        "Request for the dropping\nof subjects from the\nfaculty-in-charge",
+        "Approval of the\nfaculty-in-charge",
+        "N/A",
+        "5 minutes",
+        "Faculty-in-charge"
+      ],
+      [
+        "Request for Deans\nApproval",
+        "Approval from the\nDean",
+        "N/A",
+        "5 Minutes",
+        "Dean/Associate Dean"
+      ],
+      [
+        "Submit approved\nDropping Form",
+        "Receives approved\ndropping form",
+        "N/A",
+        "2 minutes",
+        "Registrar’s Office"
+      ],
+      [
+        "TOTAL:",
+        null,
+        "P30.00/\nunit",
+        "15 minutes",
+        ""
+      ]
+    ]
+  },
+  {
+    "index": 1,
+    "rows": [
+      [
+        "",
+        "Office or Division:",
+        "",
+        "Colleges",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "",
+        "Classification:",
+        "",
+        "Simple",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "",
+        "Type of",
+        "",
+        "Government to Citizen",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        "Transaction:",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "",
+        "Who may avail:",
+        "",
+        "Students, Shifters, Transferees",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "",
+        "CHECKLIST OF REQUIREMENTS",
+        null,
+        null,
+        "",
+        "",
+        "WHERE TO SECURE",
+        null,
+        null,
+        ""
+      ],
+      [
+        "Payment for Grades Evaluation",
+        null,
+        null,
+        null,
+        null,
+        "Cashier’s Office",
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "Evaluated Grades/Report of Grades",
+        null,
+        null,
+        null,
+        null,
+        "Registrar’s Office",
+        null,
+        null,
+        null,
+        null
+      ],
+      [
+        "CLIENT STEPS",
+        null,
+        null,
+        "AGENCY ACTIONS",
+        null,
+        "FEES\nTO\nBE\nPAID",
+        null,
+        "PROCESSING\nTIME",
+        "PERSON\nRESPONSIBLE",
+        null
+      ],
+      [
+        "1. Client secures\npayment for\ngrades\nevaluation from\nthe Cashier’s\nOffice",
+        null,
+        null,
+        "Process the transaction fee and\nprovide the client with the\nOfficial Receipt",
+        null,
+        "60",
+        null,
+        "1 minutes",
+        "Cashier’s Office\nStaff",
+        null
+      ],
+      [
+        "2. Client\npresents the official\nreceipt to the\nRegistrar’s Office,\nclaims the",
+        null,
+        null,
+        "Provide the client with the\nEvaluated Grades/Report of\nGrades",
+        null,
+        "None",
+        null,
+        "5 minutes",
+        "Registrar’s Office\nStaff",
+        null
+      ]
+    ]
+  }
+]

@@ -1,0 +1,44 @@
+{
+  "run_id": "aq_subset_20261104T163426Z",
+  "created_at_utc": "2026-11-04T16:34:26.345650+00:00",
+  "pipeline": {
+    "target_function": "app.services.qa.question_answering.answer_qa_question",
+    "not_used": "app.services.qa.groq_answer_service.generate_groq_answer as a standalone eval target",
+    "corpus": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\data\\chroma_evaluation",
+    "collection": "aska_evaluation",
+    "chunk_count": 691,
+    "user_role": "student",
+    "citation_verification_mode_for_display": "lexical",
+    "faithfulness_verifier_mode": "llm",
+    "generation_model": "openrouter/free",
+    "llm_base_url_host": "openrouter.ai",
+    "generation_result": "invoked_but_failed_http_401_openrouter",
+    "answers_are_generation_error_fallback": true
+  },
+  "dataset": {
+    "path": "C:\\Users\\Admin\\Desktop\\ASKa-piyu\\backend\\benchmarks\\evaluation\\answer_quality_labeling\\answer_quality_eval_dataset.pending_human_review.json",
+    "dataset_version": "2026-11-04-v1-answer-quality-pending-human-review",
+    "evaluation_ready": false,
+    "labeling_status_of_all_cases": "unlabeled",
+    "sha256": "D7CDD2EC2CCE20A176FBA7B07B70C6206E7AABF4F36FD8D3C5BC8BD1677E2905",
+    "pending_dataset_unchanged": true,
+    "rag_eval_dataset_unchanged": true
+  },
+  "limitations": [
+    "Only 2 of 14 pending cases have both an approved reference answer and approved gold citations.",
+    "answer_correctness is required-fact coverage against the approved reference, not RAGAS.",
+    "answer_relevancy is distinctive question-token overlap, not RAGAS.",
+    "Student-visible citations were scored from lexical V1; local .env async_llm was not used because it returns zero citations until a background job finishes.",
+    "LLM-verifier faithfulness is a separate scoring call and can be unavailable if the verifier fails.",
+    "Postgres citation resolution may still run for PDF viewer URLs against the local database; retrieval used only chroma_evaluation.",
+    "No production Chroma, Heroku, retrieval dataset, or classification dataset was modified."
+  ],
+  "files_not_modified": [
+    "backend/benchmarks/evaluation/answer_quality_labeling/answer_quality_eval_dataset.pending_human_review.json",
+    "backend/benchmarks/evaluation/rag_eval_dataset.json",
+    "backend/benchmarks/evaluation/retrieval_relevance_dataset.json",
+    "backend/benchmarks/evaluation/classification_eval_dataset.json",
+    "data/chroma_evaluation",
+    "data/chroma"
+  ]
+}

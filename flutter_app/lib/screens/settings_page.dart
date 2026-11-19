@@ -19,7 +19,7 @@ class SettingsPage extends StatelessWidget {
     final showNav = width >= 760;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: DesignTokens.pageBg,
       body: Column(
         children: [
           const PublicSiteHeader(accountActive: true),

@@ -1,0 +1,34 @@
+[
+  {
+    "case_id": "aq_04_dropping_fee_multi_document",
+    "status": "not_executed",
+    "gold_citation_ids": [
+      "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+    ],
+    "metrics": {
+      "answer_correctness": null,
+      "answer_relevancy": null,
+      "faithfulness": null,
+      "citation_set_precision": null,
+      "citation_set_recall": null,
+      "unavailable_reason": "Live question was not submitted. Metrics are unavailable, not zero."
+    }
+  },
+  {
+    "case_id": "aq_08_fail_more_than_75_percent",
+    "status": "not_executed",
+    "gold_citation_ids": [
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+      "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+    ],
+    "metrics": {
+      "answer_correctness": null,
+      "answer_relevancy": null,
+      "faithfulness": null,
+      "citation_set_precision": null,
+      "citation_set_recall": null,
+      "unavailable_reason": "Live question was not submitted. Metrics are unavailable, not zero."
+    }
+  }
+]

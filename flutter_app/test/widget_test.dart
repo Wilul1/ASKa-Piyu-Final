@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aska_piyu/auth/auth_state.dart';
 import 'package:aska_piyu/main.dart';
 import 'package:aska_piyu/models/auth_models.dart';
+import 'package:aska_piyu/screens/login_page.dart';
 import 'package:aska_piyu/screens/student_home.dart';
 import 'package:aska_piyu/services/auth_service.dart';
 import 'package:aska_piyu/widgets/sidebar.dart';
@@ -44,6 +45,26 @@ void main() {
     expect(find.text('Users & Roles'), findsNothing);
     expect(find.text('My Tickets'), findsNothing);
     expect(find.text('Submit Ticket'), findsNothing);
+  });
+
+  testWidgets('desktop home Mailbox opens login for guests',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MyApp());
+    await tester.pump();
+
+    expect(find.text('Mailbox'), findsOneWidget);
+    expect(find.text('Quick links'), findsOneWidget);
+
+    await tester.tap(find.text('Mailbox'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byType(LoginPage), findsOneWidget);
   });
 
   testWidgets('guest sidebar hides authenticated navigation',

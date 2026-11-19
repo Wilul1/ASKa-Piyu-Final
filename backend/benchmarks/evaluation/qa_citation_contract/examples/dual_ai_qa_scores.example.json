@@ -1,0 +1,63 @@
+{
+  "example_only": true,
+  "not_an_evaluation_result": true,
+  "run_id": "run_example_qa_citation_0001",
+  "case_id": "qac_001_tor_fee",
+  "judge_source": "ai_evaluator",
+  "prompt_version": "qac-judge-v1",
+  "aggregation": {
+    "rule": "mean of both judges; never max()",
+    "reported_correctness": 4.0,
+    "reported_completeness": 3.5,
+    "reported_relevance": 4.0,
+    "reported_faithfulness": 3.5,
+    "reported_overall": 3.75,
+    "formula": "reported_criterion = (primary + secondary) / 2; reported_overall = mean of four reported criteria",
+    "disagreement": true,
+    "disagreement_reason": "completeness and faithfulness differ by 1; mean used, higher score discarded as a selection rule"
+  },
+  "judges": [
+    {
+      "run_id": "run_example_qa_citation_0001",
+      "case_id": "qac_001_tor_fee",
+      "evaluator_slot": "primary",
+      "evaluation_status": "evaluated",
+      "judge_source": "ai_evaluator",
+      "evaluator_model": "example-judge-a-not-executed",
+      "prompt_version": "qac-judge-v1",
+      "evaluated_at": "2026-11-09T05:01:00Z",
+      "correctness": 4,
+      "completeness": 4,
+      "relevance": 4,
+      "faithfulness": 4,
+      "overall": 4.0,
+      "explanation": "Undergraduate and graduate TOR page rates match the retrieved Charter excerpt. No invented unit.",
+      "evidence": {
+        "faithfulness_basis": "retrieved_chunk_ids and displayed_citation_ids, not reference-answer similarity",
+        "retrieved_chunk_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"]
+      },
+      "raw_json": { "note": "Raw evaluator payload stored verbatim after secret stripping." }
+    },
+    {
+      "run_id": "run_example_qa_citation_0001",
+      "case_id": "qac_001_tor_fee",
+      "evaluator_slot": "secondary",
+      "evaluation_status": "evaluated",
+      "judge_source": "ai_evaluator",
+      "evaluator_model": "example-judge-b-not-executed",
+      "prompt_version": "qac-judge-v1",
+      "evaluated_at": "2026-11-09T05:01:08Z",
+      "correctness": 4,
+      "completeness": 3,
+      "relevance": 4,
+      "faithfulness": 3,
+      "overall": 3.5,
+      "explanation": "Rates match. Completeness/faithfulness reduced because the answer added .00 on the graduate line (source prints P150/page) without stating Charter edition.",
+      "evidence": {
+        "faithfulness_basis": "retrieved excerpt 'Graduate: P150/page'",
+        "retrieved_chunk_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"]
+      },
+      "raw_json": { "note": "Second independent pass; not shown the primary scores." }
+    }
+  ]
+}

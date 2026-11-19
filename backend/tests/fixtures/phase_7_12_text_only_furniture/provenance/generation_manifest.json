@@ -1,0 +1,239 @@
+{
+  "generator": "generate_fixture.py",
+  "page_width": 468.0,
+  "page_height": 612.0,
+  "page_count": 8,
+  "deterministic_repeat_word_geometry_match": true,
+  "word_geometry_sha256": "147ee8a636e11345ed37ee368317bb4d2447341e644d7a9fe1f1ca9b9400d751",
+  "digital_pdf_bytes_not_stable": true,
+  "digital_sha256": "dba44de3644581e6cd798c23b1d33e9998014508edf077bf7762fc5e2bbfa779",
+  "header_text": "Policy Manual Running Header",
+  "footer_text": "Internal Review Copy Only",
+  "section_heading": "Section Overview",
+  "title": "Controlled Furniture Fixture",
+  "positions": {
+    "header_y_baseline": 28.0,
+    "section_y_baseline": 78.0,
+    "body_y0_baseline": 108.0,
+    "table_y0": 300.0,
+    "footer_y_baseline": 578.0,
+    "folio_y_baseline": 598.0,
+    "title_y_baseline": 200.0,
+    "odd_header_footer_x": 36.0,
+    "even_header_footer_x": 96.0,
+    "body_x": 48.0,
+    "folio_x": 220.0
+  },
+  "pages": {
+    "1": {
+      "role": "title",
+      "running_header": false,
+      "running_footer": false,
+      "folio": false,
+      "section_heading": false,
+      "native_table": false,
+      "expected": "title is not a running header"
+    },
+    "2": {
+      "role": "content",
+      "running_header": true,
+      "running_footer": true,
+      "folio": "1",
+      "duplex_x": 96.0,
+      "section_heading": true,
+      "native_table": false,
+      "numbered_items": false,
+      "hyphen_incomplete": false,
+      "hyphen_completion": false
+    },
+    "3": {
+      "role": "content",
+      "running_header": true,
+      "running_footer": true,
+      "folio": "2",
+      "duplex_x": 36.0,
+      "section_heading": true,
+      "native_table": false,
+      "numbered_items": false,
+      "hyphen_incomplete": false,
+      "hyphen_completion": false
+    },
+    "4": {
+      "role": "content",
+      "running_header": true,
+      "running_footer": true,
+      "folio": "3",
+      "duplex_x": 96.0,
+      "section_heading": true,
+      "native_table": true,
+      "numbered_items": false,
+      "hyphen_incomplete": false,
+      "hyphen_completion": false
+    },
+    "5": {
+      "role": "content",
+      "running_header": true,
+      "running_footer": true,
+      "folio": "4",
+      "duplex_x": 36.0,
+      "section_heading": true,
+      "native_table": false,
+      "numbered_items": true,
+      "hyphen_incomplete": false,
+      "hyphen_completion": false
+    },
+    "6": {
+      "role": "content",
+      "running_header": true,
+      "running_footer": true,
+      "folio": "5",
+      "duplex_x": 96.0,
+      "section_heading": true,
+      "native_table": true,
+      "numbered_items": false,
+      "hyphen_incomplete": true,
+      "hyphen_completion": false
+    },
+    "7": {
+      "role": "content",
+      "running_header": true,
+      "running_footer": true,
+      "folio": "6",
+      "duplex_x": 36.0,
+      "section_heading": true,
+      "native_table": false,
+      "numbered_items": false,
+      "hyphen_incomplete": false,
+      "hyphen_completion": true
+    },
+    "8": {
+      "role": "content",
+      "running_header": true,
+      "running_footer": true,
+      "folio": "7",
+      "duplex_x": 96.0,
+      "section_heading": true,
+      "native_table": false,
+      "numbered_items": false,
+      "hyphen_incomplete": false,
+      "hyphen_completion": false
+    }
+  },
+  "expected_classifications": {
+    "header": "candidate text-only furniture; not a native table",
+    "footer": "candidate text-only furniture; not a native table",
+    "folio": "variable page number; 7.4A isolation candidate; not header identity",
+    "section_heading": "negative control: repeated body heading, not furniture",
+    "table": "negative control: native table with repeated column headings",
+    "title": "negative control: one-off top title, not a running header"
+  },
+  "page_rects": [
+    {
+      "page_number": 1,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    },
+    {
+      "page_number": 2,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    },
+    {
+      "page_number": 3,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    },
+    {
+      "page_number": 4,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    },
+    {
+      "page_number": 5,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    },
+    {
+      "page_number": 6,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    },
+    {
+      "page_number": 7,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    },
+    {
+      "page_number": 8,
+      "width": 468.0,
+      "height": 612.0,
+      "rotation": 0
+    }
+  ],
+  "ocr_twin_pdf": "text_only_furniture_ocr_twin.pdf",
+  "rasters": [
+    {
+      "page_number": 1,
+      "png": "page_01_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    },
+    {
+      "page_number": 2,
+      "png": "page_02_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    },
+    {
+      "page_number": 3,
+      "png": "page_03_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    },
+    {
+      "page_number": 4,
+      "png": "page_04_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    },
+    {
+      "page_number": 5,
+      "png": "page_05_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    },
+    {
+      "page_number": 6,
+      "png": "page_06_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    },
+    {
+      "page_number": 7,
+      "png": "page_07_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    },
+    {
+      "page_number": 8,
+      "png": "page_08_zoom2.png",
+      "pixmap_width": 936,
+      "pixmap_height": 1224,
+      "zoom": 2.0
+    }
+  ]
+}

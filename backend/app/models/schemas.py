@@ -448,7 +448,8 @@ TicketStatus = Literal["Open", "In Progress", "Resolved", "Closed"]
 TicketPriority = Literal["Urgent", "High", "Medium", "Low"]
 TicketSenderRole = Literal["student", "faculty", "office", "admin"]
 KbAudience = Literal["student", "faculty", "both"]
-KbConversionStatus = Literal["none", "draft", "published"]
+KbConversionStatus = Literal["none", "draft", "needs_review", "published", "failed", "rejected"]
+KbReviewStatus = Literal["pending", "approved", "rejected"]
 KbOrigin = Literal["document", "ticket_resolution"]
 
 
@@ -498,6 +499,10 @@ class NotificationSchema(BaseModel):
 class NotificationListResponse(BaseModel):
     items: list[NotificationSchema]
     total: int
+    unread_count: int
+
+
+class TransferNotificationUnreadCountResponse(BaseModel):
     unread_count: int
 
 
@@ -562,6 +567,7 @@ class TicketSchema(BaseModel):
     attachments: list[TicketAttachmentSchema] = Field(default_factory=list)
     kb_article_id: str | None = None
     kb_conversion_status: KbConversionStatus = "none"
+    kb_needs_manual_completion: bool = False
 
 
 class ConvertTicketToArticleRequest(BaseModel):
@@ -592,6 +598,13 @@ class TicketKbArticleSchema(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     published_at: str | None = None
+    needs_manual_completion: bool = False
+    review_status: KbReviewStatus | None = None
+    generation_notes: str | None = None
+
+
+class RejectTicketKbArticleRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class TicketKbDuplicateCheckResponse(BaseModel):
@@ -651,6 +664,41 @@ class AddTicketReplyRequest(BaseModel):
 
 class TicketListResponse(BaseModel):
     items: list[TicketSchema]
+    total: int
+
+
+TicketTransferStatus = Literal["Pending", "Accepted", "Rejected"]
+
+
+class CreateTicketTransferRequest(BaseModel):
+    destination_office_id: str = Field(..., min_length=1, max_length=36)
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
+class RejectTicketTransferRequest(BaseModel):
+    # Optional: a request can be rejected with no reason given, but if one
+    # is provided it is recorded (never silently dropped).
+    rejection_reason: str | None = Field(default=None, max_length=1000)
+
+
+class TicketTransferRequestSchema(BaseModel):
+    id: str
+    ticket_id: str
+    source_office_id: str
+    source_office_name: str
+    destination_office_id: str
+    destination_office_name: str
+    initiated_by_user_id: str
+    reason: str
+    status: TicketTransferStatus
+    created_at: str
+    decided_at: str | None = None
+    decided_by_user_id: str | None = None
+    rejection_reason: str | None = None
+
+
+class TicketTransferRequestListResponse(BaseModel):
+    items: list[TicketTransferRequestSchema]
     total: int
 
 
@@ -1086,3 +1134,137 @@ class GenerateArticleCandidatesFromPreviewRequest(BaseModel):
     filename: str | None = None
     max_candidates: int | None = None
     save_mode: str = "preview_only"
+
+
+# --- Admin: Model Evaluation System ---
+
+
+class EvaluationModelInfoSchema(BaseModel):
+    component: str
+    model_name: str
+    shares_model_with: str | None = None
+    allow_llm_fallback: bool | None = None
+
+
+class EvaluationModelsResponse(BaseModel):
+    models: list[EvaluationModelInfoSchema]
+
+
+class StartEvaluationRunResponse(BaseModel):
+    run_id: str
+    status: str
+
+
+class EvaluationRunSummarySchema(BaseModel):
+    run_id: str
+    status: str
+    triggered_by_user_id: str | None = None
+    started_at: str
+    completed_at: str | None = None
+    error_message: str | None = None
+
+
+class EvaluationMetricSchema(BaseModel):
+    metric_name: str
+    metric_value: float | None = None
+    extra: Any | None = None
+
+
+class EvaluationComponentSchema(BaseModel):
+    component_id: str
+    component: str
+    status: str
+    reason: str | None = None
+    note: str | None = None
+    model_name: str
+    shares_model_with: str | None = None
+    allow_llm_fallback: bool | None = None
+    case_count: int
+    skipped_unlabeled_count: int
+    has_confusion_matrix: bool = False
+    metrics: list[EvaluationMetricSchema] = Field(default_factory=list)
+
+
+class EvaluationRunDetailSchema(EvaluationRunSummarySchema):
+    config: dict[str, Any] = Field(default_factory=dict)
+    components: list[EvaluationComponentSchema] = Field(default_factory=list)
+
+
+class EvaluationRunListResponse(BaseModel):
+    runs: list[EvaluationRunSummarySchema]
+    total: int
+    limit: int
+    offset: int
+
+
+class EvaluationSummaryResponse(BaseModel):
+    latest_run: EvaluationRunSummarySchema | None = None
+    components: list[EvaluationComponentSchema] = Field(default_factory=list)
+
+
+class EvaluationConfusionMatrixResponse(BaseModel):
+    component: str
+    labels: list[str]
+    matrix: list[list[int]]
+    case_count: int
+
+
+class EvaluationCaseResultSchema(BaseModel):
+    case_id: str
+    predicted: str | None = None
+    expected: str | None = None
+    correct: bool | None = None
+    latency_ms: float | None = None
+
+
+class EvaluationCaseResultListResponse(BaseModel):
+    component: str
+    case_results: list[EvaluationCaseResultSchema]
+    total: int
+    limit: int
+    offset: int
+
+
+class QaCitationJudgingOverviewResponse(BaseModel):
+    """Read-only Stage 3.2B-3.6 QA/citation-claim judging overview.
+
+    Deliberately separate from EvaluationSummaryResponse/EvaluationRunDetailSchema
+    -- see app.services.evaluation.qa_citation_judging_overview's module
+    docstring for why this is not folded into the existing
+    answer_generation_llm/citation_verifier_llm component overlay pattern.
+    `available=False` with all other fields null/empty is the honest
+    "not computed yet" state; it is never fabricated.
+    """
+
+    available: bool
+    judge_source: str | None = None
+    judges: dict[str, Any] | None = None
+    qa: dict[str, Any] | None = None
+    citation: dict[str, Any] | None = None
+    capture_coverage: dict[str, Any] | None = None
+    source_run_ids: dict[str, str] | None = None
+    limitations: list[str] = Field(default_factory=list)
+
+
+class EvaluationFullReportResponse(BaseModel):
+    """Combined, read-only JSON export for the consolidated Model
+    Evaluation report page.
+
+    Assembled entirely from already-serialized data the dashboard's own
+    endpoints already produce (latest run + components via the same
+    `_component_schema` used by /summary and /{run_id}, the Stage
+    3.2B-3.6 QA/citation overview via the same loader used by
+    /qa-citation-overview, and the retrieval overlay's own provenance
+    block) -- no metric is recalculated, no LLM call, no Chroma read, no
+    database write. `latest_run`/`qa_citation_judging`/
+    `retrieval_provenance` are None when the underlying artifact is
+    genuinely unavailable -- an explicit "unavailable" marker, never a
+    fabricated value.
+    """
+
+    generated_at: str
+    latest_run: EvaluationRunDetailSchema | None = None
+    qa_citation_judging: dict[str, Any] | None = None
+    retrieval_provenance: dict[str, Any] | None = None
+    models: list[EvaluationModelInfoSchema] = Field(default_factory=list)
+    scope_notes: list[str] = Field(default_factory=list)

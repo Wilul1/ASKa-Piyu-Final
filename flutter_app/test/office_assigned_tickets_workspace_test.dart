@@ -207,6 +207,99 @@ void main() {
     expect(find.text('Ticket Details'), findsOneWidget);
     expect(find.text('Select a ticket to view the conversation.'), findsNothing);
   });
+
+  // --- status workflow (Phase 2): no manual status dropdown anywhere -------
+  //
+  // No DropdownButtonFormField's current value is ever a status word
+  // ('Open'/'In Progress'/'Resolved'/'Closed') -- that is the real
+  // regression this guards, independent of the (legitimate, unrelated)
+  // Priority dropdown and the status badge rendering twice (once in the
+  // thread header, once in the always-visible details sidebar, at this
+  // wide viewport).
+  const statusWords = {'Open', 'In Progress', 'Resolved', 'Closed'};
+  Finder statusDropdowns() => find.byWidgetPredicate((widget) {
+        if (widget is! DropdownButtonFormField<String>) return false;
+        return statusWords.contains(widget.initialValue);
+      });
+
+  testWidgets(
+      'Details sidebar shows status as a read-only badge with a Resolve '
+      'action, never a status dropdown',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(
+          id: 'TK-OPEN-1',
+          subject: 'Need a Good Moral Certificate',
+          status: 'Open',
+        ),
+      ],
+      initialSelectedTicketId: 'TK-OPEN-1',
+    );
+
+    // The status badge (read-only) is shown...
+    expect(find.text('Open'), findsWidgets);
+    // ...and the dedicated Resolve action replaces the old dropdown.
+    expect(find.text('Resolve'), findsOneWidget);
+    expect(statusDropdowns(), findsNothing);
+  });
+
+  testWidgets(
+      'a Resolved ticket shows no Resolve action (office has no Close either)',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(
+          id: 'TK-RESOLVED-1',
+          subject: 'Already handled',
+          status: 'Resolved',
+        ),
+      ],
+      initialSelectedTicketId: 'TK-RESOLVED-1',
+    );
+
+    expect(find.text('Resolved'), findsWidgets);
+    expect(find.text('Resolve'), findsNothing);
+    // Close is admin-only -- office never sees it regardless of status.
+    expect(find.text('Close'), findsNothing);
+    expect(statusDropdowns(), findsNothing);
+  });
+
+  testWidgets('the Transfer dialog no longer offers a status dropdown',
+      (tester) async {
+    await pumpWorkspace(
+      tester,
+      tickets: [
+        ticketJson(
+          id: 'TK-TRANSFER-1',
+          subject: 'Needs a different office',
+          status: 'Open',
+        ),
+      ],
+      initialSelectedTicketId: 'TK-TRANSFER-1',
+    );
+
+    final transfer = find.byTooltip('Transfer / reassign', skipOffstage: false);
+    await tester.ensureVisible(transfer);
+    await tester.tap(transfer);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('Transfer ticket'), findsOneWidget);
+    // Office has allowReassignment: false, so with the status dropdown
+    // removed this dialog now has no dropdowns of its own left at all --
+    // scoped to inside the dialog, since the page behind it still has its
+    // own (unrelated, legitimate) Priority dropdown.
+    expect(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byType(DropdownButtonFormField<String>),
+      ),
+      findsNothing,
+    );
+  });
 }
 
 AuthUser _officeUser() {

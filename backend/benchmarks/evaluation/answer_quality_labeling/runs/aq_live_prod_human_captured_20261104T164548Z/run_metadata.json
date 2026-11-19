@@ -1,0 +1,35 @@
+{
+  "run_id": "aq_live_prod_human_captured_20261104T164548Z",
+  "run_kind": "live_production_student_chatbot_human_captured",
+  "status": "answer_correctness_judged_citations_pending",
+  "created_at_utc": "2026-11-04T16:45:48Z",
+  "website": "https://aska-piyu-6b05cafc5bd1.herokuapp.com/",
+  "evidence_source": "Human correctness judgments supplied in the Cursor chat at 2026-11-05 00:45 UTC+8. Full verbatim chatbot transcripts were not pasted into that message.",
+  "questions_submitted_by_this_agent": 0,
+  "questions_judged": 2,
+  "verbatim_transcripts_in_this_conversation": false,
+  "citation_details_supplied": false,
+  "pipeline": {
+    "interface": "live student-facing chatbot (human-captured)",
+    "not_used": [
+      "local answer_qa_question()",
+      "local generate_groq_answer()",
+      "local fallback run aq_subset_20261104T163426Z",
+      "blocked UI run aq_live_prod_BLOCKED_20261104T164045Z"
+    ]
+  },
+  "production_safety": {
+    "documents_uploaded_or_deleted": false,
+    "tickets_created_or_modified": false,
+    "settings_changed": false,
+    "code_deployed": false,
+    "migrations_run": false,
+    "pending_dataset_modified": false,
+    "previous_run_artifacts_modified": false
+  },
+  "overall": {
+    "answers_satisfactory": 1,
+    "answers_judged": 2,
+    "summary": "1 of 2 answers satisfactory"
+  }
+}

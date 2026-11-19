@@ -1,0 +1,42 @@
+[
+  {
+    "index": 0,
+    "rows": [
+      [
+        "Evaluated\nGrades/Report of\nGrades and verify\ncompleteness of\ngrades versus\ngrades in student\nportal",
+        "",
+        "",
+        "",
+        ""
+      ],
+      [
+        "3. Client\npresents the copy\nof Official Receipt\nand Evaluated\nGrades/Report of\nGrades to their\nrespective college\nsecretary",
+        "Checks the OR and copy of\nEvaluated Grades/Report of\nGrades. Endorses to the\nenrollment advising.",
+        "None",
+        "1 minute",
+        "College Secretary"
+      ],
+      [
+        "4. Presents the\nEvaluated\nGrades/Report of\nGrades to the\nRegistration\nAdviser/Program\nCoordinator/College\nDean",
+        "Registration Adviser/Program\nCoordinator/College Dean\nchecks the client’s adherence to\nprescribed curriculum.",
+        "None",
+        "7 minutes",
+        "Registration\nAdviser/Program\nCoordinator/College\nDean"
+      ],
+      [
+        "5. Client\nreceives the Pre-\nEnrolment Form\nand proceeds to\ntheir enrollment.",
+        "Registration Adviser/Program\nCoordinator/College Dean\nsigns the Pre-Enrolment Form",
+        "None",
+        "1 minute",
+        "Registration\nAdviser/Program\nCoordinator/College\nDean"
+      ],
+      [
+        "TOTAL:",
+        null,
+        "None",
+        "15 minutes",
+        ""
+      ]
+    ]
+  }
+]

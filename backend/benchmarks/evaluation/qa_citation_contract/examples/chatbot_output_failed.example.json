@@ -1,0 +1,31 @@
+{
+  "example_only": true,
+  "not_an_evaluation_result": true,
+  "run_id": "run_example_qa_citation_0001",
+  "case_id": "qac_014_wifi_password",
+  "execution_status": "error",
+  "captured_at": "2026-11-09T05:02:00Z",
+  "pipeline": "answer_qa_question",
+  "user_role": "student",
+  "corpus": {
+    "path": "backend/data/chroma_evaluation",
+    "collection": "aska_evaluation",
+    "chunk_count": 691
+  },
+  "model": {
+    "answer_generation_model": "example-chat-model-not-executed",
+    "embedding_model": "sentence-transformers: intfloat/multilingual-e5-small",
+    "config_snapshot": { "store": "LabeledRetrievalStore" }
+  },
+  "generated_answer": null,
+  "retrieved_context": null,
+  "retrieved_chunk_ids": [],
+  "displayed_citation_ids": [],
+  "source_metadata": [],
+  "fallback_reason": null,
+  "out_of_scope_detected": false,
+  "error_type": "GroqAnswerError",
+  "error_message": "provider_unavailable",
+  "raw_qa_result_json": null,
+  "scoring_rule": "Keep the row on the run. Do not judge. Do not drop from case_count. Exclude from metric numerators and denominators. evaluation_status=not_evaluable."
+}

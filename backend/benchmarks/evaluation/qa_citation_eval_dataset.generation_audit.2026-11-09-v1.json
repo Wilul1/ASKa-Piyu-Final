@@ -1,0 +1,65 @@
+{
+  "dataset_path": "backend/benchmarks/evaluation/qa_citation_eval_dataset.json",
+  "dataset_version": "2026-11-09-v1",
+  "generation_model": "cursor-grok-4.6",
+  "generation_prompt_version": "qac-gen-v1-stage3.1b-20261109",
+  "annotation_method": "ai_assisted_grounded_generation",
+  "human_verified": false,
+  "source_corpus": {
+    "extract_artifact": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json",
+    "identity_digest": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+    "metadata_text_digest": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+    "evaluation_path": "backend/data/chroma_evaluation",
+    "evaluation_collection": "aska_evaluation"
+  },
+  "final_case_count": 36,
+  "case_type_counts": {
+    "labeled_student_support": 32,
+    "insufficient_evidence": 4
+  },
+  "category_counts": {
+    "Student Records": 3,
+    "Enrollment and Registration": 4,
+    "University Forms and Documentary Requirements": 2,
+    "Student Services": 8,
+    "Fees and Payment": 6,
+    "Academic Policies": 11,
+    "Scholarships and Financial Assistance": 1,
+    "Admissions": 1
+  },
+  "difficulty_counts": {
+    "easy": 13,
+    "medium": 13,
+    "hard": 5,
+    "conflict": 1,
+    "insufficient_evidence": 4
+  },
+  "rejected_or_reclassified_candidates": [
+    {
+      "candidate": "What is the teaching load of a regular faculty member?",
+      "status": "rejected_faculty_audience",
+      "reason": "Faculty-as-audience. Loader would reject faculty-member / teaching-load phrasing."
+    },
+    {
+      "candidate": "What is the campus Wi-Fi password?",
+      "status": "kept_as_insufficient_evidence",
+      "reason": "No wifi password in the extract. Not converted into an invented answer."
+    },
+    {
+      "candidate": "What does Brand New Article say about admissions?",
+      "status": "rejected_placeholder",
+      "reason": "FAQ placeholder text ('Brand New Article / Summary / Body'), not a university policy."
+    },
+    {
+      "candidate": "How much is library circulation, 2 pesos per what?",
+      "status": "rejected_incomplete_charter_line",
+      "reason": "Charter fee line is truncated ('2 pesos per'). Do not invent the unit."
+    },
+    {
+      "candidate": "What is the lost-ID replacement fee?",
+      "status": "kept_as_insufficient_evidence",
+      "reason": "No lost-ID replacement procedure or fee in the extract."
+    }
+  ],
+  "notes": "Candidates were drafted while inspecting locked extract titles and text, then each kept case was checked for chunk membership and verbatim excerpts. This audit file is not a live evaluation dataset and must not be loaded by the Stage 2 loader as qa_citation_eval_dataset.json."
+}

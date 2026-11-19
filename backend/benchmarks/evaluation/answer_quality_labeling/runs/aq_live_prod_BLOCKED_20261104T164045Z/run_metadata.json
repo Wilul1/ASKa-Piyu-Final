@@ -1,0 +1,39 @@
+{
+  "run_id": "aq_live_prod_BLOCKED_20261104T164045Z",
+  "run_kind": "live_production_student_chatbot",
+  "status": "not_executed",
+  "created_at_utc": "2026-11-04T16:40:45Z",
+  "website": "https://aska-piyu-6b05cafc5bd1.herokuapp.com/",
+  "public_health": {
+    "url": "https://aska-piyu-6b05cafc5bd1.herokuapp.com/health",
+    "body": {
+      "status": "ok",
+      "service": "aska-piyu"
+    },
+    "checked_at_utc": "2026-11-04T16:40:45Z"
+  },
+  "intended_pipeline": {
+    "interface": "student-facing chatbot UI",
+    "not_used": [
+      "local answer_qa_question()",
+      "local generate_groq_answer()",
+      "previous local fallback run aq_subset_20261104T163426Z"
+    ]
+  },
+  "questions_submitted": 0,
+  "blockers": [
+    "This Cursor session has no interactive browser tools (no login-form entry, no chatbot UI control).",
+    "Login credentials were not present in this Cursor conversation. The request referred to credentials from a ChatGPT conversation, which this session cannot read.",
+    "Office/bootstrap credential files in the repo were not used."
+  ],
+  "production_safety": {
+    "documents_uploaded_or_deleted": false,
+    "tickets_created_or_modified": false,
+    "settings_changed": false,
+    "code_deployed": false,
+    "migrations_run": false,
+    "pending_dataset_modified": false,
+    "previous_run_artifacts_modified": false
+  },
+  "dataset_sha256_expected": "D7CDD2EC2CCE20A176FBA7B07B70C6206E7AABF4F36FD8D3C5BC8BD1677E2905"
+}

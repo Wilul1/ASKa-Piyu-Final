@@ -1,0 +1,91 @@
+{
+  "judging_run_id": "qacj_citation_judging_20261110T082650Z",
+  "judged_at": "2026-11-10T08:26:50.469450+00:00",
+  "capture_run_id": "qac_capture_20261110T063448Z_f2dfa9d3",
+  "capture_file_sha256": "e559c4a453a02c7ea793930de9c17ca9ed3839d9539fd6574ce8cd61aa1d8c92",
+  "dataset_version": "2026-11-09-v1.1",
+  "dataset_json_sha256": "81f66f25d007f373512936880edca530c4f2137377ee5601fbb155fe81455972",
+  "accepted_qa_reference_run_id_not_modified": "qacj_judging_20261110T060752Z_e9d55993",
+  "judges": {
+    "citation_claim_rubric": {
+      "primary_model": "dots-studio/dots-3-note-preview:free",
+      "primary_provider": "atlascloud",
+      "secondary_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "secondary_provider": "nvidia",
+      "prompt_version": "qa_citation_claim_judge_v1",
+      "prompt_sha256": "5669a79db6a7f6599886baf9868f0193117a2d7a7e1c0c159485addc0533c846"
+    }
+  },
+  "scope_note": "This run judges ONLY citation-claim behavior. QA and insufficient-evidence judging were NOT re-run; the accepted QA reference run above is untouched.",
+  "answerable_total": 32,
+  "citation_aggregation": {
+    "eligible_count": 31,
+    "excluded_count": 1,
+    "excluded_counts_by_reason": {
+      "fallback_not_genuine": 1
+    },
+    "judged_case_count": 30,
+    "judge_data_points_aggregated": 60,
+    "judging_failed_partial_count": 1,
+    "judging_failed_total_count": 0,
+    "citation_precision": {
+      "numerator": 78,
+      "denominator": 86,
+      "value": 0.9069767441860465
+    },
+    "citation_completeness": {
+      "numerator": 220,
+      "denominator": 345,
+      "value": 0.6376811594202898
+    },
+    "claim_support_rate": {
+      "numerator": 220,
+      "denominator": 345,
+      "value": 0.6376811594202898
+    },
+    "unsupported_claim_rate": {
+      "numerator": 122,
+      "denominator": 345,
+      "value": 0.3536231884057971
+    },
+    "citation_validity": {
+      "numerator": 0,
+      "denominator": 86,
+      "value": 0.0
+    }
+  },
+  "special_case_outcomes": {
+    "qac_008_latin_cum_laude": {
+      "final_status": "judged",
+      "eligibility": {
+        "case_id": "qac_008_latin_cum_laude",
+        "eligible": true,
+        "exclusion_reason": null
+      },
+      "primary_claims_found": 1,
+      "secondary_claims_found": 1
+    },
+    "qac_020_transferee_documents": {
+      "final_status": "judged",
+      "eligibility": {
+        "case_id": "qac_020_transferee_documents",
+        "eligible": true,
+        "exclusion_reason": null
+      },
+      "primary_claims_found": 12,
+      "secondary_claims_found": 11
+    },
+    "qac_025_four_point_zero_and_inc": {
+      "final_status": "excluded_ineligible",
+      "eligibility": {
+        "case_id": "qac_025_four_point_zero_and_inc",
+        "eligible": false,
+        "exclusion_reason": "fallback_not_genuine"
+      },
+      "primary_claims_found": null,
+      "secondary_claims_found": null
+    }
+  },
+  "citation_verifier_metadata_limitation": "The Stage 3.4 production citation_verification.py module (unmodified) did not record resolved model/provider identity, a response id, or a call timestamp for the original citation-VERIFICATION calls that produced this capture's displayed_citation_ids -- only usage/content were captured. This is distinct from citation-CLAIM JUDGING (this run), whose own judge calls DO have full envelope traceability (raw_response_envelopes.jsonl), since those calls were made directly by this evaluation driver, not through the production verifier module.",
+  "coverage_vs_correctness_note": "Stage 3.4's '34/36 cases produced a displayed citation' is CAPTURE COVERAGE -- whether any citation was shown at all. This run's citation_aggregation (precision/completeness/claim_support_rate/unsupported_claim_rate/citation_validity) is CLAIM-LEVEL JUDGING -- whether what was shown (or not shown) was actually correct. The two are not the same measurement and are reported separately here, not conflated."
+}

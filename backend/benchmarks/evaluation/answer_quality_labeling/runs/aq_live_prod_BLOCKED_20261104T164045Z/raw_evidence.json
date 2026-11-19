@@ -1,0 +1,33 @@
+{
+  "run_id": "aq_live_prod_BLOCKED_20261104T164045Z",
+  "status": "not_executed",
+  "note": "No live chatbot responses were captured. Do not treat this file as generated answers.",
+  "cases": [
+    {
+      "case_id": "aq_04_dropping_fee_multi_document",
+      "question": "How much does it cost to drop a subject?",
+      "submitted": false,
+      "submitted_at_utc": null,
+      "chatbot_answer": null,
+      "student_visible_citations": [],
+      "citation_open_results": [],
+      "answer_complete_or_truncated": null,
+      "visible_errors": [
+        "Question was not submitted because live UI login could not be performed in this session."
+      ]
+    },
+    {
+      "case_id": "aq_08_fail_more_than_75_percent",
+      "question": "What happens if I fail more than 75% of my units?",
+      "submitted": false,
+      "submitted_at_utc": null,
+      "chatbot_answer": null,
+      "student_visible_citations": [],
+      "citation_open_results": [],
+      "answer_complete_or_truncated": null,
+      "visible_errors": [
+        "Question was not submitted because live UI login could not be performed in this session."
+      ]
+    }
+  ]
+}

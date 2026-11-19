@@ -1,0 +1,775 @@
+{
+  "reviewer_id": "AI-R2",
+  "reviewer_type": "AI",
+  "annotation_method": "independent_ai_annotation",
+  "cases": [
+    {
+      "case_id": "cls_q_rag_benchmark_01",
+      "component": "classify_question",
+      "label": "Transcript of Records",
+      "evidence_sufficient": true,
+      "justification": "The question asks the cost of obtaining a copy of a Transcript of Records, which is a TOR request.",
+      "evidence": "How much does it cost to get a copy of my Transcript of Records?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_02",
+      "component": "classify_question",
+      "label": "Graduation",
+      "evidence_sufficient": true,
+      "justification": "A fee for a second copy of a diploma is a graduation-document request, not a transcript request.",
+      "evidence": "How much is the fee for a second copy of my diploma?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_03",
+      "component": "classify_question",
+      "label": "Registration",
+      "evidence_sufficient": true,
+      "justification": "The question asks which office handles student enrollment, which is registration.",
+      "evidence": "Which office handles student enrollment?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_04",
+      "component": "classify_question",
+      "label": "Withdrawal",
+      "evidence_sufficient": true,
+      "justification": "The question asks the cost of dropping a subject, which is a withdrawal transaction.",
+      "evidence": "How much does it cost to drop a subject?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_05",
+      "component": "classify_question",
+      "label": "Library",
+      "evidence_sufficient": true,
+      "justification": "The question asks the overdue fee for library circulation service.",
+      "evidence": "What is the fee for library circulation service if my book is overdue?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_06",
+      "component": "classify_question",
+      "label": "Entrance Examination",
+      "evidence_sufficient": true,
+      "justification": "The question asks how long the LSPU entrance examination, including orientation, takes.",
+      "evidence": "How long does the LSPU entrance examination take, including orientation?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_07",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Student ID validation is a different process from course-credit Validation, and no single in-scope subcategory is clearly supported.",
+      "evidence": "What is the process for validating my student ID?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_08",
+      "component": "classify_question",
+      "label": "Retention",
+      "evidence_sufficient": true,
+      "justification": "Failing more than 75 percent of enrolled units is a scholastic-delinquency and retention consequence.",
+      "evidence": "What happens if I fail more than 75% of my units?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_09",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Faculty teaching-load determination is a faculty HR matter and is outside the student subcategory set.",
+      "evidence": "How is faculty teaching load determined?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_10",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Faculty member responsibilities are an HR and faculty-manual topic, not a student subcategory.",
+      "evidence": "What are the responsibilities of an LSPU faculty member?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_11",
+      "component": "classify_question",
+      "label": "Honorable Dismissal",
+      "evidence_sufficient": true,
+      "justification": "The question asks for the meaning of honorable dismissal for a student.",
+      "evidence": "What is honorable dismissal for a student?"
+    },
+    {
+      "case_id": "cls_q_rag_benchmark_12",
+      "component": "classify_question",
+      "label": "Administrative Officials",
+      "evidence_sufficient": true,
+      "justification": "Asking who the current LSPU president is asks for an administrative official.",
+      "evidence": "Who is the current LSPU president?"
+    },
+    {
+      "case_id": "cls_q_cg_gate3_grading_gwa",
+      "component": "classify_question",
+      "label": "Grading System",
+      "evidence_sufficient": true,
+      "justification": "Passing grade and GWA computation are grading-system rules.",
+      "evidence": "What is the passing grade and how is GWA computed?"
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_enroll_t0",
+      "component": "classify_question",
+      "label": "Registration",
+      "evidence_sufficient": true,
+      "justification": "How to enroll is a registration question.",
+      "evidence": "How do I enroll?"
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_switch_tor_followup",
+      "component": "classify_question",
+      "label": "Transcript of Records",
+      "evidence_sufficient": true,
+      "justification": "TOR in this university context is the Transcript of Records.",
+      "evidence": "Now tell me about TOR."
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_oos_stale",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The president of the Philippines is outside LSPU student-service scope.",
+      "evidence": "Who is the president of the Philippines?"
+    },
+    {
+      "case_id": "cls_q_cg_cert_final_good_moral_fee",
+      "component": "classify_question",
+      "label": "Good Moral",
+      "evidence_sufficient": true,
+      "justification": "The question asks the fee for a Good Moral Certificate.",
+      "evidence": "How much does a Good Moral Certificate cost?"
+    },
+    {
+      "case_id": "cls_q_cg_val_active_service_enroll_t0",
+      "component": "classify_question",
+      "label": "Registration",
+      "evidence_sufficient": true,
+      "justification": "Enrolling as a new student asks for the enrollment process, which is registration.",
+      "evidence": "How do I enroll as a new student at LSPU?"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_institutional_identity",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Asking what the university is does not clearly select vision and mission, history, or another single subcategory.",
+      "evidence": "What is Laguna State Polytechnic University?"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_drop_subject_no_evidence",
+      "component": "classify_question",
+      "label": "Withdrawal",
+      "evidence_sufficient": true,
+      "justification": "Dropping a subject and the grade effect of a late drop are withdrawal rules.",
+      "evidence": "How do I drop a subject and what happens to my grades if I drop late?"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_scholarship_surprising_top_source",
+      "component": "classify_question",
+      "label": "Scholarships",
+      "evidence_sufficient": true,
+      "justification": "The question asks how to apply for a scholarship at LSPU.",
+      "evidence": "How do I apply for a scholarship at LSPU?"
+    },
+    {
+      "case_id": "cls_q_cg_merged_chat_request_tor",
+      "component": "classify_question",
+      "label": "Transcript of Records",
+      "evidence_sufficient": true,
+      "justification": "The question asks how to request a Transcript of Records.",
+      "evidence": "How do I request a Transcript of Records?"
+    },
+    {
+      "case_id": "cls_q_cg_grade_correction_full_candidate_pool_repro",
+      "component": "classify_question",
+      "label": "Grading System",
+      "evidence_sufficient": true,
+      "justification": "Correcting grades, including approval and deadlines, is a grading-system process.",
+      "evidence": "A faculty member needs to correct grades for 30% of a class."
+    },
+    {
+      "case_id": "cls_q_fg_a1_refund_schedule_exact",
+      "component": "classify_question",
+      "label": "Fee Refunds",
+      "evidence_sufficient": true,
+      "justification": "The question asks what percentage of fees is refunded for a leave of absence in the third week.",
+      "evidence": "If I'm granted a Leave of Absence during the third week of classes, what percentage of my paid fees will be refunded?"
+    },
+    {
+      "case_id": "cls_q_fg_a2_coe_fee_exact",
+      "component": "classify_question",
+      "label": "Certificates",
+      "evidence_sufficient": true,
+      "justification": "A Certificate of Employment request, including its fee and processing time, is a certificate service.",
+      "evidence": "Is there a fee to request a Certificate of Employment, and how long does it take?"
+    },
+    {
+      "case_id": "cls_q_fg_b1_grade_correction_paraphrase",
+      "component": "classify_question",
+      "label": "Grading System",
+      "evidence_sufficient": true,
+      "justification": "The deadline to dispute an erroneous grade is a grade-correction rule.",
+      "evidence": "how many days do I have to formally dispute it after grades come out?"
+    },
+    {
+      "case_id": "cls_q_fg_b2_validation_paraphrase",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "Whether previously passed subjects must be retaken is a transfer-credit and validation question.",
+      "evidence": "will I have to retake subjects I already passed?"
+    },
+    {
+      "case_id": "cls_q_fg_c1_fifty_percent_refund_trap",
+      "component": "classify_question",
+      "label": "Fee Refunds",
+      "evidence_sufficient": true,
+      "justification": "The question asks the refund percentage for withdrawal in the third week.",
+      "evidence": "What percentage of fees do I get back if I withdraw during the third week of the semester?"
+    },
+    {
+      "case_id": "cls_q_fg_c2_junior_standing_trap",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Junior class standing by units earned is not a clearly supported subcategory.",
+      "evidence": "How many units do I need to have earned to be classified as a Junior student?"
+    },
+    {
+      "case_id": "cls_q_fg_d1_transcript_vs_enrollment_office",
+      "component": "classify_question",
+      "label": "Transcript of Records",
+      "evidence_sufficient": true,
+      "justification": "The question asks the submissions and fee for a Transcript of Records request.",
+      "evidence": "What do I need to submit to request my Transcript of Records, and is there a fee?"
+    },
+    {
+      "case_id": "cls_q_fg_d2_oup_vs_ocd_request_letter",
+      "component": "classify_question",
+      "label": "Requests",
+      "evidence_sufficient": true,
+      "justification": "The first step for a request letter to the Office of the University President is a request procedure.",
+      "evidence": "submit a request letter to the Office of the University President for approval"
+    },
+    {
+      "case_id": "cls_q_fg_e1_request_letter_vocabulary_collision",
+      "component": "classify_question",
+      "label": "Student Organizations",
+      "evidence_sufficient": true,
+      "justification": "Funding approval for a student-organization request is a student-organization budget matter.",
+      "evidence": "get funding approved for a request letter from my student organization"
+    },
+    {
+      "case_id": "cls_q_fg_e2_application_vocabulary_collision",
+      "component": "classify_question",
+      "label": "Requests",
+      "evidence_sufficient": true,
+      "justification": "The form used to substitute one course subject for another is a request form.",
+      "evidence": "What form do I need to submit if I want to substitute one of my course subjects for another?"
+    },
+    {
+      "case_id": "cls_q_fg_f1_validation_multiclaim_singlesource",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "Skipping validation for equivalent subjects and the credit cap are validation rules.",
+      "evidence": "can I skip validation for equivalent subjects, and if so what's the cap?"
+    },
+    {
+      "case_id": "cls_q_fg_g1_multiclaim_multisource",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "The grade requirement and the cap on credits carried without validation are transfer-credit validation rules.",
+      "evidence": "what's the cap on how many credits I can carry over without validation?"
+    },
+    {
+      "case_id": "cls_q_fg_h1_partially_unsupported",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "A fee and processing time for subject validation refer to course validation, not student-ID validation.",
+      "evidence": "Is there a fee for subject validation, and how many days does the validation process take?"
+    },
+    {
+      "case_id": "cls_q_fg_j1_good_moral_near_duplicate",
+      "component": "classify_question",
+      "label": "Good Moral",
+      "evidence_sufficient": true,
+      "justification": "The question asks what an alumnus must bring to obtain a Good Moral Certificate.",
+      "evidence": "I need a Good Moral Certificate — what do I need to bring?"
+    },
+    {
+      "case_id": "cls_q_fg_k1_class_standing_percentage_range",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The unit percentage that separates sophomore from freshman standing is not a single supported subcategory.",
+      "evidence": "What percentage of total units must I have completed to be considered a Sophomore instead of a Freshman?"
+    },
+    {
+      "case_id": "cls_q_fg_l1_refund_deadline_window",
+      "component": "classify_question",
+      "label": "Fee Refunds",
+      "evidence_sufficient": true,
+      "justification": "The question asks the last week in which any fee refund, including a partial refund, is still available.",
+      "evidence": "By what week of the semester do I need to withdraw to get any refund at all, even a partial one?"
+    },
+    {
+      "case_id": "cls_q_fg_m1_crediting_approval_chain",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "Who signs off on crediting previous subjects is the approval chain for transfer-credit validation.",
+      "evidence": "Who reviews and signs off on which of my previous subjects get credited when I transfer to LSPU?"
+    },
+    {
+      "case_id": "cls_q_fg_n1_out_of_scope_recipe",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "A cooking recipe is outside university student-service scope.",
+      "evidence": "Can you give me a recipe for adobo?"
+    },
+    {
+      "case_id": "cls_q_fg_n2_out_of_scope_unrelated_school",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Admission requirements of the University of the Philippines are outside LSPU scope.",
+      "evidence": "What are the admission requirements at the University of the Philippines?"
+    },
+    {
+      "case_id": "cls_q_fg_o1_role_student_baseline",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The question jointly asks for a retention standard and a good-moral standard, so it does not support one subcategory.",
+      "evidence": "What's the retention/good moral standard I need to maintain as a student?"
+    },
+    {
+      "case_id": "cls_q_fg_o2_role_faculty_substitution",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Arranging a substitute instructor is a faculty staffing matter and is outside the student subcategory set.",
+      "evidence": "who is allowed to arrange a substitute instructor for me?"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p1_previous_degree_transfer_credit",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "How much previous coursework can be credited without validation is a transfer-credit validation limit.",
+      "evidence": "How much of my previous coursework can be credited without validation?"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p2_grade_correction_after_30_days",
+      "component": "classify_question",
+      "label": "Grading System",
+      "evidence_sufficient": true,
+      "justification": "Requesting correction of a grade after more than 30 days is a grade-correction rule.",
+      "evidence": "What should I do if I want to request correction of a grade after more than 30 days?"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p3_paraphrased_transfer_credit",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "The limit on equivalent subjects credited from a prior degree without validation exams is a validation rule.",
+      "evidence": "is there a limit on how many equivalent subjects from that degree can count toward my new program without taking validation exams?"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p4_multiple_policy_facts",
+      "component": "classify_question",
+      "label": "Validation",
+      "evidence_sufficient": true,
+      "justification": "Both whether equivalent subjects can be credited without validation and the maximum share of the new program are validation rules.",
+      "evidence": "whether equivalent subjects can be credited without validation and the maximum amount of the new program that can be credited this way"
+    },
+    {
+      "case_id": "cls_q_pilot_pilot_p5_out_of_scope_mars",
+      "component": "classify_question",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Weather on Mars is outside university student-service scope.",
+      "evidence": "What is the weather on Mars?"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__1",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The charter bundles transcript of records, transfer credentials, certifications, CAV, copy of grades, and a second diploma copy, so it does not support one subcategory.",
+      "evidence": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents; Second copy of diploma: P100.00"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__0",
+      "component": "classify_chunk",
+      "label": "Registration",
+      "evidence_sufficient": true,
+      "justification": "The titled service is Enrollment, and the steps submit requirements and enlist subjects for registration.",
+      "evidence": "This service provides assistance for Enrollment."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__82",
+      "component": "classify_chunk",
+      "label": "Withdrawal",
+      "evidence_sufficient": true,
+      "justification": "The policy states grades and a fee when a student drops a subject.",
+      "evidence": "If a subject is dropped after the first day of the midterm examinations; A dropping fee of P20/unit is required."
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__97",
+      "component": "classify_chunk",
+      "label": "Withdrawal",
+      "evidence_sufficient": true,
+      "justification": "The citizen's charter service is Dropping of Subjects, including the dropping form and fee.",
+      "evidence": "This service provides assistance for Dropping of Subjects."
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__10",
+      "component": "classify_chunk",
+      "label": "Library",
+      "evidence_sufficient": true,
+      "justification": "The service is library circulation: searching, borrowing, and returning materials through the library.",
+      "evidence": "This service provides assistance for Library Circulation Service. Office / Division Library"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__78",
+      "component": "classify_chunk",
+      "label": "Entrance Examination",
+      "evidence_sufficient": true,
+      "justification": "The service is the LSPU entrance examination, covering orientation, the exam proper, and release of results.",
+      "evidence": "This service provides assistance for LSPU Entrance Examination."
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__14",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "ID Validation is validation of a student identification card, not course-credit Validation.",
+      "evidence": "This service provides assistance for ID Validation. Present the Certificate of Registration. Release validated ID."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__66",
+      "component": "classify_chunk",
+      "label": "Retention",
+      "evidence_sufficient": true,
+      "justification": "Warning and probation for failing 25 to 74 percent of units are retention rules on scholastic delinquency.",
+      "evidence": "Retention Policies > Sec. 4 > Scholastic Delinquency; A student who fails 25% to 49% of the total academic units"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__69",
+      "component": "classify_chunk",
+      "label": "Retention",
+      "evidence_sufficient": true,
+      "justification": "Disqualification, dismissal at 75 percent failure, and permanent disqualification are retention consequences.",
+      "evidence": "Retention Policies > Sec. 7 > Disqualification Exemption; 75% or more ... Dismissal from the College"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__14",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Faculty official time, biometrics, and the 40-hour week are faculty-manual time rules, not a student subcategory.",
+      "evidence": "A. Faculty Official Time; render a total of forty (40) service hours a week"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__15",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Faculty attendance, substitute teachers, and teaching-load assignment are faculty-manual topics.",
+      "evidence": "B. Faculty Attendance and Absences; Substitution of a duly qualified faculty ... shall be done only by the Dean"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__16",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Vertical alignment and time allotment for faculty loads are faculty HR rules, not a college-program or student subcategory.",
+      "evidence": "E. Internal Policy on Vertical Alignment of Faculty; F. Time Allotment for Teaching Loads"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__7",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "This faculty-manual passage is institutional history, from the 1952 high school through campus integration, and is not one student subcategory.",
+      "evidence": "II. Historical Development of LSPU; established in 1952 as a provincial secondary school"
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__8",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The title says historical development, but the body is a faculty teaching-commitment code, so title and text do not support one subcategory.",
+      "evidence": "II. Historical Development of LSPU - Part 2; Teaching is a personal commitment of oneself to others"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__117",
+      "component": "classify_chunk",
+      "label": "Honorable Dismissal",
+      "evidence_sufficient": true,
+      "justification": "The chunk defines honorable dismissal as voluntary withdrawal with the registrar's consent.",
+      "evidence": "Honorable Dismissal is voluntary with drawal from the college/university with the consent of the Registrar."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__118",
+      "component": "classify_chunk",
+      "label": "Honorable Dismissal",
+      "evidence_sufficient": true,
+      "justification": "The chunk states the petition, indebtedness, good-standing, and non-grant rules for honorable dismissal.",
+      "evidence": "A student of good standing who desires to withdraw ... shall be given Honorable Dismissal."
+    },
+    {
+      "case_id": "cls_c_97e32a29-fa86-458c-9fe9-dba48f9605ce__6",
+      "component": "classify_chunk",
+      "label": "Administrative Officials",
+      "evidence_sufficient": true,
+      "justification": "The chunk names the university president and vice presidents as administrative officials.",
+      "evidence": "DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__10",
+      "component": "classify_chunk",
+      "label": "Administrative Officials",
+      "evidence_sufficient": true,
+      "justification": "The chunk is a list of the university president and vice presidents.",
+      "evidence": "DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__123",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Who signs an undergraduate thesis approval sheet does not clearly match graduation or another single subcategory.",
+      "evidence": "Only the following shall be included for signing in the approval sheet: adviser, panel members, dean/associate dean, and registrar."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__290",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Criteria for a student-journalist non-academic award do not clearly support graduation, student organizations, or another single subcategory.",
+      "evidence": "Non-academic Awards; Student Journalist of the Year"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__452",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The passage mixes campus health screening, flexible learning for affected students, and work-from-home, so it does not support one subcategory.",
+      "evidence": "If not feeling well, stay home. LSPU shall implement the appropriate flexible learning mode"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__136",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "A single graduate research-objective fragment does not clearly distinguish vision and mission, graduate programs, or graduate policy.",
+      "evidence": "Gain advanced knowledge and skills in conducting various kinds of researches in one's field of study."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__478",
+      "component": "classify_chunk",
+      "label": "Counseling",
+      "evidence_sufficient": true,
+      "justification": "The sentence states who the mental health services policy covers, which is counseling.",
+      "evidence": "The mental health services policy applies to students, faculty, non-teaching personnel, officials, and Board of Regents."
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__49",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Employee official-travel facilitation is an empty staff service record and is outside the student subcategory set.",
+      "evidence": "Facilitation of Employees' Official Travels for Conference/Training; Agency Action: Not specified"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__155",
+      "component": "classify_chunk",
+      "label": "Graduate Programs",
+      "evidence_sufficient": true,
+      "justification": "The table gives core, major, cognate, and thesis units for master's and doctorate degrees, which is graduate program structure.",
+      "evidence": "Core/Foundation | Major Courses | Thesis/ Dissertation | Total Units | 42 42 | 42 42 66 | 66 | 63"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__207",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The chunk combines assistance to foreign students with a separate section on learners with special needs, so it does not support one subcategory.",
+      "evidence": "Assist foreign students with proper coordination; Sec. 9. Services for students with Special Needs and Persons with Disabilities"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__37",
+      "component": "classify_chunk",
+      "label": "Foreign Students",
+      "evidence_sufficient": true,
+      "justification": "The provisions require TOEFL or English training for foreign applicants and apply the same rules to Filipinos educated abroad.",
+      "evidence": "The foreign student applicant who is not a native English speaker is required to have at least earned a minimum score of 500 in the Test of English as Foreign Language (TOEFL)"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__151",
+      "component": "classify_chunk",
+      "label": "Registration",
+      "evidence_sufficient": true,
+      "justification": "Change of matriculation is the process and deadline for changing enrolled subjects with GSAR.",
+      "evidence": "No change of matriculation involving the taking of new subjects shall be allowed after 12% of regular class meetings have been held."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__160",
+      "component": "classify_chunk",
+      "label": "Graduate Policies",
+      "evidence_sufficient": true,
+      "justification": "Minimum residence units and the five-year and seven-year completion limits are graduate academic policies.",
+      "evidence": "A master's degree student shall earn a minimum of 18 units within two semesters; master's degree shall be completed within five (5) years"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__167",
+      "component": "classify_chunk",
+      "label": "Graduate Policies",
+      "evidence_sufficient": true,
+      "justification": "The stated amounts are the comprehensive examination fees for master's and doctorate degrees under graduate examination guidelines.",
+      "evidence": "The comprehensive examination fee is P1,000.00 for master's degree and P2,000.00 for doctorate degree."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__138",
+      "component": "classify_chunk",
+      "label": "College of Agriculture",
+      "evidence_sufficient": true,
+      "justification": "The chunk lists the agriculture curricular offerings, the doctorate and master's programs in agriculture.",
+      "evidence": "Curricular Offerings - College of Agriculture; Doctor of Philosophy in Agriculture; Master of Science in Agriculture"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__18",
+      "component": "classify_chunk",
+      "label": "Undergraduate Programs",
+      "evidence_sufficient": true,
+      "justification": "The chunk lists undergraduate degrees, BS Nutrition and Dietetics and BS Food Technology.",
+      "evidence": "BS Nutrition and Dietetics (CMO 14, s. 2017); BS Food Technology (CMO 7, s.2019)"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__26",
+      "component": "classify_chunk",
+      "label": "Graduate Programs",
+      "evidence_sufficient": true,
+      "justification": "The chunk lists Master of Science in Fisheries majors, which are graduate programs.",
+      "evidence": "Master of Science in Fisheries major in Aquaculture; Master of Science in Fisheries major in Post-Harvest"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__328",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "The title is Medals and Certificates, but the body defines laboratory drug testing, so title and text do not match one subcategory.",
+      "evidence": "Medals and Certificates; Laboratory: It refers to a private or government facility that is capable of testing a specimen"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__488",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "Appendix L is a garbled permission-form fragment and does not clearly support one subcategory.",
+      "evidence": "Appendix L; I give permission for my son/daughter to receive"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__39",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "A facilities job-order for internal clients is building maintenance, not a student request subcategory.",
+      "evidence": "Maintenance of Buildings and Facilities (Job Order Request); General Services Unit"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__111",
+      "component": "classify_chunk",
+      "label": "Scholarships",
+      "evidence_sufficient": true,
+      "justification": "The chunk states that scholarship grants and other financial assistance follow the applicable rules.",
+      "evidence": "Scholarship grants and all other forms of financial assistance shall be awarded in accordance with pertinent rules and regulations."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__114",
+      "component": "classify_chunk",
+      "label": "Scholarships",
+      "evidence_sufficient": true,
+      "justification": "The chunk states the grade and good-moral conditions for a full scholarship or training allowance for SCUAA medalists.",
+      "evidence": "Full Scholarship/Training Allowance: SCUAA medalists; grade average of 2.0; possess good moral character"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__200",
+      "component": "classify_chunk",
+      "label": "Scholarships",
+      "evidence_sufficient": true,
+      "justification": "The sentence assigns dissemination of scholarship requirements.",
+      "evidence": "Disseminate information to students regarding the requirements for scholarship."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__45",
+      "component": "classify_chunk",
+      "label": "Transferees",
+      "evidence_sufficient": true,
+      "justification": "The chunk lists admission documents required of student transferees.",
+      "evidence": "Student Transferees; Transfer Credential/Honorable Dismissal from the school last attended; Transcript of Records"
+    },
+    {
+      "case_id": "cls_c_da4a1832-7242-4e94-8ba6-bc0b9f2294bf__17",
+      "component": "classify_chunk",
+      "label": "Good Moral",
+      "evidence_sufficient": true,
+      "justification": "The service issues a Good Moral Certificate, including payment, disciplinary-record check, and release.",
+      "evidence": "This service provides assistance for Issuance of Good Moral Certificate (Transferee)."
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__233",
+      "component": "classify_chunk",
+      "label": "Student Welfare",
+      "evidence_sufficient": true,
+      "justification": "Vandalism and destruction of public property are listed as a major student offense with suspension and expulsion penalties.",
+      "evidence": "Vandalism or Destruction of Public Properties; Suspension; Expulsion"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__378",
+      "component": "classify_chunk",
+      "label": "MARK_FOR_REVIEW",
+      "evidence_sufficient": false,
+      "justification": "A fragment about intern personality and protection from danger does not clearly support one subcategory.",
+      "evidence": "Encourages student interns to develop their personality and professionalism, and to extent possible, protect them from physical or moral danger"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__464",
+      "component": "classify_chunk",
+      "label": "Counseling",
+      "evidence_sufficient": true,
+      "justification": "The chunk identifies mental health concerns such as anxiety, depression, PTSD, and suicide risk, which is counseling.",
+      "evidence": "Identification of Mental Concerns and Issues; Anxiety Disorders; Depression; Suicide and Mental Illness"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__212",
+      "component": "classify_chunk",
+      "label": "Student Welfare",
+      "evidence_sufficient": true,
+      "justification": "Cybercrime, cyberbullying, and hacking are major student offenses with suspension and expulsion penalties.",
+      "evidence": "Major Offense; Acts of Cybercrime; Cyber bullying; Expulsion from the University"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__425",
+      "component": "classify_chunk",
+      "label": "LMS",
+      "evidence_sufficient": true,
+      "justification": "The chunk defines flexible learning modes and requires faculty to use the LSPU LMS and Google Classroom.",
+      "evidence": "Asynchronous Online – students learn at different times and locations ... (via LMS); The Faculty uses the LSPU LMS"
+    },
+    {
+      "case_id": "cls_c_cec01713-c1ba-4061-9404-ffaa1d8e70dd__428",
+      "component": "classify_chunk",
+      "label": "LMS",
+      "evidence_sufficient": true,
+      "justification": "The self-paced learning module is an e-learning material, and the chunk names Google Classroom as the primary LSPU LMS.",
+      "evidence": "The university shall adopt the Self-Paced Learning Module (SLM); Google Classroom will be institutionalized as primary LSPU LMS platform"
+    }
+  ]
+}

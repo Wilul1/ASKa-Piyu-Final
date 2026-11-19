@@ -1,0 +1,41 @@
+{
+  "run_id": "131ba7a4-2fa2-475d-8d6e-ccc36044733c",
+  "status": "completed",
+  "retrieval": {
+    "cases": 12,
+    "embedding_only": {
+      "hit_at_k": 0.8333,
+      "mrr": 0.6875,
+      "ndcg_at_k": 0.6871,
+      "precision_at_k": 0.25,
+      "recall_at_k": 0.8056
+    },
+    "reranked": {
+      "hit_at_k": 0.9167,
+      "mrr": 0.8125,
+      "ndcg_at_k": 0.7812,
+      "precision_at_k": 0.2333,
+      "recall_at_k": 0.8056
+    }
+  },
+  "classification": {
+    "chunks": {
+      "accuracy": 0.6429,
+      "macro_f1": 0.5345,
+      "cases": 28
+    },
+    "questions": {
+      "accuracy": 0.7027,
+      "macro_f1": 0.5064,
+      "cases": 37
+    }
+  },
+  "question_answering": {
+    "answer_correctness": 0.5833,
+    "faithfulness": 0.5417,
+    "answer_relevancy": 0.9167,
+    "citation_set_precision": 0.9,
+    "cases": 12,
+    "skipped_role_gated": 2
+  }
+}

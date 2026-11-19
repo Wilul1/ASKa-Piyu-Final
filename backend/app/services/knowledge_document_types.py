@@ -252,11 +252,20 @@ def build_chunks_from_charter_v2_services(
     *,
     title: str,
     source_document: str,
+    exclude_rag_only: bool = False,
 ) -> list[DocumentChunk]:
     """Build one indexed service_procedure chunk per Citizen's Charter V2 service.
 
     Skips requirement/form artifacts and noise titles so chatbot retrieval is
     driven by real services (ID Validation, Good Moral, etc.).
+
+    ``exclude_rag_only`` defaults to False so existing callers (extraction
+    preview) keep seeing every service, including ``rag_only`` ones, for
+    staff review. Pass ``exclude_rag_only=True`` only at the actual ChromaDB
+    indexing boundary so placeholder-only services (e.g. a mis-parsed table
+    cell promoted into a "service title" with every real field empty) never
+    become a retrievable chunk, without touching extraction, classification,
+    or the preview path at all.
     """
     from app.services.citizen_charter_services import (
         build_charter_article_body,
@@ -266,9 +275,20 @@ def build_chunks_from_charter_v2_services(
         is_charter_reference_section,
         is_noise_service_title,
         map_charter_category,
+        resolve_display_or_not_specified,
         score_charter_service_completeness,
         strip_service_part_suffix,
     )
+
+    # Fields rendered via resolve_display_or_not_specified in
+    # build_charter_article_body -- tracked here, independently, so a
+    # generated "Not specified" placeholder can be distinguished from
+    # genuine source text reading "Not specified" without changing that
+    # function's own return shape (preserves every other existing caller's
+    # behavior/text untouched). Requirements/steps are structurally
+    # different (lists of dicts, their own dedicated noise filtering) and
+    # are deliberately not covered here -- no demonstrated dependency yet.
+    _PLACEHOLDER_TRACKED_FIELDS = ("office", "who_may_avail", "total_processing_time")
 
     chunks: list[DocumentChunk] = []
     char_start = 0
@@ -286,6 +306,8 @@ def build_chunks_from_charter_v2_services(
             continue
         if is_charter_reference_section(service_title, str(service)):
             continue
+        if exclude_rag_only and _clean_value(service.get("extraction_quality")) == "rag_only":
+            continue
 
         fields = charter_v2_service_to_fields(service)
         enriched = {
@@ -293,6 +315,11 @@ def build_chunks_from_charter_v2_services(
             "document_title": _clean_value(service.get("document_title")) or title,
             "service": service_title,
         }
+        placeholder_fields = [
+            field_name
+            for field_name in _PLACEHOLDER_TRACKED_FIELDS
+            if resolve_display_or_not_specified(enriched.get(field_name))[1]
+        ]
         content = build_charter_article_body(
             title=service_title,
             service=enriched,
@@ -350,6 +377,8 @@ def build_chunks_from_charter_v2_services(
             "charter_candidate_bucket": charter_bucket,
             "extraction_quality": _clean_value(service.get("extraction_quality")) or "clean",
         }
+        if placeholder_fields:
+            metadata["placeholder_fields"] = json.dumps(placeholder_fields)
         if page is not None:
             metadata["page"] = page
             metadata["page_start"] = page

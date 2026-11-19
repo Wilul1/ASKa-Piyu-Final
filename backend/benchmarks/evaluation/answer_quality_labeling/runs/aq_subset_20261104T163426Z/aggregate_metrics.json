@@ -1,0 +1,23 @@
+{
+  "case_count": 2,
+  "llm_generation_succeeded_case_count": 0,
+  "fallback_used_case_count": 2,
+  "answers_are_generation_error_fallback": true,
+  "answer_correctness": 0.0,
+  "answer_relevancy": 0.8334,
+  "faithfulness": null,
+  "claim_support_rate": null,
+  "citation_set_precision": 0.125,
+  "citation_set_recall": 0.25,
+  "metric_contributing_counts": {
+    "faithfulness": 0,
+    "answer_relevancy": 2,
+    "context_precision": 0,
+    "context_recall": 0,
+    "answer_correctness": 2,
+    "citation_set_precision": 2,
+    "citation_set_recall": 2,
+    "claim_support_rate": 0
+  },
+  "null_means_unavailable_not_zero": true
+}

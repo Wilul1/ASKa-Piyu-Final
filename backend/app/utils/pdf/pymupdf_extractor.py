@@ -8,7 +8,7 @@ import fitz
 from PIL import Image
 
 from app.config import settings
-from app.utils.ocr.easyocr_engine import extract_text_and_boxes_from_pil_image
+from app.utils.ocr.easyocr_engine import extract_ocr_result_from_pil_image
 
 
 @dataclass
@@ -18,7 +18,30 @@ class PageExtraction:
     method: str  # "digital" | "ocr"
     words: list[dict] | None = None  # word boxes: text, x0, y0, x1, y1, cy, height
     table_regions: list[dict] | None = None  # PyMuPDF native table detection, if any
-    geometry_scale: float = 1.0  # multiply words coords by 1/geometry_scale for PDF points
+    geometry_scale: float = 1.0  # PDF rendering zoom for OCR; 1.0 for digital PDF points
+    # Authoritative PDF page rectangle in points (``page.rect``). ``None`` when
+    # a caller constructed this object without a live page -- never estimated
+    # from word boxes. This type does not transform coordinates.
+    page_width: float | None = None
+    page_height: float | None = None
+    # Dimensions of the coordinate space that ``words`` bounding boxes use.
+    # Digital pages: PDF points, equal to page_width/page_height when known.
+    # OCR pages: pixel size of the winning EasyOCR input image. ``None`` when
+    # unknown -- never derived from zoom or from word boxes.
+    coordinate_width: float | None = None
+    coordinate_height: float | None = None
+    # Explicit page-rectangle provenance from the live ``fitz.Page``.
+    # ``None`` means not recorded (legacy / manually constructed objects) --
+    # never defaulted to ``0`` as if compatibility were verified.
+    rotation: int | None = None
+    page_origin_x: float | None = None
+    page_origin_y: float | None = None
+    # Original ``get_pixmap`` size in pixels, before OCR candidate
+    # enhancement/resize. ``None`` on digital pages and when OCR was not
+    # rendered. Distinct from ``coordinate_*`` when the winning candidate
+    # is a uniformly scaled copy of this raster.
+    raster_width: float | None = None
+    raster_height: float | None = None
 
 
 @dataclass
@@ -56,21 +79,35 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
     min_chars = settings.min_chars_per_page_for_digital_pdf
 
     # Pass 1: digital text for every page. Decide whether OCR is worth the cost.
-    digital_by_index: list[tuple[str, list[dict], list[dict] | None]] = []
+    digital_by_index: list[
+        tuple[str, list[dict], list[dict] | None, float, float, float, float, int]
+    ] = []
     sparse_indices: list[int] = []
     for index in range(len(doc)):
         page = doc[index]
         word_items = _page_word_items(page)
         digital = _extract_layout_text(page, word_items=word_items).strip()
         tables = _extract_table_regions(page) or None
-        digital_by_index.append((digital, word_items, tables))
+        rect = page.rect
+        digital_by_index.append(
+            (
+                digital,
+                word_items,
+                tables,
+                float(rect.width),
+                float(rect.height),
+                float(rect.x0),
+                float(rect.y0),
+                int(page.rotation),
+            )
+        )
         if len(digital) < min_chars:
             sparse_indices.append(index)
 
     page_count = len(doc) or 1
     digital_page_count = page_count - len(sparse_indices)
     digital_ratio = digital_page_count / page_count
-    total_digital_chars = sum(len(text) for text, _words, _tables in digital_by_index)
+    total_digital_chars = sum(len(text) for text, _words, _tables, _w, _h, _x, _y, _r in digital_by_index)
     skip_ocr = (
         digital_ratio >= float(settings.pdf_skip_ocr_when_digital_page_ratio)
         and total_digital_chars >= int(settings.pdf_skip_ocr_min_digital_chars)
@@ -79,7 +116,16 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
     ocr_indices = set(sparse_indices[:ocr_budget])
 
     pages: list[PageExtraction] = []
-    for index, (digital, word_items, tables) in enumerate(digital_by_index):
+    for index, (
+        digital,
+        word_items,
+        tables,
+        page_width,
+        page_height,
+        page_origin_x,
+        page_origin_y,
+        rotation,
+    ) in enumerate(digital_by_index):
         if index not in ocr_indices:
             pages.append(
                 PageExtraction(
@@ -89,6 +135,13 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
                     words=word_items or None,
                     table_regions=tables,
                     geometry_scale=1.0,
+                    page_width=page_width,
+                    page_height=page_height,
+                    coordinate_width=page_width,
+                    coordinate_height=page_height,
+                    rotation=rotation,
+                    page_origin_x=page_origin_x,
+                    page_origin_y=page_origin_y,
                 )
             )
             continue
@@ -96,7 +149,7 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
         page = doc[index]
         pixmap = page.get_pixmap(matrix=matrix, alpha=False)
         image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
-        ocr_text, ocr_boxes = extract_text_and_boxes_from_pil_image(image)
+        ocr_text, ocr_boxes, ocr_size = extract_ocr_result_from_pil_image(image)
         ocr_text = ocr_text.strip()
 
         # Prefer digital remnants merged with OCR when both exist on sparse pages
@@ -105,15 +158,25 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
         else:
             combined = ocr_text or digital
 
+        raster_width = float(pixmap.width)
+        raster_height = float(pixmap.height)
         if ocr_text:
             page_words: list[dict] | None = ocr_boxes or None
+            # OCR boxes stay in the winning candidate's pixel space. geometry_scale
+            # remains the render zoom (provenance only). coordinate_width/height
+            # are that candidate's actual pixel size -- not zoom * page.rect.
             scale = float(zoom) if zoom else 1.0
+            coord_width, coord_height = _ocr_coordinate_size(ocr_size)
         elif digital:
             page_words = word_items or None
             scale = 1.0
+            coord_width, coord_height = page_width, page_height
+            raster_width, raster_height = None, None
         else:
             page_words = None
             scale = 1.0
+            coord_width, coord_height = None, None
+            raster_width, raster_height = None, None
 
         pages.append(
             PageExtraction(
@@ -122,10 +185,30 @@ def _extract_pages_hybrid(doc: fitz.Document) -> list[PageExtraction]:
                 method="ocr" if ocr_text or not digital else "digital",
                 words=page_words,
                 geometry_scale=scale,
+                page_width=page_width,
+                page_height=page_height,
+                coordinate_width=coord_width,
+                coordinate_height=coord_height,
+                rotation=rotation,
+                page_origin_x=page_origin_x,
+                page_origin_y=page_origin_y,
+                raster_width=raster_width,
+                raster_height=raster_height,
             )
         )
 
     return pages
+
+
+def _ocr_coordinate_size(size: tuple[float, float] | None) -> tuple[float | None, float | None]:
+    """Copy the winning OCR image size, or ``None`` when it was not captured."""
+    if size is None or len(size) != 2:
+        return None, None
+    try:
+        width, height = float(size[0]), float(size[1])
+    except (TypeError, ValueError):
+        return None, None
+    return width, height
 
 
 def _page_word_items(page: fitz.Page) -> list[dict]:

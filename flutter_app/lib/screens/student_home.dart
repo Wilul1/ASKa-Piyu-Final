@@ -19,6 +19,7 @@ import 'my_tickets_page.dart';
 /// of a narrow column floating in unused whitespace. A max-width cap, not a
 /// fixed width, so it still shrinks naturally on narrower viewports.
 const double kHomeContentMaxWidth = 1320;
+const String _kHeroBuildingAsset = 'assets/images/lspu_admin_building.jpg';
 
 /// Public ASKa-Piyu landing page (no sidebar) — matches the branded site mock.
 class StudentHomePage extends StatefulWidget {
@@ -37,10 +38,15 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
   String _quickTab = 'Common topics';
   String? _lastAuthKey;
   ModalRoute<dynamic>? _route;
+  bool _buildingPrecached = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (!_buildingPrecached) {
+      _buildingPrecached = true;
+      precacheImage(const AssetImage(_kHeroBuildingAsset), context);
+    }
     final route = ModalRoute.of(context);
     if (route != _route) {
       appRouteObserver.unsubscribe(this);
@@ -80,45 +86,68 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
     });
     try {
       final authHeaders = AuthScope.of(context).ticketHeaders();
-      final categoriesData = await _getJson(
+      // Start both requests together. Resources only needs categories, so
+      // paint that grid as soon as `/kb/categories` returns instead of
+      // waiting on the heavier `/kb/articles` payload.
+      final categoriesFuture = _getJson(
         '/kb/categories',
         headers: authHeaders,
       );
-      final articlesData = await _getJson(
+      final articlesFuture = _getJson(
         '/kb/articles?limit=100',
         headers: authHeaders,
       );
-      final categoryItems =
-          categoriesData['items'] is List
-              ? categoriesData['items'] as List
-              : const [];
-      final articleItems =
-          articlesData['items'] is List
-              ? articlesData['items'] as List
-              : const [];
-      if (!mounted) return;
-      setState(() {
-        _categories =
-            categoryItems
-                .whereType<Map>()
-                .map(
-                  (item) => _LandingCategory.fromJson(
-                    Map<String, dynamic>.from(item),
-                  ),
-                )
-                .where((item) => item.name.isNotEmpty)
-                .toList();
-        _articles =
-            articleItems
-                .whereType<Map>()
-                .map(
-                  (item) => _LandingArticle.fromJson(
-                    Map<String, dynamic>.from(item),
-                  ),
-                )
-                .toList();
-        _loading = false;
-      });
+
+      try {
+        final categoriesData = await categoriesFuture;
+        if (!mounted) return;
+        final categoryItems =
+            categoriesData['items'] is List
+                ? categoriesData['items'] as List
+                : const [];
+        setState(() {
+          _categories =
+              categoryItems
+                  .whereType<Map>()
+                  .map(
+                    (item) => _LandingCategory.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ),
+                  )
+                  .where((item) => item.name.isNotEmpty)
+                  .toList();
+          _loading = false;
+          _error = null;
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _error = 'Could not load published Knowledge Base content.';
+          _loading = false;
+        });
+      }
+
+      try {
+        final articlesData = await articlesFuture;
+        if (!mounted) return;
+        final articleItems =
+            articlesData['items'] is List
+                ? articlesData['items'] as List
+                : const [];
+        setState(() {
+          _articles =
+              articleItems
+                  .whereType<Map>()
+                  .map(
+                    (item) => _LandingArticle.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ),
+                  )
+                  .toList();
+        });
+      } catch (_) {
+        // Role-based Quick links can stay empty; Resources already rendered.
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -238,7 +267,7 @@ class _StudentHomePageState extends State<StudentHomePage> with RouteAware {
                             Text(
                               'Quick links',
                               style: TextStyle(
-                                fontSize: isNarrow ? 22 : 28,
+                                fontSize: isNarrow ? 24 : 32,
                                 fontWeight: FontWeight.w900,
                                 color: DesignTokens.ink,
                               ),
@@ -723,12 +752,7 @@ class _HeroSectionState extends State<_HeroSection> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.asset(
-                            'assets/images/lspu_admin_building.png',
-                            fit: BoxFit.cover,
-                            alignment: Alignment.center,
-                            filterQuality: FilterQuality.high,
-                          ),
+                          const _HeroBuildingImage(),
                           // Left-to-right fade only -- the building reads
                           // as almost fully blended at the left edge, then
                           // grows steadily clearer, so the LSPU lettering,
@@ -778,12 +802,7 @@ class _HeroSectionState extends State<_HeroSection> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.asset(
-                            'assets/images/lspu_admin_building.png',
-                            fit: BoxFit.cover,
-                            alignment: Alignment.center,
-                            filterQuality: FilterQuality.high,
-                          ),
+                          const _HeroBuildingImage(),
                           // Fade pushed further right than the desktop
                           // panel's own stops -- at mobile widths the
                           // "LAGUNA STATE POLYTECHNIC UNIVERSITY" label
@@ -1068,6 +1087,31 @@ class _HeroWaveFullPainter extends CustomPainter {
   bool shouldRepaint(covariant _HeroWaveFullPainter oldDelegate) => false;
 }
 
+/// Compressed hero photo with a short fade-in so a cache miss never pops.
+class _HeroBuildingImage extends StatelessWidget {
+  const _HeroBuildingImage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      _kHeroBuildingAsset,
+      fit: BoxFit.cover,
+      alignment: Alignment.center,
+      filterQuality: FilterQuality.medium,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded) return child;
+        return AnimatedOpacity(
+          opacity: frame == null ? 0 : 1,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOut,
+          child: child,
+        );
+      },
+    );
+  }
+}
+
 /// Pale-blush pill button used for the Resources section's "See all
 /// categories" link, replacing the previous icon-led text link -- keeps the
 /// single "browse everything" entry point but matches the approved
@@ -1115,6 +1159,104 @@ class _SeeAllPill extends StatelessWidget {
   }
 }
 
+/// Shared Resources / Quick links card: burgundy title, count or short
+/// subtitle, chevron, white fill, and the 4px pink left accent.
+class _LandingLinkCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final bool isNarrow;
+  final VoidCallback onTap;
+
+  const _LandingLinkCard({
+    required this.title,
+    required this.subtitle,
+    required this.isNarrow,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          constraints: BoxConstraints(minHeight: isNarrow ? 76 : 140),
+          // A single BoxDecoration cannot combine a borderRadius with a
+          // Border whose sides have different colors -- Flutter throws
+          // "A borderRadius can only be given on borders with uniform
+          // colors" at paint time. The outer border is therefore uniform;
+          // the pink accent is a separate clipped layer, not a
+          // differently colored BorderSide.
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            children: [
+              const Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 4,
+                child: ColoredBox(color: Color(0xFFE8B4B8)),
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  (isNarrow ? 12 : 24) + 4,
+                  isNarrow ? 12 : 24,
+                  isNarrow ? 12 : 24,
+                  isNarrow ? 12 : 24,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: TextStyle(
+                              color: DesignTokens.maroon,
+                              fontWeight: FontWeight.w900,
+                              fontSize: isNarrow ? 14 : 17,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: const Color(0xFF4B5563),
+                              height: 1.4,
+                              fontSize: isNarrow ? 12 : 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: isNarrow ? 18 : 20,
+                      color: DesignTokens.maroon,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ResourcesGrid extends StatelessWidget {
   final List<_LandingCategory> categories;
   final bool isNarrow;
@@ -1143,105 +1285,15 @@ class _ResourcesGrid extends StatelessWidget {
               shown.map((category) {
                 return SizedBox(
                   width: cardWidth,
-                  child: Material(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap:
-                          () => softPush(
-                            context,
-                            KnowledgeBasePage(initialCategory: category.name),
-                          ),
-                      child: Container(
-                        constraints: BoxConstraints(
-                          minHeight: isNarrow ? 76 : 140,
-                        ),
-                        // A single BoxDecoration cannot combine a
-                        // borderRadius with a Border whose sides have
-                        // different colors -- Flutter throws "A
-                        // borderRadius can only be given on borders with
-                        // uniform colors" at paint time, which silently
-                        // fails to paint this box (while InkWell/Material
-                        // above still handle hit-testing, so the card stays
-                        // clickable but invisible). The outer border here
-                        // is therefore uniform; the pink accent is a
-                        // separate clipped layer below, not a differently
-                        // colored BorderSide.
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE5E7EB)),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Stack(
-                          children: [
-                            // Pink accent strip -- clipped to the card's
-                            // rounded rect by the Container's clipBehavior
-                            // above, so its corners never poke past the
-                            // uniform outer border.
-                            const Positioned(
-                              left: 0,
-                              top: 0,
-                              bottom: 0,
-                              width: 4,
-                              child: ColoredBox(color: Color(0xFFE8B4B8)),
-                            ),
-                            Padding(
-                              // Left padding carries the extra 4px the
-                              // accent strip used to occupy as part of the
-                              // old (broken) left BorderSide's width, so
-                              // the text content lines up exactly as
-                              // before.
-                              padding: EdgeInsets.fromLTRB(
-                                (isNarrow ? 12 : 24) + 4,
-                                isNarrow ? 12 : 24,
-                                isNarrow ? 12 : 24,
-                                isNarrow ? 12 : 24,
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          category.name,
-                                          style: TextStyle(
-                                            color: DesignTokens.maroon,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: isNarrow ? 14 : 17,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          category.articleCount > 0
-                                              ? '${category.articleCount} article${category.articleCount == 1 ? '' : 's'}'
-                                              : 'Browse articles',
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: Color(0xFF4B5563),
-                                            height: 1.4,
-                                            fontSize: isNarrow ? 12 : 14,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Icon(
-                                    Icons.chevron_right_rounded,
-                                    size: isNarrow ? 18 : 20,
-                                    color: DesignTokens.maroon,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                  child: _LandingLinkCard(
+                    title: category.name,
+                    subtitle: category.articleCount > 0
+                        ? '${category.articleCount} article${category.articleCount == 1 ? '' : 's'}'
+                        : 'Browse articles',
+                    isNarrow: isNarrow,
+                    onTap: () => softPush(
+                      context,
+                      KnowledgeBasePage(initialCategory: category.id),
                     ),
                   ),
                 );
@@ -1253,9 +1305,9 @@ class _ResourcesGrid extends StatelessWidget {
 }
 
 /// Horizontal-tab + responsive card-grid presentation of Quick Links.
-/// Groups are built from the SAME real `/kb/categories` + `/kb/articles`
-/// data already used by the Resources section above -- no fabricated
-/// titles, counts, or shortcuts.
+/// Cards reuse the Resources chrome (title + article count). Groups come
+/// from the SAME real `/kb/categories` + `/kb/articles` data -- no
+/// fabricated titles, counts, or shortcuts.
 class _QuickLinksSection extends StatelessWidget {
   final bool isNarrow;
   final String selectedTab;
@@ -1277,31 +1329,16 @@ class _QuickLinksSection extends StatelessWidget {
     'Additional resources',
   ];
 
-  /// Real published categories, each paired with up to 3 real article
-  /// titles drawn from the same category (via `_LandingArticle.category`)
-  /// and an accurate remaining count. A category is only rendered if at
-  /// least one of its real articles was actually returned.
+  /// Same published categories and article counts as the Resources grid.
   List<_QuickLinkGroup> _groupByCategory() {
-    final byCategory = <String, List<String>>{};
-    for (final article in articles) {
-      final category = article.category.trim();
-      if (category.isEmpty) continue;
-      (byCategory[category] ??= <String>[]).add(article.title);
-    }
-    final groups = <_QuickLinkGroup>[];
-    for (final category in categories) {
-      final titles = byCategory[category.name];
-      if (titles == null || titles.isEmpty) continue;
-      groups.add(
+    return [
+      for (final category in categories)
         _QuickLinkGroup(
           title: category.name,
-          previewTitles: titles.take(3).toList(),
-          moreCount: titles.length > 3 ? titles.length - 3 : 0,
-          category: category.name,
+          articleCount: category.articleCount,
+          category: category.id,
         ),
-      );
-    }
-    return groups;
+    ];
   }
 
   List<_QuickLinkGroup> _buildGroups() {
@@ -1327,16 +1364,16 @@ class _QuickLinksSection extends StatelessWidget {
       ];
     }
     if (selectedTab == 'Role-based guides') {
-      final byOffice = <String, List<String>>{};
+      final byOffice = <String, int>{};
       for (final article in articles) {
         final office = article.office.trim();
         if (office.isEmpty) continue;
-        (byOffice[office] ??= <String>[]).add(article.title);
+        byOffice[office] = (byOffice[office] ?? 0) + 1;
       }
       if (byOffice.isEmpty) {
         // No office-tagged articles published -- fall back to the same
-        // real category/article grouping as Common topics rather than
-        // showing an empty tab.
+        // real category grouping as Common topics rather than showing an
+        // empty tab.
         return _groupByCategory();
       }
       final offices = byOffice.keys.toList()..sort();
@@ -1344,9 +1381,7 @@ class _QuickLinksSection extends StatelessWidget {
         for (final office in offices)
           _QuickLinkGroup(
             title: office,
-            previewTitles: byOffice[office]!.take(3).toList(),
-            moreCount:
-                byOffice[office]!.length > 3 ? byOffice[office]!.length - 3 : 0,
+            articleCount: byOffice[office]!,
             query: office,
           ),
       ];
@@ -1427,11 +1462,11 @@ class _QuickLinksSection extends StatelessWidget {
         : LayoutBuilder(
             builder: (context, constraints) {
               final columns = isNarrow
-                  ? 1
-                  : constraints.maxWidth >= 900
+                  ? 2
+                  : MediaQuery.sizeOf(context).width >= 1000
                       ? 3
                       : 2;
-              final gap = isNarrow ? 12.0 : 16.0;
+              final gap = isNarrow ? 8.0 : 16.0;
               final cardWidth =
                   (constraints.maxWidth - gap * (columns - 1)) / columns;
               return Wrap(
@@ -1440,8 +1475,11 @@ class _QuickLinksSection extends StatelessWidget {
                 children: [
                   for (final group in groups)
                     SizedBox(
-                      width: columns == 1 ? constraints.maxWidth : cardWidth,
-                      child: _QuickLinkCard(group: group),
+                      width: cardWidth,
+                      child: _QuickLinkCard(
+                        group: group,
+                        isNarrow: isNarrow,
+                      ),
                     ),
                 ],
               );
@@ -1455,13 +1493,12 @@ class _QuickLinksSection extends StatelessWidget {
   }
 }
 
-/// One real Quick Links group: either a category/office paired with up to
-/// 3 of its real article titles, or (Additional resources only) a fixed
-/// utility shortcut with a short description instead of previews.
+/// One real Quick Links group: a category/office with its published
+/// article count, or (Additional resources only) a fixed utility shortcut
+/// with a short description. Card chrome matches Resources.
 class _QuickLinkGroup {
   final String title;
-  final List<String> previewTitles;
-  final int moreCount;
+  final int articleCount;
   final String? subtitle;
   final String? category;
   final String? query;
@@ -1470,124 +1507,58 @@ class _QuickLinkGroup {
 
   const _QuickLinkGroup({
     required this.title,
-    this.previewTitles = const [],
-    this.moreCount = 0,
+    this.articleCount = 0,
     this.subtitle,
     this.category,
     this.query,
     this.openChat = false,
     this.openTickets = false,
   });
+
+  String get cardSubtitle {
+    final custom = subtitle?.trim();
+    if (custom != null && custom.isNotEmpty) return custom;
+    if (articleCount > 0) {
+      return '$articleCount article${articleCount == 1 ? '' : 's'}';
+    }
+    return 'Browse articles';
+  }
 }
 
 class _QuickLinkCard extends StatelessWidget {
   final _QuickLinkGroup group;
+  final bool isNarrow;
 
-  const _QuickLinkCard({required this.group});
+  const _QuickLinkCard({required this.group, required this.isNarrow});
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          if (group.openChat) {
-            softPush(context, const ChatbotPage());
-            return;
-          }
-          if (group.openTickets) {
-            openProtectedPage(
-              context,
-              builder: (_) => const MyTicketsPage(),
-              requireVerifiedEmail: true,
-              message: emailVerifyRequiredMessage,
-            );
-            return;
-          }
-          softPush(
+    return _LandingLinkCard(
+      title: group.title,
+      subtitle: group.cardSubtitle,
+      isNarrow: isNarrow,
+      onTap: () {
+        if (group.openChat) {
+          softPush(context, const ChatbotPage());
+          return;
+        }
+        if (group.openTickets) {
+          openProtectedPage(
             context,
-            KnowledgeBasePage(
-              initialCategory: group.category,
-              initialQuery: group.query,
-            ),
+            builder: (_) => const MyTicketsPage(),
+            requireVerifiedEmail: true,
+            message: emailVerifyRequiredMessage,
           );
-        },
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 128),
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
+          return;
+        }
+        softPush(
+          context,
+          KnowledgeBasePage(
+            initialCategory: group.category,
+            initialQuery: group.query,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      group.title,
-                      style: const TextStyle(
-                        color: DesignTokens.maroon,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: DesignTokens.maroon,
-                    size: 20,
-                  ),
-                ],
-              ),
-              if (group.previewTitles.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                for (final title in group.previewTitles)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: DesignTokens.muted,
-                        fontSize: 13.5,
-                        height: 1.4,
-                      ),
-                    ),
-                  ),
-                if (group.moreCount > 0)
-                  Text(
-                    '+${group.moreCount} more',
-                    style: const TextStyle(
-                      color: DesignTokens.maroon,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                    ),
-                  ),
-              ] else if (group.subtitle != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  group.subtitle!,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: DesignTokens.muted,
-                    fontSize: 13.5,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -1689,11 +1660,13 @@ class _FloatingChatButton extends StatelessWidget {
 }
 
 class _LandingCategory {
+  final String id;
   final String name;
   final int articleCount;
   final String description;
 
   const _LandingCategory({
+    required this.id,
     required this.name,
     required this.articleCount,
     required this.description,
@@ -1701,6 +1674,7 @@ class _LandingCategory {
 
   factory _LandingCategory.fromJson(Map<String, dynamic> json) {
     final name = (json['name'] ?? '').toString().trim();
+    final rawId = (json['id'] ?? '').toString().trim();
     final count =
         json['article_count'] is int
             ? json['article_count'] as int
@@ -1716,6 +1690,7 @@ class _LandingCategory {
       description = 'Browse published support articles in this category.';
     }
     return _LandingCategory(
+      id: rawId.isNotEmpty ? rawId : name,
       name: name,
       articleCount: count,
       description: description,

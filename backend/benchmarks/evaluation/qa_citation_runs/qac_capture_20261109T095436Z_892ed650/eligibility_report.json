@@ -1,0 +1,193 @@
+{
+  "run_id": "qac_capture_20261109T095436Z_892ed650",
+  "source_captures_path": "benchmarks/evaluation/qa_citation_runs/qac_capture_20261109T095436Z_892ed650/captures.jsonl",
+  "phase": "stage_3_2b_phase_1_eligibility",
+  "total_count": 36,
+  "eligible_count": 0,
+  "excluded_count": 36,
+  "exclusion_counts_by_reason": {
+    "eligibility_field_missing": 36
+  },
+  "verdicts": [
+    {
+      "case_id": "qac_001_tor_undergrad_fee",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_002_enrollment_office",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_003_id_validation_requirements",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_004_clinic_walkin_fee",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_005_accounting_clearance",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_006_grade_excellent",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_007_cross_enrollee",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_008_latin_cum_laude",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_009_counseling_office",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_010_honorable_dismissal_meaning",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_011_tor_fee_levels",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_012_good_moral_by_status",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_013_shifting_conditions",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_014_refund_schedule",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_015_scholastic_warning_probation",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_016_overload_limit",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_017_uniform_schedule",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_018_scholarship_requirements",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_019_free_higher_education",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_020_transferee_documents",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_021_student_id_processing_office",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_022_unscheduled_subject",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_023_refund_and_nonrefundable_fees",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_024_retention_warning_to_dismissal",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_025_four_point_zero_and_inc",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_026_graduation_requirements",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_027_graduate_loa",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_028_honorable_dismissal_petition",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_029_absence_drop_threshold_conflict",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_030_library_reference_who",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_031_graduate_max_load",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_032_enrollment_old_students_portal",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_033_wifi_password",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_034_campus_shuttle",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_035_lost_id_fee",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    },
+    {
+      "case_id": "qac_036_library_hours",
+      "eligible": false,
+      "exclusion_reason": "eligibility_field_missing"
+    }
+  ]
+}

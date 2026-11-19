@@ -1,0 +1,62 @@
+{
+  "case_id": "aq_12_university_president",
+  "source_question_id": "rag_benchmark_12",
+  "phase": "2B_human_review_evidence_only",
+  "pending_dataset_modified": false,
+  "original_question": "Who is the current LSPU president?",
+  "requires_up_to_date_authoritative_source": true,
+  "either_source_establishes_current_status": false,
+  "sources": [
+    {
+      "document_name_and_version": "LSPU Faculty Manual 2020 (header Date March 2021; Doc. No. LSPU-PM-LFM-01 Rev 0; PDF created 2021-06-21 +08:00)",
+      "source_pdf_path": "backend/data/documents/c67bd8c8-81cd-4c8c-bda1-4f7d2039a406/LSPU Faculty Manual 2020.pdf",
+      "pdf_index": 11,
+      "printed": "Page: vii of 92",
+      "chroma_page": 11,
+      "heading": "ADMINISTRATIVE OFFICIALS",
+      "president_name": "DR. MARIO R. BRIONES",
+      "president_title": "University President",
+      "vp_rde": "DR. CORAZON N. SAN AGUSTIN",
+      "visual": "visual_faculty_pdf011_printed_page_vii.png"
+    },
+    {
+      "document_name_and_version": "LSPU Student Handbook 2021 (header Date December 2021; Doc. No. LSPU-PM-LSH-01 Rev 0; PDF created 2022-01-25 +08:00)",
+      "source_pdf_path": "backend/data/documents/d9bf05ce-fcab-4629-ad4c-4f869481189f/LSPU Student Handbook.pdf",
+      "pdf_index": 18,
+      "printed": "Page: 9 of 183",
+      "chroma_page": 18,
+      "heading": "ADMINISTRATIVE OFFICIALS",
+      "president_name": "DR. MARIO R. BRIONES",
+      "president_title": "University President",
+      "vp_rde": "DR. ROBERT C. AGATEP",
+      "visual": "visual_handbook_pdf018_printed_page_9.png",
+      "board_of_regents_pdf_index": 16,
+      "board_of_regents_printed": "Page: 7 of 183",
+      "board_entry": "HON. MARIO R. BRIONES — LSPU President, Vice-Chairman"
+    }
+  ],
+  "publication_dates": {
+    "faculty_manual_header_date": "March 2021",
+    "faculty_manual_pdf_created": "2021-06-21+08:00",
+    "student_handbook_header_date": "December 2021",
+    "student_handbook_pdf_created": "2022-01-25+08:00"
+  },
+  "ocr_files": [
+    "ocr_pymupdf_faculty_pdf011.txt",
+    "ocr_pymupdf_handbook_pdf018.txt",
+    "ocr_pymupdf_handbook_pdf016.txt",
+    "chroma_ocr_97e32a29_6.txt",
+    "chroma_ocr_cec01713_10.txt"
+  ],
+  "proposed_reference_answer_from_pending_dataset": "The LSPU Faculty Manual 2020 (Administrative Officials, page 11) and the LSPU Student Handbook (Administrative Officials, page 18) both name DR. MARIO R. BRIONES as University President. A human must confirm this is still current; these source lists are not dated as a 2026 directory. Do not treat the conflicting VP-for-Research names in those same lists as part of this answer.",
+  "evidence_supporting_proposed_answer": "Both 2021 plates name DR. MARIO R. BRIONES as University President. The pending caution that currency is unconfirmed is correct.",
+  "evidence_not_supporting_current": "Neither source is a 2026 directory. VP-RDE already conflicts between March 2021 (San Agustin) and December 2021 (Agatep).",
+  "recommended_human_decision": "insufficient_evidence",
+  "questions_to_resolve_before_approving": [
+    "Is a 2026 or later authoritative source available outside these two manuals?",
+    "If no: leave proposed_reference_answer null?",
+    "If yes: which document/page is gold?",
+    "If handbook-grounded only: accept dated 2021 wording, never 'current'?",
+    "Confirm VP-RDE conflict is staleness evidence only, not part of the president answer?"
+  ]
+}

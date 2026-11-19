@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aska-piyu.local/evaluation/qa_citation_records.schema.json",
+  "title": "ASKa-Piyu QA and citation evaluation records",
+  "description": "QA/citation evaluation records for experiment_family qa_citation_v1. Stage 2 requires case_type labeled_student_support | insufficient_evidence and claim_support supported | unsupported | not_assessable. Judge source is always ai_evaluator. Example files are not evaluation results.",
+  "$defs": {
+    "citation_id": {
+      "type": "string",
+      "pattern": "^\\S+::[0-9]+$",
+      "description": "document_id::chunk_index split on the final '::' (same as production rsplit('::', 1)). Document IDs may contain ':' (for example faq:uuid::0). Whitespace is not allowed."
+    },
+    "score_0_4": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4
+    },
+    "judge_source": {
+      "type": "string",
+      "const": "ai_evaluator"
+    },
+    "dataset_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_version",
+        "experiment_family",
+        "annotation_method",
+        "judge_source_for_later_scoring",
+        "corpus",
+        "generation",
+        "cases"
+      ],
+      "properties": {
+        "dataset_version": { "type": "string", "minLength": 1 },
+        "experiment_family": { "type": "string", "const": "qa_citation_v1" },
+        "annotation_method": {
+          "type": "string",
+          "const": "ai_assisted_grounded_generation"
+        },
+        "judge_source_for_later_scoring": { "$ref": "#/$defs/judge_source" },
+        "notes": { "type": "string" },
+        "evaluation_ready": { "type": "boolean" },
+        "corpus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "collection",
+            "expected_chunk_count",
+            "extract_artifact",
+            "identity_digest",
+            "metadata_text_digest"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "const": "backend/data/chroma_evaluation",
+              "description": "Intended evaluation Chroma path. Stage 2 does not open Chroma or prove this store equals the extract."
+            },
+            "collection": { "type": "string", "const": "aska_evaluation" },
+            "expected_chunk_count": { "type": "integer", "const": 691 },
+            "extract_artifact": {
+              "type": "string",
+              "const": "backend/benchmarks/results/chroma_record_extraction_20261104T104214Z.json"
+            },
+            "identity_digest": {
+              "type": "string",
+              "const": "fcb324dad73c41684e771defec0a36937ddde014df858c3f020aaf914774c85b",
+              "description": "Extract validation.identity_digest. This is the corpus identity, not the dataset JSON sha256."
+            },
+            "metadata_text_digest": {
+              "type": "string",
+              "const": "7cec45b38d017d17f4f7b39abf3dc2d52a4f6f832b179ea2b70c37c6086262d7",
+              "description": "Extract validation.metadata_text_digest."
+            }
+          }
+        },
+        "generation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "prompt_version"],
+          "properties": {
+            "model": { "type": "string", "minLength": 1 },
+            "prompt_version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/qa_case" }
+        }
+      }
+    },
+    "qa_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "question",
+        "category",
+        "difficulty",
+        "case_type",
+        "labeling_status",
+        "generation_model",
+        "generation_prompt_version"
+      ],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "question": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "case_type": {
+          "type": "string",
+          "enum": ["labeled_student_support", "insufficient_evidence"],
+          "description": "Live datasets are student-support only. Faculty-related cases are rejected by the loader."
+        },
+        "audience": { "type": "string", "const": "student" },
+        "difficulty": {
+          "type": "string",
+          "enum": [
+            "easy",
+            "medium",
+            "hard",
+            "conflict",
+            "insufficient_evidence"
+          ],
+          "description": "Live datasets exclude out_of_scope. labeled_student_support uses easy|medium|hard|conflict; insufficient_evidence uses insufficient_evidence."
+        },
+        "labeling_status": { "type": "string", "enum": ["labeled", "unlabeled"] },
+        "reference_answer": { "type": ["string", "null"] },
+        "supporting_document_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "supporting_chunk_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation_id" }
+        },
+        "reference_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_span" }
+        },
+        "generation_model": { "type": "string", "minLength": 1 },
+        "generation_prompt_version": { "type": "string", "minLength": 1 },
+        "reviewer_notes": { "type": "string" }
+      }
+    },
+    "evidence_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunk_id", "document_id", "excerpt"],
+      "properties": {
+        "chunk_id": { "$ref": "#/$defs/citation_id" },
+        "document_id": { "type": "string", "minLength": 1 },
+        "source_filename": { "type": "string" },
+        "title": { "type": "string" },
+        "source_section": { "type": "string" },
+        "page": { "type": ["integer", "null"] },
+        "excerpt": { "type": "string", "minLength": 1 }
+      }
+    },
+    "chatbot_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "case_id",
+        "execution_status",
+        "captured_at",
+        "pipeline",
+        "corpus",
+        "model",
+        "generated_answer",
+        "retrieved_chunk_ids",
+        "displayed_citation_ids"
+      ],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "case_id": { "type": "string", "minLength": 1 },
+        "execution_status": {
+          "oneOf": [
+            {
+              "const": "ok",
+              "description": "Answer capture completed. This does not establish answer correctness."
+            },
+            {
+              "const": "oos_or_refusal",
+              "description": "Refusal or out-of-scope handling completed. Counts as execution completion, not as a correct answer."
+            },
+            {
+              "const": "error",
+              "description": "Capture failed."
+            },
+            {
+              "const": "incomplete",
+              "description": "Capture did not complete or produced an incomplete result."
+            }
+          ]
+        },
+        "captured_at": { "type": "string", "format": "date-time" },
+        "pipeline": {
+          "type": "string",
+          "const": "answer_qa_question"
+        },
+        "user_role": { "type": "string", "const": "student" },
+        "corpus": {
+          "type": "object",
+          "required": ["path", "collection", "chunk_count"],
+          "properties": {
+            "path": { "type": "string" },
+            "collection": { "type": "string" },
+            "chunk_count": { "type": "integer" }
+          }
+        },
+        "model": {
+          "type": "object",
+          "required": ["answer_generation_model"],
+          "properties": {
+            "answer_generation_model": { "type": "string" },
+            "embedding_model": { "type": "string" },
+            "config_snapshot": { "type": "object" }
+          }
+        },
+        "generated_answer": { "type": ["string", "null"] },
+        "retrieved_context": { "type": ["string", "null"] },
+        "retrieved_chunk_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation_id" }
+        },
+        "displayed_citation_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation_id" }
+        },
+        "source_metadata": { "type": "array", "items": { "type": "object" } },
+        "fallback_reason": { "type": ["string", "null"] },
+        "fallback_used": { "type": "boolean" },
+        "is_genuine_model_output": { "type": ["boolean", "null"] },
+        "out_of_scope_detected": { "type": "boolean" },
+        "error_type": { "type": ["string", "null"] },
+        "error_message": { "type": ["string", "null"] },
+        "raw_qa_result_json": { "type": ["object", "null"] }
+      }
+    },
+    "qa_score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "case_id",
+        "evaluator_slot",
+        "evaluation_status",
+        "judge_source",
+        "evaluator_model",
+        "prompt_version",
+        "evaluated_at"
+      ],
+      "properties": {
+        "run_id": { "type": "string" },
+        "case_id": { "type": "string" },
+        "evaluator_slot": { "type": "string", "enum": ["primary", "secondary"] },
+        "evaluation_status": {
+          "type": "string",
+          "enum": ["evaluated", "not_evaluable", "failed"]
+        },
+        "judge_source": { "$ref": "#/$defs/judge_source" },
+        "evaluator_model": { "type": "string" },
+        "prompt_version": { "type": "string" },
+        "evaluated_at": { "type": "string", "format": "date-time" },
+        "correctness": { "anyOf": [{ "$ref": "#/$defs/score_0_4" }, { "type": "null" }] },
+        "completeness": { "anyOf": [{ "$ref": "#/$defs/score_0_4" }, { "type": "null" }] },
+        "relevance": { "anyOf": [{ "$ref": "#/$defs/score_0_4" }, { "type": "null" }] },
+        "faithfulness": { "anyOf": [{ "$ref": "#/$defs/score_0_4" }, { "type": "null" }] },
+        "overall": { "type": ["number", "null"] },
+        "explanation": { "type": ["string", "null"] },
+        "evidence": { "type": ["object", "null"] },
+        "raw_json": { "type": ["object", "string", "null"] }
+      }
+    },
+    "citation_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "run_id",
+        "case_id",
+        "claim_text",
+        "requires_citation",
+        "displayed_citation_ids",
+        "evaluator_slot",
+        "judge_source",
+        "evaluator_model",
+        "prompt_version"
+      ],
+      "properties": {
+        "claim_id": { "type": "string" },
+        "run_id": { "type": "string" },
+        "case_id": { "type": "string" },
+        "answer_id": { "type": "string" },
+        "claim_text": { "type": "string" },
+        "requires_citation": { "type": "boolean" },
+        "displayed_citation_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation_id" }
+        },
+        "resolved_chunk_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation_id" }
+        },
+        "supporting_evidence_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation_id" }
+        },
+        "citation_validity_by_id": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["valid", "unresolved", "wrong_document"]
+          }
+        },
+        "citation_relevance_by_id": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["supports", "related_not_supporting", "irrelevant", "unscored"]
+          }
+        },
+        "claim_support": {
+          "type": "string",
+          "enum": ["supported", "unsupported", "not_assessable"]
+        },
+        "missing_citation": { "type": "boolean" },
+        "evaluator_slot": { "type": "string", "enum": ["primary", "secondary"] },
+        "judge_source": { "$ref": "#/$defs/judge_source" },
+        "evaluator_model": { "type": "string" },
+        "prompt_version": { "type": "string" },
+        "explanation": { "type": ["string", "null"] },
+        "raw_json": { "type": ["object", "string", "null"] }
+      }
+    }
+  }
+}

@@ -1925,9 +1925,29 @@ def _clean_step_meta_field(value: Any) -> str:
     return text
 
 
-def _display_or_not_specified(value: Any) -> str:
+def resolve_display_or_not_specified(value: Any) -> tuple[str, bool]:
+    """Resolve a Citizen's Charter field for display, returning
+    ``(text, was_placeholder)``.
+
+    ``was_placeholder`` is True ONLY when the "Not specified" fallback
+    fires because the cleaned value is empty -- i.e. we generated it.
+    Genuine source text that happens to literally read "Not specified" (or
+    anything else that cleans to a non-empty string) is returned unchanged
+    with ``was_placeholder=False``, since it was never generated -- it is
+    what the document actually says. This is the point where that
+    distinction must be captured: once collapsed to a bare string (as
+    ``_display_or_not_specified`` below still does, for every existing
+    caller), the two cases are indistinguishable.
+    """
     cleaned = _clean_charter_field_text(value)
-    return cleaned or "Not specified"
+    if cleaned:
+        return cleaned, False
+    return "Not specified", True
+
+
+def _display_or_not_specified(value: Any) -> str:
+    text, _ = resolve_display_or_not_specified(value)
+    return text
 
 
 def _build_charter_overview(title: str) -> str:

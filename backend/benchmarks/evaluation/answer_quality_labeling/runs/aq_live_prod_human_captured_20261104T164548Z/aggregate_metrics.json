@@ -1,0 +1,24 @@
+{
+  "answers_judged": 2,
+  "answers_satisfactory": 1,
+  "summary": "1 of 2 answers satisfactory",
+  "answer_correctness": {
+    "aq_04_dropping_fee_multi_document": "pass",
+    "aq_08_fail_more_than_75_percent": "fail",
+    "numeric_mean": null
+  },
+  "answer_relevancy": null,
+  "faithfulness": null,
+  "claim_support_rate": null,
+  "citation_set_precision": null,
+  "citation_set_recall": null,
+  "citation_verification": "pending",
+  "metric_contributing_counts": {
+    "answer_correctness_human_judgment": 2,
+    "answer_relevancy": 0,
+    "faithfulness": 0,
+    "citation_set_precision": 0,
+    "citation_set_recall": 0
+  },
+  "null_means_unavailable_not_zero": true
+}

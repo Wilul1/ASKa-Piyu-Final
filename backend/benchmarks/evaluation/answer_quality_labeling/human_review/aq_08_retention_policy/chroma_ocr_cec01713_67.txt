@@ -1,0 +1,15 @@
+chunk_id: cec01713-c1ba-4061-9404-ffaa1d8e70dd::67
+title: Dismissal
+source_section: 4.3 > Dismissal
+page: 35
+page_start: 35
+page_end: 35
+source_filename: LSPU Student Handbook.pdf
+----- TEXT -----
+Dismissal
+
+Undergraduate Academic Policies > Article 5 > Retention Policies > 4.3 > Dismissal
+
+Any student who fails in more than seventy-five percent (75%) of the total academic units enrolled shall be subject for dis- missal from the College; provided that an incomplete grade shall not be included in the computation of earned units; provided fur- ther, that this shall not apply to students who receive final grades in only nine academic units.
+----- SOURCE_EXCERPT -----
+Dismissal Undergraduate Academic Policies > Article 5 > Retention Policies > 4.3 > Dismissal Any student who fails in more than seventy-five percent (75%) of the total academic units enrolled shall be subject for dis- missal from the College; provided that an incomplete grade shall not be included in the computation of earned units; provided fur- ther, that this shall not apply to students who rec…

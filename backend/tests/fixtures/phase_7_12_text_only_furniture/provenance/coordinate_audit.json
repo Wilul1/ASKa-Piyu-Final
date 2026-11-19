@@ -1,0 +1,248 @@
+{
+  "live_ocr_available": true,
+  "page_number": 2,
+  "pdf_width": 468.0,
+  "pdf_height": 612.0,
+  "geometry_scale": 2.0,
+  "ocr_coordinate_width": 936.0,
+  "ocr_coordinate_height": 1224.0,
+  "ocr_page_width": 468.0,
+  "ocr_page_height": 612.0,
+  "page_size_helper": [
+    468.0,
+    612.0
+  ],
+  "nominal_render_at_zoom": [
+    936.0,
+    1224.0
+  ],
+  "comparisons": [
+    {
+      "token": "Policy",
+      "digital": {
+        "text": "Policy",
+        "x0": 96.0,
+        "y0": 18.325000762939453,
+        "x1": 120.00299835205078,
+        "y1": 30.69099998474121,
+        "cy": 24.508000373840332,
+        "height": 12.365999221801758
+      },
+      "ocr": {
+        "text": "Policy Manual Running Header",
+        "x0": 187.0,
+        "x1": 444.0,
+        "y0": 34.0,
+        "y1": 64.0,
+        "cy": 49.0,
+        "height": 30.0
+      },
+      "ratios": {
+        "x0_ocr_over_digital": 1.9479166666666667,
+        "y0_ocr_over_digital": 1.8553887358499717,
+        "width_ocr_over_digital": 10.706995694062625,
+        "height_ocr_over_digital": 2.426006945488787
+      },
+      "expected_if_zoom_only": {
+        "x0": 192.0,
+        "y0": 36.650001525878906,
+        "x1": 240.00599670410156,
+        "y1": 61.38199996948242
+      },
+      "expected_if_coord_over_pdf": {
+        "scale_x": 2.0,
+        "scale_y": 2.0
+      },
+      "mapped_ocr_to_pdf": {
+        "x0": 93.5,
+        "y0": 17.0,
+        "x1": 222.0,
+        "y1": 32.0
+      },
+      "delta_mapped_minus_digital": {
+        "x0": -2.5,
+        "y0": -1.3250007629394531
+      },
+      "relative_y0_using_page_size_helper": 0.05555555555555555,
+      "relative_y0_using_coordinate_height": 0.027777777777777776,
+      "relative_y0_digital": 0.029942811704149433
+    },
+    {
+      "token": "Internal",
+      "digital": {
+        "text": "Internal",
+        "x0": 96.0,
+        "y0": 568.3250122070312,
+        "x1": 126.0149917602539,
+        "y1": 580.6909790039062,
+        "cy": 574.5079956054688,
+        "height": 12.365966796875
+      },
+      "ocr": {
+        "text": "Internal Review",
+        "x0": 189.0,
+        "x1": 319.0,
+        "y0": 1139.0,
+        "y1": 1159.0,
+        "cy": 1149.0,
+        "height": 20.0
+      },
+      "ratios": {
+        "x0_ocr_over_digital": 1.96875,
+        "y0_ocr_over_digital": 2.004134914943848,
+        "width_ocr_over_digital": 4.331168938455184,
+        "height_ocr_over_digital": 1.6173422044974433
+      },
+      "expected_if_zoom_only": {
+        "x0": 192.0,
+        "y0": 1136.6500244140625,
+        "x1": 252.0299835205078,
+        "y1": 1161.3819580078125
+      },
+      "expected_if_coord_over_pdf": {
+        "scale_x": 2.0,
+        "scale_y": 2.0
+      },
+      "mapped_ocr_to_pdf": {
+        "x0": 94.5,
+        "y0": 569.5,
+        "x1": 159.5,
+        "y1": 579.5
+      },
+      "delta_mapped_minus_digital": {
+        "x0": -1.5,
+        "y0": 1.17498779296875
+      },
+      "relative_y0_using_page_size_helper": 1.8611111111111112,
+      "relative_y0_using_coordinate_height": 0.9305555555555556,
+      "relative_y0_digital": 0.9286356408611621
+    },
+    {
+      "token": "Section",
+      "digital": {
+        "text": "Section",
+        "x0": 48.0,
+        "y0": 66.17500305175781,
+        "x1": 84.68499755859375,
+        "y1": 81.28900146484375,
+        "cy": 73.73200225830078,
+        "height": 15.113998413085938
+      },
+      "ocr": {
+        "text": "Section Overview",
+        "x0": 94.0,
+        "x1": 270.0,
+        "y0": 136.0,
+        "y1": 162.0,
+        "cy": 149.0,
+        "height": 26.0
+      },
+      "ratios": {
+        "x0_ocr_over_digital": 1.9583333333333333,
+        "y0_ocr_over_digital": 2.0551566864852213,
+        "width_ocr_over_digital": 4.797601518683231,
+        "height_ocr_over_digital": 1.7202595428016447
+      },
+      "expected_if_zoom_only": {
+        "x0": 96.0,
+        "y0": 132.35000610351562,
+        "x1": 169.3699951171875,
+        "y1": 162.5780029296875
+      },
+      "expected_if_coord_over_pdf": {
+        "scale_x": 2.0,
+        "scale_y": 2.0
+      },
+      "mapped_ocr_to_pdf": {
+        "x0": 47.0,
+        "y0": 68.0,
+        "x1": 135.0,
+        "y1": 81.0
+      },
+      "delta_mapped_minus_digital": {
+        "x0": -1.0,
+        "y0": 1.8249969482421875
+      },
+      "relative_y0_using_page_size_helper": 0.2222222222222222,
+      "relative_y0_using_coordinate_height": 0.1111111111111111,
+      "relative_y0_digital": 0.10812908995385263
+    },
+    {
+      "token": "Ordinary",
+      "digital": {
+        "text": "Ordinary",
+        "x0": 48.0,
+        "y0": 97.25,
+        "x1": 86.33999633789062,
+        "y1": 110.98999786376953,
+        "cy": 104.11999893188477,
+        "height": 13.739997863769531
+      },
+      "ocr": {
+        "text": "Ordinary",
+        "x0": 91.0,
+        "x1": 176.0,
+        "y0": 194.0,
+        "y1": 224.0,
+        "cy": 209.0,
+        "height": 30.0
+      },
+      "ratios": {
+        "x0_ocr_over_digital": 1.8958333333333333,
+        "y0_ocr_over_digital": 1.9948586118251928,
+        "width_ocr_over_digital": 2.217005949893539,
+        "height_ocr_over_digital": 2.183406453002867
+      },
+      "expected_if_zoom_only": {
+        "x0": 96.0,
+        "y0": 194.5,
+        "x1": 172.67999267578125,
+        "y1": 221.97999572753906
+      },
+      "expected_if_coord_over_pdf": {
+        "scale_x": 2.0,
+        "scale_y": 2.0
+      },
+      "mapped_ocr_to_pdf": {
+        "x0": 45.5,
+        "y0": 97.0,
+        "x1": 88.0,
+        "y1": 112.0
+      },
+      "delta_mapped_minus_digital": {
+        "x0": -2.5,
+        "y0": -0.25
+      },
+      "relative_y0_using_page_size_helper": 0.31699346405228757,
+      "relative_y0_using_coordinate_height": 0.15849673202614378,
+      "relative_y0_digital": 0.15890522875816993
+    }
+  ],
+  "table_regions_on_ocr_page": null,
+  "ocr_method": "ocr",
+  "synthetic_fake_ocr": {
+    "label": "synthetic_fake_ocr_coordinate_contract_only",
+    "not_live_ocr": true,
+    "page_width": 468.0,
+    "page_height": 612.0,
+    "coordinate_width": 1234.0,
+    "coordinate_height": 1567.0,
+    "geometry_scale": 2.0,
+    "page_size_helper": [
+      468.0,
+      612.0
+    ],
+    "box": {
+      "text": "Policy",
+      "x0": 100.0,
+      "y0": 40.0,
+      "x1": 180.0,
+      "y1": 55.0,
+      "cy": 47.5,
+      "height": 15.0
+    },
+    "rel_y0_if_using_page_size_helper": 0.06535947712418301,
+    "rel_y0_if_using_coordinate_height": 0.025526483726866625,
+    "mismatch": true
+  }
+}

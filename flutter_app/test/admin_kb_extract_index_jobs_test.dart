@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aska_piyu/screens/admin_kb_workspace.dart';
@@ -93,6 +92,91 @@ void main() {
     });
   });
 
+  // 2026-10-27 fix: a published job's structured-extraction-fallback
+  // warning (app.services.admin.digital_ingestion._structured_fallback_
+  // warning) must survive into what the admin sees once polling reaches
+  // status="published", not be silently replaced by the plain success
+  // message. _runIndexJob itself has no HTTP-mocking seam (see this
+  // file's own top comment), so these cover the pure logic it was
+  // refactored to delegate to -- exactly the same pattern already used
+  // above for reviewTextForFailedResponse.
+  group('isStructuredFallbackWarning', () {
+    const realWarning =
+        'Structured handbook-table processing was attempted for this document but failed '
+        'during indexing; generic chunking was published instead (see server logs for the '
+        'exact error). The disciplinary-offense table correction was NOT applied. Review and '
+        're-index via Extract & Structure once the underlying issue is resolved.';
+
+    test('true for the real backend warning text', () {
+      expect(isStructuredFallbackWarning(realWarning), isTrue);
+    });
+
+    test('false for null (the normal successful-publish case)', () {
+      expect(isStructuredFallbackWarning(null), isFalse);
+    });
+
+    test('false for an empty or whitespace-only string', () {
+      expect(isStructuredFallbackWarning(''), isFalse);
+      expect(isStructuredFallbackWarning('   '), isFalse);
+    });
+
+    test('false for an ordinary, unrelated status_detail value', () {
+      expect(isStructuredFallbackWarning('Embedding and publishing chunk 3/50...'), isFalse);
+    });
+  });
+
+  group('publishedIndexStage', () {
+    const realWarning =
+        'Structured handbook-table processing was attempted for this document but failed '
+        'during indexing; generic chunking was published instead (see server logs for the '
+        'exact error). The disciplinary-offense table correction was NOT applied.';
+
+    test('a published job with the structured-fallback warning displays it', () {
+      final stage = publishedIndexStage(chunks: 355, statusDetail: realWarning);
+      expect(stage.status, 'needs_review');
+      expect(stage.detail, realWarning);
+    });
+
+    test('a normal published job does not display stale progress text', () {
+      final stage = publishedIndexStage(
+        chunks: 492,
+        statusDetail: 'Embedding and publishing chunk 492/492...',
+      );
+      expect(stage.status, 'done');
+      expect(stage.detail, '492 chunks indexed');
+      expect(stage.detail, isNot(contains('Embedding and publishing')));
+    });
+
+    test('a normal published job with no status_detail behaves as before', () {
+      final stage = publishedIndexStage(chunks: 492, statusDetail: null);
+      expect(stage.status, 'done');
+      expect(stage.detail, '492 chunks indexed');
+    });
+  });
+
+  group('publishedStatusMessage', () {
+    const realWarning = 'generic chunking was published instead of the structured correction.';
+
+    test('includes the structured-fallback warning when present', () {
+      final message = publishedStatusMessage(chunks: 355, statusDetail: realWarning);
+      expect(message, contains('355 chunks indexed'));
+      expect(message, contains(realWarning));
+    });
+
+    test('is the plain success message for a normal published job', () {
+      final message = publishedStatusMessage(chunks: 492, statusDetail: null);
+      expect(message, 'Knowledge units indexed for chatbot retrieval. Indexed 492 chunks.');
+    });
+
+    test('is the plain success message even with unrelated leftover progress text', () {
+      final message = publishedStatusMessage(
+        chunks: 492,
+        statusDetail: 'Embedding and publishing chunk 492/492...',
+      );
+      expect(message, 'Knowledge units indexed for chatbot retrieval. Indexed 492 chunks.');
+    });
+  });
+
   // Stage 25 (Part 3): the two Stage 24 preview fields --
   // original_page_text_snippet / proposed_classification -- rendered by
   // _KnowledgeUnitTile inside KbKnowledgeUnitsReviewPanel. Forced wide
@@ -159,13 +243,78 @@ void main() {
       expect(find.textContaining('Suggested classification: needs review'), findsOneWidget);
       expect(find.textContaining('Original page text — unverified source context'), findsOneWidget);
 
-      // Collapsed by default -- the snippet text itself is not yet shown.
+      // Not shown until the control is tapped -- no dialog open yet.
       expect(find.text('Sec. 9. Indecency and Obscenity. Original page text.'), findsNothing);
 
       await tester.tap(find.textContaining('Original page text — unverified source context'));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       expect(find.text('Sec. 9. Indecency and Obscenity. Original page text.'), findsOneWidget);
+    });
+
+    testWidgets('tapping the control opens a dialog with the full label and source text', (tester) async {
+      await pumpPanel(tester, [suspiciousUnit()]);
+
+      expect(find.byType(Dialog), findsNothing);
+
+      await tester.tap(find.textContaining('Original page text — unverified source context').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Dialog), findsOneWidget);
+      // The label appears twice once open: once on the (still-visible) tile
+      // trigger, once as the dialog's own title.
+      expect(find.textContaining('Original page text — unverified source context'), findsNWidgets(2));
+      expect(find.text('Sec. 9. Indecency and Obscenity. Original page text.'), findsOneWidget);
+    });
+
+    testWidgets('dialog can be closed via the close icon and via the Close button', (tester) async {
+      await pumpPanel(tester, [suspiciousUnit()]);
+
+      await tester.tap(find.textContaining('Original page text — unverified source context').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+
+      await tester.tap(find.textContaining('Original page text — unverified source context').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Close'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+    });
+
+    testWidgets('Copy text button copies the complete snippet to the clipboard', (tester) async {
+      String? copiedText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (methodCall) async {
+          if (methodCall.method == 'Clipboard.setData') {
+            copiedText = (methodCall.arguments as Map)['text'] as String;
+          }
+          return null;
+        },
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+      });
+
+      // Rendered/copied text is trimmed (pre-existing behavior, unrelated
+      // to this dialog), so the fixture is pre-trimmed to match exactly.
+      final longSnippet = ('Repeated disciplinary table text. ' * 200).trim();
+      await pumpPanel(tester, [suspiciousUnit(originalSnippet: longSnippet)]);
+
+      await tester.tap(find.textContaining('Original page text — unverified source context').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(InkWell, 'Copy text'));
+      await tester.pumpAndSettle();
+
+      expect(copiedText, longSnippet, reason: 'the full, untruncated snippet must be copied');
+      expect(find.text('Original page text copied'), findsOneWidget);
     });
 
     testWidgets('missing diagnostic fields render no diagnostic section', (tester) async {
@@ -197,22 +346,25 @@ void main() {
       expect(find.textContaining('Suggested classification'), findsOneWidget);
     });
 
-    testWidgets('long original-page text expands and collapses without overflow', (tester) async {
-      final longSnippet = 'Repeated disciplinary table text. ' * 200; // ~7000 chars
+    testWidgets('long original-page text opens in a scrollable dialog without overflow or truncation', (tester) async {
+      // Rendered/copied text is trimmed (pre-existing behavior, unrelated
+      // to this dialog), so the fixture is pre-trimmed to match exactly.
+      final longSnippet = ('Repeated disciplinary table text. ' * 200).trim();
       await pumpPanel(tester, [suspiciousUnit(originalSnippet: longSnippet)]);
 
-      final toggle = find.textContaining('Original page text — unverified source context');
-      await tester.tap(toggle);
-      await tester.pump();
+      await tester.tap(find.textContaining('Original page text — unverified source context').first);
+      await tester.pumpAndSettle();
 
-      expect(tester.takeException(), isNull, reason: 'expanding a long snippet must not overflow the fixed-aspect-ratio grid cell');
-      expect(find.textContaining('Repeated disciplinary table text.'), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'opening a long snippet in the dialog must not overflow');
+      expect(find.byType(SingleChildScrollView), findsWidgets);
+      // The exact, full (untruncated) snippet text is present in the tree.
+      expect(find.text(longSnippet), findsOneWidget);
 
-      await tester.tap(toggle);
-      await tester.pump();
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('Repeated disciplinary table text.'), findsNothing);
+      expect(find.text(longSnippet), findsNothing);
     });
 
     testWidgets('existing tile content (title, status, page, content snippet) remains visible', (tester) async {

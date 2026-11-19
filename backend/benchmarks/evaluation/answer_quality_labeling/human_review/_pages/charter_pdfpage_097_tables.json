@@ -1,0 +1,201 @@
+[
+  {
+    "index": 0,
+    "rows": [
+      [
+        "Office or Division:",
+        "Colleges",
+        null,
+        null,
+        null
+      ],
+      [
+        "Classification:",
+        "Complex",
+        null,
+        null,
+        null
+      ],
+      [
+        "Type of Transaction:",
+        "G2C - Government to Citizen",
+        null,
+        null,
+        null
+      ],
+      [
+        "Who may avail:",
+        "New and Transferee Students",
+        null,
+        null,
+        null
+      ],
+      [
+        "CHECKLIST OF REQUIREMENTS",
+        null,
+        "WHERE TO SECURE",
+        null,
+        null
+      ],
+      [
+        "Form 138 (new student) / TOR (transferee),\nprinted and softcopy",
+        null,
+        "SHS / Previous HEI",
+        null,
+        null
+      ],
+      [
+        "Certificate of Good Moral Character, printed and\nsoftcopy",
+        null,
+        "SHS",
+        null,
+        null
+      ],
+      [
+        "Birth Certificate, printed and softcopy",
+        null,
+        "PSA",
+        null,
+        null
+      ],
+      [
+        "Marriage certificate (for married female)",
+        null,
+        "PSA",
+        null,
+        null
+      ],
+      [
+        "2x2 picture printed and softcopy",
+        null,
+        "client",
+        null,
+        null
+      ],
+      [
+        "CLIENT STEPS",
+        "AGENCY ACTIONS",
+        "FEES TO\nBE PAID",
+        "PROCESSING\nTIME",
+        "PERSON\nRESPONSIBLE"
+      ],
+      [
+        "Scheduling of Interview",
+        "Set Interview\nSchedule",
+        "N/A",
+        "30 minutes",
+        "College staff"
+      ],
+      [
+        "Notification/announce\nment of Interview\nSchedule",
+        "Set interview schedule\nand platform (face to\nface, video call, phone\ncall) to be used.",
+        "N/A",
+        "30 hours",
+        "College staff"
+      ],
+      [
+        "Attend the scheduled\ninterview based on the set\nplatform.",
+        "Conduct the interview\nand give\nrecommendation.",
+        "N/A",
+        "30 minutes",
+        "Program Coordinator/\nDean"
+      ],
+      [
+        "TOTAL:",
+        null,
+        "None",
+        "2 days and 7\nhours",
+        ""
+      ]
+    ]
+  },
+  {
+    "index": 1,
+    "rows": [
+      [
+        "Office or Division:",
+        "Colleges",
+        null,
+        null,
+        null
+      ],
+      [
+        "Classification:",
+        "Simple",
+        null,
+        null,
+        null
+      ],
+      [
+        "Type of Transaction:",
+        "G2C - Government to Citizen",
+        null,
+        null,
+        null
+      ],
+      [
+        "Who may avail:",
+        "New and Transferee Students",
+        null,
+        null,
+        null
+      ],
+      [
+        "CHECKLIST OF REQUIREMENTS",
+        null,
+        "WHERE TO SECURE",
+        null,
+        null
+      ],
+      [
+        "RL for the conduct of General Orientation",
+        null,
+        "Dean’s Office",
+        null,
+        null
+      ],
+      [
+        "Travel Order",
+        null,
+        "Office of the Campus Director",
+        null,
+        null
+      ],
+      [
+        "CLIENT STEPS",
+        "AGENCY ACTIONS",
+        "FEES TO\nBE PAID",
+        "PROCESSING\nTIME",
+        "PERSON\nRESPONSIBLE"
+      ],
+      [
+        "General Orientation",
+        "Conduct general\norientation for student\ninternship",
+        "N/A",
+        "2 hours",
+        "OJT Coordinator"
+      ],
+      [
+        "Bringing of OJT\nDocuments",
+        "Checking and\nevaluation of OJT\nDocuments",
+        "N/A",
+        "1 hour",
+        "OJT Coordinator"
+      ],
+      [
+        "Deployment to the Host\ntraining establishment",
+        "Endorsement to the\nHTA",
+        "N/A",
+        "1 day",
+        "OJT Coordinator"
+      ],
+      [
+        "TOTAL:",
+        null,
+        "None",
+        "1 day and 3\nhours",
+        ""
+      ]
+    ]
+  }
+]

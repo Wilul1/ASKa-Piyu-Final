@@ -196,6 +196,44 @@ def test_procedural_wording_penalty_does_not_look_like_noisy_context():
     assert not any(_has_strong_penalty(item) for item in evidence)
 
 
+def test_ticket_faq_helpdesk_category_is_not_strong_noise():
+    """Ticketing stamps category=Student Services. On a TOR question the reranker
+    then emits penalty_unrequested_student_services from that label. That must
+    not hide a correctly retrieved ticket FAQ behind the clarification template."""
+    question = "How do I request a Transcript of Records?"
+    item = RetrievedChunk(
+        document_id="faq:tor-ticket",
+        title="How do I request a Transcript of Records",
+        source_filename="Knowledge Base article",
+        chunk_index=0,
+        text=(
+            "Alumni and currently enrolled students request a Transcript of Records "
+            "at the Registrar. Submit the TOR application form and pay the fee."
+        ),
+        relevance_score=2.4,
+        original_score=0.86,
+        reranked_score=2.4,
+        rerank_reasons=[
+            "boost_tor_service_title",
+            "student_records_match",
+            "penalty_unrequested_student_services",
+        ],
+        metadata={
+            "article_type": "faq",
+            "kb_origin": "ticket_resolution",
+            "source_section": "How do I request a Transcript of Records",
+            "title": "How do I request a Transcript of Records",
+            "category": "Student Services",
+            "audience": "student",
+        },
+    )
+    assert _has_strong_penalty(item) is False
+    quality = _retrieval_quality(
+        question, [item], [item], broad_query=False, collection_mode=False
+    )
+    assert quality["should_clarify"] is False
+
+
 # --- weak evidence must not be high confidence ------------------------------
 
 

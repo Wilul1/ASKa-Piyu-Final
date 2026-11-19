@@ -1,0 +1,43 @@
+{
+  "example_only": true,
+  "not_an_evaluation_result": true,
+  "run_id": "run_example_qa_citation_0001",
+  "case_id": "qac_001_tor_fee",
+  "execution_status": "ok",
+  "captured_at": "2026-11-09T05:00:00Z",
+  "pipeline": "answer_qa_question",
+  "user_role": "student",
+  "corpus": {
+    "path": "backend/data/chroma_evaluation",
+    "collection": "aska_evaluation",
+    "chunk_count": 691
+  },
+  "model": {
+    "answer_generation_model": "example-chat-model-not-executed",
+    "embedding_model": "sentence-transformers: intfloat/multilingual-e5-small",
+    "config_snapshot": {
+      "not_generate_groq_answer": true,
+      "store": "LabeledRetrievalStore"
+    }
+  },
+  "generated_answer": "A Transcript of Records costs P75.00 per page for undergraduate students and P150.00 per page for graduate students.",
+  "retrieved_context": "Issuance of Transcript of Records... Undergraduate: P75.00/page; Graduate: P150/page",
+  "retrieved_chunk_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+  "displayed_citation_ids": ["da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"],
+  "source_metadata": [
+    {
+      "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1",
+      "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+      "title": "Issuance of Transcript of Records/Transfer Credentials/Certifications/CAV/Authenticated Documents",
+      "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+      "page_number": 12
+    }
+  ],
+  "fallback_reason": null,
+  "out_of_scope_detected": false,
+  "error_type": null,
+  "error_message": null,
+  "raw_qa_result_json": {
+    "note": "Bounded QAResult dump; secrets stripped. Example placeholder, not a live capture."
+  }
+}

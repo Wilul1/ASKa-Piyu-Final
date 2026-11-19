@@ -1,0 +1,1372 @@
+{
+  "cases": [
+    {
+      "case_id": "aq_04_dropping_fee_multi_document",
+      "source_question_id": "rag_benchmark_04",
+      "question": "How much does it cost to drop a subject?",
+      "status": "evaluated",
+      "error": null,
+      "latency_ms": 33273.88,
+      "user_role": "student",
+      "reference_answer": "Official LSPU sources list two different dropping fees and do not establish which amount is currently in force. The Citizen's Charter 2026 lists \u20b130.00 per unit for new and transferee students. The Student Handbook 2021 requires a dropping fee of \u20b120.00 per unit, citing LSPU BOR Resolution 1046, s.2012. Confirm the applicable fee with the Registrar before paying.",
+      "gold_citation_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+      ],
+      "chatbot_answer": "The listed fee for Dropping of Subjects is P30.00 (Laguna State Polytechnic University CC 2026 1st Edition).",
+      "confidence": "medium",
+      "out_of_scope_detected": false,
+      "fallback_used": true,
+      "fallback_reason": "generation_error",
+      "detected_intent": "NORMAL_QA",
+      "selected_context_count": 8,
+      "displayed_citations": [
+        {
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "title": "Dropping of Subjects",
+          "page": 98,
+          "page_number": 98,
+          "page_end": 99,
+          "page_range": "98-99",
+          "document_id": "6729b359-2f20-4b92-b7dc-b667c4821228",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "source_section": "Dropping of Subjects",
+          "source_excerpt": "Overview This service provides assistance for Dropping of Subjects. Office / Division Colleges Who May Avail New and Transferee Students Requirements - Requirement: Dropping Form Where to Secure: Registrar\u2019s Office Steps 1. Client Step: Student Application for Dropping Agency Action: Release of dropping form Fees: Not specified Processing Time: Not specified Person Responsible: RESPONSIBLE/Registrar\u2019s Office/Cashier\u2019s Office 2. Client Step: Request for the dropping of subjects from the faculty-in-charge Agency Action: Approval of the faculty-in-charge Fees: None Processing Time: 5 minutes Person Responsible: Faculty-in-charge 3. Client Step: Request for Deans Agency Action: Approval from the"
+        },
+        {
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+          "title": "Honorable Dismissal",
+          "page": 47,
+          "page_number": 47,
+          "page_end": 48,
+          "page_range": "47-48",
+          "document_id": "8dff347a-1f00-4454-b0da-f6d09e795308",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "source_section": "Article 12 > Honorable Dismissal",
+          "source_excerpt": "Honorable Dismissal Undergraduate Academic Policies > Article 12 > Honorable Dismissal > Article 12 > Honorable Dismissal Honorable Dismissal Petition: A student of good standing who de sires to withdraw from the college/university shall present a written petition to the Registrar signed by the parent/s or guardian/s. If the petition is granted, the student shall be given Honorable Dismissal. Hono\u2026"
+        },
+        {
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+          "title": "Crediting of Subjects",
+          "page": 95,
+          "page_number": 95,
+          "page_end": 96,
+          "page_range": "95-96",
+          "document_id": "6729b359-2f20-4b92-b7dc-b667c4821228",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "source_section": "Crediting of Subjects",
+          "source_excerpt": "Overview This service provides assistance for Crediting of Subjects. Office / Division Colleges Who May Avail Students Requirements - Requirement: Transcript of records/ copy of grades Previous Where to Secure: school / College/ Department Steps 1. Client Step: Evaluate Transcript of Records of Students Agency Action: Identify subjects to be credited Fees: None Processing Time: Program Person Responsible: Head/faculty/In-charge 2. Client Step: Prepare document of credited subjects Agency Action: Enumeration of subjects to be credited Fees: None Processing Time: 15 mins Person Responsible: College/Secretary 3. Client Step: Noted by the dean/ assoc. dean Agency Action: The Dean/ Assoc Dean wil"
+        },
+        {
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+          "title": "Completion of INC/Removal \u2013 Online System",
+          "page": 94,
+          "page_number": 94,
+          "page_end": 95,
+          "page_range": "94-95",
+          "document_id": "6729b359-2f20-4b92-b7dc-b667c4821228",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "source_section": "Completion of INC/Removal \u2013 Online System",
+          "source_excerpt": "Overview This service provides assistance for Completion of INC/Removal \u2013 Online System. Office / Division College, Registrar, Cashier Who May Avail Students Requirements - Requirement: Completion form Registrar Proof of Payment for completion/removal (official Cashier 86 receipt) Where to Secure: Not specified Steps 1. Client Step: After submitting the complete requirements to the subject teacher, the students will log in to his portal in LSPU online system to apply online for the completion of INC or 4.0 grade. The student will pay the corresponding completion fess to the cashier\u2019s office Agency Action: After receiving the student\u2019s payment, the cashier will put the OR number on the comple"
+        }
+      ],
+      "displayed_citation_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92"
+      ],
+      "retrieved_chunks": [
+        {
+          "rank": 1,
+          "title": "Dropping of Subjects",
+          "path": "Dropping of Subjects",
+          "page": 98,
+          "content_preview": "Overview This service provides assistance for Dropping of Subjects. Office / Division Colleges Who May Avail New and Transferee Students Requirements - Requirement: Dropping Form Where to Secure: Registrar\u2019s Office Steps 1. Client Step: Student Application for Dropping Agency Action: Release of dropping form Fees: Not specified Processing Time: Not specified Person Responsible: RESPONSIBLE/Registrar\u2019s Office/Cashier\u2019s Office 2. Client Step: Request for the dropping of subjects from the faculty-in-charge Agency Action: Approval of the faculty-in-charge Fees: None Processing Time: 5 minutes Person Responsible: Faculty-in-charge 3. Client Step: Request for Deans Agency Action: Approval from the...",
+          "original_score": 0.8837,
+          "reranked_score": 3.5087,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:citizen charter",
+            "boost_taxonomy_service_identity:Registration",
+            "boost_distinctive_title_terms:dropping,subjects,citizen,charter",
+            "boost_chunk_with_total_fees",
+            "boost_charter_fee_metadata",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_rank_1",
+            "keep_close_to_rank_1",
+            "keep_title_path_intent_match",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "chunk_index": 97,
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+          "citation_id_stamped": true,
+          "audience": "both"
+        },
+        {
+          "rank": 2,
+          "title": "Offering of Unscheduled Subject/s",
+          "path": "Offering of Unscheduled Subject/s",
+          "page": 93,
+          "content_preview": "Overview This service provides assistance for Offering of Unscheduled Subject/s. Office / Division Colleges Who May Avail Irregular Students Requirements - Requirement: Request Letter Client Copy of Evaluation of Grades Registrar Where to Secure: Not specified Steps 1. Client Step: Submits letter request for the offering of unscheduled subject/s and copy of evaluation of grades from the Office of the Registrar to the Office of the Agency Action: Receives the letter request and verifies the need for the offering of unscheduled subject/s Forward request to the Office of the Registrar Forwards the request to the OVPAA for approval Informs the student requested has been offered (or not) upon rec...",
+          "original_score": 0.8479,
+          "reranked_score": 3.4104,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:citizen charter",
+            "boost_taxonomy_service_identity:Withdrawal",
+            "boost_distinctive_title_terms:subject,subjects,citizen,charter",
+            "boost_chunk_with_total_fees",
+            "boost_charter_fee_metadata",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_close_to_rank_1",
+            "keep_title_path_intent_match",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "chunk_index": 91,
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91",
+          "citation_id_stamped": true,
+          "audience": "both"
+        },
+        {
+          "rank": 3,
+          "title": "Crediting of Subjects",
+          "path": "Crediting of Subjects",
+          "page": 95,
+          "content_preview": "Overview This service provides assistance for Crediting of Subjects. Office / Division Colleges Who May Avail Students Requirements - Requirement: Transcript of records/ copy of grades Previous Where to Secure: school / College/ Department Steps 1. Client Step: Evaluate Transcript of Records of Students Agency Action: Identify subjects to be credited Fees: None Processing Time: Program Person Responsible: Head/faculty/In-charge 2. Client Step: Prepare document of credited subjects Agency Action: Enumeration of subjects to be credited Fees: None Processing Time: 15 mins Person Responsible: College/Secretary 3. Client Step: Noted by the dean/ assoc. dean Agency Action: The Dean/ Assoc Dean wil...",
+          "original_score": 0.842,
+          "reranked_score": 3.4045,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:citizen charter",
+            "boost_taxonomy_service_identity:Withdrawal",
+            "boost_distinctive_title_terms:service,subjects,citizen,charter",
+            "boost_chunk_with_total_fees",
+            "boost_charter_fee_metadata",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_close_to_rank_1",
+            "keep_title_path_intent_match",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "chunk_index": 93,
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+          "citation_id_stamped": true,
+          "audience": "both"
+        },
+        {
+          "rank": 4,
+          "title": "Completion of INC/Removal \u2013 Online System",
+          "path": "Completion of INC/Removal \u2013 Online System",
+          "page": 94,
+          "content_preview": "Overview This service provides assistance for Completion of INC/Removal \u2013 Online System. Office / Division College, Registrar, Cashier Who May Avail Students Requirements - Requirement: Completion form Registrar Proof of Payment for completion/removal (official Cashier 86 receipt) Where to Secure: Not specified Steps 1. Client Step: After submitting the complete requirements to the subject teacher, the students will log in to his portal in LSPU online system to apply online for the completion of INC or 4.0 grade. The student will pay the corresponding completion fess to the cashier\u2019s office Agency Action: After receiving the student\u2019s payment, the cashier will put the OR number on the comple...",
+          "original_score": 0.8416,
+          "reranked_score": 3.0516,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:citizen charter",
+            "boost_distinctive_title_terms:service,registrar,citizen,charter",
+            "boost_chunk_with_total_fees",
+            "boost_charter_fee_metadata",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_close_to_rank_1",
+            "keep_same_domain:Academic Policies",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "chunk_index": 92,
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+          "citation_id_stamped": true,
+          "audience": "both"
+        },
+        {
+          "rank": 5,
+          "title": "Open to all Clients",
+          "path": "Open to all Clients",
+          "page": 83,
+          "content_preview": "Overview This service provides assistance for Open to all Clients. Office / Division CIET & ITSO Who May Avail All Requirements No additional requirements specified in the Citizen's Charter. Steps 1. Client Step: Submit all necessary documents/requireme nts for IP Registration Agency Action: Receive and evaluate the documents and sign the approval form Fees: Not specified Processing Time: Not specified Person Responsible: RESPONSIBLE/ITSO and CIET 2. Client Step: Submit IP registration form/s and receipt copy with signature of the unit Agency Action: Receive and sign the submitted copy and evaluate the IP registration documents Fees: None Processing Time: 3 days Person Responsible: ITSO and...",
+          "original_score": 0.8447,
+          "reranked_score": 2.7847,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:citizen charter",
+            "boost_distinctive_title_terms:citizen,charter,citizencharter",
+            "boost_chunk_with_total_fees",
+            "boost_charter_fee_metadata",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "chunk_index": 84,
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::84",
+          "citation_id_stamped": true,
+          "audience": "both"
+        },
+        {
+          "rank": 6,
+          "title": "Signing of Faculty Clearance",
+          "path": "Signing of Faculty Clearance",
+          "page": 96,
+          "content_preview": "Overview This service provides assistance for Signing of Faculty Clearance. Office / Division Colleges Who May Avail Regular and Part-Time Faculty Requirements No additional requirements specified in the Citizen's Charter. Steps 1. Client Step: Faculty secures checklist of submission of all requirements. Agency Action: Office secretary issues signed checklist Fees: Not specified Processing Time: Not specified Person Responsible: RESPONSIBLE/secretary or/personnel 2. Client Step: Faculty submits the deliverables to the concerned for clearance. Agency Action: Dean/Associate Dean verifies completeness of requirements Fees: None Processing Time: 2 min Person Responsible: Office secretary/Dean/As...",
+          "original_score": 0.8562,
+          "reranked_score": 2.5062,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:citizen charter",
+            "boost_distinctive_title_terms:service,faculty,citizen,charter",
+            "boost_chunk_with_total_fees",
+            "boost_charter_fee_metadata",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready",
+            "penalty_unrelated_procedure"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+          "source_filename": "Laguna State Polytechnic University-CC_2026-1st Edition.pdf",
+          "chunk_index": 94,
+          "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::94",
+          "citation_id_stamped": true,
+          "audience": "both"
+        },
+        {
+          "rank": 7,
+          "title": "Withdrawal Policy",
+          "path": "Undergraduate Academic Policies > Article 9 > Withdrawal from the University > 1.1 > Withdrawal Policy > Withdrawal Policy",
+          "page": 46,
+          "content_preview": "Withdrawal Policy Undergraduate Academic Policies > Article 9 > Withdrawal from the University > 1.1 > Withdrawal Policy Students of good standing who wish to withdraw from the university can be granted either temporary (Leave of Ab- sence) or permanent (Honorable Dismissal) forms.",
+          "original_score": 0.8514,
+          "reranked_score": 2.9214,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:withdrawal registrar",
+            "boost_distinctive_title_terms:withdrawal,registrar,withdrawalregistrar",
+            "honorable_dismissal_match",
+            "metadata_category_match",
+            "metadata_subcategory_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_same_domain:Academic Policies",
+            "keep_title_path_intent_match",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 108,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::108",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 8,
+          "title": "Withdrawal Guidelines",
+          "path": "Undergraduate Academic Policies > Article 9 > Withdrawal from the University > 1.2 > Withdrawal Guidelines > Withdrawal Guidelines",
+          "page": 46,
+          "content_preview": "Withdrawal Guidelines Undergraduate Academic Policies > Article 9 > Withdrawal from the University > 1.2 > Withdrawal Guidelines The student must prepare a request in the form of a written petition to the Dean and shall secure prescribed clearance to be submitted to the Office of the Registrar.",
+          "original_score": 0.8259,
+          "reranked_score": 2.8959,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:withdrawal registrar",
+            "boost_distinctive_title_terms:withdrawal,registrar,withdrawalregistrar",
+            "honorable_dismissal_match",
+            "metadata_category_match",
+            "metadata_subcategory_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_same_domain:Academic Policies",
+            "keep_title_path_intent_match",
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 109,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::109",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 9,
+          "title": "Honorable Dismissal",
+          "path": "Undergraduate Academic Policies > Article 12 > Honorable Dismissal > Honorable Dismissal",
+          "page": 47,
+          "content_preview": "Honorable Dismissal Undergraduate Academic Policies > Article 12 > Honorable Dismissal Honorable Dismissal is voluntary with drawal from the college/university with the consent of the Registrar.",
+          "original_score": 0.8927,
+          "reranked_score": 2.9677,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:honorable dismissal",
+            "boost_distinctive_title_terms:honorable,dismissal,registrar,honorabledismissal",
+            "honorable_dismissal_match",
+            "boost_honorable_dismissal_title",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 117,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 10,
+          "title": "Honorable Dismissal",
+          "path": "Undergraduate Academic Policies > Article 12 > Honorable Dismissal > Honorable Dismissal",
+          "page": 47,
+          "content_preview": "Honorable Dismissal Undergraduate Academic Policies > Article 12 > Honorable Dismissal > Article 12 > Honorable Dismissal Honorable Dismissal Petition: A student of good standing who de sires to withdraw from the college/university shall present a written petition to the Registrar signed by the parent/s or guardian/s. If the petition is granted, the student shall be given Honorable Dismissal. Honorable Dismissal Policy: All indebtedness to the university must be settled before a statement of Honorable Dismissal will be issued. The statement indicates that the student who withdraws is of good standing as far as character and conduct are concerned. If the student has been dropped from the roll...",
+          "original_score": 0.862,
+          "reranked_score": 2.937,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:honorable dismissal",
+            "boost_distinctive_title_terms:honorable,dismissal,registrar,honorabledismissal",
+            "honorable_dismissal_match",
+            "boost_honorable_dismissal_title",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 118,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 11,
+          "title": "Client-initiated",
+          "path": "Graduate Studies > Article 2 > Student Admission and Counseling > 4.2 > Client-initiated > Client-initiated",
+          "page": 144,
+          "content_preview": "Client-initiated Graduate Studies > Article 2 > Student Admission and Counseling > 4.2 > Client-initiated termination requested by the client/service user. The termination of counseling sessions may take place upon the completion and submission of termination form. The office recog- nizes the right of their clients and the freedom to withdraw from the process especially when the client feels that the process is not applicable to his/her issues. Sec.5. Counseling termination specifics \u2013 consist of the clients\u2019 withdrawal from the counseling process. It will be the basis of virtual counseling. These are: 5.1. Service user\u2019s name",
+          "original_score": 0.8466,
+          "reranked_score": 2.9166,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:withdrawal registrar",
+            "boost_distinctive_title_terms:withdrawal,registrar,withdrawalregistrar",
+            "honorable_dismissal_match",
+            "metadata_category_match",
+            "metadata_subcategory_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_same_domain:Academic Policies",
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 422,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::422",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 12,
+          "title": "Refunding of Fees",
+          "path": "Undergraduate Academic Policies > Article 3 > Registration > Sec. 3 > Refunding of Fees > Refunding of Fees",
+          "page": 30,
+          "content_preview": "Refunding of Fees Undergraduate Academic Policies > Article 3 > Registration > Sec. 3 > Refunding of Fees A student who has paid the enrolment fees and who is granted Honorable Dismissal/Transfer Credentials or Leave of Absence (LOA) is entitled to a refund of their fees, except matricula- tion or registration fee, in accordance with the following schedule: 3.1. seventy-five percent (75%): within the week from the opening of classes 3.2. fifty percent (50%): within the period from the second to the fourth week 3.3. No refund: after the fourth week from the opening of classes",
+          "original_score": 0.8393,
+          "reranked_score": 2.9143,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:honorable dismissal",
+            "boost_distinctive_title_terms:honorable,dismissal,registrar,honorabledismissal",
+            "honorable_dismissal_match",
+            "boost_honorable_dismissal_title",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 52,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::52",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 13,
+          "title": "Student Transferees",
+          "path": "Undergraduate Academic Policies > Article 2 > Admission Requirements > 2.11.2 > Student Transferees > Student Transferees",
+          "page": 28,
+          "content_preview": "Student Transferees Undergraduate Academic Policies > Article 2 > Admission Requirements > 2.11.2 > Student Transferees - Transfer Credential/Honorable Dismissal from the schoollast attended - Transcript of Records or a copy of Academic Records for evaluation purposes - physical, medical, and drug testing examinations certified by a government physician, certifying the applicant\u2019s fitness to do University work - Certificate of Good Moral Character (the last school at- tended) - three (3) latest 2x2 pictures - photocopy of authenticated birth certificate/marriage cer- tificate (for married female students only) issued by the Phil- ippine Statistics Authority (PSA), formerly NSO 2.13. Other re...",
+          "original_score": 0.8224,
+          "reranked_score": 2.8974,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:honorable dismissal",
+            "boost_distinctive_title_terms:honorable,dismissal,registrar,honorabledismissal",
+            "honorable_dismissal_match",
+            "boost_honorable_dismissal_title",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 45,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::45",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 14,
+          "title": "Scholastic Delinquency",
+          "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency > Scholastic Delinquency",
+          "page": 35,
+          "content_preview": "Scholastic Delinquency Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency The University Academic Council shall promulgate (delinquency) rules and guidelines governing scholastic delinquency, subject to the approv- al of the Board of Regents, and to the following minimum standards: 4.1. Warning. At the end of the semester, A student who fails 25% to 49% of the total academic units he registered shall be warned by the Dean and advised to improve his/her performance. 4.2. Probation. At the end of the semester, A student fails 50% to 74% of the total academic units in which he registered shall be placed on probation for the succeeding semester, an...",
+          "original_score": 0.8649,
+          "reranked_score": 2.6849,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:scholastic delinquency",
+            "boost_distinctive_title_terms:registrar,scholastic,delinquency,academic",
+            "boost_path_domain_match:retention",
+            "failing_subjects_policy",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready",
+            "penalty_student_handbook_for_faculty_query"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_same_domain:Academic Policies",
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 66,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 15,
+          "title": "Validation of Subjects",
+          "path": "Undergraduate Academic Policies > Article 4 > Validation > Sec. 1 > Validation of Subjects > Validation of Subjects",
+          "page": 31,
+          "content_preview": "Validation of Subjects Undergraduate Academic Policies > Article 4 > Validation > Sec. 1 > Validation of Subjects Subjects are validated without fee when the students will take the examination during the final examination provid- ed such subjects are included in the schedule of examination for regu- lar students. However, validating test may be given during the period covering one week before the first day of registration in each semester upon payment of P20 per unit. The examination is taken at the time is scheduled. Letter request from the Dean must be obtained taking the validation test. Present the approved letter request to the person in- charge of validating examination.",
+          "original_score": 0.8436,
+          "reranked_score": 2.0736,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:subjects registrar",
+            "boost_distinctive_title_terms:subjects,registrar,ofsubjects,subjectsregistrar",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready",
+            "penalty_student_handbook_for_faculty_query"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_same_domain:Academic Policies",
+            "keep_title_path_intent_match",
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 57,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::57",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 16,
+          "title": "Dropping",
+          "path": "Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.1 > Dropping > Dropping",
+          "page": 39,
+          "content_preview": "Dropping Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.1 > Dropping Students shall be dropped if they have an accumulated absence of at least 25% of the total number of class hours in a semester. With the faculty\u2019s consent and the Dean's approval, a student may drop the subject by filing the prescribed form. With- drawing from any subject before mid-term examination permits a student to drop the subject without prejudice.",
+          "original_score": 0.8811,
+          "reranked_score": 1.9911,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_near_exact_service_title:dropping",
+            "boost_distinctive_title_terms:dropping,registrar",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready",
+            "penalty_student_handbook_for_faculty_query"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "keep_same_domain:Academic Policies",
+            "keep_title_path_intent_match",
+            "keep_positive_boost_without_strong_penalty",
+            "drop_weak_context_match"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 81,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+          "citation_id_stamped": true,
+          "audience": "student"
+        }
+      ],
+      "retrieved_citation_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::84",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::94",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::108",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::109",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::422",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::52",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::45",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::57",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81"
+      ],
+      "generation_context": {
+        "generation_invoked": true,
+        "generation_succeeded": false,
+        "status": "invoked_but_failed:conversational_or_recovered_fallback_used",
+        "final_context_chunks": [
+          {
+            "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+            "chunk_merge_key": "id:da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+            "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+            "chunk_index": 97,
+            "title": "Dropping of Subjects",
+            "path": "Dropping of Subjects",
+            "audience": "both"
+          },
+          {
+            "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91",
+            "chunk_merge_key": "id:da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91",
+            "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+            "chunk_index": 91,
+            "title": "Offering of Unscheduled Subject/s",
+            "path": "Offering of Unscheduled Subject/s",
+            "audience": "both"
+          },
+          {
+            "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+            "chunk_merge_key": "id:da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+            "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+            "chunk_index": 93,
+            "title": "Crediting of Subjects",
+            "path": "Crediting of Subjects",
+            "audience": "both"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::108",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::108",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 108,
+            "title": "Withdrawal Policy",
+            "path": "Undergraduate Academic Policies > Article 9 > Withdrawal from the University > 1.1 > Withdrawal Policy > Withdrawal Policy",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 117,
+            "title": "Honorable Dismissal",
+            "path": "Undergraduate Academic Policies > Article 12 > Honorable Dismissal > Honorable Dismissal",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 118,
+            "title": "Honorable Dismissal",
+            "path": "Undergraduate Academic Policies > Article 12 > Honorable Dismissal > Honorable Dismissal",
+            "audience": "student"
+          },
+          {
+            "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+            "chunk_merge_key": "id:da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+            "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+            "chunk_index": 92,
+            "title": "Completion of INC/Removal \u2013 Online System",
+            "path": "Completion of INC/Removal \u2013 Online System",
+            "audience": "both"
+          },
+          {
+            "citation_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::84",
+            "chunk_merge_key": "id:da4a1832-7242-4e94-8ba6-bc0b9f2294bf::84",
+            "document_id": "da4a1832-7242-4e94-8ba6-bc0b9f2294bf",
+            "chunk_index": 84,
+            "title": "Open to all Clients",
+            "path": "Open to all Clients",
+            "audience": "both"
+          }
+        ]
+      },
+      "generation_context_citation_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::108",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::84"
+      ],
+      "generation_usage": {},
+      "answer_rewrite": {
+        "evidence_bearing_answer": null,
+        "table_inversion_corrected": false,
+        "classification_template_applied": false,
+        "used_recovered": false
+      },
+      "citation_v2_sink": {},
+      "async_verification_sink_keys": [],
+      "timing_s": {
+        "retrieval_s": 32.369,
+        "rerank_s": 0.074
+      },
+      "metrics": {
+        "answer_correctness": {
+          "value": 0.0,
+          "unavailable": false,
+          "detail": {
+            "methodology": "Deterministic presence of required facts copied from the human-approved reference answer. This is not RAGAS answer_correctness.",
+            "score": 0.0,
+            "present_fact_ids": [],
+            "missing_fact_ids": [
+              "charter_30_per_unit",
+              "handbook_20_per_unit",
+              "new_transferee_limitation",
+              "bor_1046",
+              "conflict_or_confirm"
+            ],
+            "facts": [
+              {
+                "id": "charter_30_per_unit",
+                "from_approved_answer": "Citizen's Charter 2026 lists \u20b130.00 per unit",
+                "present": false
+              },
+              {
+                "id": "handbook_20_per_unit",
+                "from_approved_answer": "Student Handbook 2021 requires a dropping fee of \u20b120.00 per unit",
+                "present": false
+              },
+              {
+                "id": "new_transferee_limitation",
+                "from_approved_answer": "Charter fee is for new and transferee students",
+                "present": false
+              },
+              {
+                "id": "bor_1046",
+                "from_approved_answer": "Handbook cites LSPU BOR Resolution 1046, s.2012",
+                "present": false
+              },
+              {
+                "id": "conflict_or_confirm",
+                "from_approved_answer": "Do not choose a winning rate; confirm with the Registrar",
+                "present": false
+              }
+            ]
+          }
+        },
+        "answer_relevancy": {
+          "value": 0.6667,
+          "unavailable": false,
+          "detail": {
+            "methodology": "Fraction of distinctive question tokens present in the chatbot answer. This is not RAGAS answer_relevancy.",
+            "score": 0.6667,
+            "distinctive_tokens": [
+              "much",
+              "drop",
+              "subject"
+            ],
+            "matched_token_count": 2
+          }
+        },
+        "evidence_in_generation_context": {
+          "gold_context_recall": 0.5,
+          "gold_ids_in_generation_context": [
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+          ],
+          "generation_context_ids": [
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::91",
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::108",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92",
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::84"
+          ]
+        },
+        "evidence_in_retrieval": {
+          "gold_retrieval_recall": 0.5,
+          "gold_ids_in_retrieval": [
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+          ]
+        },
+        "student_visible_citation_quality": {
+          "citation_set_precision": 0.25,
+          "citation_set_recall": 0.5,
+          "intersection_ids": [
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+          ],
+          "predicted_ids": [
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118",
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::93",
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::92"
+          ],
+          "gold_ids": [
+            "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+          ],
+          "unavailable_reason": null
+        },
+        "llm_verifier_faithfulness": {
+          "faithfulness": null,
+          "claim_support_rate": null,
+          "citation_set_precision": null,
+          "citation_set_recall": null,
+          "verifier_invoked": true,
+          "verifier_succeeded": false,
+          "failure_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401",
+          "verified_citation_ids": [],
+          "claims": [
+            {
+              "claim_id": "c1",
+              "text": "The listed fee for Dropping of Subjects is P30.00 (Laguna State Polytechnic University CC 2026 1st Edition)"
+            }
+          ],
+          "per_claim_verified_ids": {},
+          "latency_ms": null,
+          "unavailable_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401"
+        },
+        "ragas": {
+          "installed": false,
+          "answer_correctness": null,
+          "answer_relevancy": null,
+          "faithfulness": null,
+          "note": "RAGAS was not installed and was not used."
+        }
+      }
+    },
+    {
+      "case_id": "aq_08_fail_more_than_75_percent",
+      "source_question_id": "rag_benchmark_08",
+      "question": "What happens if I fail more than 75% of my units?",
+      "status": "evaluated",
+      "error": null,
+      "latency_ms": 3179.17,
+      "user_role": "student",
+      "reference_answer": "The LSPU Student Handbook 2021 retention policy uses two slightly different failure thresholds.\n\nSection 4.3 states that any student who fails in more than 75% of the total academic units enrolled shall be subject for dismissal from the College. An incomplete grade is not included in the computation of earned units. Section 4.3 also states that this shall not apply to students who receive final grades in only nine academic units.\n\nThe scholastic-delinquency table on the following page lists 75% or more, when the student is enrolled in nine academic units or more, as Dismissal from the College (not allowed to enroll). Failing 100% is listed separately as Permanent disqualification from the University, which is not the same as dismissal from the College.\n\nThe nine-unit language therefore appears in two contexts: as an exemption in Section 4.3 for students who receive final grades in only nine academic units, and as an enrollment condition in the table (nine academic units or more) for the 75% or more dismissal row.\n\nBecause Section 4.3 says \u201cmore than 75%\u201d and the table says \u201c75% or more,\u201d these pages do not resolve the exact-75% case. Confirm the applicable rule with the Registrar.",
+      "gold_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+      ],
+      "chatbot_answer": "At the end of the semester, A student who fails 25% to 49% of the total academic units he registered shall be warned by the Dean and advised to improve his/her performance. At the end of the semester, A student fails 50% to 74% of the total academic units in which he registered shall be placed on probation for the succeeding semester, and the Dean con- cerned shall reduce his/her load accordingly. A student's\u2026",
+      "confidence": "medium",
+      "out_of_scope_detected": false,
+      "fallback_used": true,
+      "fallback_reason": "generation_error",
+      "detected_intent": "NORMAL_QA",
+      "selected_context_count": 7,
+      "displayed_citations": [
+        {
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+          "title": "Scholastic Delinquency",
+          "page": 35,
+          "page_number": 35,
+          "page_end": 36,
+          "page_range": "35-36",
+          "document_id": "8dff347a-1f00-4454-b0da-f6d09e795308",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "source_section": "Sec. 4 > Scholastic Delinquency",
+          "source_excerpt": "Scholastic Delinquency Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency The University Academic Council shall promulgate (delinquency) rules and guidelines governing scholastic delinquency, subject to the approv- al of the Board of Regents, and to the following minimum standards: 4.1. Warning. At the end of the semester, A student who fails 25% to\u2026"
+        }
+      ],
+      "displayed_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66"
+      ],
+      "retrieved_chunks": [
+        {
+          "rank": 1,
+          "title": "Shifting of Course",
+          "path": "Undergraduate Academic Policies > Article 2 > Admission Requirements > 2.10 > Shifting of Course > Shifting of Course",
+          "page": 27,
+          "content_preview": "Shifting of Course Undergraduate Academic Policies > Article 2 > Admission Requirements > 2.10 > Shifting of Course Students from other courses can shift to any BS Program within the university provided that the following condi- tions are met: 2.10.1. No failure of greater than six (6) units during the semester. 2.10.2. No failure in the course/major-related subjects stated in the retention policy of any BS in the respective program curricu- lum. 2.10.3 A filled out shifting form from the Office of the Registrar",
+          "original_score": 0.8655,
+          "reranked_score": 3.2355,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_near_exact_service_title:retention policies",
+            "boost_distinctive_title_terms:academic,retention",
+            "boost_path_domain_match:retention",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "metadata_category_match",
+            "metadata_subcategory_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_rank_1",
+            "keep_close_to_rank_1",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 43,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 2,
+          "title": "Dismissal",
+          "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > 4.3 > Dismissal > Dismissal",
+          "page": 35,
+          "content_preview": "Dismissal Undergraduate Academic Policies > Article 5 > Retention Policies > 4.3 > Dismissal Any student who fails in more than seventy-five percent (75%) of the total academic units enrolled shall be subject for dis- missal from the College; provided that an incomplete grade shall not be included in the computation of earned units; provided fur- ther, that this shall not apply to students who receive final grades in only nine academic units.",
+          "original_score": 0.9092,
+          "reranked_score": 2.5342,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:retention policies",
+            "boost_distinctive_title_terms:dismissal,academic,retention,retentionpolicies",
+            "boost_path_domain_match:retention",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "failed_units_dismissal",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready",
+            "penalty_unrequested_inc",
+            "penalty_unrequested_grading_system"
+          ],
+          "selected_for_context": false,
+          "context_filter_reasons": [
+            "drop_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 67,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 3,
+          "title": "Scholastic Delinquency",
+          "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency > Scholastic Delinquency",
+          "page": 35,
+          "content_preview": "Scholastic Delinquency Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency The University Academic Council shall promulgate (delinquency) rules and guidelines governing scholastic delinquency, subject to the approv- al of the Board of Regents, and to the following minimum standards: 4.1. Warning. At the end of the semester, A student who fails 25% to 49% of the total academic units he registered shall be warned by the Dean and advised to improve his/her performance. 4.2. Probation. At the end of the semester, A student fails 50% to 74% of the total academic units in which he registered shall be placed on probation for the succeeding semester, an...",
+          "original_score": 0.8918,
+          "reranked_score": 4.1518,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:scholastic delinquency",
+            "boost_distinctive_title_terms:scholastic,delinquency,academic,retention",
+            "boost_path_domain_match:retention",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "boost_scholastic_delinquency_thresholds",
+            "boost_warning_threshold_text",
+            "metadata_category_match",
+            "metadata_subcategory_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_close_to_rank_1",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 66,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 4,
+          "title": "Disqualification Exemption",
+          "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 7 > Disqualification Exemption > Disqualification Exemption",
+          "page": 35,
+          "content_preview": "Disqualification Exemption Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 7 > Disqualification Exemption Permanent disqualification does not apply to cases, where on the recommendation of the Faculty con- cerned, s/he certifies that the grade of 5.0 is due to the unauthorized dropping off the student and not to poor academic performance. Allowable Percentage | Number | load (%) | of units | Status | for the of failure | enrolled | following semester any number | Less three 25% - 49% of academic | Warning | from units the nor- units | mal load 6 academic 50% - 74% | units or | Probation | 15 units only more Nine aca- | Dismissal from not allowed 75% or more demic unit...",
+          "original_score": 0.8845,
+          "reranked_score": 3.8745,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:retention policies",
+            "boost_distinctive_title_terms:academic,retention,retentionpolicies",
+            "boost_path_domain_match:retention",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "boost_warning_threshold_text",
+            "failed_units_dismissal",
+            "metadata_category_match",
+            "metadata_subcategory_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_close_to_rank_1",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 69,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 5,
+          "title": "Dropped",
+          "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 5 > Dropped > Dropped",
+          "page": 35,
+          "content_preview": "Dropped Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 5 > Dropped Any student dropped from one college/school shall not be admitted to another course in LSPU, unless in the evaluation of the Dean, the student\u2019s aptitude and interest may qualify him/her to anoth- er field of study, in which case, he/she may be admitted on probation.",
+          "original_score": 0.8713,
+          "reranked_score": 2.9163,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_exact_service_title:retention policies",
+            "boost_distinctive_title_terms:academic,retention,dropped,retentionpolicies",
+            "boost_path_domain_match:retention",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "penalty_dropped_transfer_rule_for_threshold_query",
+            "metadata_category_match",
+            "metadata_subcategory_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_close_to_rank_1",
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 68,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::68",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 6,
+          "title": "Dropping",
+          "path": "Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.1 > Dropping > Dropping",
+          "page": 39,
+          "content_preview": "Dropping Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.1 > Dropping Students shall be dropped if they have an accumulated absence of at least 25% of the total number of class hours in a semester. With the faculty\u2019s consent and the Dean's approval, a student may drop the subject by filing the prescribed form. With- drawing from any subject before mid-term examination permits a student to drop the subject without prejudice.",
+          "original_score": 0.8749,
+          "reranked_score": 2.3799,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_near_exact_service_title:academic",
+            "boost_distinctive_title_terms:academic",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 81,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 7,
+          "title": "Policy",
+          "path": "Graduate Studies > Article 11 > Attendance > Sec. 1 > Policy > Policy",
+          "page": 59,
+          "content_preview": "Policy Graduate Studies > Article 11 > Attendance > Sec. 1 > Policy A student may absent from classes for unavoidable cause. A student accumulating absences from class which is equivalent to twenty percent (20%) of the total number of hour per day session for a partic- ular subject shall be dropped from the roll of students for the particular subject or class. Time lost due to late enrolment shall be considered as a time lost by absence. Sec. 2. Sports, other non-academic activities, and academic commitments at other institutions will not normally be accepted as valid reasons for ap- proving absences from any arranged course activities in the university.",
+          "original_score": 0.8645,
+          "reranked_score": 2.3695,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_near_exact_service_title:academic",
+            "boost_distinctive_title_terms:academic",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 162,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::162",
+          "citation_id_stamped": true,
+          "audience": "student"
+        },
+        {
+          "rank": 8,
+          "title": "Dropping Grades Policy",
+          "path": "Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.2 > Dropping Grades Policy > Dropping Grades Policy",
+          "page": 39,
+          "content_preview": "Dropping Grades Policy Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.2 > Dropping Grades Policy 4.2.1. If a subject is dropped after the first day of the midterm ex- aminations, the instructors concerned shall indicate in the form whether or not the student shall be given a grade of \u201c5.0\u201d for the course based on his/her class standing in that subject. 4.2.2. Any student who drops a course without the College Dean's approval shall be given an automatic grade of \u201c5.0\u201d for the course of his/her registration privileges is curtailed or entire- ly drawn. 4.2.3. If a student is dropped from the roll by his/her instructor/ professor due to the Attendance Rule, a student...",
+          "original_score": 0.8492,
+          "reranked_score": 2.3542,
+          "boost_reasons": [
+            "title_path_keyword_match",
+            "boost_near_exact_service_title:academic",
+            "boost_distinctive_title_terms:academic",
+            "academic_policy_match",
+            "failing_subjects_policy",
+            "metadata_category_match",
+            "boost_valid_source_metadata",
+            "boost_has_page_number",
+            "boost_level2_citation_ready"
+          ],
+          "selected_for_context": true,
+          "context_filter_reasons": [
+            "keep_positive_boost_without_strong_penalty"
+          ],
+          "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+          "source_filename": "LSPU Student Handbook.pdf",
+          "chunk_index": 82,
+          "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+          "citation_id_stamped": true,
+          "audience": "student"
+        }
+      ],
+      "retrieved_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::68",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::162",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+      ],
+      "generation_context": {
+        "generation_invoked": true,
+        "generation_succeeded": false,
+        "status": "invoked_but_failed:conversational_or_recovered_fallback_used",
+        "final_context_chunks": [
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 43,
+            "title": "Shifting of Course",
+            "path": "Undergraduate Academic Policies > Article 2 > Admission Requirements > 2.10 > Shifting of Course > Shifting of Course",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 66,
+            "title": "Scholastic Delinquency",
+            "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 4 > Scholastic Delinquency > Scholastic Delinquency",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 69,
+            "title": "Disqualification Exemption",
+            "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 7 > Disqualification Exemption > Disqualification Exemption",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::68",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::68",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 68,
+            "title": "Dropped",
+            "path": "Undergraduate Academic Policies > Article 5 > Retention Policies > Sec. 5 > Dropped > Dropped",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 81,
+            "title": "Dropping",
+            "path": "Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.1 > Dropping > Dropping",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::162",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::162",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 162,
+            "title": "Policy",
+            "path": "Graduate Studies > Article 11 > Attendance > Sec. 1 > Policy > Policy",
+            "audience": "student"
+          },
+          {
+            "citation_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+            "chunk_merge_key": "id:cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+            "document_id": "cec01713-c1ba-4061-9404-ffaa1d8e70dd",
+            "chunk_index": 82,
+            "title": "Dropping Grades Policy",
+            "path": "Undergraduate Academic Policies > Article 6 > Academic Load and Changes > 4.2 > Dropping Grades Policy > Dropping Grades Policy",
+            "audience": "student"
+          }
+        ]
+      },
+      "generation_context_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::68",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::162",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+      ],
+      "generation_usage": {},
+      "answer_rewrite": {
+        "evidence_bearing_answer": null,
+        "table_inversion_corrected": false,
+        "classification_template_applied": false,
+        "used_recovered": false
+      },
+      "citation_v2_sink": {},
+      "async_verification_sink_keys": [],
+      "timing_s": {
+        "retrieval_s": 2.579,
+        "rerank_s": 0.037
+      },
+      "metrics": {
+        "answer_correctness": {
+          "value": 0.0,
+          "unavailable": false,
+          "detail": {
+            "methodology": "Deterministic presence of required facts copied from the human-approved reference answer. This is not RAGAS answer_correctness.",
+            "score": 0.0,
+            "present_fact_ids": [],
+            "missing_fact_ids": [
+              "section_43_more_than_75",
+              "table_75_or_more",
+              "dismissal_from_college",
+              "permanent_disqualification",
+              "inc_exclusion",
+              "nine_unit_language",
+              "exact_75_unresolved_or_confirm"
+            ],
+            "facts": [
+              {
+                "id": "section_43_more_than_75",
+                "from_approved_answer": "Section 4.3: fails in more than 75%",
+                "present": false
+              },
+              {
+                "id": "table_75_or_more",
+                "from_approved_answer": "Table lists 75% or more",
+                "present": false
+              },
+              {
+                "id": "dismissal_from_college",
+                "from_approved_answer": "Dismissal from the College",
+                "present": false
+              },
+              {
+                "id": "permanent_disqualification",
+                "from_approved_answer": "100% is permanent disqualification from the University",
+                "present": false
+              },
+              {
+                "id": "inc_exclusion",
+                "from_approved_answer": "Incomplete grade is not included in the computation",
+                "present": false
+              },
+              {
+                "id": "nine_unit_language",
+                "from_approved_answer": "Nine academic units exemption and/or enrollment condition",
+                "present": false
+              },
+              {
+                "id": "exact_75_unresolved_or_confirm",
+                "from_approved_answer": "Exact-75% unresolved; confirm with the Registrar",
+                "present": false
+              }
+            ]
+          }
+        },
+        "answer_relevancy": {
+          "value": 1.0,
+          "unavailable": false,
+          "detail": {
+            "methodology": "Fraction of distinctive question tokens present in the chatbot answer. This is not RAGAS answer_relevancy.",
+            "score": 1.0,
+            "distinctive_tokens": [
+              "fail",
+              "units"
+            ],
+            "matched_token_count": 2
+          }
+        },
+        "evidence_in_generation_context": {
+          "gold_context_recall": 0.5,
+          "gold_ids_in_generation_context": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+          ],
+          "generation_context_ids": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::43",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::68",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::81",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::162",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+          ]
+        },
+        "evidence_in_retrieval": {
+          "gold_retrieval_recall": 1.0,
+          "gold_ids_in_retrieval": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+          ]
+        },
+        "student_visible_citation_quality": {
+          "citation_set_precision": 0.0,
+          "citation_set_recall": 0.0,
+          "intersection_ids": [],
+          "predicted_ids": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66"
+          ],
+          "gold_ids": [
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+            "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+          ],
+          "unavailable_reason": null
+        },
+        "llm_verifier_faithfulness": {
+          "faithfulness": null,
+          "claim_support_rate": null,
+          "citation_set_precision": null,
+          "citation_set_recall": null,
+          "verifier_invoked": true,
+          "verifier_succeeded": false,
+          "failure_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401",
+          "verified_citation_ids": [],
+          "claims": [
+            {
+              "claim_id": "c1",
+              "text": "At the end of the semester, A student who fails 25% to 49% of the total academic units he registered shall be warned by the Dean and advised to improve his/her performance"
+            },
+            {
+              "claim_id": "c2",
+              "text": "At the end of the semester, A student fails 50% to 74% of the total academic units in which he registered shall be placed on probation for the succeeding semester, and the Dean con- cerned shall reduce his/her load accordingly"
+            },
+            {
+              "claim_id": "c3",
+              "text": "A student's\u2026"
+            }
+          ],
+          "per_claim_verified_ids": {},
+          "latency_ms": null,
+          "unavailable_reason": "provider_error: Client error '401 Unauthorized' for url 'https://openrouter.ai/api/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401"
+        },
+        "ragas": {
+          "installed": false,
+          "answer_correctness": null,
+          "answer_relevancy": null,
+          "faithfulness": null,
+          "note": "RAGAS was not installed and was not used."
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,213 @@
+{
+  "artifact_kind": "answer_quality_thesis_overview",
+  "created_at_utc": "2026-11-04T16:48:00Z",
+  "dataset_path": "backend/benchmarks/evaluation/answer_quality_labeling/answer_quality_eval_dataset.pending_human_review.json",
+  "dataset_version": "2026-11-04-v1-answer-quality-pending-human-review",
+  "dataset_sha256": "D7CDD2EC2CCE20A176FBA7B07B70C6206E7AABF4F36FD8D3C5BC8BD1677E2905",
+  "evaluation_ready": false,
+  "labeling_status_of_all_cases": "unlabeled",
+  "progress": {
+    "benchmark_questions_prepared": 14,
+    "actual_live_chatbot_tests": 2,
+    "satisfactory_actual_answers": 1,
+    "unsatisfactory_actual_answers": 1,
+    "not_live_tested": 12,
+    "overall_14_question_accuracy": null,
+    "overall_14_question_accuracy_note": "Not calculated. Simulated and unevaluated cases are excluded from accuracy."
+  },
+  "counts_by_status": {
+    "ACTUAL_LIVE_TEST": 2,
+    "SIMULATED_NOT_LIVE_TESTED": 8,
+    "NOT_EVALUATED": 4
+  },
+  "cases": [
+    {
+      "case_id": "aq_01_tor_fee",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "How much does it cost to get a copy of my Transcript of Records?",
+      "case_type": "direct_factual",
+      "reference_available": true,
+      "reference_approval": "Phase 2D human-approved proposed_reference_answer",
+      "gold_citation_ids": [],
+      "citation_decision": "unresolved",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_02_diploma_second_copy_fee",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "How much is the fee for a second copy of my diploma?",
+      "case_type": "direct_factual",
+      "reference_available": true,
+      "reference_approval": "proposed_reference_answer pending PDF confirmation",
+      "gold_citation_ids": [],
+      "citation_decision": "not_assigned",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_03_enrollment_office",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "Which office handles student enrollment?",
+      "case_type": "direct_factual",
+      "reference_available": true,
+      "reference_approval": "proposed_reference_answer pending PDF confirmation",
+      "gold_citation_ids": [],
+      "citation_decision": "not_assigned",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_04_dropping_fee_multi_document",
+      "overview_status": "ACTUAL LIVE TEST",
+      "question": "How much does it cost to drop a subject?",
+      "case_type": "multi_document",
+      "reference_available": true,
+      "reference_approval": "Phase 2D human-approved proposed_reference_answer",
+      "gold_citation_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82"
+      ],
+      "citation_decision": "approved",
+      "live_human_observation": "Chatbot stated Dropping of Subjects fee as P30.00 and provided the procedure and estimated processing time.",
+      "answer_correctness": "pass",
+      "citation_verification": "pending"
+    },
+    {
+      "case_id": "aq_05_library_overdue_fee",
+      "overview_status": "NOT EVALUATED",
+      "question": "What is the fee for library circulation service if my book is overdue?",
+      "case_type": "insufficient_evidence",
+      "reference_available": false,
+      "proposed_reference_answer": null,
+      "gold_citation_ids": [],
+      "not_evaluated_reason": "Extraction has '2 pesos per' with the unit missing; 'overdue' does not appear in the evaluation corpus.",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_06_entrance_exam_duration",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "How long does the LSPU entrance examination take, including orientation?",
+      "case_type": "multi_part",
+      "reference_available": true,
+      "reference_approval": "proposed_reference_answer pending PDF confirmation",
+      "gold_citation_ids": [],
+      "citation_decision": "not_assigned",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_07_id_validation_process",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "What is the process for validating my student ID?",
+      "case_type": "direct_factual",
+      "reference_available": true,
+      "reference_approval": "proposed_reference_answer pending PDF confirmation",
+      "gold_citation_ids": [],
+      "citation_decision": "not_assigned",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_08_fail_more_than_75_percent",
+      "overview_status": "ACTUAL LIVE TEST",
+      "question": "What happens if I fail more than 75% of my units?",
+      "case_type": "multi_part",
+      "reference_available": true,
+      "reference_approval": "Phase 2D human-approved proposed_reference_answer",
+      "gold_citation_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::67",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+      ],
+      "citation_decision": "approved",
+      "live_human_observation": "Chatbot returned fragmented table content and did not clearly explain the consequence of failing more than 75% of units.",
+      "answer_correctness": "fail",
+      "citation_verification": "pending"
+    },
+    {
+      "case_id": "aq_09_faculty_teaching_load",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "How is faculty teaching load determined?",
+      "case_type": "multi_part",
+      "reference_available": true,
+      "reference_approval": "proposed_reference_answer pending PDF confirmation",
+      "gold_citation_ids": [],
+      "citation_decision": "not_assigned",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_10_faculty_responsibilities",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "What are the responsibilities of an LSPU faculty member?",
+      "case_type": "direct_factual",
+      "reference_available": true,
+      "reference_approval": "Phase 2D human-approved proposed_reference_answer",
+      "gold_citation_ids": [],
+      "citation_decision": "held",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_11_honorable_dismissal",
+      "overview_status": "SIMULATED — NOT LIVE-TESTED",
+      "question": "What is honorable dismissal for a student?",
+      "case_type": "multi_part",
+      "reference_available": true,
+      "reference_approval": "proposed_reference_answer pending PDF confirmation",
+      "gold_citation_ids": [],
+      "citation_decision": "not_assigned",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_12_university_president",
+      "overview_status": "NOT EVALUATED",
+      "question": "Who is the current LSPU president?",
+      "case_type": "multi_document",
+      "reference_available": false,
+      "proposed_reference_answer": null,
+      "gold_citation_ids": [],
+      "not_evaluated_reason": "Dated 2021 lists name Dr. Mario R. Briones but do not establish who is president in 2026. Phase 2D/2F keep the reference answer and gold citations empty.",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_13_out_of_scope_weather_mars",
+      "overview_status": "NOT EVALUATED",
+      "question": "What is the weather on Mars tomorrow?",
+      "case_type": "out_of_scope",
+      "reference_available": false,
+      "proposed_reference_answer": null,
+      "gold_citation_ids": [],
+      "not_evaluated_reason": "Out-of-scope probe. No LSPU reference answer. Not live-tested for refusal behavior.",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    },
+    {
+      "case_id": "aq_14_insufficient_wifi_password",
+      "overview_status": "NOT EVALUATED",
+      "question": "What is the LSPU student Wi-Fi password?",
+      "case_type": "insufficient_evidence",
+      "reference_available": false,
+      "proposed_reference_answer": null,
+      "gold_citation_ids": [],
+      "not_evaluated_reason": "No Wi-Fi password passage exists in the 691-chunk evaluation corpus.",
+      "chatbot_answer": null,
+      "answer_correctness": null,
+      "citation_verification": null
+    }
+  ]
+}

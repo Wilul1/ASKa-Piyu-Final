@@ -117,6 +117,14 @@ class Settings(BaseSettings):
     auth_remember_token_ttl_minutes: int = 60 * 24 * 7
     chunk_max_chars: int = 1200
     chunk_overlap: int = 150
+    # Hard ceiling for the global content-aware chunker
+    # (app.services.common_representation.chunker.chunk_document_record):
+    # chunk_max_chars above is actually the *target* packing size at every
+    # existing call site (chunk_document_text's own chunk_size parameter),
+    # not a hard maximum -- this is the first setting representing a real
+    # hard maximum, used only by the new global-chunker integration, not
+    # by chunk_document_text's existing, unrelated call sites.
+    chunk_hard_max_chars: int = 1800
     # Local sentence-embedding model for Chroma retrieval (multilingual: handles
     # English/Tagalog/Taglish student phrasing). Ignored when env=test, which
     # always uses Chroma's bundled default embedding to keep tests fast/offline.

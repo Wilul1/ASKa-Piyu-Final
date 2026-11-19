@@ -207,8 +207,8 @@ class AdminArticleCard extends StatelessWidget {
                     else if (isUnsavedPreview)
                       const KbBadge(
                         label: 'Unsaved Preview',
-                        background: Color(0xFFEFF6FF),
-                        foreground: Color(0xFF1D4ED8),
+                        background: DesignTokens.maroonWash,
+                        foreground: DesignTokens.maroon,
                       )
                     else if (showPublicReadinessLabels)
                       KbBadge(

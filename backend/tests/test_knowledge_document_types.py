@@ -4,6 +4,7 @@ from app.config import settings
 from app.services.chroma_store import RetrievedChunk
 from app.services.knowledge_document_types import (
     KnowledgeDocumentType,
+    build_chunks_from_charter_v2_services,
     build_typed_chunks,
     detect_knowledge_document_type,
 )
@@ -551,3 +552,47 @@ def test_charter_chunks_carry_both_suggested_category_and_taxonomy_category():
     assert metadata["suggested_category"] == charter_label
     assert metadata["category"]
     assert "subcategory" in metadata
+
+
+def test_build_chunks_skips_rag_only_but_keeps_needs_review():
+    """Phase 6 Part A: a `rag_only` Charter service (e.g. a mis-parsed table
+    cell promoted into a "service title" with every real field empty) must
+    never become a new Chroma ingestion chunk when `exclude_rag_only=True`
+    (the real indexing boundary), but `needs_review`/`clean` services, and
+    the default (preview) call shape, are unaffected."""
+    services = [
+        {
+            "service_title": "Units: 18",
+            "office_division": "Not specified",
+            "who_may_avail": "Not specified",
+            "requirements": [],
+            "steps": [],
+            "extraction_quality": "rag_only",
+        },
+        {
+            "service_title": "Issuance of Good Moral Certificate",
+            "office_division": "Registrar",
+            "classification": "Simple",
+            "transaction_type": "G2C",
+            "who_may_avail": "Students",
+            "requirements": [{"requirement": "Request form", "where_to_secure": "Registrar"}],
+            "steps": [],
+            "extraction_quality": "needs_review",
+        },
+    ]
+
+    # Default (preview) behavior: both services remain, rag_only included.
+    default_chunks = build_chunks_from_charter_v2_services(
+        services, title="Charter", source_document="charter.pdf"
+    )
+    default_titles = {c.metadata["title"] for c in default_chunks}
+    assert "Units: 18" in default_titles
+    assert "Issuance of Good Moral Certificate" in default_titles
+
+    # Indexing boundary: rag_only excluded, needs_review kept.
+    indexed_chunks = build_chunks_from_charter_v2_services(
+        services, title="Charter", source_document="charter.pdf", exclude_rag_only=True
+    )
+    indexed_titles = {c.metadata["title"] for c in indexed_chunks}
+    assert "Units: 18" not in indexed_titles
+    assert "Issuance of Good Moral Certificate" in indexed_titles

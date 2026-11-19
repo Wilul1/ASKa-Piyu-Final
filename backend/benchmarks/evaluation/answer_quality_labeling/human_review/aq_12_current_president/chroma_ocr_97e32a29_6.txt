@@ -1,0 +1,17 @@
+chunk_id: 97e32a29-fa86-458c-9fe9-dba48f9605ce::6
+title: Administrative Officials
+source_section: Administrative Officials
+page: 11
+page_start: 11
+page_end: 12
+source_filename: LSPU Faculty Manual 2020.pdf
+----- TEXT -----
+Administrative Officials
+
+DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. CORAZON N. SAN AGUSTIN Vice President for Research Development and Extension I. General Information Santa Cruz Main Campus. It is the second largest university campus of LSPU which is strategically located four (4) kilometers from the own proper.
+As a key player in education, this campus offers relevant curricular programs with almost 9,000 student population in Engineering, Nursing & Allied Health courses, Hospitality Management & Tourism, Teacher Education, Industrial Technology, Criminal Justice Education, Law, Computer Studies, Arts and Sci- ences, and Business Management and Accountancy.
+Siniloan Host Campus. It lies on a 33-hectare site that is situated in a second class municipality between the plains of Sierra Madre Mountain and Laguna de Bay. It is a center of education serving towns in eastern Laguna and the northern part of Quezon Province. LSPU Siniloan has decided itself to meet the needs of its stakeholders under a shifting educational climate particu- larly in agriculture to which it was originally known.
+San Pablo Campus. This campus is a eighty-nine (89) kilometers from Manila, resting on approximately 5 hectare land area. It takes pride of its dis- tinctive accomplishments in instruction, research, extension services, linkage program, and community involvement in collaboration with other campuses.
+Los Baños Campus. This campus is situated along the shoreline of La- guna Lake, in the first-class urban municipality, northern slopes of Mt. Maria Makiling. It is sixty-five (65) kilometers from Manila in a 7.5-hectare land area with approximately 4,000 student’s population where majority are registered in Fishery course & sciences and allied courses.
+----- SOURCE_EXCERPT -----
+Administrative Officials DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. CORAZON N. SAN AGUSTIN Vice President for Research Development and Extension I. General Information Santa Cruz Main Campus. It is the second largest university campus of LSPU which is strategically located four…

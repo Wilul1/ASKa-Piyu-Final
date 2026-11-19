@@ -1,0 +1,65 @@
+chunk_id: da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97
+title: Dropping of Subjects
+source_section: Dropping of Subjects
+page: 98
+page_start: 98
+page_end: None
+source_filename: Laguna State Polytechnic University-CC_2026-1st Edition.pdf
+----- TEXT -----
+Overview
+This service provides assistance for Dropping of Subjects.
+
+Office / Division
+Colleges
+
+Who May Avail
+New and Transferee Students
+
+Requirements
+- Requirement: Dropping Form
+  Where to Secure: Registrar’s Office
+
+Steps
+1. Client Step: Student Application for Dropping
+   Agency Action: Release of dropping form
+   Fees: Not specified
+   Processing Time: Not specified
+   Person Responsible: RESPONSIBLE/Registrar’s Office/Cashier’s Office
+
+2. Client Step: Request for the dropping of subjects from the faculty-in-charge
+   Agency Action: Approval of the faculty-in-charge
+   Fees: None
+   Processing Time: 5 minutes
+   Person Responsible: Faculty-in-charge
+
+3. Client Step: Request for Deans
+   Agency Action: Approval from the
+   Fees: None
+   Processing Time: 5 Minutes
+   Person Responsible: Dean/Associate/Dean
+
+4. Client Step: Approval Submit approved
+   Agency Action: Dean Receives approved
+   Fees: None
+   Processing Time: 2 minutes
+   Person Responsible: Registrar’s Office
+
+5. Client Step: Dropping Form
+   Agency Action: dropping form
+   Fees: Not specified
+   Processing Time: Not specified
+   Person Responsible: Not specified
+
+Fees
+P30.00
+
+Total Processing Time
+15 minutes
+
+Source Information
+Document: Laguna State Polytechnic University-CC_2026-1st Edition
+Service: Dropping of Subjects
+Office: Colleges
+Page: 98
+----- SOURCE_EXCERPT -----
+Overview This service provides assistance for Dropping of Subjects. Office / Division Colleges Who May Avail New and Transferee Students Requirements - Requirement: Dropping Form Where to Secure: Registrar’s Office Steps 1. Client Step: Student Application for Dropping Agency Action: Release of dropping form Fees: Not specified Processing Time: Not specified Person Responsible: RESPONSIBLE/Registrar’s Office/Cashier’s Office 2. Client Step: Request for the dropping of subjects from the faculty-in-charge Agency Action: Approval of the faculty-in-charge Fees: None Processing Time: 5 minutes Person Responsible: Faculty-in-charge 3. Client Step: Request for Deans Agency Action: Approval from the

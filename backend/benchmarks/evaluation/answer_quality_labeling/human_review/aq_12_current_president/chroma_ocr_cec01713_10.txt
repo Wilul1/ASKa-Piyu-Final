@@ -1,0 +1,13 @@
+chunk_id: cec01713-c1ba-4061-9404-ffaa1d8e70dd::10
+title: Administrative Officials
+source_section: Administrative Officials
+page: 18
+page_start: 18
+page_end: 18
+source_filename: LSPU Student Handbook.pdf
+----- TEXT -----
+Administrative Officials
+
+DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. ROBERT C. AGATEP Vice President for Research Development and Extension
+----- SOURCE_EXCERPT -----
+Administrative Officials DR. MARIO R. BRIONES University President DR. EDEN C. CALLO Vice President for Academic Affairs ENGR. BELTRAN P. PEDRIGAL, MSA Vice President for Administration DR. ROBERT C. AGATEP Vice President for Research Development and Extension

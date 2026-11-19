@@ -1,0 +1,12 @@
+{
+  "candidate_model": "dots-studio/dots-3-note-preview:free",
+  "candidate_configured_provider_label": "atlascloud",
+  "reference_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "reference_configured_provider_label": "nvidia",
+  "candidate_resolved_providers_seen": [
+    "AtlasCloud"
+  ],
+  "reference_resolved_providers_seen": [
+    "Nvidia"
+  ]
+}

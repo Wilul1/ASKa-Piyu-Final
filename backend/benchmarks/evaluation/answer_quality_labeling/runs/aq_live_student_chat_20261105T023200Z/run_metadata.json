@@ -1,0 +1,36 @@
+{
+  "run_id": "aq_live_student_chat_20261105T023200Z",
+  "run_kind": "live_student_chatbot_screenshot_capture",
+  "status": "human_judged_answer_correctness_citations_partial",
+  "created_at_utc": "2026-11-04T18:32:00Z",
+  "evidence_source": "Fourteen live chatbot screenshots supplied in Cursor on 2026-11-05. User ran questions as a student. User stated faculty-related questions cannot be answered because Faculty Manual content is faculty-role only.",
+  "user_role": "student",
+  "questions_judged": 14,
+  "pending_dataset": "backend/benchmarks/evaluation/answer_quality_labeling/answer_quality_eval_dataset.pending_human_review.json",
+  "pending_dataset_still_unlabeled": true,
+  "evaluation_ready_unchanged": false,
+  "rag_eval_dataset_modified": false,
+  "overview_rag_cards_populated": false,
+  "pipeline": {
+    "interface": "live student-facing chatbot (human screenshots)",
+    "not_used": [
+      "Admin Model Evaluation Run Evaluation",
+      "rag_eval_dataset.json labeled cases",
+      "local generate_groq_answer() eval runner"
+    ]
+  },
+  "production_safety": {
+    "pending_dataset_modified": false,
+    "rag_eval_dataset_modified": false,
+    "retrieval_or_classification_gold_modified": false,
+    "code_deployed": false
+  },
+  "overall": {
+    "pass": 5,
+    "partial": 4,
+    "fail": 3,
+    "role_gated_expected": 2,
+    "student_visible_denominator": 12,
+    "summary": "5 pass / 4 partial / 3 fail on student-visible cases; 2 faculty-manual cases expected refusal for student role"
+  }
+}

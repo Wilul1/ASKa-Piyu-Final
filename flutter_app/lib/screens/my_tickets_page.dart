@@ -18,16 +18,20 @@ import '../widgets/public_site_header.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/student_ui.dart';
 
-const _statusOptions = ['All', 'Open', 'In Progress', 'Resolved', 'Closed'];
+const _statusOptions = ['All', 'Open', 'In Progress', 'Closed'];
 // Cosmetic-only display labels for _statusOptions (same indices/values) --
 // the real filter value stays 'All' so comparisons/onChanged are unchanged.
 const _statusOptionsDisplay = [
   'All Status',
   'Open',
   'In Progress',
-  'Resolved',
   'Closed',
 ];
+
+const _ticketsNavy = DesignTokens.ink;
+const _ticketsMuted = DesignTokens.muted;
+const _ticketsPageBg = DesignTokens.pageBg;
+const _ticketsCardBorder = DesignTokens.border;
 
 class TicketMessage {
   final String id;
@@ -162,7 +166,10 @@ class TicketEntry {
         subject.toLowerCase().contains(normalized) ||
         assignedOffice.toLowerCase().contains(normalized) ||
         category.toLowerCase().contains(normalized);
-    final matchesStatus = statusFilter == 'All' || status == statusFilter;
+    final matchesStatus =
+        statusFilter == 'All' ||
+        status == statusFilter ||
+        (statusFilter == 'Closed' && status == 'Resolved');
     final matchesOffice =
         officeFilter == 'All Offices' || assignedOffice == officeFilter;
     final matchesCategory =
@@ -391,7 +398,18 @@ class _MyTicketsPageState extends State<MyTicketsPage>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 900;
+        final width = constraints.maxWidth;
+        final isWide = width >= kDesktopSplitBreakpoint;
+        final wideDesktop = width >= 1200;
+        final side = wideDesktop
+            ? width * DesignTokens.kbDesktopSideInset
+            : (isWide ? 28.0 : 16.0);
+        final pagePadding = EdgeInsets.fromLTRB(
+          side,
+          isWide ? 42 : 22,
+          side,
+          isWide ? 72 : 56,
+        );
         final filteredTickets =
             _tickets
                 .where(
@@ -416,7 +434,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
             _statusFilter != 'All' ||
             _officeFilter != 'All Offices' ||
             _categoryFilter != 'All Categories';
-
         final listView = RefreshIndicator(
           onRefresh: () async {
             await _loadTickets();
@@ -425,9 +442,16 @@ class _MyTicketsPageState extends State<MyTicketsPage>
           color: DesignTokens.maroon,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
+            padding: pagePadding,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                _TicketsHeadingRow(
+                  isWide: isWide,
+                  showSubmitButton: true,
+                  onAction: () => _tabController.animateTo(1),
+                ),
+                SizedBox(height: isWide ? 22 : 18),
                 if (_unreadNotifications > 0) ...[
                   _NotificationsBanner(
                     notifications:
@@ -443,7 +467,6 @@ class _MyTicketsPageState extends State<MyTicketsPage>
                 _TicketStatsSummary(
                   tickets: _tickets,
                   isWide: isWide,
-                  onSubmitTicket: () => _tabController.animateTo(1),
                 ),
                 SizedBox(height: isWide ? 18 : 14),
                 _TicketToolbar(
@@ -485,57 +508,46 @@ class _MyTicketsPageState extends State<MyTicketsPage>
         );
 
         final submitView = SingleChildScrollView(
-          child: CreateTicketForm(
-            initialQuestion: widget.initialQuestion,
-            onCreated: _ticketCreated,
-            compact: !isWide,
-          ),
-        );
-
-        final bodyContent = StudentPage(
-          maxWidth: 1780,
-          scroll: isWide,
-          padding:
-              isWide
-                  ? const EdgeInsets.fromLTRB(24, 22, 24, 28)
-                  : const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          padding: pagePadding,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Neither tab shows a "Back to ..." row above the hero -- the
-              // navbar's own My Tickets nav item (kept active on both tabs)
-              // already provides navigation, matching both approved targets.
-              _TicketsHeroBanner(
-                tabController: _tabController,
+              _TicketsHeadingRow(
                 isWide: isWide,
-                isFaculty: AuthScope.of(context).role == 'faculty',
+                showSubmitButton: false,
+                onAction: () => _tabController.animateTo(0),
               ),
-              SizedBox(height: isWide ? 20 : 14),
-              if (isWide)
-                SizedBox(
-                  height: 760,
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [listView, submitView],
-                  ),
-                )
-              else
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [listView, submitView],
-                  ),
-                ),
+              SizedBox(height: isWide ? 22 : 18),
+              CreateTicketForm(
+                initialQuestion: widget.initialQuestion,
+                onCreated: _ticketCreated,
+                onCancel: () => _tabController.animateTo(0),
+                compact: !isWide,
+              ),
             ],
           ),
         );
 
         return Scaffold(
-          backgroundColor: DesignTokens.bgGrey,
-          body: Column(
+          backgroundColor: _ticketsPageBg,
+          body: Stack(
             children: [
-              const PublicSiteHeader(myTicketsActive: true),
-              Expanded(child: bodyContent),
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(painter: _TicketsPageWavePainter()),
+                ),
+              ),
+              Column(
+                children: [
+                  const PublicSiteHeader(myTicketsActive: true),
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [listView, submitView],
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         );
@@ -554,217 +566,150 @@ List<String> _distinctSorted(Iterable<String> values) {
   return list;
 }
 
-/// Shared hero banner for the My Tickets / Submit Ticket experience --
-/// carries the same restrained light-maroon/pink wave language as the
-/// approved homepage hero (a soft gradient with a single gentle curved
-/// edge), without literally reusing the homepage's own multi-layer wave
-/// painter. Reacts to [tabController] so the eyebrow/heading/subtitle swap
-/// between the list and submit views instead of each view rendering its
-/// own separate header.
-class _TicketsHeroBanner extends StatelessWidget {
-  final TabController tabController;
+class _TicketsHeadingRow extends StatelessWidget {
   final bool isWide;
-  final bool isFaculty;
+  final bool showSubmitButton;
+  final VoidCallback onAction;
 
-  const _TicketsHeroBanner({
-    required this.tabController,
+  const _TicketsHeadingRow({
     required this.isWide,
-    required this.isFaculty,
+    required this.showSubmitButton,
+    required this.onAction,
   });
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: tabController,
-      builder: (context, _) {
-        final onSubmitView = tabController.index == 1;
-        final eyebrow = onSubmitView ? 'SUBMIT TICKET' : 'TICKETS';
-        final title = onSubmitView ? 'Submit a Support Request' : 'My Tickets';
-        final subtitle =
-            onSubmitView
-                ? 'Share your concern and any details the office will need to help you.'
-                : isFaculty
-                ? 'Create faculty support requests, track progress, and read office replies in one place.'
-                : 'Create support requests, track progress, and read office replies in one place.';
+    final title = showSubmitButton ? 'My Tickets' : 'Submit a Support Request';
+    final subtitle = showSubmitButton
+        ? 'Track the status of your support tickets.'
+        : 'Tell us what you need help with.';
 
-        return ClipRect(
-          child: Container(
-            width: double.infinity,
-            color: const Color(0xFFFDF1F2),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(painter: _TicketsHeroWavePainter()),
-                  ),
-                ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    isWide ? 28 : 18,
-                    isWide ? 26 : 20,
-                    isWide ? 28 : 18,
-                    isWide ? 46 : 34,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        eyebrow,
-                        style: const TextStyle(
-                          color: DesignTokens.maroon,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 12,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: isWide ? 37 : 24,
-                          fontWeight: FontWeight.w900,
-                          // Both hero titles share the same maroon
-                          // treatment -- intentional visual consistency
-                          // between My Tickets and Submit Ticket.
-                          color: DesignTokens.maroon,
-                          height: 1.05,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: isWide ? 620 : 420,
-                        ),
-                        child: Text(
-                          subtitle,
-                          style: TextStyle(
-                            fontSize: isWide ? 14 : 13,
-                            color: DesignTokens.muted,
-                            height: 1.4,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+    final heading = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: isWide ? 40 : 30,
+            height: 1.12,
+            fontWeight: FontWeight.w800,
+            color: _ticketsNavy,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          subtitle,
+          style: const TextStyle(
+            fontSize: 15.5,
+            height: 1.4,
+            color: _ticketsMuted,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: 85,
+            height: 3,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: DesignTokens.maroon,
+                borderRadius: BorderRadius.all(Radius.circular(2)),
+              ),
             ),
           ),
-        );
-      },
+        ),
+      ],
+    );
+
+    final submitButton = SizedBox(
+      height: 48,
+      child: ElevatedButton(
+        onPressed: onAction,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: DesignTokens.maroon,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        child: const Text(
+          'Submit Ticket',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+        ),
+      ),
+    );
+
+    if (!showSubmitButton) return heading;
+    if (!isWide) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          heading,
+          const SizedBox(height: 18),
+          submitButton,
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: heading),
+        const SizedBox(width: 16),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: submitButton,
+        ),
+      ],
     );
   }
 }
 
-/// Wave shapes across the hero, rebuilt from pixel measurements of the
-/// approved target screenshot (1672x941): a per-column scan for sustained
-/// dusty-rose color found genuine wave presence only in the left ~14% and
-/// right ~28% of the hero's width, with a wide, essentially flat/pale
-/// middle band (x roughly 15%-70%) showing no sustained wave color at all.
-/// That is a materially different silhouette from a single continuous
-/// crest-and-valley: two independent, edge-anchored bands rather than one
-/// wave spanning the full width. A soft top-to-bottom base tint (measured
-/// going from ~(248,237,240) just below the navbar to ~(240,225,228) at
-/// the hero's bottom edge, uniform across x) supplies the remaining depth
-/// through that flat middle, standing in for the background gradient the
-/// target shows there.
-class _TicketsHeroWavePainter extends CustomPainter {
-  const _TicketsHeroWavePainter();
+class _TicketsPageWavePainter extends CustomPainter {
+  const _TicketsPageWavePainter();
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Uniform base gradient (not x-dependent): the measured middle band has
-    // no distinct wave shape, just a gentle top-to-bottom deepening.
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFFFDF1F2), Color(0xFFF6E1E4)],
-        ).createShader(Offset.zero & size),
-    );
+    final w = size.width;
+    final h = size.height;
 
-    // Full-width soft wave: a single gentle S-curve visible across the whole
-    // hero, at a light-enough tint that it doesn't register as "sustained
-    // deep rose" in a strict per-column color scan (which is why the edge-
-    // measurement below found the middle "empty") but still reads visually
-    // as a continuous curved band, matching the target's overall softness.
-    _paintLayer(
-      canvas,
-      size,
-      color: const Color(0xFFEFC3CA).withValues(alpha: 0.40),
-      anchors: const [
-        Offset(0.00, 0.40),
-        Offset(0.25, 0.58),
-        Offset(0.50, 0.76),
-        Offset(0.75, 0.62),
-        Offset(1.00, 0.50),
-      ],
-    );
-
-    // Left band: measured sustained-rose top edge rises from ~49% of the
-    // hero height at x=0 to ~90% (nearly gone) by x=~14%, then stays absent
-    // through the wide middle.
-    _paintLayer(
-      canvas,
-      size,
-      color: const Color(0xFFC17E88).withValues(alpha: 0.42),
-      anchors: const [
-        Offset(0.00, 0.49),
-        Offset(0.05, 0.60),
-        Offset(0.10, 0.74),
-        Offset(0.15, 0.95),
-      ],
-    );
-
-    // Right band: reappears around x=~72% (top edge ~90% down, i.e. barely
-    // present) and thickens steadily toward the right edge (top edge ~55%
-    // down at x=100%), the strongest/deepest point of the whole hero.
-    _paintLayer(
-      canvas,
-      size,
-      color: const Color(0xFFC17E88).withValues(alpha: 0.55),
-      anchors: const [
-        Offset(0.65, 0.98),
-        Offset(0.72, 0.90),
-        Offset(0.85, 0.75),
-        Offset(1.00, 0.55),
-      ],
-    );
-  }
-
-  void _paintLayer(
-    Canvas canvas,
-    Size size, {
-    required Color color,
-    required List<Offset> anchors,
-  }) {
-    final pts = <Offset>[
-      for (final a in anchors) Offset(size.width * a.dx, size.height * a.dy),
-    ];
-    final path =
-        Path()
-          ..moveTo(0, size.height)
-          ..lineTo(pts.first.dx, pts.first.dy);
-    for (var i = 0; i < pts.length - 1; i++) {
-      final p0 = i == 0 ? pts[i] : pts[i - 1];
-      final p1 = pts[i];
-      final p2 = pts[i + 1];
-      final p3 = (i + 2 < pts.length) ? pts[i + 2] : pts[i + 1];
-      final c1 = p1 + (p2 - p0) / 6;
-      final c2 = p2 - (p3 - p1) / 6;
-      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
+    void band(Path path, Color color) {
+      canvas.drawPath(path, Paint()..color = color);
     }
-    path
-      ..lineTo(size.width, size.height)
-      ..close();
-    canvas.drawPath(path, Paint()..color = color);
+
+    band(
+      Path()
+        ..moveTo(0, h * 0.62)
+        ..cubicTo(w * 0.08, h * 0.48, w * 0.22, h * 0.78, w * 0.36, h * 0.70)
+        ..cubicTo(w * 0.24, h * 0.92, w * 0.10, h * 1.02, 0, h)
+        ..close(),
+      const Color(0xFFF6E4E8).withValues(alpha: 0.95),
+    );
+    band(
+      Path()
+        ..moveTo(0, h * 0.74)
+        ..cubicTo(w * 0.10, h * 0.60, w * 0.28, h * 0.88, w * 0.42, h * 0.80)
+        ..cubicTo(w * 0.30, h * 0.98, w * 0.12, h * 1.05, 0, h * 0.96)
+        ..close(),
+      const Color(0xFFF3D4DB).withValues(alpha: 0.72),
+    );
+    band(
+      Path()
+        ..moveTo(0, h * 0.84)
+        ..cubicTo(w * 0.06, h * 0.76, w * 0.16, h * 0.96, w * 0.28, h * 0.90)
+        ..cubicTo(w * 0.18, h * 1.02, w * 0.08, h * 1.04, 0, h)
+        ..close(),
+      const Color(0xFFE8C2CB).withValues(alpha: 0.45),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _TicketsHeroWavePainter oldDelegate) => false;
+  bool shouldRepaint(covariant _TicketsPageWavePainter oldDelegate) => false;
 }
 
 class _LoginRequiredPage extends StatelessWidget {
@@ -843,17 +788,13 @@ class _LoginRequiredPage extends StatelessWidget {
 
 /// Real ticket counts presented as plain numbers/labels -- no status icons
 /// or icon containers, per the redesign's "typography over icons" mandate.
-/// The primary Submit Ticket action lives here (right side on desktop,
-/// full-width below the stats on narrow layouts).
 class _TicketStatsSummary extends StatelessWidget {
   final List<TicketEntry> tickets;
   final bool isWide;
-  final VoidCallback onSubmitTicket;
 
   const _TicketStatsSummary({
     required this.tickets,
     required this.isWide,
-    required this.onSubmitTicket,
   });
 
   @override
@@ -861,7 +802,8 @@ class _TicketStatsSummary extends StatelessWidget {
     final openCount = tickets.where((t) => t.status == 'Open').length;
     final progressCount =
         tickets.where((t) => t.status == 'In Progress').length;
-    final closedCount = tickets.where((t) => t.status == 'Closed').length;
+    final closedCount =
+        tickets.where((t) => t.status == 'Closed' || t.status == 'Resolved').length;
     final totalCount = tickets.length;
 
     final metrics = [
@@ -869,19 +811,19 @@ class _TicketStatsSummary extends StatelessWidget {
         number: '$openCount',
         label: 'Open',
         caption: 'Awaiting office response',
-        color: const Color(0xFF2563EB),
+        color: DesignTokens.statusOpen,
       ),
       (
         number: '$progressCount',
         label: 'In Progress',
         caption: 'Being handled by the office',
-        color: const Color(0xFFF97316),
+        color: DesignTokens.statusInProgress,
       ),
       (
         number: '$closedCount',
         label: 'Closed',
         caption: 'Resolved tickets',
-        color: const Color(0xFF16A34A),
+        color: DesignTokens.statusClosed,
       ),
       (
         number: '$totalCount',
@@ -900,26 +842,6 @@ class _TicketStatsSummary extends StatelessWidget {
           color: m.color,
         ),
     ];
-
-    final submitButton = SizedBox(
-      height: 42,
-      child: ElevatedButton(
-        onPressed: onSubmitTicket,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: DesignTokens.maroon,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        child: const Text(
-          'Submit Ticket',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-        ),
-      ),
-    );
 
     // Wide layout: a single row with a subtle vertical divider between each
     // metric, matching the approved target's summary card exactly.
@@ -967,29 +889,26 @@ class _TicketStatsSummary extends StatelessWidget {
       ],
     );
 
-    return StudentPanel(
-      padding: EdgeInsets.symmetric(
-        horizontal: isWide ? 20 : 14,
-        vertical: isWide ? 12 : 14,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(DesignTokens.radiusLg),
+        border: Border.all(color: _ticketsCardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
-      child:
-          isWide
-              ? Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(child: wideStatsRow),
-                  const SizedBox(width: 22),
-                  submitButton,
-                ],
-              )
-              : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  narrowStatsGrid,
-                  const SizedBox(height: 14),
-                  submitButton,
-                ],
-              ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: isWide ? 8 : 14,
+          vertical: isWide ? 18 : 14,
+        ),
+        child: isWide ? wideStatsRow : narrowStatsGrid,
+      ),
     );
   }
 }
@@ -1014,16 +933,10 @@ class _StatBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 10 : 12,
-        vertical: compact ? 8 : 8,
-      ),
-      decoration: BoxDecoration(
-        // A very subtle per-metric tint (matching the target) -- not a
-        // solid fill, just enough to distinguish each metric's zone.
-        color: color.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(10),
+        horizontal: compact ? 10 : 22,
+        vertical: compact ? 8 : 6,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1032,19 +945,19 @@ class _StatBlock extends StatelessWidget {
           Text(
             number,
             style: TextStyle(
-              fontSize: compact ? 20 : 24,
-              fontWeight: FontWeight.w900,
+              fontSize: compact ? 22 : 32,
+              fontWeight: FontWeight.w800,
               color: color,
               height: 1,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 12.5,
-              color: DesignTokens.ink,
-              fontWeight: FontWeight.w800,
+            style: TextStyle(
+              fontSize: 13.5,
+              color: color,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 2),
@@ -1053,8 +966,8 @@ class _StatBlock extends StatelessWidget {
             maxLines: compact ? 2 : 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 11,
-              color: DesignTokens.muted,
+              fontSize: 12,
+              color: _ticketsMuted,
               height: 1.2,
             ),
           ),
@@ -1116,25 +1029,13 @@ class _TicketToolbarState extends State<_TicketToolbar> {
 
   @override
   Widget build(BuildContext context) {
-    return StudentPanel(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      shadow: false,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 900;
-          // A tighter content padding than the shared `_inputDecoration`
-          // default -- scoped to this toolbar only via `.copyWith` so
-          // Submit Ticket's own fields (which also use `_inputDecoration`)
-          // are not affected.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < kDesktopSplitBreakpoint;
           final searchField = TextField(
             controller: widget.searchCtrl,
-            decoration: _inputDecoration(
+            decoration: _filterFieldDecoration(
               hintText: 'Search ticket ID, subject, office, or category...',
-            ).copyWith(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
-              ),
             ),
           );
           final statusDropdown = _FilterDropdown(
@@ -1156,18 +1057,27 @@ class _TicketToolbarState extends State<_TicketToolbar> {
             values: widget.categoryOptions,
             onChanged: widget.onCategoryChanged,
           );
-          final clearAction = TextButton(
-            onPressed: widget.hasActiveFilters ? widget.onClear : null,
-            style: TextButton.styleFrom(
-              backgroundColor: const Color(0xFFFBF2F3),
-              foregroundColor: DesignTokens.maroon,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              minimumSize: const Size(0, 0),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+          final clearAction = SizedBox(
+            height: 48,
+            child: Opacity(
+              opacity: widget.hasActiveFilters ? 1 : 0.92,
+              child: TextButton(
+                onPressed: widget.onClear,
+                style: TextButton.styleFrom(
+                  backgroundColor: const Color(0xFFF8E9EC),
+                  foregroundColor: DesignTokens.maroon,
+                  disabledForegroundColor: DesignTokens.maroon,
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                ),
+                child: const Text(
+                  'Clear',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
-            child: const Text('Clear'),
           );
 
           if (isNarrow) {
@@ -1241,19 +1151,18 @@ class _TicketToolbarState extends State<_TicketToolbar> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(flex: 6, child: searchField),
+                const SizedBox(width: 12),
+                SizedBox(width: 138, child: statusDropdown),
                 const SizedBox(width: 10),
-                SizedBox(width: 150, child: statusDropdown),
+                SizedBox(width: 148, child: officeDropdown),
                 const SizedBox(width: 10),
-                SizedBox(width: 170, child: officeDropdown),
-                const SizedBox(width: 10),
-                SizedBox(width: 170, child: categoryDropdown),
+                SizedBox(width: 158, child: categoryDropdown),
                 const SizedBox(width: 10),
                 clearAction,
               ],
             ),
           );
         },
-      ),
     );
   }
 }
@@ -1282,12 +1191,7 @@ class _FilterDropdown extends StatelessWidget {
     return DropdownButtonFormField<String>(
       value: value,
       isExpanded: true,
-      decoration: _inputDecoration(hintText: label).copyWith(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 10,
-        ),
-      ),
+      decoration: _filterFieldDecoration(hintText: label),
       items: [
         for (var i = 0; i < values.length; i++)
           DropdownMenuItem(
@@ -1334,7 +1238,7 @@ class TicketsList extends StatelessWidget {
           tickets
               .map(
                 (ticket) => Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: TicketCard(
                     ticket: ticket,
                     onTap: () => onTicketTap(ticket),
@@ -1346,10 +1250,6 @@ class TicketsList extends StatelessWidget {
   }
 }
 
-/// Wide horizontal card matching the approved target: a left ID/date
-/// column, a vertical divider, a main column (status/priority, subject,
-/// office/category/replies, description preview), and a trailing chevron.
-/// Stacks (ID+date above main) on narrower widths instead of overflowing.
 class TicketCard extends StatelessWidget {
   final TicketEntry ticket;
   final VoidCallback onTap;
@@ -1358,125 +1258,84 @@ class TicketCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final idAndDate = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          ticket.id,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: DesignTokens.maroon,
-            fontWeight: FontWeight.w900,
-            fontSize: 14,
+    final accent = _statusStyle(ticket.status).color;
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _ticketsCardBorder),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.035),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          _formatDate(ticket.updatedAt),
-          style: const TextStyle(color: DesignTokens.muted, fontSize: 12.5),
-        ),
-      ],
-    );
-
-    final mainColumn = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            TicketStatusChip(status: ticket.status),
-            TicketPriorityChip(priority: ticket.priority),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Text(
-          ticket.subject,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: DesignTokens.ink,
-            fontWeight: FontWeight.w900,
-            fontSize: 17,
-          ),
-        ),
-        const SizedBox(height: 8),
-        _TicketMetaLine(
-          parts: [
-            ticket.assignedOffice,
-            ticket.category,
-            '${ticket.messages.length} '
-                '${ticket.messages.length == 1 ? 'reply' : 'replies'}',
-          ],
-        ),
-        if (ticket.description.trim().isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Text(
-            ticket.description,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 13,
-              height: 1.35,
-            ),
-          ),
-        ],
-      ],
-    );
-
-    return StudentInkCard(
-      onTap: onTap,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 640;
-          if (isNarrow) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: idAndDate),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      color: DesignTokens.muted,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                mainColumn,
-              ],
-            );
-          }
-
-          return IntrinsicHeight(
+          child: IntrinsicHeight(
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(width: 180, child: idAndDate),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 18),
-                  child: VerticalDivider(
-                    width: 1,
-                    thickness: 1,
-                    color: DesignTokens.border,
+                Container(
+                  width: 5,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(18),
+                      bottomLeft: Radius.circular(18),
+                    ),
                   ),
                 ),
-                Expanded(child: mainColumn),
-                const SizedBox(width: 10),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: DesignTokens.muted,
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          ticket.id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: DesignTokens.maroon,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatDate(ticket.createdAt),
+                          style: const TextStyle(
+                            color: _ticketsMuted,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: TicketStatusChip(status: ticket.status),
+                ),
+                const Padding(
+                  padding: EdgeInsets.only(right: 10),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    color: Color(0xFF9AA3B2),
+                    size: 22,
+                  ),
                 ),
               ],
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -2630,9 +2489,11 @@ class _StudentReplyBubble extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 520),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFFEFF6FF),
+          color: DesignTokens.maroonWash,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFBFDBFE)),
+          border: Border.all(
+            color: DesignTokens.maroon.withValues(alpha: 0.28),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2640,7 +2501,7 @@ class _StudentReplyBubble extends StatelessWidget {
             Text(
               'You · ${_formatDate(message.createdAt)}',
               style: const TextStyle(
-                color: Color(0xFF1D4ED8),
+                color: DesignTokens.maroon,
                 fontWeight: FontWeight.w800,
                 fontSize: 12,
               ),
@@ -3057,15 +2918,14 @@ class _ChipPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withOpacity(0.18)),
       ),
       child: Text(
         label,
         style: TextStyle(
           fontSize: 12,
-          fontWeight: FontWeight.w900,
+          fontWeight: FontWeight.w700,
           color: color,
         ),
       ),
@@ -3160,6 +3020,7 @@ class _TicketError extends StatelessWidget {
 class CreateTicketForm extends StatefulWidget {
   final String? initialQuestion;
   final ValueChanged<TicketEntry> onCreated;
+  final VoidCallback? onCancel;
   final bool compact;
 
   /// Seeded offices skip the network load. Widget tests only.
@@ -3170,6 +3031,7 @@ class CreateTicketForm extends StatefulWidget {
     super.key,
     this.initialQuestion,
     required this.onCreated,
+    this.onCancel,
     this.compact = false,
     this.debugOffices,
   });
@@ -3391,23 +3253,46 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
     }
   }
 
+  void _cancel() {
+    if (_submitting) return;
+    if (widget.onCancel != null) {
+      widget.onCancel!();
+      return;
+    }
+    _subjectCtrl.clear();
+    _descCtrl.clear();
+    setState(() {
+      _attachmentFile = null;
+      _attachmentName = null;
+      _selectedOfficeId = null;
+    });
+  }
+
+  Widget _fieldLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: _ticketsNavy,
+        fontWeight: FontWeight.w700,
+        fontSize: 14,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final fieldDecoration = _submitFieldDecoration();
     final form = Form(
       key: _formKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _FieldLabel(
-            number: 1,
-            label: 'Office (optional)',
-            helper: 'Select the office you want to send this ticket to.',
-          ),
-          const SizedBox(height: 6),
+          _fieldLabel('Office (optional)'),
+          const SizedBox(height: 8),
           DropdownButtonFormField<String?>(
             value: _selectedOfficeId,
             isExpanded: true,
-            decoration: _inputDecoration(
+            decoration: fieldDecoration.copyWith(
               hintText: 'Automatic routing — Let ASKa-Piyu choose',
             ),
             items: [
@@ -3427,59 +3312,46 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                     ? null
                     : (value) => setState(() => _selectedOfficeId = value),
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Not sure which office handles your concern? Leave this on '
-            'Automatic Routing and ASKa-Piyu will send your ticket to the '
-            'appropriate office.',
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12.5,
-              height: 1.4,
-            ),
-          ),
           const SizedBox(height: 18),
-          _FieldLabel(
-            number: 2,
-            label: 'Subject',
-            helper: 'A short summary of what you need help with.',
-          ),
-          const SizedBox(height: 6),
+          _fieldLabel('Subject'),
+          const SizedBox(height: 8),
           TextFormField(
             controller: _subjectCtrl,
             validator: _validateTicketSubject,
             textInputAction: TextInputAction.next,
-            decoration: _inputDecoration(
-              hintText: 'Example: How can I request my transcript of records?',
+            decoration: fieldDecoration.copyWith(
+              hintText: 'Enter a short subject',
             ),
           ),
           const SizedBox(height: 18),
-          _FieldLabel(
-            number: 3,
-            label: 'Description',
-            helper:
-                'Include dates, reference numbers, offices visited, '
-                'or steps you already tried.',
-          ),
-          const SizedBox(height: 6),
-          TextFormField(
-            controller: _descCtrl,
-            validator: _validateTicketDescription,
-            minLines: widget.compact ? 4 : 5,
-            maxLines: widget.compact ? 6 : 7,
-            decoration: _inputDecoration(
-              hintText: 'Tell us what happened and what help you need.',
+          _fieldLabel('Description'),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: widget.compact ? 96 : 115,
+            child: TextFormField(
+              controller: _descCtrl,
+              validator: _validateTicketDescription,
+              expands: true,
+              maxLines: null,
+              minLines: null,
+              textAlignVertical: TextAlignVertical.top,
+              decoration: fieldDecoration.copyWith(
+                hintText: 'Describe your concern',
+              ),
             ),
           ),
           const SizedBox(height: 18),
-          _FieldLabel(
-            number: 4,
-            label: 'Attachment (optional)',
-            helper:
-                'Screenshot or document ($_attachmentFormatsLabel — '
-                'max 10 MB).',
-          ),
+          _fieldLabel('Attachment (optional)'),
           const SizedBox(height: 6),
+          const Text(
+            'JPG, JPEG, PNG, PDF, up to 10 MB.',
+            style: TextStyle(
+              color: _ticketsMuted,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 8),
           _AttachmentPicker(
             fileName: _attachmentName,
             onPick: _submitting ? null : _pickAttachment,
@@ -3491,42 +3363,41 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                       _attachmentName = null;
                     }),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 22),
           LayoutBuilder(
             builder: (context, constraints) {
               final isNarrow = constraints.maxWidth < 420;
-              final clearButton = OutlinedButton(
-                onPressed:
-                    _submitting
-                        ? null
-                        : () {
-                          _subjectCtrl.clear();
-                          _descCtrl.clear();
-                          setState(() {
-                            _attachmentFile = null;
-                            _attachmentName = null;
-                            _selectedOfficeId = null;
-                          });
-                        },
+              final cancelButton = OutlinedButton(
+                onPressed: _submitting ? null : _cancel,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: DesignTokens.ink,
-                  side: const BorderSide(color: DesignTokens.border),
+                  foregroundColor: DesignTokens.maroon,
+                  backgroundColor: Colors.white,
+                  side: const BorderSide(color: DesignTokens.maroon),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 15,
+                    horizontal: 22,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: const Text('Clear'),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               );
               final submitButton = ElevatedButton(
                 onPressed: _submitting ? null : _submit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: DesignTokens.maroon,
                   foregroundColor: Colors.white,
+                  disabledBackgroundColor: DesignTokens.maroon.withValues(
+                    alpha: 0.55,
+                  ),
                   elevation: 0,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 22,
-                    vertical: 15,
+                    vertical: 14,
                   ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
@@ -3549,7 +3420,10 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                             Text('Submitting...'),
                           ],
                         )
-                        : const Text('Submit Ticket'),
+                        : const Text(
+                          'Submit Ticket',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
               );
 
               if (isNarrow) {
@@ -3558,7 +3432,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
                   children: [
                     submitButton,
                     const SizedBox(height: 10),
-                    clearButton,
+                    cancelButton,
                   ],
                 );
               }
@@ -3566,7 +3440,7 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
               return Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  clearButton,
+                  cancelButton,
                   const SizedBox(width: 12),
                   submitButton,
                 ],
@@ -3577,23 +3451,28 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
       ),
     );
 
-    final guidance = _SubmitTicketGuidance(
-      attachmentFormatsLabel: _attachmentFormatsLabel,
-    );
-
-    // The form card and the guidance column are deliberately two independent
-    // pieces of composition, not one shared bordered container -- wrapping
-    // both in a single StudentPanel made the right column's white background
-    // stretch down to match the (much taller) form, leaving a huge empty
-    // bordered region below "File requirements". The guidance column's own
-    // two cards already carry their own borders/backgrounds, so it needs no
-    // outer panel at all; it simply sizes to its content.
-    final formCard = StudentPanel(
-      padding:
-          widget.compact
-              ? const EdgeInsets.fromLTRB(16, 16, 16, 16)
-              : const EdgeInsets.fromLTRB(24, 24, 22, 22),
-      child: form,
+    final formCard = DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(DesignTokens.radiusLg),
+        border: Border.all(color: _ticketsCardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          widget.compact ? 16 : 28,
+          widget.compact ? 16 : 26,
+          widget.compact ? 16 : 28,
+          widget.compact ? 16 : 22,
+        ),
+        child: form,
+      ),
     );
 
     return LayoutBuilder(
@@ -3603,161 +3482,111 @@ class _CreateTicketFormState extends State<CreateTicketForm> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(flex: 7, child: formCard),
-              const SizedBox(width: 24),
-              Expanded(flex: 3, child: guidance),
+              const SizedBox(width: 22),
+              const Expanded(flex: 3, child: _SubmitTicketGuidance()),
             ],
           );
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [formCard, const SizedBox(height: 20), guidance],
+          children: [
+            formCard,
+            const SizedBox(height: 20),
+            const _SubmitTicketGuidance(),
+          ],
         );
       },
     );
   }
 }
 
-/// The real, accurate list of file types [pickAppFile] accepts for ticket
-/// attachments (see [_CreateTicketFormState._pickAttachment]) -- kept as a
-/// single source of truth so the field helper and the guidance panel never
-/// drift from what the picker actually allows.
-const _attachmentFormatsLabel =
-    'JPG, JPEG, PNG, WebP, GIF, BMP, HEIC, TIFF, or PDF';
-
-/// Right-side (desktop) / below-form (narrow) guidance column for the
-/// Submit Ticket view. The "Tips" list is static UI copy; the file
-/// requirements line always reflects the real accepted formats/size/count.
 class _SubmitTicketGuidance extends StatelessWidget {
-  final String attachmentFormatsLabel;
-
-  const _SubmitTicketGuidance({required this.attachmentFormatsLabel});
+  const _SubmitTicketGuidance();
 
   static const _tips = [
-    'Provide a clear and specific subject',
-    'Include important details such as dates or reference numbers',
-    'Attach relevant screenshots or documents',
-    'Choose the correct office if you know it',
-    "Use Automatic Routing if you're not sure",
+    'Provide a clear and specific subject.',
+    'Include important details such as dates or reference numbers.',
+    'Attach relevant screenshots or documents.',
+    'Choose the correct office if you know it.',
+    "Use Automatic Routing if you're not sure.",
   ];
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFBF2F3),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE8B4B8)),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBF2F3),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFF0D4D8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Before submitting',
+            style: TextStyle(
+              color: DesignTokens.maroon,
+              fontWeight: FontWeight.w800,
+              fontSize: 18,
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Before submitting',
-                style: TextStyle(
-                  color: DesignTokens.maroon,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 15,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Providing clear and complete details helps the office '
-                'respond faster.',
-                style: TextStyle(
-                  color: DesignTokens.muted,
-                  fontSize: 12.5,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Divider(height: 1, color: Color(0xFFE8B4B8)),
-              const SizedBox(height: 14),
-              const Text(
-                'Tips for a faster response',
-                style: TextStyle(
-                  color: DesignTokens.ink,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 8),
-              for (var i = 0; i < _tips.length; i++)
-                Padding(
-                  padding: EdgeInsets.only(
-                    bottom: i == _tips.length - 1 ? 0 : 8,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 18,
-                        child: Text(
-                          '${i + 1}',
-                          style: const TextStyle(
-                            color: DesignTokens.maroon,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 12.5,
-                          ),
-                        ),
+          const SizedBox(height: 8),
+          const Text(
+            'Providing clear and complete details helps us resolve your request faster.',
+            style: TextStyle(
+              color: Color(0xFF5B6472),
+              fontSize: 13.5,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1, color: Color(0xFFE8C5CA)),
+          const SizedBox(height: 16),
+          const Text(
+            'Tips for a faster response:',
+            style: TextStyle(
+              color: _ticketsNavy,
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (var i = 0; i < _tips.length; i++)
+            Padding(
+              padding: EdgeInsets.only(bottom: i == _tips.length - 1 ? 0 : 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 22,
+                    child: Text(
+                      '${i + 1}.',
+                      style: const TextStyle(
+                        color: DesignTokens.maroon,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                        height: 1.4,
                       ),
-                      Expanded(
-                        child: Text(
-                          _tips[i],
-                          style: const TextStyle(
-                            color: DesignTokens.muted,
-                            fontSize: 12.5,
-                            height: 1.4,
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: DesignTokens.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'File requirements',
-                style: TextStyle(
-                  color: DesignTokens.ink,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
-                ),
+                  Expanded(
+                    child: Text(
+                      _tips[i],
+                      style: const TextStyle(
+                        color: Color(0xFF5B6472),
+                        fontSize: 13.5,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                'You can attach one file ($attachmentFormatsLabel) with a '
-                'maximum size of 10 MB.',
-                style: const TextStyle(
-                  color: DesignTokens.muted,
-                  fontSize: 12.5,
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+            ),
+        ],
+      ),
     );
   }
 }
@@ -3767,69 +3596,6 @@ class _TicketOfficeOption {
   final String name;
 
   const _TicketOfficeOption({required this.id, required this.name});
-}
-
-/// Field label with an optional small numbered marker (1-4) -- a
-/// navigation/hierarchy element for the Submit Ticket flow's numbered
-/// steps, not a decorative icon.
-class _FieldLabel extends StatelessWidget {
-  final String label;
-  final String helper;
-  final int? number;
-
-  const _FieldLabel({required this.label, required this.helper, this.number});
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            color: DesignTokens.ink,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        if (helper.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(
-            helper,
-            style: const TextStyle(
-              color: DesignTokens.muted,
-              fontSize: 12,
-              height: 1.35,
-            ),
-          ),
-        ],
-      ],
-    );
-    if (number == null) return text;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: DesignTokens.maroon.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Text(
-            '$number',
-            style: const TextStyle(
-              color: DesignTokens.maroon,
-              fontWeight: FontWeight.w900,
-              fontSize: 12,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(child: text),
-      ],
-    );
-  }
 }
 
 /// Click-to-select attachment picker. The application only ever supports
@@ -3854,7 +3620,7 @@ class _AttachmentPicker extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
         decoration: BoxDecoration(
           color: const Color(0xFFFBF2F3),
           borderRadius: BorderRadius.circular(14),
@@ -3882,64 +3648,30 @@ class _AttachmentPicker extends StatelessWidget {
                     TextButton(onPressed: onPick, child: const Text('Change')),
                   ],
                 )
-                : Column(
-                  children: [
-                    const Text(
-                      'Choose a file',
-                      style: TextStyle(
-                        color: DesignTokens.maroon,
-                        fontWeight: FontWeight.w800,
+                : const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Choose a file',
+                        style: TextStyle(
+                          color: DesignTokens.maroon,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'No file selected',
-                      style: TextStyle(color: DesignTokens.muted, fontSize: 12),
-                    ),
-                  ],
+                      SizedBox(height: 4),
+                      Text(
+                        'No file selected',
+                        style: TextStyle(
+                          color: _ticketsMuted,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
       ),
-    );
-  }
-}
-
-/// Plain, bullet-separated ticket metadata (office • category • updated •
-/// replies) -- typography and a simple separator carry the hierarchy
-/// instead of a row of decorative metadata icons. Each piece truncates on
-/// its own so long office/category text can't break the card layout.
-class _TicketMetaLine extends StatelessWidget {
-  final List<String> parts;
-
-  const _TicketMetaLine({required this.parts});
-
-  @override
-  Widget build(BuildContext context) {
-    final nonEmpty = parts.where((p) => p.trim().isNotEmpty).toList();
-    return Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < nonEmpty.length; i++) ...[
-          if (i > 0)
-            const Text(
-              '•',
-              style: TextStyle(color: DesignTokens.muted, fontSize: 12),
-            ),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 220),
-            child: Text(
-              nonEmpty[i],
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: DesignTokens.muted,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ],
     );
   }
 }
@@ -3950,40 +3682,62 @@ class _ChipStyle {
   const _ChipStyle(this.color);
 }
 
-InputDecoration _inputDecoration({required String hintText}) {
-  return InputDecoration(
-    hintText: hintText,
+InputDecoration _filterFieldDecoration({required String hintText}) {
+  const radius = BorderRadius.all(Radius.circular(24));
+  return const InputDecoration(
     filled: true,
-    fillColor: const Color(0xFFF8FAFC),
+    fillColor: Colors.white,
     border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: DesignTokens.border),
+      borderRadius: radius,
+      borderSide: BorderSide(color: _ticketsCardBorder),
     ),
     enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: const BorderSide(color: DesignTokens.border),
+      borderRadius: radius,
+      borderSide: BorderSide(color: _ticketsCardBorder),
     ),
     focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: BorderSide(
-        color: DesignTokens.ink.withValues(alpha: 0.35),
-        width: 1.2,
-      ),
+      borderRadius: radius,
+      borderSide: BorderSide(color: Color(0xFFD9DEE6)),
     ),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+    contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+  ).copyWith(hintText: hintText);
+}
+
+InputDecoration _submitFieldDecoration() {
+  const radius = BorderRadius.all(Radius.circular(12));
+  return const InputDecoration(
+    filled: true,
+    fillColor: Colors.white,
+    border: OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: _ticketsCardBorder),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: _ticketsCardBorder),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: Color(0xFFD0D5DD)),
+    ),
+    errorBorder: OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: Color(0xFFB42318)),
+    ),
+    contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
   );
 }
 
 _ChipStyle _statusStyle(String status) {
   switch (status) {
     case 'Open':
-      return const _ChipStyle(Color(0xFF2563EB));
+      return const _ChipStyle(DesignTokens.statusOpen);
     case 'In Progress':
-      return const _ChipStyle(Color(0xFFF97316));
+      return const _ChipStyle(DesignTokens.statusInProgress);
     case 'Resolved':
-      return const _ChipStyle(Color(0xFF7C3AED));
+      return const _ChipStyle(DesignTokens.statusResolved);
     case 'Closed':
-      return const _ChipStyle(Color(0xFF16A34A));
+      return const _ChipStyle(DesignTokens.statusClosed);
     default:
       return const _ChipStyle(DesignTokens.muted);
   }
@@ -3992,9 +3746,9 @@ _ChipStyle _statusStyle(String status) {
 _ChipStyle _priorityStyle(String priority) {
   switch (priority) {
     case 'Urgent':
-      return const _ChipStyle(Color(0xFFDC2626));
+      return const _ChipStyle(DesignTokens.statusUrgent);
     case 'High':
-      return const _ChipStyle(Color(0xFFEA580C));
+      return const _ChipStyle(DesignTokens.statusInProgress);
     case 'Medium':
       return const _ChipStyle(Color(0xFFD97706));
     case 'Low':

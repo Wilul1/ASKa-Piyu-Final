@@ -1,0 +1,154 @@
+{
+  "dataset_version": "2026-11-04-v2",
+  "notes": "12 human-reviewed retrieval questions with relevant chunk ids and graded relevance (3=highly relevant, 2=relevant, 1=partial, 0=irrelevant).",
+  "cases": [
+    {
+      "query_id": "rag_benchmark_01",
+      "query": "How much does it cost to get a copy of my Transcript of Records?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_02",
+      "query": "How much is the fee for a second copy of my diploma?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::1": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_03",
+      "query": "Which office handles student enrollment?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::0": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_04",
+      "query": "How much does it cost to drop a subject?",
+      "relevant_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82",
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::97": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::82": 1.0
+      },
+      "labeling_status": "labeled",
+      "note": "Two conflicting real fee schedules for the same action: the Citizen's Charter (::97) states a flat P30.00 dropping fee; the older Student Handbook policy (::82, LSPU BOR 1046 s.2012) states P20/unit."
+    },
+    {
+      "query_id": "rag_benchmark_05",
+      "query": "What is the fee for library circulation service if my book is overdue?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::10"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::10": 1.0
+      },
+      "labeling_status": "labeled",
+      "note": "Correct service page, but the extracted fee text is incomplete ('2 pesos per' -- the unit, e.g."
+    },
+    {
+      "query_id": "rag_benchmark_06",
+      "query": "How long does the LSPU entrance examination take, including orientation?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::78"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::78": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_07",
+      "query": "What is the process for validating my student ID?",
+      "relevant_ids": [
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::14"
+      ],
+      "graded_relevance": {
+        "da4a1832-7242-4e94-8ba6-bc0b9f2294bf::14": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_08",
+      "query": "What happens if I fail more than 75% of my units?",
+      "relevant_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69"
+      ],
+      "graded_relevance": {
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::69": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::66": 2.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_09",
+      "query": "How is faculty teaching load determined?",
+      "relevant_ids": [
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::14",
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::15",
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::16"
+      ],
+      "graded_relevance": {
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::16": 3.0,
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::14": 2.0,
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::15": 2.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_10",
+      "query": "What are the responsibilities of an LSPU faculty member?",
+      "relevant_ids": [
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::7",
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::8"
+      ],
+      "graded_relevance": {
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::8": 3.0,
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::7": 1.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_11",
+      "query": "What is honorable dismissal for a student?",
+      "relevant_ids": [
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118"
+      ],
+      "graded_relevance": {
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::117": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::118": 3.0
+      },
+      "labeling_status": "labeled"
+    },
+    {
+      "query_id": "rag_benchmark_12",
+      "query": "Who is the current LSPU president?",
+      "relevant_ids": [
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::6",
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::10"
+      ],
+      "graded_relevance": {
+        "97e32a29-fa86-458c-9fe9-dba48f9605ce::6": 3.0,
+        "cec01713-c1ba-4061-9404-ffaa1d8e70dd::10": 3.0
+      },
+      "labeling_status": "labeled"
+    }
+  ]
+}
